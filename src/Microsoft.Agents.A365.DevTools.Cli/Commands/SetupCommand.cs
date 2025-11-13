@@ -30,7 +30,7 @@ public class SetupCommand
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector)
     {
-        var command = new Command("setup", "Set up your Agent365 environment by creating Azure resources, configuring\npermissions, and registering your agent blueprint for deployment");
+        var command = new Command("setup", "Set up your Agent 365 environment by creating Azure resources, configuring\npermissions, and registering your agent blueprint for deployment");
 
         // Options for the main setup command
         var configOption = new Option<FileInfo>(
@@ -63,7 +63,7 @@ public class SetupCommand
                 // Validate configuration even in dry-run mode
                 var dryRunConfig = await configService.LoadAsync(config.FullName);
                 
-                logger.LogInformation("DRY RUN: Agent365 Setup - Blueprint + Messaging Endpoint Registration");
+                logger.LogInformation("DRY RUN: Agent 365 Setup - Blueprint + Messaging Endpoint Registration");
                 logger.LogInformation("This would execute the following operations:");
                 logger.LogInformation("  1. Create agent blueprint and Azure resources");
                 logger.LogInformation("  2. Register blueprint messaging endpoint");
@@ -72,7 +72,7 @@ public class SetupCommand
                 return;
             }
 
-            logger.LogInformation("Agent365 Setup - Blueprint + Messaging Endpoint Registration");
+            logger.LogInformation("Agent 365 Setup - Blueprint + Messaging Endpoint Registration");
             logger.LogInformation("Creating blueprint and registering messaging endpoint...");
             logger.LogInformation("");
             
@@ -227,7 +227,7 @@ public class SetupCommand
                 // Display verification URLs and next steps
                 await DisplayVerificationInfoAsync(config, logger);
                 
-                logger.LogInformation("Agent365 setup completed successfully");
+                logger.LogInformation("Agent 365 setup completed successfully");
             }
             catch (Exception ex)
             {
@@ -374,7 +374,7 @@ public class SetupCommand
             subscriptionId: setupConfig.SubscriptionId,
             location: "global",
             messagingEndpoint: messagingEndpoint,
-            agentDescription: "Agent365 messaging endpoint for automated interactions",
+            agentDescription: "Agent 365 messaging endpoint for automated interactions",
             sku: "F0",
             agentBlueprintId: setupConfig.AgentBlueprintId);
         

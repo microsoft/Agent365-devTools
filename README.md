@@ -174,13 +174,6 @@ The CLI automatically:
 
 ---
 
-
-## Configuration
-
-
-## Configuration
-
-
 ## Configuration
 
 

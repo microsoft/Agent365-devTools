@@ -237,8 +237,6 @@ For security and flexibility, the CLI supports environment variable overrides fo
 1. **MCP Platform App IDs**:
    ```bash
    # Override MCP Platform Application ID for specific environments
-   A365_MCP_APP_ID_PREPROD=05879165-0320-489e-b644-f72b33f3edf0
-   A365_MCP_APP_ID_TEST=05879165-0320-489e-b644-f72b33f3edf0
    A365_MCP_APP_ID_CUSTOM=your-custom-app-id
    ```
 
