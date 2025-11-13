@@ -230,21 +230,56 @@ public class Agent365Config
 
 For security and flexibility, the CLI supports environment variable overrides for sensitive configuration values and internal endpoints. This allows the public codebase to remain clean while enabling internal Microsoft development workflows.
 
-**Pattern**: `A365_{CATEGORY}_{ENVIRONMENT}`
+**Pattern**: `A365_{CATEGORY}_{ENVIRONMENT}` or `A365_{CATEGORY}` (for simple overrides)
 
 **Supported Environment Variables:**
 
-1. **MCP Platform App IDs**:
+1. **Agent 365 Tools App ID (Authentication)**:
    ```bash
-   # Override MCP Platform Application ID for specific environments
-   A365_MCP_APP_ID_CUSTOM=your-custom-app-id
+   # Override Agent 365 Tools App ID for authentication
+   # Used by AuthenticationService when authenticating to Agent 365 endpoints
+   export A365_MCP_APP_ID=your-custom-app-id
    ```
 
-2. **Discover Endpoints**:
+2. **MCP Platform App IDs (Per-Environment)**:
+   ```bash
+   # Override MCP Platform Application ID for specific environments
+   # Used by ConfigConstants.GetAgent365ToolsResourceAppId()
+   # Internal use only - customers should not need these overrides
+   export A365_MCP_APP_ID_STAGING=your-staging-app-id
+   export A365_MCP_APP_ID_CUSTOM=your-custom-app-id
+   ```
 
-**Implementation Pattern** (in `ConfigConstants.cs`):
+3. **Discover Endpoints (Per-Environment)**:
+   ```bash
+   # Override discover endpoint URLs for specific environments
+   # Used by ConfigConstants.GetDiscoverEndpointUrl()
+   # Internal use only - customers should not need these overrides
+   export A365_DISCOVER_ENDPOINT_STAGING=https://staging.agent365.example.com/agents/discoverToolServers
+   export A365_DISCOVER_ENDPOINT_CUSTOM=https://custom.agent365.example.com/agents/discoverToolServers
+   ```
+
+4. **MOS Titles Service URL**:
+   ```bash
+   # Override MOS Titles service URL (used by PublishCommand)
+   # Default: https://titles.prod.mos.microsoft.com
+   # Internal use only - for non-production Microsoft environments
+   export MOS_TITLES_URL=https://custom.titles.mos.example.com
+   ```
+
+5. **Power Platform API URL**:
+   ```bash
+   # Override Power Platform API URL (for custom environments)
+   # Default: https://api.powerplatform.com
+   # Internal use only - for non-production Microsoft environments
+   export POWERPLATFORM_API_URL=https://api.custom.powerplatform.example.com
+   ```
+
+**Implementation Pattern**:
+
+**ConfigConstants.cs** (Per-environment with suffix):
 ```csharp
-public static string GetMcpPlatformResourceAppId(string environment)
+public static string GetAgent365ToolsResourceAppId(string environment)
 {
     // Check for custom app ID in environment variable first
     var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpper()}");
@@ -254,26 +289,49 @@ public static string GetMcpPlatformResourceAppId(string environment)
     // Default to production app ID
     return environment?.ToLower() switch
     {
-        "prod" => "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1",
-        _ => "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+        "prod" => McpConstants.Agent365ToolsProdAppId,
+        _ => McpConstants.Agent365ToolsProdAppId
     };
 }
 ```
 
+**AuthenticationService.cs** (Simple override without environment suffix):
+```csharp
+// Use production App ID by default, allow override via A365_MCP_APP_ID
+var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.Agent365ToolsProdAppId;
+```
+
+**PublishCommand.cs** (MOS Titles URL):
+```csharp
+private static string GetMosTitlesUrl(string? tenantId)
+{
+    // Check for environment variable override
+    var envUrl = Environment.GetEnvironmentVariable("MOS_TITLES_URL");
+    if (!string.IsNullOrWhiteSpace(envUrl))
+        return envUrl;
+    
+    return MosTitlesUrlProd;
+}
+```
+
 **Benefits:**
-- ✅ **Public Repository Ready**: No internal endpoints or app IDs in source code
+- ✅ **Public Repository Ready**: No internal/test/preprod endpoints or app IDs hardcoded in source code
 - ✅ **Flexible for Internal Development**: Microsoft developers can override via environment variables
-- ✅ **Secure**: No secrets hardcoded in the codebase
+- ✅ **Secure**: No secrets or internal App IDs hardcoded in the codebase
 - ✅ **Simple**: Easy to understand and maintain
+- ✅ **Production by Default**: Customers can only access production endpoints without configuration
+
+**Key Design Decision:**
+All test/preprod App IDs and URLs have been removed from the codebase. The production App ID (`ea9ffc3e-8a23-4a7d-836d-234d7c7565c1`) is the only value hardcoded in `McpConstants.Agent365ToolsProdAppId`. Internal Microsoft developers must use environment variables for non-production testing.
 
 **Usage Examples:**
 ```bash
-# Custom deployment
+# Custom deployment for internal Microsoft development
 export A365_MCP_APP_ID_STAGING=your-staging-app-id
 export A365_DISCOVER_ENDPOINT_STAGING=https://staging.yourdomain.com/agents/discoverToolServers
 
 # Run CLI with overrides
-a365 setup --environment prod
+a365 setup --environment staging
 ```
 
 ---

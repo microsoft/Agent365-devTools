@@ -23,7 +23,7 @@ public sealed class A365CreateInstanceRunner
     private readonly CommandExecutor _executor;
     private readonly GraphApiService _graphService;
 
-    // License SKU IDs (from PowerShell script)
+    // License SKU IDs
     private const string SkuTeamsEntNew = "7e31c0d9-9551-471d-836f-32ee72be4a01"; // Microsoft_Teams_Enterprise_New
     private const string SkuE5NoTeams = "18a4bd3f-0b5b-4887-b04f-61dd0ee15f5e"; // Microsoft_365_E5_(no_Teams)
 
@@ -39,7 +39,6 @@ public sealed class A365CreateInstanceRunner
 
     /// <summary>
     /// Execute instance creation workflow.
-    /// Fully compatible with a365-createinstance.ps1 -Step parameter.
     /// </summary>
     /// <param name="configPath">Path to a365.config.json</param>
     /// <param name="generatedConfigPath">Path to a365.generated.config.json</param>

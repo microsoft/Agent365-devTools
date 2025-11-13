@@ -10,7 +10,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>a365</ToolCommandName>
     <PackageId>Microsoft.Agents.A365.DevTools.Cli</PackageId>
-    <Description>CLI tool for Microsoft Agents A365 development</Description>
+    <Description>CLI tool for Microsoft Agents 365 development</Description>
     <PackageProjectUrl>https://github.com/microsoft/Agent365-devTools</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>

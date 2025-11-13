@@ -74,58 +74,38 @@ public class AuthenticationService
             string scope;
             string environmentName;
 
-            // Agent 365 Tools App IDs for different environments
-            const string Agent365ToolsTestAppId = "05879165-0320-489e-b644-f72b33f3edf0";
-            const string Agent365ToolsPreprodAppId = "4585d2c8-61e2-4f6a-a2a5-707519abf91c";
-            const string Agent365ToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
-
-            // Check for Agent 365 Tools App IDs
-            if (resourceUrl == Agent365ToolsTestAppId)
-            {
-                scope = $"{resourceUrl}/.default";
-                environmentName = "TEST";
-                _logger.LogInformation("Using Agent 365 Tools (TEST) for authentication");
-            }
-            else if (resourceUrl == Agent365ToolsPreprodAppId)
-            {
-                scope = $"{resourceUrl}/.default";
-                environmentName = "PREPROD";
-                _logger.LogInformation("Using Agent 365 Tools (PREPROD) for authentication");
-            }
-            else if (resourceUrl == Agent365ToolsProdAppId)
+            // Check if this is the production App ID
+            if (resourceUrl == McpConstants.Agent365ToolsProdAppId)
             {
                 scope = $"{resourceUrl}/.default";
                 environmentName = "PRODUCTION";
                 _logger.LogInformation("Using Agent 365 Tools (PRODUCTION) for authentication");
             }
-            // Check for Agent365 endpoint URLs (legacy support)
+            // Check for Agent 365 endpoint URLs (legacy support)
             else if (resourceUrl.Contains("agent365", StringComparison.OrdinalIgnoreCase))
             {
-                // Determine App ID from endpoint URL
-                string appId;
-                if (resourceUrl.Contains("preprod", StringComparison.OrdinalIgnoreCase))
+                // Use production App ID by default
+                // For non-production environments, users should provide the App ID directly via config
+                // or set environment variable A365_MCP_APP_ID (without environment suffix for backward compatibility)
+                var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.Agent365ToolsProdAppId;
+                
+                if (appId != McpConstants.Agent365ToolsProdAppId)
                 {
-                    appId = Agent365ToolsPreprodAppId;
-                    environmentName = "PREPROD";
-                }
-                else if (resourceUrl.Contains("test", StringComparison.OrdinalIgnoreCase) ||
-                         resourceUrl.Contains("dev", StringComparison.OrdinalIgnoreCase))
-                {
-                    appId = Agent365ToolsTestAppId;
-                    environmentName = "TEST";
+                    environmentName = "CUSTOM";
+                    _logger.LogInformation("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
                 }
                 else
                 {
-                    appId = Agent365ToolsProdAppId;
                     environmentName = "PRODUCTION";
+                    _logger.LogInformation("Using Agent 365 Tools (PRODUCTION) App ID for endpoint URL");
                 }
 
                 scope = $"{appId}/.default";
-                _logger.LogInformation("Using Agent 365 Tools App ID for endpoint URL ({Environment})", environmentName);
             }
             else
             {
                 // Default: use the resource as-is with /.default suffix (likely an App ID)
+                // This allows passing custom App IDs directly via config
                 scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                     ? resourceUrl
                     : $"{resourceUrl}/.default";
