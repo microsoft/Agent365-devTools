@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Text;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
@@ -77,7 +80,7 @@ public abstract class Agent365Exception : Exception
             sb.AppendLine();
             foreach (var detail in errorDetails)
             {
-                sb.AppendLine($"  • {detail}");
+                sb.AppendLine($"  ï¿½ {detail}");
             }
         }
         
@@ -101,7 +104,7 @@ public abstract class Agent365Exception : Exception
         {
             foreach (var detail in ErrorDetails)
             {
-                sb.AppendLine($"  • {detail}");
+                sb.AppendLine($"  ï¿½ {detail}");
             }
             sb.AppendLine();
         }
@@ -123,7 +126,7 @@ public abstract class Agent365Exception : Exception
             sb.AppendLine("Context:");
             foreach (var kvp in Context)
             {
-                sb.AppendLine($"  • {kvp.Key}: {kvp.Value}");
+                sb.AppendLine($"  ï¿½ {kvp.Key}: {kvp.Value}");
             }
             sb.AppendLine();
         }

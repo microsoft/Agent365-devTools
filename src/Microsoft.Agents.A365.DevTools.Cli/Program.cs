@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.CommandLine;
 using System.Reflection;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;

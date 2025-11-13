@@ -1,4 +1,7 @@
-﻿using System.Text.Json;
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Headers;

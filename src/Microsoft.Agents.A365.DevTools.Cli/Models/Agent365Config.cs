@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Reflection;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;

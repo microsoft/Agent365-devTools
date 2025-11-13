@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -309,7 +312,7 @@ public class ConfigService : IConfigService
             _logger?.LogError("Configuration validation failed:");
             foreach (var error in validationResult.Errors)
             {
-                _logger?.LogError("  • {Error}", error);
+                _logger?.LogError("  ï¿½ {Error}", error);
             }
             
             // Convert validation errors to structured exception
@@ -325,7 +328,7 @@ public class ConfigService : IConfigService
         {
             foreach (var warning in validationResult.Warnings)
             {
-                _logger?.LogWarning("  • {Warning}", warning);
+                _logger?.LogWarning("  ï¿½ {Warning}", warning);
             }
         }
 

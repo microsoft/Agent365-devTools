@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 /// <summary>

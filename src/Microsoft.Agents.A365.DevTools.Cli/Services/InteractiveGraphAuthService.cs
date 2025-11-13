@@ -1,4 +1,7 @@
-﻿using Azure.Core;
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;

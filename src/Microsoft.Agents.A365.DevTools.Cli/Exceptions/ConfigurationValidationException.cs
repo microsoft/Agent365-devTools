@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 /// <summary>
@@ -73,7 +76,7 @@ public class ConfigurationValidationException : Agent365Exception
         {
             steps.Add("");
             steps.Add("Common Azure naming rules:");
-            steps.AddRange(contextualHelp.Select(h => $"  • {h}"));
+            steps.AddRange(contextualHelp.Select(h => $"  ï¿½ {h}"));
             steps.Add("");
             steps.Add("See Azure naming conventions: https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules");
         }
