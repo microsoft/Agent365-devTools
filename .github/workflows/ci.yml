@@ -39,8 +39,11 @@ jobs:
         with:
           setAllVars: true
 
-      - name: Restore dependencies
+      - name: Restore source dependencies
         run: dotnet restore dirs.proj
+
+      - name: Restore test dependencies
+        run: dotnet restore tests.proj
 
       - name: Build source projects
         run: dotnet build dirs.proj --no-restore --configuration Release
