@@ -59,3 +59,12 @@ jobs:
         continue-on-error: true
         run: dotnet pack dirs.proj --configuration Release --output ../NuGetPackages
 
+      - name: Verify package was created
+        run: |
+          if ! ls ../NuGetPackages/*.nupkg 1> /dev/null 2>&1; then
+            echo "Error: No package file was created"
+            exit 1
+          fi
+          echo "✅ Package created successfully (NU5017 is a known false positive with centralized package management)"
+          ls -lh ../NuGetPackages/*.nupkg
+
