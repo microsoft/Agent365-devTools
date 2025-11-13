@@ -1,11 +1,11 @@
-# Agent365 CLI - Configuration Initialization Guide
+# Agent 365 CLI - Configuration Initialization Guide
 
 > **Command**: `a365 config init`  
-> **Purpose**: Initialize your Agent365 configuration with all required settings for deployment
+> **Purpose**: Initialize your Agent 365 configuration with all required settings for deployment
 
 ## Overview
 
-The `a365 config init` command walks you through creating a complete configuration file (`a365.config.json`) for your Agent365 deployment. This interactive process collects essential information about your Azure subscription, agent identity, and deployment settings.
+The `a365 config init` command walks you through creating a complete configuration file (`a365.config.json`) for your Agent 365 deployment. This interactive process collects essential information about your Azure subscription, agent identity, and deployment settings.
 
 ## Quick Start
 

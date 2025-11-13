@@ -13,7 +13,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Implementation of configuration service for Agent365 CLI.
+/// Implementation of configuration service for Agent 365 CLI.
 /// Handles loading, saving, and validating the two-file configuration model.
 /// </summary>
 public class ConfigService : IConfigService

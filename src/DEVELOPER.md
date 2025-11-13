@@ -1,12 +1,12 @@
 # Microsoft.Agents.A365.DevTools.Cli - Developer Guide
 
-This guide is for contributors and maintainers of the Agent365 CLI codebase. For end-user installation and usage, see [README.md](./README.md).
+This guide is for contributors and maintainers of the Agent 365 CLI codebase. For end-user installation and usage, see [README.md](./README.md).
 
 ---
 
 ## Project Overview
 
-The Agent365 CLI (`a365`) is a .NET tool that automates the deployment and management of Agent365 applications on Azure. It handles:
+The Agent 365 CLI (`a365`) is a .NET tool that automates the deployment and management of Agent 365 applications on Azure. It handles:
 
 - **Multiplatform deployment** (.NET, Node.js, Python) with automatic platform detection
 - Agent blueprint and identity creation
@@ -18,12 +18,12 @@ The Agent365 CLI (`a365`) is a .NET tool that automates the deployment and manag
 
 ## Python Project Support
 
-The CLI now fully supports Python Agent365 projects with the following features:
+The CLI now fully supports Python Agent 365 projects with the following features:
 
 - ✅ **Auto-detection** via `pyproject.toml` and `*.py` files
 - ✅ **Runtime configuration** - Sets correct `PYTHON|3.11` runtime automatically
 - ✅ **Environment variables** - Converts `.env` to Azure App Settings automatically
-- ✅ **Local dependencies** - Handles Agent365 package wheels in `dist/` folder using `--find-links`
+- ✅ **Local dependencies** - Handles Agent 365 package wheels in `dist/` folder using `--find-links`
 - ✅ **Entry point detection** - Prioritizes `start_with_generic_host.py` with smart content analysis
 - ✅ **Build automation** - Creates `.deployment` file to force Oryx Python build
 - ✅ **Startup commands** - Sets correct startup command for Azure Web Apps automatically
@@ -38,7 +38,7 @@ The CLI now fully supports Python Agent365 projects with the following features:
   - Handles local wheel packages in `dist/` folder via `--find-links dist`
   - Creates `requirements.txt` with `--pre` flag to allow pre-release packages
   - Automatically converts `.env` to Azure App Settings
-  - Detects Agent365 entry points (prioritizes `start_with_generic_host.py`)
+  - Detects Agent 365 entry points (prioritizes `start_with_generic_host.py`)
   - Smart entry point selection based on content analysis (checks for `if __name__ == "__main__"`)
   - Sets Python startup command via `az webapp config set`
   - Creates `.deployment` file to force Oryx Python build
@@ -100,7 +100,7 @@ The CLI provides a `config` command for managing configuration:
 
 ## Inheritable Permissions: Best Practice
 
-Agent365 CLI and the Agent365 platform are designed to use inheritable permissions on agent blueprints. This means:
+Agent 365 CLI and the Agent 365 platform are designed to use inheritable permissions on agent blueprints. This means:
 
 - **Agent identities automatically inherit OAuth2 scopes from the blueprint.**
 - **No additional admin consent is required for agent identities** (as long as the blueprint’s service principal has been granted the required permissions).
@@ -153,7 +153,7 @@ C:\projects\my-agent> a365 config init
 # Syncs to: %LocalAppData%\Microsoft.Agents.A365.DevTools.Cli\a365.config.json
 
 # User can now run commands from ANY directory
-C:\Users\sellak> a365 setup
+C:\Users\user1> a365 setup
 # CLI reads from %LocalAppData%, operates on project at deploymentProjectPath
 ```
 
@@ -243,11 +243,6 @@ For security and flexibility, the CLI supports environment variable overrides fo
    ```
 
 2. **Discover Endpoints**:
-   ```bash
-   # Override Agent365 discovery endpoints
-   A365_DISCOVER_ENDPOINT_PREPROD=https://preprod.agent365.svc.cloud.dev.microsoft/agents/discoverToolServers
-   A365_DISCOVER_ENDPOINT_TEST=https://test.agent365.svc.cloud.dev.microsoft/agents/discoverToolServers
-   ```
 
 **Implementation Pattern** (in `ConfigConstants.cs`):
 ```csharp
@@ -275,16 +270,12 @@ public static string GetMcpPlatformResourceAppId(string environment)
 
 **Usage Examples:**
 ```bash
-# Internal Microsoft development
-export A365_MCP_APP_ID_PREPROD=05879165-0320-489e-b644-f72b33f3edf0
-export A365_DISCOVER_ENDPOINT_PREPROD=https://preprod.agent365.svc.cloud.dev.microsoft/agents/discoverToolServers
-
 # Custom deployment
 export A365_MCP_APP_ID_STAGING=your-staging-app-id
 export A365_DISCOVER_ENDPOINT_STAGING=https://staging.yourdomain.com/agents/discoverToolServers
 
 # Run CLI with overrides
-a365 setup --environment preprod
+a365 setup --environment prod
 ```
 
 ---
@@ -1096,13 +1087,13 @@ logs/
 Agent365 CLI - Command: setup
 Version: 1.0.0
 Log file: C:\Users\...\logs\a365.setup.log
-Started at: 2024-01-15 10:30:45
+Started at: 2025-11-15 10:30:45
 ==========================================================
 
 [2024-01-15 10:30:45.123] [INF] Agent365 Setup - Starting...
 [2024-01-15 10:30:45.456] [INF] Subscription: abc123-...
 [2024-01-15 10:30:46.789] [ERR] Configuration validation failed
-[2024-01-15 10:30:46.790] [ERR]   � WebAppName can only contain alphanumeric characters and hyphens
+[2024-01-15 10:30:46.790] [ERR]    WebAppName can only contain alphanumeric characters and hyphens
 ```
 
 **Finding Your Logs:**

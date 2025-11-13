@@ -229,7 +229,6 @@ public class GraphApiService
 
     /// <summary>
     /// Base64URL encode a byte array (URL-safe Base64 encoding without padding)
-    /// Based on https://msazure.visualstudio.com/One/_git/ESTS-Main?path=/src/Product/Microsoft.AzureAD.FmiIdLib/FmiIdLibrary.cs
     /// </summary>
     private static string Base64UrlEncode(byte[] data)
     {

@@ -11,7 +11,7 @@ using System.Text.Json;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for handling authentication to Agent365 Agent 365 Tools
+/// Service for handling authentication to Agent 365 Tools
 /// </summary>
 public class AuthenticationService
 {
@@ -28,7 +28,7 @@ public class AuthenticationService
     }
 
     /// <summary>
-    /// Gets an access token for Agent365, using cached token if valid or prompting for authentication
+    /// Gets an access token for Agent 365, using cached token if valid or prompting for authentication
     /// </summary>
     /// <param name="resourceUrl">The resource URL to request a token for (e.g., https://agent365.svc.cloud.microsoft or environment-specific URL)</param>
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
@@ -53,7 +53,7 @@ public class AuthenticationService
         }
 
         // Authenticate interactively
-        _logger.LogInformation("Authentication required for Agent365 Agent 365 Tools");
+        _logger.LogInformation("Authentication required for Agent 365 Tools");
         var token = await AuthenticateInteractivelyAsync(resourceUrl);
 
         // Cache the token for this resourceUrl
@@ -79,24 +79,24 @@ public class AuthenticationService
             const string Agent365ToolsPreprodAppId = "4585d2c8-61e2-4f6a-a2a5-707519abf91c";
             const string Agent365ToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
 
-            // Check for Agent365 Agent 365 Tools App IDs
+            // Check for Agent 365 Tools App IDs
             if (resourceUrl == Agent365ToolsTestAppId)
             {
                 scope = $"{resourceUrl}/.default";
                 environmentName = "TEST";
-                _logger.LogInformation("Using Agent365 Agent 365 Tools (TEST) for authentication");
+                _logger.LogInformation("Using Agent 365 Tools (TEST) for authentication");
             }
             else if (resourceUrl == Agent365ToolsPreprodAppId)
             {
                 scope = $"{resourceUrl}/.default";
                 environmentName = "PREPROD";
-                _logger.LogInformation("Using Agent365 Agent 365 Tools (PREPROD) for authentication");
+                _logger.LogInformation("Using Agent 365 Tools (PREPROD) for authentication");
             }
             else if (resourceUrl == Agent365ToolsProdAppId)
             {
                 scope = $"{resourceUrl}/.default";
                 environmentName = "PRODUCTION";
-                _logger.LogInformation("Using Agent365 Agent 365 Tools (PRODUCTION) for authentication");
+                _logger.LogInformation("Using Agent 365 Tools (PRODUCTION) for authentication");
             }
             // Check for Agent365 endpoint URLs (legacy support)
             else if (resourceUrl.Contains("agent365", StringComparison.OrdinalIgnoreCase))
@@ -121,7 +121,7 @@ public class AuthenticationService
                 }
 
                 scope = $"{appId}/.default";
-                _logger.LogInformation("Using Agent365 Agent 365 Tools App ID for endpoint URL ({Environment})", environmentName);
+                _logger.LogInformation("Using Agent 365 Tools App ID for endpoint URL ({Environment})", environmentName);
             }
             else
             {
