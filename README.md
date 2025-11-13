@@ -286,28 +286,6 @@ a365 develop --help
 
 ```
 
----
-
-## Detailed Documentation
-
-For in-depth command references and advanced topics, see our detailed guides:
-
-### 📚 Command Guides
-- **[Config Init](./docs/commands/config-init.md)** - Complete field reference, validation rules, and examples
-- **[Setup](./docs/commands/setup.md)** - Azure infrastructure and agent blueprint creation
-- **[Deploy](./docs/commands/deploy.md)** - Platform-specific deployment (DotNet, Node.js, Python)
-- **[Create Instance](./docs/commands/create-instance.md)** - Agent identity and user creation
-- **[Cleanup](./docs/commands/cleanup.md)** - Resource cleanup and teardown
-
-### 🔧 Topic Guides
-- **[Authentication & Permissions](./docs/guides/authentication.md)** - Azure AD setup and admin consent
-- **[Troubleshooting](./docs/guides/troubleshooting.md)** - Common issues and solutions
-- **[Multi-Environment Setup](./docs/guides/multi-environment.md)** - Managing dev/staging/prod configs
-
-### 🏗️ Contributing
-- **[Architecture Overview](./docs/contributing/architecture.md)** - CLI design and structure
-- **[Development Setup](./docs/contributing/development-setup.md)** - Building and testing
-- **[Logging Best Practices](./docs/contributing/logging-best-practices.md)** - Log levels and patterns
 
 ---
 
