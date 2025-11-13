@@ -68,3 +68,12 @@ jobs:
           echo "✅ Package created successfully (NU5017 is a known false positive with centralized package management)"
           ls -lh ../NuGetPackages/*.nupkg
 
+      - name: Copy NuGet packages
+        run: |
+          mkdir -p ~/drop/dotnet/NuGetPackages && cp -v ../NuGetPackages/*.nupkg $_
+ 
+      - name: Upload NuGet packages as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-packages-${{ github.run_number }}
+          path: ~/drop/dotnet/NuGetPackages/*
