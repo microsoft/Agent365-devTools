@@ -19,9 +19,12 @@ class Program
         var commandName = DetectCommandName(args);
         var logFilePath = ConfigService.GetCommandLogPath(commandName);
 
+        // Check if verbose flag is present to adjust logging level
+        var isVerbose = args.Contains("--verbose") || args.Contains("-v");
+        
         // Configure Serilog with both console and file output
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
+            .MinimumLevel.Is(isVerbose ? Serilog.Events.LogEventLevel.Debug : Serilog.Events.LogEventLevel.Information)
             .WriteTo.Console()  // Console output (user-facing)
             .WriteTo.File(      // File output (for debugging)
                 path: logFilePath,
@@ -34,14 +37,13 @@ class Program
 
         try
         {
-            // Log startup info to file
-            Log.Information("==========================================================");
-            Log.Information("Agent 365 CLI - Command: {Command}", commandName);
-            Log.Information("Version: {Version}", GetDisplayVersion());
-            Log.Information("Log file: {LogFile}", logFilePath);
-            Log.Information("Started at: {Time}", DateTime.Now);
-            Log.Information("==========================================================");
-            Log.Information("");
+            // Log startup info to file only (debug level - not shown to users by default)
+            Log.Debug("==========================================================");
+            Log.Debug("Agent 365 CLI - Command: {Command}", commandName);
+            Log.Debug("Version: {Version}", GetDisplayVersion());
+            Log.Debug("Log file: {LogFile}", logFilePath);
+            Log.Debug("Started at: {Time}", DateTime.Now);
+            Log.Debug("==========================================================");
             
             // Log version information
             var version = GetDisplayVersion();
@@ -168,8 +170,36 @@ class Program
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
         
-        // Add Agent365 Tooling Service
-        services.AddSingleton<IAgent365ToolingService, Agent365ToolingService>();
+        // Add Agent365 Tooling Service with environment detection
+        services.AddSingleton<IAgent365ToolingService>(provider =>
+        {
+            var configService = provider.GetRequiredService<IConfigService>();
+            var authService = provider.GetRequiredService<AuthenticationService>();
+            var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
+            
+            // Determine environment: try to load from config if --config option is provided, otherwise default to prod
+            string environment = "prod"; // Default
+            
+            // Check if --config argument was provided (for internal developers)
+            var args = Environment.GetCommandLineArgs();
+            var configIndex = Array.FindIndex(args, arg => arg == "--config" || arg == "-c");
+            if (configIndex >= 0 && configIndex < args.Length - 1)
+            {
+                try
+                {
+                    // Try to load config file to get environment
+                    var config = configService.LoadAsync(args[configIndex + 1]).Result;
+                    environment = config.Environment;
+                }
+                catch
+                {
+                    // If config loading fails, stick with default "prod"
+                    // This is fine - the service will work with default environment
+                }
+            }
+            
+            return new Agent365ToolingService(configService, authService, logger, environment);
+        });
         
         // Add Azure validators (individual validators for composition)
         services.AddSingleton<AzureAuthValidator>();

@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -19,17 +21,11 @@ public static class DevelopMcpCommand
     {
         var developMcpCommand = new Command("develop-mcp", "Manage MCP servers in Dataverse environments");
 
-        // Add common options
-        var configOption = new Option<string>(
-            ["--config", "-c"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path");
-
+        // Add minimal options - config is optional and not advertised (for internal developers only)
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Enable verbose logging");
 
-        developMcpCommand.AddOption(configOption);
         developMcpCommand.AddOption(verboseOption);
 
         // Add subcommands
@@ -65,8 +61,19 @@ public static class DevelopMcpCommand
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (configPath, dryRun) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"
+        );
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (configPath, dryRun, verbose) =>
         {
+            if (verbose)
+            {
+                logger.LogInformation("Verbose mode enabled - showing detailed information");
+            }
+            
             logger.LogInformation("Starting list-environments operation...");
 
             if (dryRun)
@@ -80,6 +87,12 @@ public static class DevelopMcpCommand
 
             // Call service
             var environmentsResponse = await toolingService.ListEnvironmentsAsync();
+
+            if (verbose)
+            {
+                logger.LogInformation("API call completed - received response with {Count} environment(s)", 
+                    environmentsResponse?.Environments?.Length ?? 0);
+            }
 
             if (environmentsResponse == null || environmentsResponse.Environments.Length == 0)
             {
@@ -109,11 +122,20 @@ public static class DevelopMcpCommand
                 {
                     logger.LogInformation("   Region: {Geo}", env.Geo);
                 }
+                
+                // Show additional details in verbose mode
+                if (verbose)
+                {
+                    if (!string.IsNullOrWhiteSpace(env.TenantId))
+                    {
+                        logger.LogInformation("   Tenant ID: {TenantId}", env.TenantId);
+                    }
+                }
             }
 
             logger.LogInformation("Listed {Count} Dataverse environment(s)", environmentsResponse.Environments.Length);
 
-        }, configOption, dryRunOption);
+        }, configOption, dryRunOption, verboseOption);
 
         return command;
     }
@@ -147,18 +169,46 @@ public static class DevelopMcpCommand
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (envId, configPath, dryRun) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"
+        );
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (envId, configPath, dryRun, verbose) =>
         {
-            // Prompt for missing required argument
-            if (string.IsNullOrWhiteSpace(envId))
+            if (verbose)
             {
-                Console.Write("Enter Dataverse environment ID: ");
-                envId = Console.ReadLine();
+                logger.LogInformation("Verbose mode enabled - showing detailed information");
+            }
+            
+            try
+            {
+                // Validate and prompt for missing required argument with security checks
                 if (string.IsNullOrWhiteSpace(envId))
                 {
-                    logger.LogError("Environment ID is required");
-                    return;
+                    envId = InputValidator.PromptAndValidateRequiredInput("Enter Dataverse environment ID: ", "Environment ID");
+                    if (string.IsNullOrWhiteSpace(envId))
+                    {
+                        logger.LogError("Environment ID is required");
+                        return;
+                    }
                 }
+                else
+                {
+                    // Validate provided environment ID
+                    envId = InputValidator.ValidateInput(envId, "Environment ID");
+                    if (envId == null)
+                    {
+                        logger.LogError("Invalid environment ID format");
+                        return;
+                    }
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogError("Input validation failed: {Message}", ex.Message);
+                return;
             }
 
             logger.LogInformation("Starting list-servers operation for environment {EnvId}...", envId);
@@ -245,7 +295,7 @@ public static class DevelopMcpCommand
             }
             logger.LogInformation("Listed {Count} MCP server(s) in environment {EnvId}", servers.Length, envId);
 
-        }, envIdOption, configOption, dryRunOption);
+        }, envIdOption, configOption, dryRunOption, verboseOption);
 
         return command;
     }
@@ -300,62 +350,106 @@ public static class DevelopMcpCommand
 
         command.SetHandler(async (envId, serverName, alias, displayName, configPath, dryRun) =>
         {
-            // Prompt for missing required arguments
-            if (string.IsNullOrWhiteSpace(envId))
+            try
             {
-                Console.Write("Enter Dataverse environment ID: ");
-                envId = Console.ReadLine();
+                // Validate and prompt for missing required arguments with security checks
                 if (string.IsNullOrWhiteSpace(envId))
                 {
-                    logger.LogError("Environment ID is required");
-                    return;
+                    envId = InputValidator.PromptAndValidateRequiredInput("Enter Dataverse environment ID: ", "Environment ID");
+                    if (string.IsNullOrWhiteSpace(envId))
+                    {
+                        logger.LogError("Environment ID is required");
+                        return;
+                    }
                 }
-            }
+                else
+                {
+                    // Validate provided environment ID
+                    envId = InputValidator.ValidateInput(envId, "Environment ID");
+                    if (envId == null)
+                    {
+                        logger.LogError("Invalid environment ID format");
+                        return;
+                    }
+                }
 
-            if (string.IsNullOrWhiteSpace(serverName))
-            {
-                Console.Write("Enter MCP server name to publish: ");
-                serverName = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(serverName))
                 {
-                    logger.LogError("Server name is required");
+                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to publish: ", "Server name", 100);
+                    if (string.IsNullOrWhiteSpace(serverName))
+                    {
+                        logger.LogError("Server name is required");
+                        return;
+                    }
+                }
+                else
+                {
+                    // Validate provided server name
+                    serverName = InputValidator.ValidateInput(serverName, "Server name");
+                    if (serverName == null)
+                    {
+                        logger.LogError("Invalid server name format");
+                        return;
+                    }
+                }
+
+                logger.LogInformation("Starting publish operation for server {ServerName} in environment {EnvId}...", serverName, envId);
+
+                if (dryRun)
+                {
+                    logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                    logger.LogInformation("[DRY RUN] Would publish MCP server {ServerName} to environment {EnvId}", serverName, envId);
+                    logger.LogInformation("[DRY RUN] Alias: {Alias}", alias ?? "[would prompt]");
+                    logger.LogInformation("[DRY RUN] Display Name: {DisplayName}", displayName ?? "[would prompt]");
+                    await Task.CompletedTask;
                     return;
                 }
-            }
 
-            logger.LogInformation("Starting publish operation for server {ServerName} in environment {EnvId}...", serverName, envId);
-
-            if (dryRun)
-            {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
-                logger.LogInformation("[DRY RUN] Would publish MCP server {ServerName} to environment {EnvId}", serverName, envId);
-                logger.LogInformation("[DRY RUN] Alias: {Alias}", alias ?? "[would prompt]");
-                logger.LogInformation("[DRY RUN] Display Name: {DisplayName}", displayName ?? "[would prompt]");
-                await Task.CompletedTask;
-                return;
-            }
-
-            // Prompt for missing optional values
-            if (string.IsNullOrWhiteSpace(alias))
-            {
-                Console.Write("Enter alias for the MCP server: ");
-                alias = Console.ReadLine();
+                // Validate and prompt for missing optional values with security checks
                 if (string.IsNullOrWhiteSpace(alias))
                 {
-                    logger.LogError("Alias is required");
-                    return;
+                    alias = InputValidator.PromptAndValidateRequiredInput("Enter alias for the MCP server: ", "Alias", 50);
+                    if (string.IsNullOrWhiteSpace(alias))
+                    {
+                        logger.LogError("Alias is required");
+                        return;
+                    }
                 }
-            }
+                else
+                {
+                    // Validate provided alias
+                    alias = InputValidator.ValidateInput(alias, "Alias", maxLength: 50);
+                    if (alias == null)
+                    {
+                        logger.LogError("Invalid alias format");
+                        return;
+                    }
+                }
 
-            if (string.IsNullOrWhiteSpace(displayName))
-            {
-                Console.Write("Enter display name for the MCP server: ");
-                displayName = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(displayName))
                 {
-                    logger.LogError("Display name is required");
-                    return;
+                    displayName = InputValidator.PromptAndValidateRequiredInput("Enter display name for the MCP server: ", "Display name", 100);
+                    if (string.IsNullOrWhiteSpace(displayName))
+                    {
+                        logger.LogError("Display name is required");
+                        return;
+                    }
                 }
+                else
+                {
+                    // Validate provided display name
+                    displayName = InputValidator.ValidateInput(displayName, "Display name", maxLength: 100);
+                    if (displayName == null)
+                    {
+                        logger.LogError("Invalid display name format");
+                        return;
+                    }
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogError("Input validation failed: {Message}", ex.Message);
+                return;
             }
 
             // Create request
@@ -426,27 +520,53 @@ public static class DevelopMcpCommand
 
         command.SetHandler(async (envId, serverName, configPath, dryRun) =>
         {
-            // Prompt for missing required arguments
-            if (string.IsNullOrWhiteSpace(envId))
+            try
             {
-                Console.Write("Enter Dataverse environment ID: ");
-                envId = Console.ReadLine();
+                // Validate and prompt for missing required arguments with security checks
                 if (string.IsNullOrWhiteSpace(envId))
                 {
-                    logger.LogError("Environment ID is required");
-                    return;
+                    envId = InputValidator.PromptAndValidateRequiredInput("Enter Dataverse environment ID: ", "Environment ID");
+                    if (string.IsNullOrWhiteSpace(envId))
+                    {
+                        logger.LogError("Environment ID is required");
+                        return;
+                    }
                 }
-            }
+                else
+                {
+                    // Validate provided environment ID
+                    envId = InputValidator.ValidateInput(envId, "Environment ID");
+                    if (envId == null)
+                    {
+                        logger.LogError("Invalid environment ID format");
+                        return;
+                    }
+                }
 
-            if (string.IsNullOrWhiteSpace(serverName))
-            {
-                Console.Write("Enter MCP server name to unpublish: ");
-                serverName = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(serverName))
                 {
-                    logger.LogError("Server name is required");
-                    return;
+                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to unpublish: ", "Server name", 100);
+                    if (string.IsNullOrWhiteSpace(serverName))
+                    {
+                        logger.LogError("Server name is required");
+                        return;
+                    }
                 }
+                else
+                {
+                    // Validate provided server name
+                    serverName = InputValidator.ValidateInput(serverName, "Server name");
+                    if (serverName == null)
+                    {
+                        logger.LogError("Invalid server name format");
+                        return;
+                    }
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogError("Input validation failed: {Message}", ex.Message);
+                return;
             }
 
             logger.LogInformation("Starting unpublish operation for server {ServerName} in environment {EnvId}...", serverName, envId);
@@ -476,7 +596,7 @@ public static class DevelopMcpCommand
     }
 
     /// <summary>
-    /// Creates the approve subcommand (not implemented)
+    /// Creates the approve subcommand
     /// </summary>
     private static Command CreateApproveSubcommand(ILogger logger, IAgent365ToolingService toolingService)
     {
@@ -504,16 +624,33 @@ public static class DevelopMcpCommand
 
         command.SetHandler(async (serverName, configPath, dryRun) =>
         {
-            // Prompt for missing required arguments
-            if (string.IsNullOrWhiteSpace(serverName))
+            try
             {
-                Console.Write("Enter MCP server name to approve: ");
-                serverName = Console.ReadLine();
+                // Validate and prompt for missing required arguments with security checks
                 if (string.IsNullOrWhiteSpace(serverName))
                 {
-                    logger.LogError("Server name is required");
-                    return;
+                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to approve: ", "Server name", 100);
+                    if (string.IsNullOrWhiteSpace(serverName))
+                    {
+                        logger.LogError("Server name is required");
+                        return;
+                    }
                 }
+                else
+                {
+                    // Validate provided server name
+                    serverName = InputValidator.ValidateInput(serverName, "Server name");
+                    if (serverName == null)
+                    {
+                        logger.LogError("Invalid server name format");
+                        return;
+                    }
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogError("Input validation failed: {Message}", ex.Message);
+                return;
             }
 
             logger.LogInformation("Starting approve operation for server {ServerName}...", serverName);
@@ -543,7 +680,7 @@ public static class DevelopMcpCommand
     }
 
     /// <summary>
-    /// Creates the block subcommand (not yet implemented)
+    /// Creates the block subcommand
     /// </summary>
     private static Command CreateBlockSubcommand(ILogger logger, IAgent365ToolingService toolingService)
     {
@@ -571,16 +708,33 @@ public static class DevelopMcpCommand
 
         command.SetHandler(async (serverName, configPath, dryRun) =>
         {
-            // Prompt for missing required arguments
-            if (string.IsNullOrWhiteSpace(serverName))
+            try
             {
-                Console.Write("Enter MCP server name to block: ");
-                serverName = Console.ReadLine();
+                // Validate and prompt for missing required arguments with security checks
                 if (string.IsNullOrWhiteSpace(serverName))
                 {
-                    logger.LogError("Server name is required");
-                    return;
+                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to block: ", "Server name", 100);
+                    if (string.IsNullOrWhiteSpace(serverName))
+                    {
+                        logger.LogError("Server name is required");
+                        return;
+                    }
                 }
+                else
+                {
+                    // Validate provided server name
+                    serverName = InputValidator.ValidateInput(serverName, "Server name");
+                    if (serverName == null)
+                    {
+                        logger.LogError("Invalid server name format");
+                        return;
+                    }
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogError("Input validation failed: {Message}", ex.Message);
+                return;
             }
 
             logger.LogInformation("Starting block operation for server {ServerName}...", serverName);
@@ -607,5 +761,124 @@ public static class DevelopMcpCommand
         }, serverNameOption, configOption, dryRunOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Validates and sanitizes user input following Azure CLI security patterns
+    /// </summary>
+    private static class InputValidator
+    {
+        private static readonly char[] InvalidChars = ['<', '>', '"', '|', '\0', '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\u0007', '\u0008', '\u0009', '\u000a', '\u000b', '\u000c', '\u000d', '\u000e', '\u000f', '\u0010', '\u0011', '\u0012', '\u0013', '\u0014', '\u0015', '\u0016', '\u0017', '\u0018', '\u0019', '\u001a', '\u001b', '\u001c', '\u001d', '\u001e', '\u001f'];
+
+        /// <summary>
+        /// Prompts for and validates a required string input
+        /// </summary>
+        public static string? PromptAndValidateRequiredInput(string promptText, string fieldName, int maxLength = 255)
+        {
+            Console.Write(promptText);
+            var input = Console.ReadLine()?.Trim();
+            
+            return ValidateInput(input, fieldName, isRequired: true, maxLength);
+        }
+
+        /// <summary>
+        /// Prompts for and validates an optional string input
+        /// </summary>
+        public static string? PromptAndValidateOptionalInput(string promptText, string fieldName, int maxLength = 255)
+        {
+            Console.Write(promptText);
+            var input = Console.ReadLine()?.Trim();
+            
+            return ValidateInput(input, fieldName, isRequired: false, maxLength);
+        }
+
+        /// <summary>
+        /// Validates string input following Azure CLI security patterns
+        /// </summary>
+        public static string? ValidateInput(string? input, string fieldName, bool isRequired = true, int maxLength = 255)
+        {
+            // Handle null or empty input
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return isRequired ? null : string.Empty;
+            }
+
+            // Trim and validate length
+            input = input.Trim();
+            if (input.Length > maxLength)
+            {
+                throw new ArgumentException($"{fieldName} cannot exceed {maxLength} characters");
+            }
+
+            // Check for dangerous characters that could be used in injection attacks
+            if (input.IndexOfAny(InvalidChars) != -1)
+            {
+                throw new ArgumentException($"{fieldName} contains invalid characters");
+            }
+
+            // Additional validation for environment ID (must be reasonable identifier)
+            if (fieldName.Equals("Environment ID", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsValidEnvironmentId(input))
+                {
+                    throw new ArgumentException("Environment ID must be a valid identifier (GUID or alphanumeric with hyphens)");
+                }
+            }
+
+            // Additional validation for server names (alphanumeric, hyphens, underscores only)
+            if (fieldName.Equals("Server name", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsValidServerName(input))
+                {
+                    throw new ArgumentException("Server name can only contain alphanumeric characters, hyphens, and underscores");
+                }
+            }
+
+            return input;
+        }
+
+        /// <summary>
+        /// Validates environment ID format (GUID or reasonable test identifier)
+        /// </summary>
+        private static bool IsValidEnvironmentId(string input)
+        {
+            // Accept GUID format (production case)
+            if (Guid.TryParse(input, out _))
+                return true;
+
+            // Accept alphanumeric identifiers with hyphens for test scenarios
+            // Must start with alphanumeric character and contain only safe characters
+            if (string.IsNullOrWhiteSpace(input))
+                return false;
+
+            if (!char.IsLetterOrDigit(input[0]))
+                return false;
+
+            return input.All(c => char.IsLetterOrDigit(c) || c == '-');
+        }
+
+        /// <summary>
+        /// Validates GUID format for strict GUID requirements
+        /// </summary>
+        private static bool IsValidGuidFormat(string input)
+        {
+            return Guid.TryParse(input, out _);
+        }
+
+        /// <summary>
+        /// Validates server name format (alphanumeric, hyphens, underscores)
+        /// </summary>
+        private static bool IsValidServerName(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return false;
+
+            // Must start with alphanumeric character
+            if (!char.IsLetterOrDigit(input[0]))
+                return false;
+
+            // Can contain only letters, digits, hyphens, and underscores
+            return input.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
+        }
     }
 }

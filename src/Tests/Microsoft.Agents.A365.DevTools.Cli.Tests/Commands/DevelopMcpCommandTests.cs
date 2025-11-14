@@ -66,7 +66,7 @@ public class DevelopMcpCommandTests
         subcommand.Description.Should().Be("List all Dataverse environments available for MCP server management");
         
         var options = subcommand.Options.ToList();
-        options.Should().HaveCount(2); // config, dry-run (plus help automatically)
+        options.Should().HaveCount(3); // config, dry-run, verbose (plus help automatically)
 
         // Verify config option
         var configOption = options.FirstOrDefault(o => o.Name == "config");
@@ -78,6 +78,12 @@ public class DevelopMcpCommandTests
         var dryRunOption = options.FirstOrDefault(o => o.Name == "dry-run");
         dryRunOption.Should().NotBeNull();
         dryRunOption!.Aliases.Should().Contain("--dry-run");
+
+        // Verify verbose option
+        var verboseOption = options.FirstOrDefault(o => o.Name == "verbose");
+        verboseOption.Should().NotBeNull();
+        verboseOption!.Aliases.Should().Contain("-v");
+        verboseOption!.Aliases.Should().Contain("--verbose");
     }
 
     [Fact]
@@ -91,7 +97,7 @@ public class DevelopMcpCommandTests
         subcommand.Description.Should().Be("List MCP servers in a specific Dataverse environment");
         
         var options = subcommand.Options.ToList();
-        options.Should().HaveCount(3); // environment-id, config, dry-run
+        options.Should().HaveCount(4); // environment-id, config, dry-run, verbose
 
         // Verify environment-id option with short alias
         var envOption = options.FirstOrDefault(o => o.Name == "environment-id");
@@ -103,6 +109,12 @@ public class DevelopMcpCommandTests
         var configOption = options.FirstOrDefault(o => o.Name == "config");
         configOption.Should().NotBeNull();
         configOption!.Aliases.Should().Contain("-c");
+        
+        // Verify verbose option
+        var verboseOption = options.FirstOrDefault(o => o.Name == "verbose");
+        verboseOption.Should().NotBeNull();
+        verboseOption!.Aliases.Should().Contain("-v");
+        verboseOption!.Aliases.Should().Contain("--verbose");
     }
 
     [Fact]

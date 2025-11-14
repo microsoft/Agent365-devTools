@@ -101,7 +101,13 @@ The CLI provides a `config` command for managing configuration:
 
 ### MCP Server Management Command
 
-The CLI provides a `develop-mcp` command for managing Model Context Protocol (MCP) servers in Dataverse environments:
+The CLI provides a `develop-mcp` command for managing Model Context Protocol (MCP) servers in Dataverse environments. The command follows a **minimal configuration approach** - it defaults to the production environment and only requires additional configuration when needed.
+
+**Configuration Approach:**
+- **Default Environment**: Uses "prod" environment automatically
+- **Optional Config File**: Use `--config/-c` to specify custom environment from a365.config.json
+- **Production First**: Optimized for production workflows with minimal setup
+- **KISS Principle**: Avoids over-engineering common use cases
 
 **Environment Management:**
 - `a365 develop-mcp list-environments` — List all available Dataverse environments for MCP server management
@@ -111,20 +117,28 @@ The CLI provides a `develop-mcp` command for managing Model Context Protocol (MC
 - `a365 develop-mcp publish -e <environment-id> -s <server-name>` — Publish an MCP server to a Dataverse environment
 - `a365 develop-mcp unpublish -e <environment-id> -s <server-name>` — Unpublish an MCP server from a Dataverse environment
 
-**Server Approval:**
+**Server Approval (Global Operations):**
 - `a365 develop-mcp approve -s <server-name>` — Approve an MCP server
 - `a365 develop-mcp block -s <server-name>` — Block an MCP server
 
 **Key Features:**
 - **Azure CLI Style Parameters:** Uses named options (`--environment-id/-e`, `--server-name/-s`) for better UX
 - **Dry Run Support:** All commands support `--dry-run` for safe testing
-- **Consistent Configuration:** All commands support `--config/-c` for custom configuration files
+- **Optional Configuration:** Use `--config/-c` only when non-production environment is needed
+- **Production Default:** Works out-of-the-box with prod environment, no config file required
+- **Verbose Logging:** Use `--verbose` for detailed output and debugging
 - **Interactive Prompts:** Missing required parameters prompt for user input
 - **Comprehensive Logging:** Detailed logging for debugging and audit trails
 
+**Configuration Options:**
+- **No Config (Default)**: Uses production environment automatically
+- **With Config File**: `--config path/to/a365.config.json` to specify custom environment
+- **Verbose Output**: `--verbose` for detailed logging and debugging information
+
 **Examples:**
+
 ```bash
-# List all environments
+# Default usage (production environment, no config needed)
 a365 develop-mcp list-environments
 
 # List servers in a specific environment  
@@ -140,12 +154,25 @@ a365 develop-mcp publish \
 # Quick unpublish with short aliases
 a365 develop-mcp unpublish -e "Default-12345678-1234-1234-1234-123456789abc" -s "msdyn_MyMcpServer"
 
-# Approve a server
+# Approve a server (global operation)
 a365 develop-mcp approve --server-name "msdyn_MyMcpServer"
 
 # Test commands safely with dry-run
 a365 develop-mcp publish -e "myenv" -s "myserver" --dry-run
+
+# Use custom environment from config file (internal developers)
+a365 develop-mcp list-environments --config ./dev-config.json
+
+# Verbose output for debugging
+a365 develop-mcp list-servers -e "myenv" --verbose
 ```
+
+**Architecture Notes:**
+- Uses constructor injection pattern for environment configuration
+- Agent365ToolingService receives environment parameter via dependency injection
+- Program.cs detects --config option and extracts environment from config file
+- Defaults to "prod" when no config file is specified
+- Follows KISS principles to avoid over-engineering common scenarios
 
 ## Inheritable Permissions: Best Practice
 

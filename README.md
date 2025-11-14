@@ -123,6 +123,9 @@ a365 develop --list
 ```
 
 ### MCP Server Management
+
+Manage Model Context Protocol (MCP) servers in Dataverse environments. The CLI automatically uses the production environment unless a configuration file is specified with `--config`.
+
 ```bash
 # List Dataverse environments
 a365 develop-mcp list-environments
@@ -136,12 +139,15 @@ a365 develop-mcp publish -e "Default-12345678-1234-1234-1234-123456789abc" -s "m
 # Unpublish an MCP server  
 a365 develop-mcp unpublish -e "Default-12345678-1234-1234-1234-123456789abc" -s "msdyn_MyMcpServer"
 
-# Approve/block MCP servers
+# Approve/block MCP servers (global operations, no environment needed)
 a365 develop-mcp approve -s "msdyn_MyMcpServer"
 a365 develop-mcp block -s "msdyn_MyMcpServer"
 
 # All commands support dry-run for safe testing
 a365 develop-mcp publish -e "myenv" -s "myserver" --dry-run
+
+# Use verbose output for detailed logging
+a365 develop-mcp list-environments --verbose
 ```
 
 ---

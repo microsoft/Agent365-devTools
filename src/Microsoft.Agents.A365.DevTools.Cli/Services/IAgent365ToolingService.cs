@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.  
+// Licensed under the MIT License.
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;

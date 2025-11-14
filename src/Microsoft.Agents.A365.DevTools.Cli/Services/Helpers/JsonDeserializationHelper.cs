@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.  
+// Licensed under the MIT License.  
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
@@ -33,10 +35,8 @@ public static class JsonDeserializationHelper
             // First, try to deserialize directly (normal case - single serialization)
             return JsonSerializer.Deserialize<T>(responseContent, options);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            logger.LogDebug(ex, "Failed to deserialize response directly, checking for double-serialization");
-
             // Check if response is double-serialized JSON (starts with quote and contains escaped JSON)
             if (responseContent.Length > 0 && responseContent[0] == '"')
             {
@@ -51,49 +51,16 @@ public static class JsonDeserializationHelper
                         return result;
                     }
                 }
-                catch (Exception unwrapEx)
+                catch (JsonException)
                 {
-                    logger.LogError(unwrapEx, "Failed to unwrap double-serialized response");
+                    // Fall through to final error logging
                 }
             }
 
-            logger.LogError(ex, "Failed to deserialize response");
+            // Only log as error when all deserialization attempts fail
+            logger.LogWarning("Failed to deserialize response as {Type}", typeof(T).Name);
             logger.LogDebug("Response content: {Content}", responseContent);
             return null;
         }
-    }
-
-    /// <summary>
-    /// Attempts deserialization with a fallback strategy.
-    /// First tries to deserialize as T, then as TFallback if T fails.
-    /// </summary>
-    /// <typeparam name="T">Primary type to deserialize to</typeparam>
-    /// <typeparam name="TFallback">Fallback type if primary deserialization fails</typeparam>
-    /// <param name="responseContent">The raw JSON string from the API</param>
-    /// <param name="logger">Logger for diagnostic information</param>
-    /// <param name="options">Optional JSON serializer options</param>
-    /// <returns>Result with the deserialized object and which type was used</returns>
-    public static (T? result, bool usedFallback) DeserializeWithFallback<T, TFallback>(
-        string responseContent,
-        ILogger logger,
-        JsonSerializerOptions? options = null)
-        where T : class
-        where TFallback : class
-    {
-        var primaryResult = DeserializeWithDoubleSerialization<T>(responseContent, logger, options);
-        if (primaryResult != null)
-        {
-            return (primaryResult, false);
-        }
-
-        logger.LogDebug("Primary deserialization failed, attempting fallback type {FallbackType}", typeof(TFallback).Name);
-        var fallbackResult = DeserializeWithDoubleSerialization<TFallback>(responseContent, logger, options);
-
-        if (fallbackResult != null && fallbackResult is T converted)
-        {
-            return (converted, true);
-        }
-
-        return (null, false);
     }
 }

@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.  
+// Licensed under the MIT License. 
 using System.Net.Http;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -16,15 +18,18 @@ public class Agent365ToolingService : IAgent365ToolingService
     private readonly IConfigService _configService;
     private readonly AuthenticationService _authService;
     private readonly ILogger<Agent365ToolingService> _logger;
+    private readonly string _environment;
 
     public Agent365ToolingService(
         IConfigService configService,
         AuthenticationService authService,
-        ILogger<Agent365ToolingService> logger)
+        ILogger<Agent365ToolingService> logger,
+        string environment = "prod")
     {
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _environment = environment ?? "prod";
     }
 
     /// <summary>
@@ -52,7 +57,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         // Read response content
         var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
         _logger.LogInformation("Received response from {Operation} endpoint", operationName);
-        _logger.LogInformation("Response content: {ResponseContent}", responseContent);
+        _logger.LogDebug("Response content: {ResponseContent}", responseContent);
 
         // Check if response content indicates failure (Agent365 API pattern)
         // The API may return double-serialized JSON, so we use JsonDeserializationHelper
@@ -64,22 +69,19 @@ public class Agent365ToolingService : IAgent365ToolingService
                 var statusResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<ApiStatusResponse>(
                     responseContent, _logger);
 
-                if (statusResponse != null && !string.IsNullOrEmpty(statusResponse.Status))
+                if (statusResponse != null && !string.IsNullOrEmpty(statusResponse.Status) && statusResponse.Status != "Success")
                 {
-                    if (statusResponse.Status != "Success")
+                    // Extract error message
+                    string errorMessage = statusResponse.Message ?? $"{operationName} failed";
+                    
+                    // Also check for Error property which might contain additional details
+                    if (!string.IsNullOrEmpty(statusResponse.Error))
                     {
-                        // Extract error message
-                        string errorMessage = statusResponse.Message ?? $"{operationName} failed";
-                        
-                        // Also check for Error property which might contain additional details
-                        if (!string.IsNullOrEmpty(statusResponse.Error))
-                        {
-                            errorMessage += $" - {statusResponse.Error}";
-                        }
-                        
-                        _logger.LogError("{Operation} failed: {Message}", operationName, errorMessage);
-                        return (false, responseContent);
+                        errorMessage += $" - {statusResponse.Error}";
                     }
+                    
+                    _logger.LogError("{Operation} failed: {Message}", operationName, errorMessage);
+                    return (false, responseContent);
                 }
             }
             catch (JsonException ex)
@@ -214,18 +216,15 @@ public class Agent365ToolingService : IAgent365ToolingService
     {
         try
         {
-            // Load configuration
-            var config = await _configService.LoadAsync();
-            
-            // Build URL using private helper method
-            var endpointUrl = BuildListEnvironmentsUrl(config.Environment);
+            // Build URL using environment from constructor
+            var endpointUrl = BuildListEnvironmentsUrl(_environment);
             
             _logger.LogInformation("Listing Dataverse environments");
-            _logger.LogInformation("Environment: {Env}", config.Environment);
+            _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
-            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
             var authToken = await _authService.GetAccessTokenAsync(audience);
@@ -292,18 +291,15 @@ public class Agent365ToolingService : IAgent365ToolingService
 
         try
         {
-            // Load configuration
-            var config = await _configService.LoadAsync();
-            
-            // Build URL using private helper method
-            var endpointUrl = BuildListMcpServersUrl(config.Environment, environmentId);
+            // Build URL using environment from constructor
+            var endpointUrl = BuildListMcpServersUrl(_environment, environmentId);
             
             _logger.LogInformation("Listing MCP servers for environment {EnvId}", environmentId);
-            _logger.LogInformation("Environment: {Env}", config.Environment);
+            _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
-            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
             var authToken = await _authService.GetAccessTokenAsync(audience);
@@ -363,17 +359,17 @@ public class Agent365ToolingService : IAgent365ToolingService
         try
         {
             // Load configuration
-            var config = await _configService.LoadAsync();
+            // Use environment from constructor
             
             // Build URL using private helper method
-            var endpointUrl = BuildPublishMcpServerUrl(config.Environment, environmentId, serverName);
+            var endpointUrl = BuildPublishMcpServerUrl(_environment, environmentId, serverName);
             
             _logger.LogInformation("Publishing MCP server {ServerName} to environment {EnvId}", serverName, environmentId);
-            _logger.LogInformation("Environment: {Env}", config.Environment);
+            _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
-            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
             var authToken = await _authService.GetAccessTokenAsync(audience);
@@ -446,17 +442,17 @@ public class Agent365ToolingService : IAgent365ToolingService
         try
         {
             // Load configuration
-            var config = await _configService.LoadAsync();
+            // Use environment from constructor
             
             // Build URL using private helper method
-            var endpointUrl = BuildUnpublishMcpServerUrl(config.Environment, environmentId, serverName);
+            var endpointUrl = BuildUnpublishMcpServerUrl(_environment, environmentId, serverName);
             
             _logger.LogInformation("Unpublishing MCP server {ServerName} from environment {EnvId}", serverName, environmentId);
-            _logger.LogInformation("Environment: {Env}", config.Environment);
+            _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
-            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
             var authToken = await _authService.GetAccessTokenAsync(audience);
@@ -476,7 +472,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             var response = await httpClient.DeleteAsync(endpointUrl, cancellationToken);
 
             // Validate response using common helper
-            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "unpublish MCP server", cancellationToken);
+            var (isSuccess, _) = await ValidateResponseAsync(response, "unpublish MCP server", cancellationToken);
             if (!isSuccess)
             {
                 return false;
@@ -503,17 +499,17 @@ public class Agent365ToolingService : IAgent365ToolingService
         try
         {
             // Load configuration
-            var config = await _configService.LoadAsync();
+            // Use environment from constructor
             
             // Build URL using private helper method
-            var endpointUrl = BuildApproveMcpServerUrl(config.Environment, serverName);
+            var endpointUrl = BuildApproveMcpServerUrl(_environment, serverName);
             
             _logger.LogInformation("Approving MCP server {ServerName}", serverName);
-            _logger.LogInformation("Environment: {Env}", config.Environment);
+            _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
-            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
             var authToken = await _authService.GetAccessTokenAsync(audience);
@@ -561,17 +557,17 @@ public class Agent365ToolingService : IAgent365ToolingService
         try
         {
             // Load configuration
-            var config = await _configService.LoadAsync();
+            // Use environment from constructor
             
             // Build URL using private helper method
-            var endpointUrl = BuildBlockMcpServerUrl(config.Environment, serverName);
+            var endpointUrl = BuildBlockMcpServerUrl(_environment, serverName);
             
             _logger.LogInformation("Blocking MCP server {ServerName}", serverName);
-            _logger.LogInformation("Environment: {Env}", config.Environment);
+            _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
-            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
             var authToken = await _authService.GetAccessTokenAsync(audience);
