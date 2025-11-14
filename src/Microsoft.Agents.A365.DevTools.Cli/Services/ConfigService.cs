@@ -312,7 +312,7 @@ public class ConfigService : IConfigService
             _logger?.LogError("Configuration validation failed:");
             foreach (var error in validationResult.Errors)
             {
-                _logger?.LogError("  � {Error}", error);
+                _logger?.LogError("  • {Error}", error);
             }
             
             // Convert validation errors to structured exception
@@ -328,7 +328,7 @@ public class ConfigService : IConfigService
         {
             foreach (var warning in validationResult.Warnings)
             {
-                _logger?.LogWarning("  � {Warning}", warning);
+                _logger?.LogWarning("  • {Warning}", warning);
             }
         }
 

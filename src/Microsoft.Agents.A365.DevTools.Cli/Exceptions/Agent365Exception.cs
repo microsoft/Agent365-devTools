@@ -80,7 +80,7 @@ public abstract class Agent365Exception : Exception
             sb.AppendLine();
             foreach (var detail in errorDetails)
             {
-                sb.AppendLine($"  � {detail}");
+                sb.AppendLine($"  • {detail}");
             }
         }
         
@@ -104,7 +104,7 @@ public abstract class Agent365Exception : Exception
         {
             foreach (var detail in ErrorDetails)
             {
-                sb.AppendLine($"  � {detail}");
+                sb.AppendLine($"  • {detail}");
             }
             sb.AppendLine();
         }
@@ -126,7 +126,7 @@ public abstract class Agent365Exception : Exception
             sb.AppendLine("Context:");
             foreach (var kvp in Context)
             {
-                sb.AppendLine($"  � {kvp.Key}: {kvp.Value}");
+                sb.AppendLine($"  • {kvp.Key}: {kvp.Value}");
             }
             sb.AppendLine();
         }
