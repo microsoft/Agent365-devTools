@@ -8,8 +8,10 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
@@ -24,6 +26,13 @@ public class ConfigCommandTests
 {
     // Use NullLoggerFactory instead of console logger to avoid I/O bottleneck during test runs
     private readonly ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
+    private readonly IConfigurationWizardService _mockWizardService;
+
+    public ConfigCommandTests()
+    {
+        // Create a mock wizard service that never actually runs (for import-only tests)
+        _mockWizardService = Substitute.For<IConfigurationWizardService>();
+    }
 
     private string GetTestConfigDir()
     {
@@ -61,7 +70,7 @@ public class ConfigCommandTests
         {
             Console.SetOut(outputWriter);
             var root = new RootCommand();
-            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir));
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, _mockWizardService));
             var result = await root.InvokeAsync($"config init -c \"{importPath}\"");
             Assert.Equal(0, result);
             Assert.True(File.Exists(configPath));
@@ -78,7 +87,15 @@ public class ConfigCommandTests
     [Fact]
     public async Task Init_InvalidConfigFile_IsRejectedAndShowsError()
     {
-        var logger = _loggerFactory.CreateLogger("Test");
+        // Create a logger that captures output to a string
+        var logMessages = new List<string>();
+        var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.AddProvider(new TestLoggerProvider(logMessages));
+            builder.SetMinimumLevel(LogLevel.Debug);
+        });
+        var logger = loggerFactory.CreateLogger("Test");
+        
         var configDir = GetTestConfigDir();
         Directory.CreateDirectory(configDir);
         var configPath = Path.Combine(configDir, "a365.config.json");
@@ -88,23 +105,21 @@ public class ConfigCommandTests
         var importPath = Path.Combine(configDir, "import_invalid.json");
         await File.WriteAllTextAsync(importPath, JsonSerializer.Serialize(invalidConfig));
 
-        var originalOut = Console.Out;
-        using var outputWriter = new StringWriter();
         try
         {
-            Console.SetOut(outputWriter);
             var root = new RootCommand();
-            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir));
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, _mockWizardService));
             var result = await root.InvokeAsync($"config init -c \"{importPath}\"");
             Assert.Equal(0, result);
             Assert.False(File.Exists(configPath));
-            var output = outputWriter.ToString();
-            Assert.Contains("Configuration is invalid", output);
-            Assert.Contains("tenantId is required", output, StringComparison.OrdinalIgnoreCase);
+            
+            // Check log messages instead of console output
+            var allLogs = string.Join("\n", logMessages);
+            Assert.Contains("Imported configuration is invalid", allLogs);
+            Assert.Contains("tenantId is required", allLogs, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
-            Console.SetOut(originalOut);
             if (Directory.Exists(configDir)) Directory.Delete(configDir, true);
         }
     }
@@ -175,7 +190,7 @@ public class ConfigCommandTests
 
             // Act
             var root = new RootCommand();
-            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir));
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, _mockWizardService));
             var result = await root.InvokeAsync("config display --generated");
 
             // Assert
@@ -243,7 +258,7 @@ public class ConfigCommandTests
 
             // Act
             var root = new RootCommand();
-            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir));
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, _mockWizardService));
             var result = await root.InvokeAsync("config display");
 
             // Assert
@@ -300,7 +315,7 @@ public class ConfigCommandTests
 
             // Act
             var root = new RootCommand();
-            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir));
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, _mockWizardService));
             var result = await root.InvokeAsync("config display --generated");
 
             // Assert
@@ -356,7 +371,7 @@ public class ConfigCommandTests
 
             // Act
             var root = new RootCommand();
-            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir));
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, _mockWizardService));
             var result = await root.InvokeAsync("config display --all");
 
             // Assert
@@ -484,4 +499,47 @@ public class ConfigCommandTests
 public class ConfigTestCollection
 {
     // This class is never instantiated. It exists only to define the collection.
+}
+
+/// <summary>
+/// Test logger provider that captures log messages to a list
+/// </summary>
+internal class TestLoggerProvider : ILoggerProvider
+{
+    private readonly List<string> _logMessages;
+
+    public TestLoggerProvider(List<string> logMessages)
+    {
+        _logMessages = logMessages;
+    }
+
+    public ILogger CreateLogger(string categoryName)
+    {
+        return new TestLogger(_logMessages);
+    }
+
+    public void Dispose() { }
+}
+
+/// <summary>
+/// Test logger that captures messages to a list
+/// </summary>
+internal class TestLogger : ILogger
+{
+    private readonly List<string> _logMessages;
+
+    public TestLogger(List<string> logMessages)
+    {
+        _logMessages = logMessages;
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        var message = formatter(state, exception);
+        _logMessages.Add($"[{logLevel}] {message}");
+    }
 }

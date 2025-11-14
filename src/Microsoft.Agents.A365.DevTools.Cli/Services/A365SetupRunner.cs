@@ -846,6 +846,7 @@ public sealed class A365SetupRunner
     /// <summary>
     /// Create Federated Identity Credential to link managed identity to blueprint
     /// Equivalent to createFederatedIdentityCredential function in PowerShell
+    /// Implements retry logic to handle Azure AD propagation delays
     /// </summary>
     private async Task<bool> CreateFederatedIdentityCredentialAsync(
         string tenantId,
@@ -854,6 +855,9 @@ public sealed class A365SetupRunner
         string msiPrincipalId,
         CancellationToken ct)
     {
+        const int maxRetries = 5;
+        const int initialDelayMs = 2000; // Start with 2 seconds
+
         try
         {
             var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
@@ -875,23 +879,44 @@ public sealed class A365SetupRunner
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
 
             var url = $"https://graph.microsoft.com/v1.0/applications/{blueprintObjectId}/federatedIdentityCredentials";
-            var response = await httpClient.PostAsync(
-                url,
-                new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
 
-            if (!response.IsSuccessStatusCode)
+            // Retry loop to handle propagation delays
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
+                var response = await httpClient.PostAsync(
+                    url,
+                    new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                    ct);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation("  - Credential Name: {Name}", credentialName);
+                    _logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+                    _logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                    return true;
+                }
+
                 var error = await response.Content.ReadAsStringAsync(ct);
+
+                // Check if it's a propagation issue (resource not found)
+                if (error.Contains("Request_ResourceNotFound") || error.Contains("does not exist"))
+                {
+                    if (attempt < maxRetries)
+                    {
+                        var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1); // Exponential backoff
+                        _logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...", 
+                            attempt, maxRetries, delayMs);
+                        await Task.Delay(delayMs, ct);
+                        continue;
+                    }
+                }
+
+                // Other error or max retries reached
                 _logger.LogError("Failed to create federated identity credential: {Error}", error);
                 return false;
             }
 
-            _logger.LogInformation("  - Credential Name: {Name}", credentialName);
-            _logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-            _logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
-
-            return true;
+            return false;
         }
         catch (Exception ex)
         {

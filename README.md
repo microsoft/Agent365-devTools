@@ -18,22 +18,42 @@ dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli
 
 ### 2. Configure
 
-You can configure the CLI in two ways:
-
-#### a) Interactive setup
+Configure the CLI using the interactive wizard:
 
 ```bash
 a365 config init
 ```
-This will prompt you for all required Azure and agent details, then write `a365.config.json` to the correct location.
 
-The interactive setup includes helpful prompts with:
-- **Smart defaults** based on your current context
-- **Format validation** for fields like User Principal Names
-- **Path verification** to ensure your project directory exists
-- **Clear examples** and guidance for each field
+The wizard provides:
+- **Azure CLI integration** - Automatically detects your Azure subscription, tenant, and resources
+- **Smart defaults** - Uses values from existing configuration or generates sensible defaults
+- **Minimal input** - Only requires 2-3 core values (agent name, deployment path, manager email)
+- **Auto-generation** - Creates related resource names from your agent name
+- **Platform detection** - Validates your project type (.NET, Node.js, or Python)
 
-**Minimum required properties:**
+**What you'll be prompted for:**
+- **Agent name** - A unique identifier for your agent (alphanumeric only)
+- **Deployment project path** - Path to your agent project directory
+- **Manager email** - Email of the manager overseeing this agent
+- **Azure resources** - Select from existing resource groups and app service plans
+
+The wizard will automatically generate:
+- Web app names
+- Agent identity names
+- User principal names
+- Display names
+
+**Import from file:**
+```bash
+a365 config init -c path/to/config.json
+```
+
+**Global configuration:**
+```bash
+a365 config init --global
+```
+
+**Minimum required configuration:**
 ```json
 {
   "tenantId": "your-tenant-id",
@@ -48,15 +68,7 @@ The interactive setup includes helpful prompts with:
 }
 ```
 
-**Required Fields Explained:**
-
-- **`agentUserPrincipalName`**: The User Principal Name (UPN) for the agentic user in email format (e.g., `demo.agent@contoso.onmicrosoft.com`). This creates a dedicated user identity for your agent within Microsoft 365.
-- **`agentUserDisplayName`**: Human-readable display name shown in Microsoft 365 applications (e.g., "Sales Assistant Agent" or "Demo Agent User").  
-- **`deploymentProjectPath`**: Path to your agent project directory containing the application files. Supports both relative paths (e.g., `./src`) and absolute paths.
-
-**Note:** The CLI automatically detects your project type (.NET, Node.js, or Python) and builds accordingly. No need to specify project files manually.
-
-See `a365.config.example.json` for all available options and required properties.
+See `a365.config.example.json` for all available options.
 
 ### 3. Setup (Blueprint + Messaging Endpoint)
 

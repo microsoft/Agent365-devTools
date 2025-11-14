@@ -95,9 +95,18 @@ Microsoft.Agents.A365.DevTools.Cli/
 
 The CLI provides a `config` command for managing configuration:
 
-- `a365 config init` — Interactively prompts for required config values and writes `a365.config.json`.
-- `a365 config init -c <file>` — Imports and validates a config file, then writes it to the standard location.
+- `a365 config init` — Interactive wizard with Azure CLI integration and smart defaults. Prompts for agent name, deployment path, and manager email. Auto-generates resource names and validates configuration.
+- `a365 config init -c <file>` — Imports and validates a config file from the specified path.
+- `a365 config init --global` — Creates configuration in global directory (AppData) instead of current directory.
 - `a365 config display` — Prints the current configuration.
+
+**Configuration Wizard Features:**
+- **Azure CLI Integration**: Automatically detects subscription, tenant, resource groups, and app service plans
+- **Smart Defaults**: Uses existing configuration values or generates intelligent defaults
+- **Minimal Input**: Only requires 2-3 core fields (agent name, deployment path, manager email)
+- **Auto-Generation**: Creates webapp names, identity names, and UPNs from the agent name
+- **Platform Detection**: Validates project type (.NET, Node.js, Python) in deployment path
+- **Dual Save**: Saves to both local project directory and global cache for reuse
 
 ### MCP Server Management Command
 
