@@ -93,7 +93,7 @@ class Program
             var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, executor));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, executor, graphApiService));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService));
 
             // Invoke

@@ -119,7 +119,7 @@ public class Agent365Config
     /// User Principal Name (UPN) for the agentic user to be created in Azure AD.
     /// </summary>
     [JsonPropertyName("agentUserPrincipalName")]
-    public string? AgentUserPrincipalName { get; set; }
+    public string? AgentUserPrincipalName { get; init; }
 
     /// <summary>
     /// Display name for the agentic user to be created in Azure AD.

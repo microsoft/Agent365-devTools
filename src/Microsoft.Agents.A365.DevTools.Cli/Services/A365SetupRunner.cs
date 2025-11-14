@@ -718,6 +718,7 @@ public sealed class A365SetupRunner
                     objectId,
                     credentialName,
                     managedIdentityPrincipalId,
+                    graphToken,
                     ct);
 
                 if (ficSuccess)
@@ -835,6 +836,7 @@ public sealed class A365SetupRunner
         string blueprintObjectId,
         string credentialName,
         string msiPrincipalId,
+        string graphToken,
         CancellationToken ct)
     {
         const int maxRetries = 5;
@@ -842,10 +844,9 @@ public sealed class A365SetupRunner
 
         try
         {
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
-                _logger.LogError("Failed to acquire Graph API access token for FIC creation");
+                _logger.LogError("Graph token is required for FIC creation");
                 return false;
             }
 
@@ -859,45 +860,66 @@ public sealed class A365SetupRunner
 
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
 
-            var url = $"https://graph.microsoft.com/v1.0/applications/{blueprintObjectId}/federatedIdentityCredentials";
-
-            // Retry loop to handle propagation delays
-            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            // Try standard endpoint first, then fallback to Agent Blueprint-specific path
+            var urls = new[]
             {
-                var response = await httpClient.PostAsync(
-                    url,
-                    new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                    ct);
+                $"https://graph.microsoft.com/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
+                $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials"
+            };
 
-                if (response.IsSuccessStatusCode)
+            string? lastError = null;
+
+            foreach (var url in urls)
+            {
+                // Retry loop to handle propagation delays
+                for (int attempt = 1; attempt <= maxRetries; attempt++)
                 {
-                    _logger.LogInformation("  - Credential Name: {Name}", credentialName);
-                    _logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-                    _logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
-                    return true;
-                }
+                    var response = await httpClient.PostAsync(
+                        url,
+                        new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        ct);
 
-                var error = await response.Content.ReadAsStringAsync(ct);
-
-                // Check if it's a propagation issue (resource not found)
-                if (error.Contains("Request_ResourceNotFound") || error.Contains("does not exist"))
-                {
-                    if (attempt < maxRetries)
+                    if (response.IsSuccessStatusCode)
                     {
-                        var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1); // Exponential backoff
-                        _logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...", 
-                            attempt, maxRetries, delayMs);
-                        await Task.Delay(delayMs, ct);
-                        continue;
+                        _logger.LogInformation("  - Credential Name: {Name}", credentialName);
+                        _logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+                        _logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                        return true;
                     }
-                }
 
-                // Other error or max retries reached
-                _logger.LogError("Failed to create federated identity credential: {Error}", error);
-                return false;
+                    var error = await response.Content.ReadAsStringAsync(ct);
+                    lastError = error;
+
+                    // Check if it's a propagation issue (resource not found)
+                    if (error.Contains("Request_ResourceNotFound") || error.Contains("does not exist"))
+                    {
+                        if (attempt < maxRetries)
+                        {
+                            var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1); // Exponential backoff
+                            _logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...", 
+                                attempt, maxRetries, delayMs);
+                            await Task.Delay(delayMs, ct);
+                            continue;
+                        }
+                    }
+
+                    // Check if it's an Agent Blueprint API version error - try fallback URL
+                    if (error.Contains("Agent Blueprints are not supported on the API version"))
+                    {
+                        _logger.LogDebug("Standard endpoint not supported, trying Agent Blueprint-specific path...");
+                        break; // Break retry loop to try next URL
+                    }
+
+                    // Other error - break retry loop to try next URL
+                    _logger.LogDebug("FIC creation failed with error: {Error}", error);
+                    break;
+                }
             }
 
+            // All attempts failed
+            _logger.LogDebug("Failed to create federated identity credential after trying all endpoints (may not be supported for Agent Blueprints yet): {Error}", lastError);
             return false;
         }
         catch (Exception ex)
