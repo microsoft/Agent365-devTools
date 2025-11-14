@@ -166,7 +166,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 ManagerEmail = managerEmail,
                 AgentUserUsageLocation = GetUsageLocationFromAccount(accountInfo),
                 DeploymentProjectPath = deploymentPath,
-                AgentDescription = $"{agentName} - Agent 365 Demo Agent"
+                AgentDescription = $"{agentName} - Agent 365 Agent"
             };
 
             _logger.LogInformation("Configuration wizard completed successfully");
