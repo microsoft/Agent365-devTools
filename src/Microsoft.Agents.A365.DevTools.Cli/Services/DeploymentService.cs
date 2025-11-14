@@ -267,7 +267,7 @@ public class DeploymentService
         _logger.LogInformation("Key files to verify:");
         _logger.LogInformation("  - .deployment (should contain: SCM_DO_BUILD_DURING_DEPLOYMENT=true)");
         _logger.LogInformation("  - requirements.txt (should have: --find-links=dist)");
-        _logger.LogInformation("  - dist/*.whl (local Agent365 packages)");
+        _logger.LogInformation("  - dist/*.whl (local Microsoft Agent 365 packages)");
         _logger.LogInformation("");
 
         Console.Write("Proceed with deployment? [Y/n]: ");
@@ -285,3 +285,4 @@ public class DeploymentService
         await Task.CompletedTask;
     }
 }
+
