@@ -132,7 +132,7 @@ catch {
         Write-Host "  - AppRoleAssignment.ReadWrite.All" -ForegroundColor White
         Write-Host "  - Or Global Administrator / Application Administrator role" -ForegroundColor White
         Write-Host ""
-        Write-Host "Please contact your Azure AD administrator to run this script." -ForegroundColor Yellow
+        Write-Host "Please contact your Microsoft Entra ID administrator to run this script." -ForegroundColor Yellow
     }
     
     Disconnect-MgGraph | Out-Null
