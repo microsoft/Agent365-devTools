@@ -1121,6 +1121,49 @@ Follow Semantic Versioning: `MAJOR.MINOR.PATCH[-PRERELEASE]`
 - Uninstall first: `dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli`
 - Use `.\install-cli.ps1` which handles this automatically
 
+**"a365: The term 'a365' is not recognized" after installation**
+
+This happens when `%USERPROFILE%\.dotnet\tools` is not in your PATH environment variable.
+
+**Quick Fix (Current Session Only):**
+```powershell
+# Add to current PowerShell session
+$env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+a365 --version  # Test it works
+```
+
+**Permanent Fix (Recommended):**
+```powershell
+# Add permanently to user PATH
+$userToolsPath = "$env:USERPROFILE\.dotnet\tools"
+$currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+if ($currentUserPath -like "*$userToolsPath*") {
+    Write-Host "Already in user PATH: $userToolsPath" -ForegroundColor Green
+} else {
+    [Environment]::SetEnvironmentVariable("Path", "$currentUserPath;$userToolsPath", "User")
+    Write-Host "Added to user PATH permanently" -ForegroundColor Green
+    Write-Host "Restart PowerShell/Terminal for this to take effect" -ForegroundColor Yellow
+}
+```
+
+After permanent fix:
+1. Close and reopen PowerShell/Terminal
+2. Run `a365 --version` to verify
+
+**Alternative: Manual PATH Update (Windows)**
+1. Open System Properties → Environment Variables
+2. Under "User variables", select "Path" → Edit
+3. Add new entry: `C:\Users\YourUsername\.dotnet\tools`
+4. Click OK and restart terminal
+
+**Linux/Mac:**
+Add to `~/.bashrc` or `~/.zshrc`:
+```bash
+export PATH="$PATH:$HOME/.dotnet/tools"
+```
+Then run: `source ~/.bashrc` (or `source ~/.zshrc`)
+
 ---
 
 ## Contributing

@@ -86,8 +86,11 @@ public static class ConfigCommand
                         return;
                     }
 
-                    // Save to target location
-                    var outputJson = JsonSerializer.Serialize(importedConfig, new JsonSerializerOptions { WriteIndented = true });
+                    // CRITICAL: Only serialize static properties when saving to a365.config.json
+                    // This prevents dynamic properties (e.g., agentBlueprintId, managedIdentityPrincipalId) 
+                    // from being written to the static config file
+                    var staticConfig = importedConfig.GetStaticConfig();
+                    var outputJson = JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true });
                     await File.WriteAllTextAsync(configPath, outputJson);
                     
                     // Also save to global if saving locally
@@ -131,8 +134,10 @@ public static class ConfigCommand
                 
                 if (config != null)
                 {
-                    // Save the configuration
-                    var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+                    // CRITICAL: Only serialize static properties (init-only) to a365.config.json
+                    // Dynamic properties (get/set) should only be in a365.generated.config.json
+                    var staticConfig = config.GetStaticConfig();
+                    var json = JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true });
                     
                     // Save to primary location (local or global based on flag)
                     await File.WriteAllTextAsync(configPath, json);

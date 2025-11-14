@@ -1329,8 +1329,8 @@ public sealed class A365SetupRunner
             var graphUrl = $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
             
             _logger.LogInformation("Configuring Graph inheritable permissions");
-            _logger.LogInformation("  - Request URL: {Url}", graphUrl);
-            _logger.LogInformation("  - Blueprint Object ID: {ObjectId}", blueprintObjectId);
+            _logger.LogDebug("  - Request URL: {Url}", graphUrl);
+            _logger.LogDebug("  - Blueprint Object ID: {ObjectId}", blueprintObjectId);
 
             // Convert scope list to JsonArray
             var scopesArray = new JsonArray();
@@ -1349,7 +1349,7 @@ public sealed class A365SetupRunner
                 }
             };
 
-            _logger.LogInformation("  - Request body: {Body}", graphBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            _logger.LogDebug("  - Request body: {Body}", graphBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             
             var graphResponse = await httpClient.PostAsync(
                 graphUrl,
@@ -1392,7 +1392,7 @@ public sealed class A365SetupRunner
             
             _logger.LogInformation("");
             _logger.LogInformation("Configuring Connectivity inheritable permissions");
-            _logger.LogInformation("  - Request URL: {Url}", connectivityUrl);
+            _logger.LogDebug("  - Request URL: {Url}", connectivityUrl);
             
             var connectivityBody = new JsonObject
             {
@@ -1404,7 +1404,7 @@ public sealed class A365SetupRunner
                 }
             };
 
-            _logger.LogInformation("  - Request body: {Body}", connectivityBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            _logger.LogDebug("  - Request body: {Body}", connectivityBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
             var connectivityResponse = await httpClient.PostAsync(
                 connectivityUrl,
@@ -1532,9 +1532,9 @@ public sealed class A365SetupRunner
     private async Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(string tenantId, CancellationToken ct)
     {
         _logger.LogInformation("Authenticating to Microsoft Graph using interactive browser authentication...");
-        _logger.LogWarning("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
-        _logger.LogWarning("This will open a browser window for interactive authentication.");
-        _logger.LogWarning("Please sign in with a Global Administrator account.");
+        _logger.LogInformation("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
+        _logger.LogInformation("This will open a browser window for interactive authentication.");
+        _logger.LogInformation("Please sign in with a Global Administrator account.");
         _logger.LogInformation("");
         
         // Use InteractiveGraphAuthService to get proper authentication

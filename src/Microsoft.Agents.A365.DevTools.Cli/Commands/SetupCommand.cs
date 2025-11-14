@@ -131,6 +131,25 @@ public class SetupCommand
                 }
 
                 setupResults.BlueprintCreated = true;
+                
+                // Reload config to get blueprint ID and check for inheritable permissions status
+                var tempConfig = await configService.LoadAsync(config.FullName);
+                setupResults.BlueprintId = tempConfig.AgentBlueprintId;
+                
+                // Check if inheritable permissions were configured successfully
+                // The A365SetupRunner sets this flag in generated config
+                setupResults.InheritablePermissionsConfigured = tempConfig.InheritanceConfigured;
+                
+                if (!tempConfig.InheritanceConfigured)
+                {
+                    setupResults.Warnings.Add("Inheritable permissions configuration incomplete");
+                    
+                    if (!string.IsNullOrEmpty(tempConfig.InheritanceConfigError))
+                    {
+                        setupResults.Warnings.Add($"Inheritable permissions error: {tempConfig.InheritanceConfigError}");
+                    }
+                }
+                
                 logger.LogInformation("Agent blueprint created successfully");
                 logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
 
@@ -357,16 +376,12 @@ public class SetupCommand
                     blueprintProp.GetString());
             }
 
-            // Configuration files
-            logger.LogInformation("Configuration Files:");
-            logger.LogInformation("   - Setup Config: {SetupConfig}", setupConfigFile.FullName);
-            logger.LogInformation("   - Generated Config: {GeneratedConfig}", generatedConfigPath);
-
             logger.LogInformation("");
             logger.LogInformation("Next Steps:");
             logger.LogInformation("   1. Review Azure resources in the portal");
-            logger.LogInformation("   2. Create agent instance using CLI for testing purposes");
-            logger.LogInformation("   3. Use 'a365 deploy' to deploy the application to Azure");
+            logger.LogInformation("   2. View configuration: a365 config display");
+            logger.LogInformation("   3. Create agent instance: a365 create-instance identity");
+            logger.LogInformation("   4. Deploy application: a365 deploy app");
             logger.LogInformation("");
         }
         catch (Exception ex)
@@ -551,9 +566,16 @@ public class SetupCommand
         // Show what succeeded
         logger.LogInformation("Completed Steps:");
         if (results.BlueprintCreated)
-            logger.LogInformation("  [OK] Agent blueprint created");
+        {
+            var blueprintIdMsg = !string.IsNullOrEmpty(results.BlueprintId) 
+                ? $" (Blueprint ID: {results.BlueprintId})"
+                : "";
+            logger.LogInformation("  [OK] Agent blueprint created{BlueprintIdMsg}", blueprintIdMsg);
+        }
         if (results.McpPermissionsConfigured)
             logger.LogInformation("  [OK] MCP server permissions configured");
+        if (results.InheritablePermissionsConfigured)
+            logger.LogInformation("  [OK] Inheritable permissions configured");
         if (results.BotApiPermissionsConfigured)
             logger.LogInformation("  [OK] Messaging Bot API permissions configured");
         if (results.MessagingEndpointRegistered)
@@ -590,19 +612,24 @@ public class SetupCommand
             logger.LogInformation("");
             logger.LogInformation("Recovery Actions:");
             
+            if (!results.InheritablePermissionsConfigured)
+            {
+                logger.LogInformation("  - Inheritable Permissions: Refer to Agent 365 CLI documentation for manual configuration");
+            }
+            
             if (!results.McpPermissionsConfigured)
             {
-                logger.LogInformation("  - MCP Permissions: Run 'a365 deploy mcp' after resolving permission issues");
+                logger.LogInformation("  - MCP Permissions: Refer to Agent 365 CLI documentation for manual configuration");
             }
             
             if (!results.BotApiPermissionsConfigured)
             {
-                logger.LogInformation("  - Bot API Permissions: Manually grant permissions in Azure Portal");
+                logger.LogInformation("  - Bot API Permissions: Refer to Agent 365 CLI documentation for manual configuration");
             }
             
             if (!results.MessagingEndpointRegistered)
             {
-                logger.LogInformation("  - Messaging Endpoint: Re-run 'a365 setup' or register manually");
+                logger.LogInformation("  - Messaging Endpoint: Refer to Agent 365 CLI documentation for manual configuration");
             }
         }
         else if (results.HasWarnings)
@@ -626,9 +653,11 @@ public class SetupCommand
 internal class SetupResults
 {
     public bool BlueprintCreated { get; set; }
+    public string? BlueprintId { get; set; }
     public bool McpPermissionsConfigured { get; set; }
     public bool BotApiPermissionsConfigured { get; set; }
     public bool MessagingEndpointRegistered { get; set; }
+    public bool InheritablePermissionsConfigured { get; set; }
     
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
