@@ -10,7 +10,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for interacting with Agent365 Tooling API endpoints for MCP server management in Dataverse
+/// Service for interacting with Microsoft Agent 365 Tooling API endpoints for MCP server management in Dataverse
 /// Handles authentication, HTTP communication, and response deserialization
 /// </summary>
 public class Agent365ToolingService : IAgent365ToolingService
@@ -34,7 +34,7 @@ public class Agent365ToolingService : IAgent365ToolingService
 
     /// <summary>
     /// Common helper method to handle HTTP response validation and logging.
-    /// Handles double-serialized JSON responses from the Agent365 API.
+    /// Handles double-serialized JSON responses from the Microsoft Agent 365 API.
     /// </summary>
     /// <param name="response">The HTTP response message</param>
     /// <param name="operationName">Name of the operation for logging purposes</param>
@@ -59,7 +59,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         _logger.LogInformation("Received response from {Operation} endpoint", operationName);
         _logger.LogDebug("Response content: {ResponseContent}", responseContent);
 
-        // Check if response content indicates failure (Agent365 API pattern)
+        // Check if response content indicates failure (Microsoft Agent 365 API pattern)
         // The API may return double-serialized JSON, so we use JsonDeserializationHelper
         if (!string.IsNullOrWhiteSpace(responseContent))
         {
@@ -126,10 +126,10 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <summary>
-    /// Builds base URL for Agent365 Tools API based on environment
+    /// Builds base URL for Microsoft Agent 365 Tools API based on environment
     /// </summary>
     /// <param name="environment">Environment name (test, preprod, prod)</param>
-    /// <returns>Base URL for the Agent365 Tools API</returns>
+    /// <returns>Base URL for the Microsoft Agent 365 Tools API</returns>
     private string BuildAgent365ToolsBaseUrl(string environment)
     {
         // Get from ConfigConstants to leverage existing URL construction logic
@@ -604,3 +604,4 @@ public class Agent365ToolingService : IAgent365ToolingService
         }
     }
 }
+

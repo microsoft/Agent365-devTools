@@ -1,11 +1,11 @@
-# Agent 365 CLI
+# Microsoft Agent 365 CLI
 
-A command-line tool for deploying and managing Agent 365 applications on Azure. 
+A command-line tool for deploying and managing Microsoft Agent 365 applications on Azure. 
 
 ## Supported Platforms
 - ✅ .NET Applications
 - ✅ Node.js Applications  
-- ✅ **Python Applications** (Auto-detects via `pyproject.toml`, handles Agent 365 dependencies, converts .env to Azure App Settings)
+- ✅ **Python Applications** (Auto-detects via `pyproject.toml`, handles Microsoft Agent 365 dependencies, converts .env to Azure App Settings)
 
 ## Quick Start
 
@@ -103,7 +103,7 @@ a365 create-instance enable-notifications
 ```bash
 a365 deploy                 # Full build and deploy
 a365 deploy app             # Deploy application binaries to the configured Azure App Service
-a365 deploy mcp             # Update Agent365 Tool permissions
+a365 deploy mcp             # Update Microsoft Agent 365 Tool permissions
 a365 deploy --restart       # Skip build, deploy existing publish folder (quick iteration)
 a365 deploy --inspect       # Pause before deployment to verify package contents
 a365 deploy --restart --inspect  # Combine flags for quick redeploy with inspection
@@ -113,7 +113,7 @@ a365 cleanup
 **Deploy Options Explained:**
 - **Default** (`a365 deploy`): Full build pipeline - platform detection, environment validation, build, manifest creation, packaging, and deployment
 - **app**: Deploy application binaries to the configured Azure App Service
-- **mcp**: Update Agent365 Tool permissions
+- **mcp**: Update Microsoft Agent 365 Tool permissions
 - **`--restart`**: Skip all build steps and start from compressing the existing `publish/` folder. Perfect for quick iteration when you've manually modified files in the publish directory (e.g., tweaking `requirements.txt`, `.deployment`, or other config files)
 - **`--inspect`**: Pause before deployment to review the publish folder and ZIP contents. Useful for verifying package structure before uploading to Azure
 - **`--verbose`**: Enable detailed logging for all build and deployment steps

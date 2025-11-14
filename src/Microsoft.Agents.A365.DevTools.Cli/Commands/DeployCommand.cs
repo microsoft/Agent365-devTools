@@ -108,7 +108,7 @@ public class DeployCommand
         DeploymentService deploymentService,
         IAzureValidator azureValidator)
     {
-        var command = new Command("app", "Deploy Agent365 application binaries to the configured Azure App Service");
+        var command = new Command("app", "Deploy Microsoft Agent 365 application binaries to the configured Azure App Service");
 
         var configOption = new Option<FileInfo>(
             new[] { "--config", "-c" },
@@ -205,7 +205,7 @@ public class DeployCommand
                 return;
             }
 
-            logger.LogInformation("Starting deploy Agent 365 Tool Permissions...");
+            logger.LogInformation("Starting deploy Microsoft Agent 365 Tool Permissions...");
             logger.LogInformation(""); // Empty line for readability
 
             try
@@ -218,7 +218,7 @@ public class DeployCommand
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Agent 365 Tool Permissions deploy/update failed: {Message}", ex.Message);
+                logger.LogError(ex, "Microsoft Agent 365 Tool Permissions deploy/update failed: {Message}", ex.Message);
                 throw;
             }
         }, configOption, verboseOption, dryRunOption);
@@ -298,7 +298,7 @@ public class DeployCommand
     }
 
     /// <summary>
-    /// Convert Agent 365Config to DeploymentConfiguration
+    /// Convert Microsoft Agent 365 Config to DeploymentConfiguration
     /// </summary>
     private static DeploymentConfiguration ConvertToDeploymentConfig(Agent365Config config)
     {
@@ -356,7 +356,7 @@ public class DeployCommand
             logger
         );
 
-        logger.LogInformation("Deploy Agent 365 Tool Permissions completed successfully!");
+        logger.LogInformation("Deploy Microsoft Agent 365 Tool Permissions completed successfully!");
     }
 
     private static async Task EnsureMcpOauth2PermissionGrantsAsync(
@@ -471,3 +471,4 @@ public class DeployCommand
         }
     }
 }
+

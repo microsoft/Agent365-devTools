@@ -5,7 +5,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for interacting with Agent365 Tooling API endpoints for MCP server management in Dataverse
+/// Service for interacting with Microsoft Agent 365 Tooling API endpoints for MCP server management in Dataverse
 /// </summary>
 public interface IAgent365ToolingService
 {
@@ -72,3 +72,4 @@ public interface IAgent365ToolingService
         string serverName,
         CancellationToken cancellationToken = default);
 }
+

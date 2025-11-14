@@ -1,12 +1,12 @@
 # Microsoft.Agents.A365.DevTools.Cli - Developer Guide
 
-This guide is for contributors and maintainers of the Agent 365 CLI codebase. For end-user installation and usage, see [README.md](./README.md).
+This guide is for contributors and maintainers of the Microsoft Agent 365 CLI codebase. For end-user installation and usage, see [README.md](./README.md).
 
 ---
 
 ## Project Overview
 
-The Agent 365 CLI (`a365`) is a .NET tool that automates the deployment and management of Agent 365 applications on Azure. It handles:
+The Microsoft Agent 365 CLI (`a365`) is a .NET tool that automates the deployment and management of Microsoft Agent 365 applications on Azure. It handles:
 
 - **Multiplatform deployment** (.NET, Node.js, Python) with automatic platform detection
 - Agent blueprint and identity creation
@@ -552,8 +552,8 @@ a365 deploy --restart --inspect
 
 ```bash
 # Clone repository
-git clone https://github.com/microsoft/Agent365.git
-cd Agent365/utils/scripts/developer
+git clone https://github.com/microsoft/Agent365-devTools.git
+cd Agent365-devTools/utils/scripts/developer
 
 # Restore dependencies
 cd Microsoft.Agents.A365.DevTools.Cli
@@ -1266,4 +1266,5 @@ Logging is implemented using Serilog with dual sinks:
 Command name detection is automatic - the CLI analyzes command-line arguments to determine which command is running.
 
 ---
+
 
