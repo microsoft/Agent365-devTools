@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0", // Update this version when you make changes to the manifest
+  "id": "a99017af-5a99-4780-b000-1b7c7c825d55",
+  "developer": {
+    "name": "specify name of developer",
+    "websiteUrl": "https://go.microsoft.com/fwlink/?linkid=2138949",
+    "privacyUrl": "https://go.microsoft.com/fwlink/?linkid=2138950",
+    "termsOfUseUrl": "https://go.microsoft.com/fwlink/?linkid=2138865",
+    "mpnId": "0000000"
+  },
+  "name": {
+    "short": "",
+    "full": ""
+  },
+  "description": {
+    "short": "Use this field to add a short description about the agent",
+    "full": "Use this field to add a full description about the agent"
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#07687d",
+  "bots": [
+    {
+      "botId": "f082901b-bcf9-44ae-acb1-6b55fc6e9d56",
+      "isNotificationOnly": false,
+      "supportsFiles": true,
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat",
+        "copilot"
+      ]
+    }
+  ],
+  "validDomains": [
+    "*.botframework.com",
+    "*.*.botframework.com"
+  ],
+  "webApplicationInfo": {
+    "id": "f082901b-bcf9-44ae-acb1-6b55fc6e9d56",
+    "resource": "api://f082901b-bcf9-44ae-acb1-6b55fc6e9d56"
+  },
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json",
+  "manifestVersion": "devPreview",
+  "copilotAgents": {
+    "customEngineAgents": [
+      {
+        "id": "f082901b-bcf9-44ae-acb1-6b55fc6e9d56",
+        "type": "bot"
+      }
+    ]
+  }
+}

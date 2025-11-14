@@ -1,0 +1,12 @@
+<!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
+<Project Sdk="Microsoft.Build.Traversal">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Include only test projects from Tests folder -->
+    <ProjectReference Include="Tests\**\*.csproj" Exclude="**\bin\**;**\obj\**" />
+  </ItemGroup>
+</Project>

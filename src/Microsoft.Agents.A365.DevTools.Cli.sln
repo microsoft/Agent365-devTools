@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Microsoft.Agents.A365.DevTools.Cli", "Microsoft.Agents.A365.DevTools.Cli\Microsoft.Agents.A365.DevTools.Cli.csproj", "{B46A53DE-09FD-8E1D-83E8-F1DC1DB32397}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Microsoft.Agents.A365.DevTools.Cli.Tests", "Tests\Microsoft.Agents.A365.DevTools.Cli.Tests\Microsoft.Agents.A365.DevTools.Cli.Tests.csproj", "{ACDAF3A6-DD04-9652-7C37-1C5EC3FA9FB5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B46A53DE-09FD-8E1D-83E8-F1DC1DB32397}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B46A53DE-09FD-8E1D-83E8-F1DC1DB32397}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B46A53DE-09FD-8E1D-83E8-F1DC1DB32397}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B46A53DE-09FD-8E1D-83E8-F1DC1DB32397}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ACDAF3A6-DD04-9652-7C37-1C5EC3FA9FB5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ACDAF3A6-DD04-9652-7C37-1C5EC3FA9FB5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ACDAF3A6-DD04-9652-7C37-1C5EC3FA9FB5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ACDAF3A6-DD04-9652-7C37-1C5EC3FA9FB5}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {19651AF6-5AD5-4FDE-955C-C5F46EFF31BB}
+	EndGlobalSection
+EndGlobal

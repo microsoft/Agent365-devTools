@@ -1,0 +1,7 @@
+<!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
+<Project Sdk="Microsoft.Build.Traversal">
+  <ItemGroup>
+    <!-- Include all test projects -->
+    <ProjectReference Include="**/*.csproj" />
+  </ItemGroup>
+</Project>

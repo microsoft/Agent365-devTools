@@ -1,0 +1,63 @@
+<!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
+<Project>
+  <PropertyGroup>
+    <!-- Path properties -->
+    <DotNetSdkPath>$(MSBuildThisFileDirectory)</DotNetSdkPath>
+    <RepositoryRoot>$(DotNetSdkPath)..\</RepositoryRoot>
+    
+    <!-- Common build properties -->
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsAsErrors />
+    <WarningsNotAsErrors />
+    
+    <!-- Package properties -->
+    <PackageOutputPath>$(RepositoryRoot)/NuGetPackages</PackageOutputPath>
+    
+    <!-- Suppress XML documentation warnings for now - can be re-enabled when documentation is added -->
+    <NoWarn>$(NoWarn);CS1591;CS1573;CS1574</NoWarn>
+
+    <!-- Language features -->
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    
+    <!-- Package metadata -->
+    <Authors>Microsoft</Authors>
+    <Copyright>© Microsoft Corporation. All rights reserved.</Copyright>
+    <Company>Microsoft Corporation</Company>
+    <RepositoryUrl>https://github.com/microsoft/Agent365-devTools</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+
+    <!-- Version is managed by Nerdbank.GitVersioning (nbgv) via version.json -->
+    <!-- PackageVersion and Version properties are set automatically by nbgv -->
+
+    <!-- Build Configuration -->
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Source Link Support -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>embedded</DebugType>
+    
+    <!-- Suppress common NuGet warnings -->
+    <NoWarn>$(NoWarn);NU1608</NoWarn>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <!-- Package references for all projects -->
+    <PackageReference Include="Nerdbank.GitVersioning" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <None Include="$(RepositoryRoot)\LICENSE" Pack="true" PackagePath="" />
+    <None Include="$(RepositoryRoot)\README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+</Project>

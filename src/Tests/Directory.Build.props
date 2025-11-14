@@ -1,0 +1,14 @@
+<!-- Copyright (c) Microsoft Corporation. Licensed under the MIT License. -->
+<Project>
+  <!-- Import parent Directory.Build.props to inherit common settings -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  
+  <PropertyGroup>
+    <!-- Test projects should not be packable -->
+    <IsPackable>false</IsPackable>
+    
+    <!-- Suppress XML documentation warnings (CS1591) for test projects -->
+    <!-- Test methods typically follow clear naming conventions and don't need XML documentation -->
+    <NoWarn>$(NoWarn);CS1591;NU1605</NoWarn>
+  </PropertyGroup>
+</Project>

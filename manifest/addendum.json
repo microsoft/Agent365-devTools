@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "addendumVersion": "1.0",
+  "copilotSettings": {
+      "elementType": "Extensions",
+      "isDigitalWorker": true
+  }
+}

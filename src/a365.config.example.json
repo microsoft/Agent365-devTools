@@ -1,0 +1,18 @@
+{
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "resourceGroup": "your-resource-group-name",
+  "location": "eastus",
+  "environment": "preprod",
+  "appServicePlanName": "your-app-service-plan-name",
+  "appServicePlanSku": "B1",
+  "webAppName": "your-unique-webapp-name",
+  "agentIdentityDisplayName": "Your Agent Display Name",
+  "agentBlueprintDisplayName": "Your Blueprint Display Name",
+  "agentUserPrincipalName": "agentuser@yourdomain.onmicrosoft.com",
+  "agentUserDisplayName": "Your Agent User Display Name",
+  "managerEmail": "manager@yourdomain.onmicrosoft.com",
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": "/path/to/your/agent/project",
+  "agentDescription": "Description of your agent's capabilities"
+}
