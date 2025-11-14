@@ -7,7 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for loading, saving, and validating Agent365 configuration.
+/// Service for loading, saving, and validating Microsoft Agent 365 configuration.
 /// 
 /// DESIGN PATTERN: Handles merge (load) and split (save) of two-file config model
 /// - LoadAsync: Merges a365.config.json + a365.generated.config.json to single Agent365Config
