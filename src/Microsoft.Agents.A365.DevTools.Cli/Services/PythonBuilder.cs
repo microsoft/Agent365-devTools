@@ -231,12 +231,12 @@ public class PythonBuilder : IPlatformBuilder
 
     private string DetectStartCommand(string projectDir, string publishPath)
     {
-        // First, check for Agent365-specific entry points with smart content analysis
+        // First, check for Microsoft Agent 365-specific entry points with smart content analysis
         var agentEntryPoints = new[] { "start_with_generic_host.py", "host_agent_server.py" };
         var detectedAgentEntry = DetectBestAgentEntry(publishPath, agentEntryPoints);
         if (!string.IsNullOrEmpty(detectedAgentEntry))
         {
-            _logger.LogInformation("Detected Agent365 entry point: {File}, using command: python {File}", detectedAgentEntry, detectedAgentEntry);
+            _logger.LogInformation("Detected Microsoft Agent 365 entry point: {File}, using command: python {File}", detectedAgentEntry, detectedAgentEntry);
             return $"python {detectedAgentEntry}";
         }
 
@@ -332,7 +332,7 @@ public class PythonBuilder : IPlatformBuilder
                 var hasMain = content.Contains("if __name__ == \"__main__\":") || content.Contains("def main(");
                 var priority = CalculateAgentEntryPriority(file, content);
                 foundFiles.Add((file, priority, hasMain));
-                _logger.LogDebug("Found Agent365 entry candidate: {File} (priority: {Priority}, hasMain: {HasMain})", file, priority, hasMain);
+                _logger.LogDebug("Found Microsoft Agent 365 entry candidate: {File} (priority: {Priority}, hasMain: {HasMain})", file, priority, hasMain);
             }
         }
 
@@ -346,7 +346,7 @@ public class PythonBuilder : IPlatformBuilder
             .ThenBy(f => f.file)
             .First();
 
-        _logger.LogInformation("Selected best Agent365 entry point: {File} (priority: {Priority}, hasMain: {HasMain})", 
+        _logger.LogInformation("Selected best Microsoft Agent 365 entry point: {File} (priority: {Priority}, hasMain: {HasMain})", 
             best.file, best.priority, best.hasMain);
 
         return best.file;
