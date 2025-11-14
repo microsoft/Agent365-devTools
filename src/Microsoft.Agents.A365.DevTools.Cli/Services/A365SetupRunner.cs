@@ -486,29 +486,11 @@ public sealed class A365SetupRunner
         generatedConfig["completedAt"] = DateTime.UtcNow.ToString("o");
         await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
-        _logger.LogInformation("Setup completed. Generated config at {Path}", generatedConfigPath);
+        _logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
         _logger.LogInformation("");
-        _logger.LogInformation("==========================================");
-        _logger.LogInformation("INSTALLATION COMPLETED SUCCESSFULLY!");
-        _logger.LogInformation("==========================================");
-        _logger.LogInformation("");
-        _logger.LogInformation("Agent Blueprint Details:");
-        _logger.LogInformation("  - Display Name: {Name}", cfg["agentBlueprintDisplayName"]?.GetValue<string>());
-        _logger.LogInformation("  - Object ID: {Id}", generatedConfig["agentBlueprintObjectId"]?.GetValue<string>());
-        _logger.LogInformation("  - Identifier URI: api://{Id}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
-
-        // Print summary to console as the very last output
-        AppDomain.CurrentDomain.ProcessExit += (_, __) =>
-        {
-            Console.WriteLine();
-            Console.WriteLine("==========================================");
-            Console.WriteLine(" AGENT BLUEPRINT CREATED SUCCESSFULLY! ");
-            Console.WriteLine("==========================================");
-            Console.WriteLine($"Blueprint ID: {generatedConfig["agentBlueprintId"]?.GetValue<string>()}");
-            Console.WriteLine();
-            Console.WriteLine($"Generated config saved at: {generatedConfigPath}");
-            Console.WriteLine();
-        };
+        _logger.LogInformation("Blueprint installation completed successfully");
+        _logger.LogInformation("Blueprint ID: {BlueprintId}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
+        _logger.LogInformation("Identifier URI: api://{AppId}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
 
         return true;
     }

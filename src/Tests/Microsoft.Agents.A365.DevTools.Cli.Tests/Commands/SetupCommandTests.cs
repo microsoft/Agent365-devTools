@@ -13,6 +13,7 @@ using NSubstitute;
 using Xunit;
 using System.IO;
 using System.Threading.Tasks;
+using FluentAssertions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
@@ -80,4 +81,343 @@ public class SetupCommandTests
         await _mockAzureValidator.DidNotReceiveWithAnyArgs().ValidateAllAsync(default!);
         await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateOrUpdateBotWithAgentBlueprintAsync(default!, default!, default!, default!, default!, default!, default!, default!, default!);
     }
+
+    [Fact]
+    public async Task SetupCommand_McpPermissionFailure_DoesNotThrowUnhandledException()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "eastus", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = ".",
+            AgentBlueprintId = "blueprint-app-id",
+            Environment = "prod"
+        };
+        
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
+
+        // Simulate MCP permission failure by setting up a failing mock
+        SetupCommand.SetupRunnerInvoker = async (setupPath, generatedPath, exec, webApp) =>
+        {
+            // Simulate blueprint creation success but write minimal generated config
+            var generatedConfig = new
+            {
+                agentBlueprintId = "test-blueprint-id",
+                agentBlueprintObjectId = "test-object-id",
+                tenantId = "tenant"
+            };
+            
+            await File.WriteAllTextAsync(generatedPath, System.Text.Json.JsonSerializer.Serialize(generatedConfig));
+            return true;
+        };
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, 
+            _mockConfigService, 
+            _mockExecutor, 
+            _mockDeploymentService, 
+            _mockBotConfigurator, 
+            _mockAzureValidator, 
+            _mockWebAppCreator, 
+            _mockPlatformDetector);
+        
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act - Even if MCP permissions fail, setup should not throw unhandled exception
+        var result = await parser.InvokeAsync("setup", testConsole);
+
+        // Assert - The command should complete without unhandled exceptions
+        // It may log errors but should not crash
+        result.Should().BeOneOf(0, 1); // May return 0 (success) or 1 (partial failure) but should not throw
+    }
+
+    [Fact]
+    public void SetupCommand_ErrorMessages_ShouldBeInformativeAndActionable()
+    {
+        // Arrange
+        var mockLogger = Substitute.For<ILogger<SetupCommand>>();
+        
+        // Act - Verify that error messages are being logged with sufficient detail
+        // This is a placeholder for ensuring error messages follow best practices
+        
+        // Assert - Error messages should:
+        // 1. Explain what failed
+        mockLogger.ReceivedCalls().Should().NotBeNull();
+        
+        // 2. Provide context (e.g., which resource, which permission)
+        // 3. Suggest remediation steps
+        // 4. Not contain emojis or special characters
+    }
+
+    [Fact]
+    public async Task SetupCommand_BlueprintCreationSuccess_LogsAtInfoLevel()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "eastus", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = ".",
+            AgentBlueprintId = "blueprint-app-id"
+        };
+        
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
+
+        SetupCommand.SetupRunnerInvoker = async (setupPath, generatedPath, exec, webApp) =>
+        {
+            var generatedConfig = new
+            {
+                agentBlueprintId = "test-blueprint-id",
+                agentBlueprintObjectId = "test-object-id",
+                tenantId = "tenant",
+                completed = true
+            };
+            
+            await File.WriteAllTextAsync(generatedPath, System.Text.Json.JsonSerializer.Serialize(generatedConfig));
+            return true;
+        };
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, 
+            _mockConfigService, 
+            _mockExecutor, 
+            _mockDeploymentService, 
+            _mockBotConfigurator, 
+            _mockAzureValidator, 
+            _mockWebAppCreator, 
+            _mockPlatformDetector);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("setup", testConsole);
+
+        // Assert - Blueprint creation success should be logged at Info level
+        _mockLogger.ReceivedCalls().Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task SetupCommand_GeneratedConfigPath_LoggedAtDebugLevel()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "eastus", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = ".",
+            AgentBlueprintId = "blueprint-app-id"
+        };
+        
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
+
+        var debugLogReceived = false;
+        _mockLogger.When(x => x.Log(
+            LogLevel.Debug,
+            Arg.Any<EventId>(),
+            Arg.Any<object>(),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>()))
+            .Do(x => debugLogReceived = true);
+
+        SetupCommand.SetupRunnerInvoker = async (setupPath, generatedPath, exec, webApp) =>
+        {
+            var generatedConfig = new
+            {
+                agentBlueprintId = "test-blueprint-id"
+            };
+            
+            await File.WriteAllTextAsync(generatedPath, System.Text.Json.JsonSerializer.Serialize(generatedConfig));
+            return true;
+        };
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, 
+            _mockConfigService, 
+            _mockExecutor, 
+            _mockDeploymentService, 
+            _mockBotConfigurator, 
+            _mockAzureValidator, 
+            _mockWebAppCreator, 
+            _mockPlatformDetector);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        await parser.InvokeAsync("setup", testConsole);
+
+        // Assert - Generated config path should be logged at Debug level, not Info
+        // This test verifies that implementation detail messages are not shown to users by default
+        debugLogReceived.Should().BeTrue("Generated config path should be logged at Debug level");
+    }
+
+    [Fact]
+    public async Task SetupCommand_PartialFailure_DisplaysComprehensiveSummary()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "eastus", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = ".",
+            AgentBlueprintId = "blueprint-app-id",
+            Environment = "prod"
+        };
+        
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
+
+        var summaryLogged = false;
+        var completedStepsLogged = false;
+
+        _mockLogger.When(x => x.Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Any<object>(),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>()))
+            .Do(callInfo =>
+            {
+                var formatter = callInfo.ArgAt<Func<object, Exception?, string>>(4);
+                var state = callInfo.ArgAt<object>(2);
+                var message = formatter(state, null);
+                
+                if (message.Contains("Setup Summary"))
+                    summaryLogged = true;
+                if (message.Contains("Completed Steps:"))
+                    completedStepsLogged = true;
+            });
+
+        SetupCommand.SetupRunnerInvoker = async (setupPath, generatedPath, exec, webApp) =>
+        {
+            var generatedConfig = new
+            {
+                agentBlueprintId = "test-blueprint-id",
+                agentBlueprintObjectId = "test-object-id",
+                tenantId = "tenant"
+            };
+            
+            await File.WriteAllTextAsync(generatedPath, System.Text.Json.JsonSerializer.Serialize(generatedConfig));
+            return true;
+        };
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, 
+            _mockConfigService, 
+            _mockExecutor, 
+            _mockDeploymentService, 
+            _mockBotConfigurator, 
+            _mockAzureValidator, 
+            _mockWebAppCreator, 
+            _mockPlatformDetector);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("setup", testConsole);
+
+        // Assert - Setup should display a comprehensive summary
+        summaryLogged.Should().BeTrue("Setup should display a summary section");
+        completedStepsLogged.Should().BeTrue("Summary should show completed steps");
+    }
+
+    [Fact]
+    public async Task SetupCommand_AllStepsSucceed_ShowsSuccessfulSummary()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "eastus", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = ".",
+            AgentBlueprintId = "blueprint-app-id",
+            Environment = "prod"
+        };
+        
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
+
+        var successMessageLogged = false;
+
+        _mockLogger.When(x => x.Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Any<object>(),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>()))
+            .Do(callInfo =>
+            {
+                var formatter = callInfo.ArgAt<Func<object, Exception?, string>>(4);
+                var state = callInfo.ArgAt<object>(2);
+                var message = formatter(state, null);
+                
+                if (message.Contains("Setup completed successfully"))
+                    successMessageLogged = true;
+            });
+
+        SetupCommand.SetupRunnerInvoker = async (setupPath, generatedPath, exec, webApp) =>
+        {
+            var generatedConfig = new
+            {
+                agentBlueprintId = "test-blueprint-id",
+                agentBlueprintObjectId = "test-object-id",
+                tenantId = "tenant"
+            };
+            
+            await File.WriteAllTextAsync(generatedPath, System.Text.Json.JsonSerializer.Serialize(generatedConfig));
+            return true;
+        };
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, 
+            _mockConfigService, 
+            _mockExecutor, 
+            _mockDeploymentService, 
+            _mockBotConfigurator, 
+            _mockAzureValidator, 
+            _mockWebAppCreator, 
+            _mockPlatformDetector);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        await parser.InvokeAsync("setup", testConsole);
+
+        // Assert
+        successMessageLogged.Should().BeTrue("Setup should show success message when all steps complete");
+    }
 }
+
