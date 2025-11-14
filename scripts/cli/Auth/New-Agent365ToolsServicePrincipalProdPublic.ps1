@@ -5,7 +5,7 @@
     Creates the Agent 365 Tools Service Principal in your tenant (Admin only).
 
 .DESCRIPTION
-    This script creates the Service Principal for Agent 365 Tools in your Azure AD tenant.
+    This script creates the Service Principal for Agent 365 Tools in your Microsoft Entra ID tenant.
     This is a ONE-TIME operation per tenant that requires admin permissions.
     
     After the Service Principal is created, regular users can create their own app
