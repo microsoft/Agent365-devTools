@@ -68,7 +68,8 @@ Microsoft.Agents.A365.DevTools.Cli/
 │  ├─ CreateInstanceCommand.cs  # a365 create-instance (identity, licenses, enable-notifications)
 │  ├─ DeployCommand.cs          # a365 deploy
 │  ├─ QueryEntraCommand.cs      # a365 query-entra (blueprint-scopes, instance-scopes)
-│  └─ DevelopCommand.cs         # a365 develop
+│  ├─ DevelopCommand.cs         # a365 develop
+│  └─ DevelopMcpCommand.cs      # a365 develop-mcp (MCP server management)
 ├─ Services/                     # Business logic services
 │  ├─ ConfigService.cs          # Configuration management
 │  ├─ DeploymentService.cs      # Multiplatform Azure deployment
@@ -97,6 +98,54 @@ The CLI provides a `config` command for managing configuration:
 - `a365 config init` — Interactively prompts for required config values and writes `a365.config.json`.
 - `a365 config init -c <file>` — Imports and validates a config file, then writes it to the standard location.
 - `a365 config display` — Prints the current configuration.
+
+### MCP Server Management Command
+
+The CLI provides a `develop-mcp` command for managing Model Context Protocol (MCP) servers in Dataverse environments:
+
+**Environment Management:**
+- `a365 develop-mcp list-environments` — List all available Dataverse environments for MCP server management
+
+**Server Management:**
+- `a365 develop-mcp list-servers -e <environment-id>` — List MCP servers in a specific Dataverse environment
+- `a365 develop-mcp publish -e <environment-id> -s <server-name>` — Publish an MCP server to a Dataverse environment
+- `a365 develop-mcp unpublish -e <environment-id> -s <server-name>` — Unpublish an MCP server from a Dataverse environment
+
+**Server Approval:**
+- `a365 develop-mcp approve -s <server-name>` — Approve an MCP server
+- `a365 develop-mcp block -s <server-name>` — Block an MCP server
+
+**Key Features:**
+- **Azure CLI Style Parameters:** Uses named options (`--environment-id/-e`, `--server-name/-s`) for better UX
+- **Dry Run Support:** All commands support `--dry-run` for safe testing
+- **Consistent Configuration:** All commands support `--config/-c` for custom configuration files
+- **Interactive Prompts:** Missing required parameters prompt for user input
+- **Comprehensive Logging:** Detailed logging for debugging and audit trails
+
+**Examples:**
+```bash
+# List all environments
+a365 develop-mcp list-environments
+
+# List servers in a specific environment  
+a365 develop-mcp list-servers -e "Default-12345678-1234-1234-1234-123456789abc"
+
+# Publish a server with alias and display name
+a365 develop-mcp publish \
+  --environment-id "Default-12345678-1234-1234-1234-123456789abc" \
+  --server-name "msdyn_MyMcpServer" \
+  --alias "my-server" \
+  --display-name "My Custom MCP Server"
+
+# Quick unpublish with short aliases
+a365 develop-mcp unpublish -e "Default-12345678-1234-1234-1234-123456789abc" -s "msdyn_MyMcpServer"
+
+# Approve a server
+a365 develop-mcp approve --server-name "msdyn_MyMcpServer"
+
+# Test commands safely with dry-run
+a365 develop-mcp publish -e "myenv" -s "myserver" --dry-run
+```
 
 ## Inheritable Permissions: Best Practice
 
@@ -495,7 +544,7 @@ dotnet test
 Use the convenient script:
 
 ```bash
-# From developer/ directory
+# From scripts/cli directory
 .\install-cli.ps1
 ```
 

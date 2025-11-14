@@ -2,9 +2,16 @@
 # This script installs the Agent 365 CLI from a local NuGet package in the publish folder.
 # Usage: Run this script from the root of the extracted package (where publish/ exists)
 
+# Get the repository root directory (two levels up from scripts/cli/)
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$projectPath = Join-Path $repoRoot 'src\Microsoft.Agents.A365.DevTools.Cli\Microsoft.Agents.A365.DevTools.Cli.csproj'
 
+# Verify the project file exists
+if (-not (Test-Path $projectPath)) {
+    Write-Error "ERROR: Project file not found at $projectPath"
+    exit 1
+}
 
-$projectPath = Join-Path $PSScriptRoot 'Microsoft.Agents.A365.DevTools.Cli\Microsoft.Agents.A365.DevTools.Cli.csproj'
 $outputDir = Join-Path $PSScriptRoot 'nupkg'
 if (-not (Test-Path $outputDir)) {
     New-Item -ItemType Directory -Path $outputDir | Out-Null
@@ -17,7 +24,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Write-Host "Packing CLI tool to $outputDir (Release configuration)..."
-dotnet pack $projectPath -c Release -o $outputDir --no-build
+dotnet pack $projectPath -c Release -o $outputDir --no-build -p:IncludeSymbols=false -p:TreatWarningsAsErrors=false
 if ($LASTEXITCODE -ne 0) {
     Write-Error "ERROR: dotnet pack failed. Check output above for details."
     exit 1

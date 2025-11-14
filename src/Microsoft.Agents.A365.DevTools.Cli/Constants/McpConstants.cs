@@ -18,21 +18,6 @@ public static class McpConstants
     public const string ToolingManifestFileName = "ToolingManifest.json";
 
     /// <summary>
-    /// Get MCP server base URL for environment (configurable via environment variables)
-    /// Override via A365_MCP_SERVER_BASE_URL_{ENVIRONMENT} environment variable
-    /// </summary>
-    public static string GetMcpServerBaseUrl(string environment)
-    {
-        var customUrl = Environment.GetEnvironmentVariable($"A365_MCP_SERVER_BASE_URL_{environment?.ToUpper()}");
-        if (!string.IsNullOrEmpty(customUrl))
-            return customUrl;
-
-        // Default to production-equivalent URL
-        return "https://agent365.svc.cloud.microsoft/mcp/servers";
-    }
-
-
-    /// <summary>
     /// JSON-RPC version
     /// </summary>
     public const string JsonRpcVersion = "2.0";

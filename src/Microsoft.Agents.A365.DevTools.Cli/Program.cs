@@ -66,7 +66,8 @@ class Program
             var executor = serviceProvider.GetRequiredService<CommandExecutor>();
             var authService = serviceProvider.GetRequiredService<AuthenticationService>();
             var azureValidator = serviceProvider.GetRequiredService<IAzureValidator>();
-            
+            var toolingService = serviceProvider.GetRequiredService<IAgent365ToolingService>();
+
             // Get services needed by commands
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<BotConfigurator>();
@@ -76,6 +77,7 @@ class Program
 
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor, 
                 deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
@@ -165,6 +167,9 @@ class Program
         services.AddSingleton<IConfigService, ConfigService>();
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
+        
+        // Add Agent365 Tooling Service
+        services.AddSingleton<IAgent365ToolingService, Agent365ToolingService>();
         
         // Add Azure validators (individual validators for composition)
         services.AddSingleton<AzureAuthValidator>();
