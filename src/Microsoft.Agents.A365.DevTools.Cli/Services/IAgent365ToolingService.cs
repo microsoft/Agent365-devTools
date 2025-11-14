@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.  
 // Licensed under the MIT License.
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -71,5 +72,11 @@ public interface IAgent365ToolingService
     Task<bool> BlockServerAsync(
         string serverName,
         CancellationToken cancellationToken = default);
+
+	/// <summary>
+	/// Gets MCP server information
+	/// </summary>
+	/// <param name="serverName">MCP server name</param>
+	public Task<ServerInfo> GetServerInfoAsync(String serverName);
 }
 

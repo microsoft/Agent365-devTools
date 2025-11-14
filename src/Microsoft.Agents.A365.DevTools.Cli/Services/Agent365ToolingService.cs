@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation.  
 // Licensed under the MIT License. 
-using System.Net.Http;
-using System.Text.Json;
-using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Extensions.Logging;
+using System.Net.Http;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -209,6 +211,17 @@ public class Agent365ToolingService : IAgent365ToolingService
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
         return $"{baseUrl}/agents/mcpServers/{serverName}/block";
+    }
+
+    /// <summary>
+    /// Builds URL for getting MCP server details
+    /// </summary>
+    /// <param name="environment">Environment name</param>
+    /// <returns>URL for get MCP server endpoint</returns>
+    private string BuildGetMCPServerUrl(string environment)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/servers/MCPManagement";
     }
 
     /// <inheritdoc />
@@ -602,6 +615,109 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogError(ex, "Failed to block MCP server {ServerName}", serverName);
             return false;
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<ServerInfo> GetServerInfoAsync(String serverName)
+    {
+        var endpointUrl = BuildGetMCPServerUrl(_environment);
+
+        _logger.LogInformation("Calling get MCP server for {ServerName}", serverName);
+        _logger.LogInformation("Environment: {Env}", _environment);
+        _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+
+        // Get authentication token
+        var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+        _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+
+        var authToken = await _authService.GetAccessTokenAsync(audience);
+        if (string.IsNullOrWhiteSpace(authToken))
+        {
+            _logger.LogError("Failed to acquire authentication token");
+            throw new InvalidOperationException("Failed to acquire authentication token");
+        }
+        _logger.LogInformation("Successfully acquired access token");
+
+        // Create authenticated HTTP client
+        using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+
+        var requestObject = new
+        {
+            @params = new
+            {
+                name = "GetMCPServer",
+                arguments = new
+                {
+                    mcpServerName = serverName
+                }
+            },
+            method = "tools/call",
+            id = "1",
+            jsonrpc = "2.0"
+        };
+
+        var json = JsonSerializer.Serialize(requestObject);
+
+        // Log request details
+        LogRequest("POST", endpointUrl, json);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpointUrl)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+
+        // Add Accept headers
+        request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+        // Send the request
+        var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Failed to fetch MCP server details. Status: {Status}", response.StatusCode);
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Error response: {Error}", errorContent);
+            throw new InvalidOperationException("Failed to fetch MCP server details");
+        }
+
+        var responseContent = await response.Content.ReadAsStringAsync();
+
+        _logger.LogInformation("Successfully received response from MCP servers management endpoint");
+        
+        // Join all response data: lines (handles single or multi-line data segments)
+        var dataJson = string.Concat(
+            responseContent.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+               .Where(l => l.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+               .Select(l => l.Substring(5).Trim()));
+
+        // Parse outer JSON-RPC
+        var root = JsonNode.Parse(dataJson)!;
+        var content = root["result"]?["content"]?.AsArray()
+                      ?? throw new InvalidOperationException("Missing result.content");
+
+        // Find the first text chunk that contains inner JSON (starts with '{')
+        var innerJson = content
+            .Select(n => n?["text"]?.GetValue<string>())
+            .FirstOrDefault(t => t is { } s && s.TrimStart().StartsWith("{"))
+            ?? throw new InvalidOperationException("Inner JSON not found in content[].text");
+
+        // Parse inner JSON and read server
+        var server = JsonNode.Parse(innerJson)!["server"]
+                     ?? throw new InvalidOperationException("Missing 'server' object");
+
+        string Get(string name) =>
+            server[name]?.GetValue<string>() is { } v && !string.IsNullOrWhiteSpace(v)
+                ? v
+                : throw new InvalidOperationException($"Missing/empty server.{name}");
+
+        return new ServerInfo
+        {
+            McpServerId = Get("id"),
+            McpServerDisplayName = Get("displayName"),
+            McpServerDescription = Get("description"),
+            McpServerUrl = Get("url")
+        };
     }
 }
 

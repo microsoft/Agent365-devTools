@@ -1,9 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -35,6 +37,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateApproveSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
 
         return developMcpCommand;
     }
@@ -759,6 +762,57 @@ public static class DevelopMcpCommand
             logger.LogInformation("Successfully blocked MCP server {ServerName}", serverName);
 
         }, serverNameOption, configOption, dryRunOption);
+
+        return command;
+    }
+
+    /// <summary>
+    /// Creates the package generation subcommand
+    /// </summary>
+    private static Command CreatePackageMCPServerSubCommand(ILogger logger, IAgent365ToolingService toolingService)
+    {
+        var command = new Command("package-mcp-server", "Generate MCP server package for submission on Microsoft admin center");
+
+        var serverNameOption = new Option<string>("--server-name", "MCP server name") { IsRequired = true };
+        var developerNameOption = new Option<string>("--developer-name", "Publisher/developer display name") { IsRequired = true };
+        var iconUrlOption = new Option<string>("--icon-url", "Public URL to a PNG icon for the MCP server") { IsRequired = true };
+        var outputPathOption = new Option<string>("--output-path", "Target directory for the generated ZIP package") { IsRequired = true };
+        var dryRunOption = new Option<bool>(name: "--dry-run", description: "Show what would be done without executing");
+        var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
+
+        command.AddOption(serverNameOption);
+        command.AddOption(developerNameOption);
+        command.AddOption(iconUrlOption);
+        command.AddOption(outputPathOption);
+        command.AddOption(dryRunOption);
+        command.AddOption(configOption);
+
+        command.SetHandler(async (serverName, developerName, iconUrl, outputPath, dryRun) =>
+        {
+            if (dryRun)
+            {
+                logger.LogInformation("[DRY RUN] Would query MCP servers management endpoint to fetch details of the MCP server");
+                logger.LogInformation("[DRY RUN] Fetch the icon from the provided url");
+                logger.LogInformation("[DRY RUN] Build the package content and put it in the target directory");
+                await Task.CompletedTask;
+                return;
+            }
+
+            logger.LogInformation("Starting package creation...");
+
+            try
+            {
+                var serverInfo = await toolingService.GetServerInfoAsync(serverName);
+                var manifest = PackageMCPServerHelper.GenerateManifestJson(serverInfo, developerName, logger);
+                var zipFilePath = PackageMCPServerHelper.BuildPackage(manifest, serverInfo, iconUrl, outputPath);
+                logger.LogInformation("Package was created successfully at {zipFilePath}", zipFilePath);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Package creation failed");
+            }
+
+        }, serverNameOption, developerNameOption, iconUrlOption, outputPathOption, dryRunOption);
 
         return command;
     }
