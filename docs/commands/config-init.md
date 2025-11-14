@@ -1,162 +1,409 @@
 # Agent 365 CLI - Configuration Initialization Guide
 
 > **Command**: `a365 config init`  
-> **Purpose**: Initialize your Agent 365 configuration with all required settings for deployment
+> **Purpose**: Interactive wizard to configure Agent 365 with Azure CLI integration and smart defaults
 
 ## Overview
 
-The `a365 config init` command walks you through creating a complete configuration file (`a365.config.json`) for your Agent 365 deployment. This interactive process collects essential information about your Azure subscription, agent identity, and deployment settings.
+The `a365 config init` command provides an intelligent, interactive configuration wizard that minimizes manual input by leveraging Azure CLI integration and smart defaults. The wizard automatically detects your Azure subscription, suggests resource names, and validates your inputs to ensure a smooth setup experience.
 
 ## Quick Start
 
 ```bash
-# Initialize configuration with interactive prompts
+# Initialize configuration with interactive wizard
 a365 config init
 
-# Use existing config as starting point
-a365 config init --config path/to/existing/a365.config.json
+# Import existing config file
+a365 config init --configfile path/to/existing/a365.config.json
+
+# Create config in global directory (AppData)
+a365 config init --global
+```
+
+## Key Features
+
+- **Azure CLI Integration**: Automatically detects your Azure subscription, tenant, and available resources
+- **Smart Defaults**: Generates sensible defaults for resource names, agent identities, and UPNs
+- **Resource Discovery**: Lists existing resource groups, app service plans, and locations
+- **Platform Detection**: Automatically detects project type (.NET, Node.js, Python)
+- **Input Validation**: Validates paths, UPNs, emails, and Azure resources
+- **Interactive Prompts**: Press Enter to accept defaults or type to customize
+
+## Configuration Flow
+
+### Step 1: Azure CLI Verification
+
+The wizard first verifies your Azure CLI authentication:
+
+```
+Checking Azure CLI authentication...
+Subscription ID: e09e22f2-9193-4f54-a335-01f59575eefd (My Subscription)
+Tenant ID: adfa4542-3e1e-46f5-9c70-3df0b15b3f6c
+
+NOTE: Defaulted from current Azure account. To use a different Azure subscription,
+run 'az login' and then 'az account set --subscription <subscription-id>' before
+running this command.
+```
+
+**If not logged in:**
+```
+ERROR: You are not logged in to Azure CLI.
+Please run 'az login' and then try again.
+```
+
+### Step 2: Agent Name
+
+Provide a unique name for your agent. This is used to generate derived names for resources:
+
+```
+Agent name [agent1114]: myagent
+```
+
+**Smart Defaults**: If no existing config, defaults to `agent` + current date (e.g., `agent1114`)
+
+### Step 3: Deployment Project Path
+
+Specify the path to your agent project:
+
+```
+Deployment project path [C:\A365-Ignite-Demo\sample_agent]:
+Detected DotNet project
+```
+
+**Features**:
+- Defaults to current directory or existing config path
+- Validates directory exists
+- Detects project platform (.NET, Node.js, Python)
+- Warns if no supported project type detected
+
+### Step 4: Resource Group Selection
+
+Choose from existing resource groups or create a new one:
+
+```
+Available resource groups:
+  1. a365demorg
+  2. another-rg
+  3. <Create new resource group>
+
+Select resource group (1-3) [1]: 1
+```
+
+**Smart Behavior**:
+- Lists existing resource groups from your subscription
+- Option to create new resource group
+- Defaults to existing config value if available
+
+### Step 5: App Service Plan Selection
+
+Choose from existing app service plans in the selected resource group:
+
+```
+Available app service plans in resource group 'a365demorg':
+  1. a365agent-app-plan
+  2. <Create new app service plan>
+
+Select app service plan (1-2) [1]: 1
+```
+
+**Smart Behavior**:
+- Only shows plans in the selected resource group
+- Option to create new plan
+- Defaults to existing config value
+
+### Step 6: Manager Email
+
+Provide the email address of the agent's manager:
+
+```
+Manager email [agent365demo.manager1@a365preview001.onmicrosoft.com]:
+```
+
+**Validation**: Ensures valid email format
+
+### Step 7: Azure Location
+
+Choose the Azure region for deployment:
+
+```
+Azure location [eastus]:
+```
+
+**Smart Defaults**: Uses location from existing config or Azure account
+
+### Step 8: Configuration Summary
+
+Review all settings before saving:
+
+```
+=================================================================
+ Configuration Summary
+=================================================================
+Agent Name             : myagent
+Web App Name           : myagent-webapp-11140916
+Agent Identity Name    : myagent Identity
+Agent Blueprint Name   : myagent Blueprint
+Agent UPN              : agent.myagent.11140916@yourdomain.onmicrosoft.com
+Agent Display Name     : myagent Agent User
+Manager Email          : agent365demo.manager1@a365preview001.onmicrosoft.com
+Deployment Path        : C:\A365-Ignite-Demo\sample_agent
+Resource Group         : a365demorg
+App Service Plan       : a365agent-app-plan
+Location               : eastus
+Subscription           : My Subscription (e09e22f2-9193-4f54-a335-01f59575eefd)
+Tenant                 : adfa4542-3e1e-46f5-9c70-3df0b15b3f6c
+
+Do you want to customize any derived names? (y/N):
+```
+
+### Step 9: Name Customization (Optional)
+
+Optionally customize generated names:
+
+```
+Do you want to customize any derived names? (y/N): y
+
+Web App Name [myagent-webapp-11140916]: myagent-prod
+Agent Identity Display Name [myagent Identity]:
+Agent Blueprint Display Name [myagent Blueprint]:
+Agent User Principal Name [agent.myagent.11140916@yourdomain.onmicrosoft.com]:
+Agent User Display Name [myagent Agent User]:
+```
+
+### Step 10: Confirmation
+
+Final confirmation to save:
+
+```
+Save this configuration? (Y/n): Y
+
+Configuration saved to: C:\Users\user\a365.config.json
+
+You can now run:
+  a365 setup      - Create Azure resources
+  a365 deploy     - Deploy your agent
 ```
 
 ## Configuration Fields
 
-### Azure Infrastructure
+The wizard automatically populates these fields:
 
-| Field | Description | Example | Required |
-|-------|-------------|---------|----------|
-| **tenantId** | Azure AD Tenant ID | `12345678-1234-...` | ? Yes |
-| **subscriptionId** | Azure Subscription ID | `87654321-4321-...` | ? Yes |
-| **resourceGroup** | Azure Resource Group name | `my-agent-rg` | ? Yes |
-| **location** | Azure region | `eastus`, `westus2` | ? Yes |
-| **appServicePlanName** | App Service Plan name | `my-agent-plan` | ? Yes |
-| **appServicePlanSku** | Service Plan SKU | `B1`, `S1`, `P1V2` | ? No (defaults to `B1`) |
-| **webAppName** | Web App name (must be globally unique) | `my-agent-webapp` | ? Yes |
+### Azure Infrastructure (Auto-detected from Azure CLI)
 
-### Agent Identity
+| Field | Description | Source | Example |
+|-------|-------------|--------|---------|
+| **tenantId** | Azure AD Tenant ID | Azure CLI (`az account show`) | `adfa4542-3e1e-46f5-9c70-3df0b15b3f6c` |
+| **subscriptionId** | Azure Subscription ID | Azure CLI (`az account show`) | `e09e22f2-9193-4f54-a335-01f59575eefd` |
+| **resourceGroup** | Azure Resource Group name | User selection from list | `a365demorg` |
+| **location** | Azure region | Azure account or user input | `eastus` |
+| **appServicePlanName** | App Service Plan name | User selection from list | `a365agent-app-plan` |
+| **appServicePlanSku** | Service Plan SKU | Default value | `B1` |
 
-| Field | Description | Example | Required |
-|-------|-------------|---------|----------|
-| **agentIdentityDisplayName** | Name shown in Azure AD for the agent identity | `My Agent Identity` | ? Yes |
-| **agentBlueprintDisplayName** | Name for the agent blueprint | `My Agent Blueprint` | ? Yes |
-| **agentUserPrincipalName** | UPN for the agentic user | `demo.agent@contoso.onmicrosoft.com` | ? Yes |
-| **agentUserDisplayName** | Display name for the agentic user | `Demo Agent` | ? Yes |
-| **agentDescription** | Description of your agent | `My helpful support agent` | ? No |
-| **managerEmail** | Email of the agent's manager | `manager@contoso.com` | ? No |
-| **agentUserUsageLocation** | Country code for license assignment | `US`, `GB`, `DE` | ? No (defaults to `US`) |
+### Agent Identity (Auto-generated with customization option)
 
-### Deployment Settings
+| Field | Description | Generation Logic | Example |
+|-------|-------------|------------------|---------|
+| **webAppName** | Web App name (globally unique) | `{agentName}-webapp-{timestamp}` | `myagent-webapp-11140916` |
+| **agentIdentityDisplayName** | Agent identity in Azure AD | `{agentName} Identity` | `myagent Identity` |
+| **agentBlueprintDisplayName** | Agent blueprint name | `{agentName} Blueprint` | `myagent Blueprint` |
+| **agentUserPrincipalName** | UPN for the agentic user | `agent.{agentName}.{timestamp}@domain` | `agent.myagent.11140916@yourdomain.onmicrosoft.com` |
+| **agentUserDisplayName** | Display name for agentic user | `{agentName} Agent User` | `myagent Agent User` |
+| **agentDescription** | Description of your agent | `{agentName} - Agent 365 Demo Agent` | `myagent - Agent 365 Demo Agent` |
 
-| Field | Description | Example | Required |
-|-------|-------------|---------|----------|
-| **deploymentProjectPath** | Path to agent project directory | `C:\projects\my-agent` or `./my-agent` | ? Yes |
+### User-Provided Fields
 
-## Interactive Prompts
+| Field | Description | Validation | Example |
+|-------|-------------|------------|---------|
+| **managerEmail** | Email of the agent's manager | Email format | `manager@contoso.com` |
+| **deploymentProjectPath** | Path to agent project directory | Directory exists, platform detection | `C:\projects\my-agent` |
+| **agentUserUsageLocation** | Country code for license | Auto-detected from Azure account | `US` |
 
-When you run `a365 config init`, you'll see detailed prompts for each field:
+## Command Options
 
-### Example: Agent User Principal Name
+```bash
+# Display help
+a365 config init --help
 
-```
-----------------------------------------------
- Agent User Principal Name (UPN)
-----------------------------------------------
-Description : Email-like identifier for the agentic user in Azure AD.
-              Format: <username>@<domain>.onmicrosoft.com or @<verified-domain>
-              Example: demo.agent@contoso.onmicrosoft.com
-              This must be unique in your tenant.
+# Import existing configuration file
+a365 config init --configfile path/to/config.json
+a365 config init -c path/to/config.json
 
-Current Value: [agent.john@yourdomain.onmicrosoft.com]
-
-> demo.agent@contoso.onmicrosoft.com
-```
-
-### Example: Deployment Project Path
-
-```
-----------------------------------------------
- Deployment Project Path
-----------------------------------------------
-Description : Path to your agent project directory for deployment.
-              This should contain your agent's source code and configuration files.
-              The directory must exist and be accessible.
-              You can use relative paths (e.g., ./my-agent) or absolute paths.
-
-Current Value: [C:\Users\john\projects\current-directory]
-
-> ./my-agent
-```
-
-## Field Validation
-
-The CLI validates your input to catch errors early:
-
-### Agent User Principal Name (UPN)
-
-? **Valid formats**:
-- `demo.agent@contoso.onmicrosoft.com`
-- `support-bot@verified-domain.com`
-
-? **Invalid formats**:
-- `invalidupn` (missing @)
-- `user@` (missing domain)
-- `@domain.com` (missing username)
-
-### Deployment Project Path
-
-? **Valid paths**:
-- `./my-agent` (relative path)
-- `C:\projects\my-agent` (absolute path)
-- `../parent-folder/my-agent` (parent directory)
-
-? **Invalid paths**:
-- `Z:\nonexistent\path` (directory doesn't exist)
-- `C:\|invalid` (illegal characters)
-
-### Empty Values
-
-All required fields must have values:
-
-```
-? This field is required. Please provide a value.
+# Create config in global directory (AppData)
+a365 config init --global
+a365 config init -g
 ```
 
 ## Generated Configuration File
 
-After completing the prompts, `a365 config init` creates `a365.config.json`:
+After completing the wizard, `a365.config.json` is created:
 
 ```json
 {
-  "tenantId": "12345678-1234-1234-1234-123456789012",
-  "subscriptionId": "87654321-4321-4321-4321-210987654321",
-  "resourceGroup": "my-agent-rg",
+  "tenantId": "adfa4542-3e1e-46f5-9c70-3df0b15b3f6c",
+  "subscriptionId": "e09e22f2-9193-4f54-a335-01f59575eefd",
+  "resourceGroup": "a365demorg",
   "location": "eastus",
-  "appServicePlanName": "my-agent-plan",
+  "environment": "prod",
+  "appServicePlanName": "a365agent-app-plan",
   "appServicePlanSku": "B1",
-  "webAppName": "my-agent-webapp",
-  "agentIdentityDisplayName": "My Agent Identity",
-  "agentBlueprintDisplayName": "My Agent Blueprint",
-  "agentUserPrincipalName": "demo.agent@contoso.onmicrosoft.com",
-  "agentUserDisplayName": "Demo Agent",
-  "deploymentProjectPath": "C:\\projects\\my-agent",
-  "agentDescription": "My helpful support agent",
+  "webAppName": "myagent-webapp-11140916",
+  "agentIdentityDisplayName": "myagent Identity",
+  "agentBlueprintDisplayName": "myagent Blueprint",
+  "agentUserPrincipalName": "agent.myagent.11140916@yourdomain.onmicrosoft.com",
+  "agentUserDisplayName": "myagent Agent User",
   "managerEmail": "manager@contoso.com",
-  "agentUserUsageLocation": "US"
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": "C:\\projects\\my-agent",
+  "agentDescription": "myagent - Agent 365 Demo Agent"
 }
 ```
 
-## Smart Defaults
+## Smart Default Generation
 
-The CLI provides intelligent defaults based on your environment:
+The wizard uses intelligent algorithms to generate defaults:
 
-| Field | Default Value | Logic |
-|-------|---------------|-------|
-| **agentIdentityDisplayName** | `John's Agent 365 Instance 20241112T153045` | `<Username>'s Agent 365 Instance <Timestamp>` |
-| **agentBlueprintDisplayName** | `John's Agent 365 Blueprint` | `<Username>'s Agent 365 Blueprint` |
-| **agentUserPrincipalName** | `agent.john@yourdomain.onmicrosoft.com` | `agent.<username>@yourdomain.onmicrosoft.com` |
-| **agentUserDisplayName** | `John's Agent User` | `<Username>'s Agent User` |
-| **deploymentProjectPath** | `C:\projects\current-directory` | Current working directory |
-| **agentUserUsageLocation** | `US` | United States |
+### Agent Name Derivation
 
-## Usage with Other Commands
+**Input**: `myagent`
+
+**Generated Names**:
+```
+webAppName               = myagent-webapp-11140916
+agentIdentityDisplayName = myagent Identity
+agentBlueprintDisplayName = myagent Blueprint
+agentUserPrincipalName   = agent.myagent.11140916@yourdomain.onmicrosoft.com
+agentUserDisplayName     = myagent Agent User
+agentDescription         = myagent - Agent 365 Demo Agent
+```
+
+**Timestamp**: `MMddHHmm` format (e.g., `11140916` = Nov 14, 09:16 AM)
+
+### Usage Location Detection
+
+Automatically determined from Azure account home tenant location:
+- US-based tenants → `US`
+- UK-based tenants → `GB`
+- Canada-based tenants → `CA`
+- Falls back to `US` if unable to detect
+
+## Validation Rules
+
+### Deployment Project Path
+
+- **Existence**: Directory must exist on the file system
+- **Platform Detection**: Warns if no supported project type (.NET, Node.js, Python) is detected
+- **Confirmation**: User can choose to continue even without detected platform
+
+```
+WARNING: Could not detect a supported project type (.NET, Node.js, or Python)
+in the specified directory.
+Continue anyway? (y/N):
+```
+
+### Resource Group
+
+- **Existence**: Must select from existing resource groups or create new
+- **Format**: Azure naming conventions (lowercase, alphanumeric, hyphens)
+
+### App Service Plan
+
+- **Scope**: Must exist in the selected resource group
+- **Fallback**: Option to create new plan if none exist
+
+### Manager Email
+
+- **Format**: Valid email address (contains `@` and domain)
+
+- **Format**: Valid email address (contains `@` and domain)
+
+## Azure CLI Integration
+
+The wizard leverages Azure CLI for automatic resource discovery:
+
+### Prerequisites
+
+```bash
+# Install Azure CLI (if not already installed)
+# Windows: https://learn.microsoft.com/cli/azure/install-azure-cli-windows
+# macOS: brew install azure-cli
+# Linux: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+# Login to Azure
+az login
+
+# Set active subscription (if you have multiple)
+az account set --subscription "My Subscription"
+
+# Verify current account
+az account show
+```
+
+### What the Wizard Fetches
+
+1. **Current Azure Account**:
+   - Subscription ID and Name
+   - Tenant ID
+   - User information
+   - Home tenant location (for usage location)
+
+2. **Resource Groups**:
+   - Lists all resource groups in your subscription
+   - Allows selection or creation of new group
+
+3. **App Service Plans**:
+   - Lists plans in the selected resource group
+   - Filters by location compatibility
+   - Shows SKU and pricing tier
+
+4. **Azure Locations**:
+   - Lists available Azure regions
+   - Suggests location based on account or existing config
+
+### Error Handling
+
+**Not logged in**:
+```
+ERROR: You are not logged in to Azure CLI.
+Please run 'az login' and then try again.
+```
+
+**Solution**: Run `az login` and complete browser authentication
+
+**Multiple subscriptions**:
+```
+Subscription ID: e09e22f2-9193-4f54-a335-01f59575eefd (Subscription 1)
+
+NOTE: To use a different Azure subscription, run 'az login' and then
+'az account set --subscription <subscription-id>' before running this command.
+```
+
+**Solution**: Set desired subscription with `az account set`
+
+## Updating Existing Configuration
+
+Re-run the wizard to update your configuration:
+
+```bash
+# Wizard will load existing values as defaults
+a365 config init
+
+# Or import from a different file
+a365 config init --configfile production.config.json
+```
+
+**Workflow**:
+1. Wizard detects existing `a365.config.json`
+2. Displays message: "Found existing configuration. Default values will be used where available."
+3. Each prompt shows current value in brackets: `[current-value]`
+4. Press **Enter** to keep current value
+5. Type new value to update
+
+**Example**:
+```
+Agent name [myagent]: myagent-v2
+Deployment project path [C:\projects\my-agent]:  ← Press Enter to keep
+Resource group [a365demorg]: new-rg  ← Type to update
+```
 
 ### Setup Command
 
@@ -315,7 +562,8 @@ After running `a365 config init`:
 
 1. **Review the generated config**:
    ```bash
-   cat a365.config.json
+   # View static configuration
+   a365 config display
    ```
 
 2. **Run setup** to create Azure resources:
@@ -323,19 +571,16 @@ After running `a365 config init`:
    a365 setup
    ```
 
-3. **Create agent instance**:
-   ```bash
-   a365 create-instance
-   ```
-
-4. **Deploy your agent**:
+3. **Deploy your agent**:
    ```bash
    a365 deploy
    ```
 
-## Support
+## Additional Resources
 
-For issues or questions:
+- **Command Reference**: [a365 config display](config-display.md)
+- **Setup Guide**: [a365 setup](setup.md)
+- **Deployment Guide**: [a365 deploy](deploy.md)
 - **GitHub Issues**: [Agent 365 Repository](https://github.com/microsoft/Agent365-devTools/issues)
 - **Documentation**: [Microsoft Learn](https://learn.microsoft.com/agent365)
-- **Community**: [Microsoft Tech Community](https://techcommunity.microsoft.com)
+

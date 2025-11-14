@@ -152,7 +152,9 @@ public static class ConfigCommand
                 }
                 else
                 {
-                    logger.LogWarning("Configuration wizard cancelled.");
+                    // Wizard returned null - could be user cancellation or error
+                    // Error details already logged by the wizard service
+                    logger.LogDebug("Configuration wizard returned null");
                 }
             }
             catch (Exception ex)

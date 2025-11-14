@@ -44,13 +44,14 @@ public class ConfigurationWizardService : IConfigurationWizardService
             {
                 _logger.LogDebug("Using existing configuration with deploymentProjectPath: {Path}", existingConfig.DeploymentProjectPath ?? "(null)");
                 Console.WriteLine("Found existing configuration. Default values will be used where available.");
-                Console.WriteLine("Press **Enter** to keep a current value, or type a new one to update it.");
+                Console.WriteLine("Press Enter to keep a current value, or type a new one to update it.");
                 Console.WriteLine();
             }
 
             // Step 1: Verify Azure CLI login
             if (!await VerifyAzureLoginAsync())
             {
+                _logger.LogError("Configuration wizard cancelled: Azure CLI authentication required");
                 return null;
             }
 
@@ -58,7 +59,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var accountInfo = await _azureCliService.GetCurrentAccountAsync();
             if (accountInfo == null)
             {
-                Console.WriteLine("ERROR: Could not retrieve Azure account information. Please run 'az login' first.");
+                _logger.LogError("Failed to retrieve Azure account information. Please run 'az login' first");
                 return null;
             }
 
@@ -72,7 +73,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var agentName = PromptForAgentName(existingConfig);
             if (string.IsNullOrWhiteSpace(agentName))
             {
-                Console.WriteLine("ERROR: Agent name is required. Configuration cancelled.");
+                _logger.LogError("Agent name is required. Configuration cancelled");
                 return null;
             }
 
@@ -82,6 +83,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var deploymentPath = await PromptForDeploymentPathAsync(existingConfig);
             if (string.IsNullOrWhiteSpace(deploymentPath))
             {
+                _logger.LogError("Configuration wizard cancelled: Deployment project path not provided or invalid");
                 return null;
             }
 
@@ -89,6 +91,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var resourceGroup = await PromptForResourceGroupAsync(existingConfig);
             if (string.IsNullOrWhiteSpace(resourceGroup))
             {
+                _logger.LogError("Configuration wizard cancelled: Resource group not selected");
                 return null;
             }
 
@@ -96,6 +99,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var appServicePlan = await PromptForAppServicePlanAsync(existingConfig, resourceGroup);
             if (string.IsNullOrWhiteSpace(appServicePlan))
             {
+                _logger.LogError("Configuration wizard cancelled: App Service Plan not selected");
                 return null;
             }
 
@@ -103,6 +107,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var managerEmail = PromptForManagerEmail(existingConfig);
             if (string.IsNullOrWhiteSpace(managerEmail))
             {
+                _logger.LogError("Configuration wizard cancelled: Manager email not provided");
                 return null;
             }
 
@@ -139,6 +144,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             if (saveResponse == "n" || saveResponse == "no")
             {
                 Console.WriteLine("Configuration cancelled.");
+                _logger.LogInformation("Configuration wizard cancelled by user");
                 return null;
             }
 
@@ -163,12 +169,12 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 AgentDescription = $"{agentName} - Agent 365 Demo Agent"
             };
 
+            _logger.LogInformation("Configuration wizard completed successfully");
             return config;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during configuration wizard");
-            Console.WriteLine($"ERROR: Configuration wizard failed: {ex.Message}");
+            _logger.LogError(ex, "Configuration wizard failed: {Message}", ex.Message);
             return null;
         }
     }
@@ -177,8 +183,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
     {
         if (!await _azureCliService.IsLoggedInAsync())
         {
-            Console.WriteLine("ERROR: You are not logged in to Azure CLI.");
-            Console.WriteLine("Please run 'az login' and select your subscription, then try again.");
+            _logger.LogError("You are not logged in to Azure CLI. Please run 'az login' and select your subscription, then try again");
             return false;
         }
 
@@ -247,6 +252,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
                 if (response != "y" && response != "yes")
                 {
+                    _logger.LogError("Deployment path must contain a valid project. Configuration cancelled");
                     return string.Empty;
                 }
             }
