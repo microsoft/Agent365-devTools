@@ -632,11 +632,11 @@ public class GraphApiService
         if (!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync(ct);
-            _logger.LogWarning("Graph DELETE {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+            _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
             return false;
         }
 
-        return true; 
+        return true;
     }
 
     public async Task<string?> LookupServicePrincipalByAppIdAsync(string tenantId, string appId, CancellationToken ct = default)
@@ -804,7 +804,8 @@ public class GraphApiService
                         _logger.LogError("  2. Check if you are a Global Administrator or Application Administrator");
                         _logger.LogError("  3. Ensure the oauth2PermissionGrant exists and is not system-protected");
                         _logger.LogError("  4. Try running: az login --tenant {TenantId} with elevated privileges", tenantId);
-                        return false;   
+                        
+                        throw new InvalidOperationException($"Failed to delete existing oauth2PermissionGrant {id}");
                     }
 
                     _logger.LogDebug("Successfully deleted oauth2PermissionGrant {Id}", id);

@@ -17,8 +17,8 @@ a365 deploy app
 a365 deploy mcp
 
 # Common flags
-a365 deploy --restart     # reuse existing publish/ (skip build)
-a365 deploy --inspect     # pause to review publish/ and zip
+a365 deploy app --restart     # reuse existing publish/ (skip build)
+a365 deploy app --inspect     # pause to review publish/ and zip
 a365 deploy --dry-run     # print actions, no changes
 a365 deploy --verbose     # detailed logs
 ```
@@ -30,7 +30,7 @@ a365 deploy --verbose     # detailed logs
 ### Default (`a365 deploy`)
 Runs **two phases sequentially**:
 
-**Part 1 — App Binaries**
+**Step 1 — App Binaries**
 1. Load `a365.config.json` (+ dynamic state from generated config).
 2. **Azure preflight**  
    - Validates Azure CLI auth + subscription context (`ValidateAllAsync`).  
@@ -38,11 +38,11 @@ Runs **two phases sequentially**:
 3. Build/package via `DeploymentService.DeployAsync(...)` (supports `--inspect` and `--restart`).
 4. Log success/failure.
 
-**Part 2 — MCP Permissions**
+**Step 2 — MCP Permissions**
 1. Re-load config (same path).
 2. Read required scopes from `deploymentProjectPath/toolingManifest.json`.
 3. Apply **in order**:
-   - **OAuth2 grant**: `CreateOrUpdateOauth2PermissionGrantAsync`
+   - **OAuth2 grant**: `ReplaceOauth2PermissionGrantAsync`
    - **Inheritable permissions**: `SetInheritablePermissionsAsync`
    - **Admin consent (agent identity)**: `ReplaceOauth2PermissionGrantAsync`
 4. Log success/failure.
@@ -108,7 +108,7 @@ Runs **two phases sequentially**:
 When running `a365 deploy` or `a365 deploy mcp`:
 
 1. **OAuth2 permission grant**  
-   `CreateOrUpdateOauth2PermissionGrantAsync(tenant, blueprintSp, mcpPlatformSp, scopes)`
+   `ReplaceOauth2PermissionGrantAsync(tenant, blueprintSp, mcpPlatformSp, scopes)`
 
 2. **Inheritable permissions**  
    `SetInheritablePermissionsAsync(tenant, agentBlueprintAppId, mcpResourceAppId, scopes)`
@@ -128,7 +128,7 @@ a365 deploy --verbose
 
 ### Quick iteration (reuse last build)
 ```bash
-a365 deploy --restart
+a365 deploy app --restart
 ```
 
 ### MCP only (permissions/scopes refresh)
@@ -138,7 +138,7 @@ a365 deploy mcp --verbose
 
 ### Validate everything without changing anything
 ```bash
-a365 deploy --dry-run --inspect
+a365 deploy app --dry-run --inspect
 ```
 
 ---

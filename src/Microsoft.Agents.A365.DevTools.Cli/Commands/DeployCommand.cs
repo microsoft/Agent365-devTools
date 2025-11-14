@@ -329,8 +329,8 @@ public class DeployCommand
             LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
             executor);
 
-        // Step 1: Apply MCP OAuth2 permission grants
-        logger.LogInformation("Step 1: Applying MCP OAuth2 permission grants and inheritable permissions...");
+        // 1. Apply MCP OAuth2 permission grants
+        logger.LogInformation("1. Applying MCP OAuth2 permission grants...");
         await EnsureMcpOauth2PermissionGrantsAsync(
             graphService,
             config,
@@ -338,8 +338,8 @@ public class DeployCommand
             logger
         );
 
-        // Step 2: Apply inheritable permissions on the agent identity blueprint
-        logger.LogInformation("Step 2: Applying MCP inheritable permissions...");
+        // 2. Apply inheritable permissions on the agent identity blueprint
+        logger.LogInformation("2. Applying MCP inheritable permissions...");
         await EnsureMcpInheritablePermissionsAsync(
             graphService,
             config,
@@ -347,8 +347,8 @@ public class DeployCommand
             logger
         );
 
-        // Step 3: Consent to required scopes for the agent identity
-        logger.LogInformation("Step 3: Consenting to required MCP scopes for the agent identity...");
+        // 3. Consent to required scopes for the agent identity
+        logger.LogInformation("3. Consenting to required MCP scopes for the agent identity...");
         await EnsureAdminConsentForAgenticAppAsync(
             graphService,
             config,
