@@ -412,10 +412,10 @@ public sealed class A365SetupRunner
             var blueprintObjectId = blueprintResult.objectId;
 
             _logger.LogInformation("Agent Blueprint Details:");
-            _logger.LogInformation("  • Display Name: {Name}", agentBlueprintDisplayName);
-            _logger.LogInformation("  • App ID: {Id}", blueprintAppId);
-            _logger.LogInformation("  • Object ID: {Id}", blueprintObjectId);
-            _logger.LogInformation("  • Identifier URI: api://{Id}", blueprintAppId);
+            _logger.LogInformation("  - Display Name: {Name}", agentBlueprintDisplayName);
+            _logger.LogInformation("  - App ID: {Id}", blueprintAppId);
+            _logger.LogInformation("  - Object ID: {Id}", blueprintObjectId);
+            _logger.LogInformation("  - Identifier URI: api://{Id}", blueprintAppId);
 
             // Convert to camelCase and save
             var camelCaseConfig = new JsonObject
@@ -493,9 +493,9 @@ public sealed class A365SetupRunner
         _logger.LogInformation("==========================================");
         _logger.LogInformation("");
         _logger.LogInformation("Agent Blueprint Details:");
-        _logger.LogInformation("  • Display Name: {Name}", cfg["agentBlueprintDisplayName"]?.GetValue<string>());
-        _logger.LogInformation("  • Object ID: {Id}", generatedConfig["agentBlueprintObjectId"]?.GetValue<string>());
-        _logger.LogInformation("  • Identifier URI: api://{Id}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
+        _logger.LogInformation("  - Display Name: {Name}", cfg["agentBlueprintDisplayName"]?.GetValue<string>());
+        _logger.LogInformation("  - Object ID: {Id}", generatedConfig["agentBlueprintObjectId"]?.GetValue<string>());
+        _logger.LogInformation("  - Identifier URI: api://{Id}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
 
         // Print summary to console as the very last output
         AppDomain.CurrentDomain.ProcessExit += (_, __) =>
@@ -594,10 +594,10 @@ public sealed class A365SetupRunner
             var createAppUrl = "https://graph.microsoft.com/beta/applications";
             
             _logger.LogInformation("Creating Agent Blueprint application...");
-            _logger.LogInformation("  • Display Name: {DisplayName}", displayName);
+            _logger.LogInformation("  - Display Name: {DisplayName}", displayName);
             if (!string.IsNullOrEmpty(sponsorUserId))
             {
-                _logger.LogInformation("  • Sponsor: User ID {UserId}", sponsorUserId);
+                _logger.LogInformation("  - Sponsor: User ID {UserId}", sponsorUserId);
             }
             
             var appResponse = await httpClient.PostAsync(
@@ -643,8 +643,8 @@ public sealed class A365SetupRunner
             var objectId = app["id"]!.GetValue<string>();
 
             _logger.LogInformation("Application created successfully");
-            _logger.LogInformation("  • App ID: {AppId}", appId);
-            _logger.LogInformation("  • Object ID: {ObjectId}", objectId);
+            _logger.LogInformation("  - App ID: {AppId}", appId);
+            _logger.LogInformation("  - Object ID: {ObjectId}", objectId);
 
             // Wait for application propagation
             const int maxRetries = 30;
@@ -783,7 +783,7 @@ public sealed class A365SetupRunner
                 applicationScopes.Add("User.Read");
             }
 
-            _logger.LogInformation("  • Application scopes: {Scopes}", string.Join(", ", applicationScopes));
+            _logger.LogInformation("  - Application scopes: {Scopes}", string.Join(", ", applicationScopes));
 
             // Generate consent URLs for Graph and Connectivity
             var applicationScopesJoined = string.Join(' ', applicationScopes);
@@ -887,10 +887,10 @@ public sealed class A365SetupRunner
                 return false;
             }
 
-            _logger.LogInformation("  • Credential Name: {Name}", credentialName);
-            _logger.LogInformation("  • Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-            _logger.LogInformation("  • Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
-            
+            _logger.LogInformation("  - Credential Name: {Name}", credentialName);
+            _logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+            _logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+
             return true;
         }
         catch (Exception ex)
@@ -1107,7 +1107,7 @@ public sealed class A365SetupRunner
                 ct);
 
             _logger.LogInformation("Client secret created successfully!");
-            _logger.LogInformation("  • Secret stored in generated config (encrypted: {IsProtected})", RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
+            _logger.LogInformation("  - Secret stored in generated config (encrypted: {IsProtected})", RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
             _logger.LogWarning("IMPORTANT: The client secret has been stored in {Path}", generatedConfigPath);
             _logger.LogWarning("Keep this file secure and do not commit it to source control!");
             
@@ -1322,9 +1322,9 @@ public sealed class A365SetupRunner
             var graphUrl = $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
             
             _logger.LogInformation("Configuring Graph inheritable permissions");
-            _logger.LogInformation("  • Request URL: {Url}", graphUrl);
-            _logger.LogInformation("  • Blueprint Object ID: {ObjectId}", blueprintObjectId);
-            
+            _logger.LogInformation("  - Request URL: {Url}", graphUrl);
+            _logger.LogInformation("  - Blueprint Object ID: {ObjectId}", blueprintObjectId);
+
             // Convert scope list to JsonArray
             var scopesArray = new JsonArray();
             foreach (var scope in inheritableScopes)
@@ -1342,7 +1342,7 @@ public sealed class A365SetupRunner
                 }
             };
 
-            _logger.LogInformation("  • Request body: {Body}", graphBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            _logger.LogInformation("  - Request body: {Body}", graphBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             
             var graphResponse = await httpClient.PostAsync(
                 graphUrl,
@@ -1360,7 +1360,7 @@ public sealed class A365SetupRunner
                 
                 if (isAlreadyConfigured)
                 {
-                    _logger.LogInformation("  • Graph inheritable permissions already configured (idempotent)");
+                    _logger.LogInformation("  - Graph inheritable permissions already configured (idempotent)");
                 }
                 else
                 {
@@ -1373,8 +1373,8 @@ public sealed class A365SetupRunner
             else
             {
                 _logger.LogInformation("Successfully configured Graph inheritable permissions");
-                _logger.LogInformation("    • Resource: Microsoft Graph");
-                _logger.LogInformation("    • Scopes: {Scopes}", string.Join(", ", inheritableScopes));
+                _logger.LogInformation("    - Resource: Microsoft Graph");
+                _logger.LogInformation("    - Scopes: {Scopes}", string.Join(", ", inheritableScopes));
                 generatedConfig["graphInheritanceConfigured"] = true;
             }
 
@@ -1385,7 +1385,7 @@ public sealed class A365SetupRunner
             
             _logger.LogInformation("");
             _logger.LogInformation("Configuring Connectivity inheritable permissions");
-            _logger.LogInformation("  • Request URL: {Url}", connectivityUrl);
+            _logger.LogInformation("  - Request URL: {Url}", connectivityUrl);
             
             var connectivityBody = new JsonObject
             {
@@ -1397,7 +1397,7 @@ public sealed class A365SetupRunner
                 }
             };
 
-            _logger.LogInformation("  • Request body: {Body}", connectivityBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            _logger.LogInformation("  - Request body: {Body}", connectivityBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
             var connectivityResponse = await httpClient.PostAsync(
                 connectivityUrl,
@@ -1415,7 +1415,7 @@ public sealed class A365SetupRunner
                 
                 if (isAlreadyConfigured)
                 {
-                    _logger.LogInformation("  • Connectivity inheritable permissions already configured (idempotent)");
+                    _logger.LogInformation("  - Connectivity inheritable permissions already configured (idempotent)");
                 }
                 else
                 {
@@ -1427,8 +1427,8 @@ public sealed class A365SetupRunner
             else
             {
                 _logger.LogInformation("Successfully configured Connectivity inheritable permissions");
-                _logger.LogInformation("    • Resource: Connectivity Service");
-                _logger.LogInformation("    • Scope: Connectivity.Connections.Read");
+                _logger.LogInformation("    - Resource: Connectivity Service");
+                _logger.LogInformation("    - Scope: Connectivity.Connections.Read");
                 generatedConfig["connectivityInheritanceConfigured"] = true;
             }
 

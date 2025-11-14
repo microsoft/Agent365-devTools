@@ -190,7 +190,7 @@ Uses:
 
 ```bash
 # Deploy your agent to Azure
-a365 deploy
+a365 deploy app
 ```
 
 Uses:

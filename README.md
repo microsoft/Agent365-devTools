@@ -114,6 +114,8 @@ a365 create-instance enable-notifications
 ### Deploy & Cleanup
 ```bash
 a365 deploy                 # Full build and deploy
+a365 deploy app             # Deploy application binaries to the configured Azure App Service
+a365 deploy mcp             # Update Agent365 Tool permissions
 a365 deploy --restart       # Skip build, deploy existing publish folder (quick iteration)
 a365 deploy --inspect       # Pause before deployment to verify package contents
 a365 deploy --restart --inspect  # Combine flags for quick redeploy with inspection
@@ -122,6 +124,8 @@ a365 cleanup
 
 **Deploy Options Explained:**
 - **Default** (`a365 deploy`): Full build pipeline - platform detection, environment validation, build, manifest creation, packaging, and deployment
+- **app**: Deploy application binaries to the configured Azure App Service
+- **mcp**: Update Agent365 Tool permissions
 - **`--restart`**: Skip all build steps and start from compressing the existing `publish/` folder. Perfect for quick iteration when you've manually modified files in the publish directory (e.g., tweaking `requirements.txt`, `.deployment`, or other config files)
 - **`--inspect`**: Pause before deployment to review the publish folder and ZIP contents. Useful for verifying package structure before uploading to Azure
 - **`--verbose`**: Enable detailed logging for all build and deployment steps

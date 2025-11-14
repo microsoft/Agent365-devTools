@@ -459,9 +459,9 @@ public sealed class A365CreateInstanceRunner
         try
         {
             _logger.LogInformation("Creating Agent Identity using Graph API...");
-            _logger.LogInformation("  • Display Name: {Name}", displayName);
-            _logger.LogInformation("  • Agent Blueprint ID: {Id}", agentBlueprintId);
-            _logger.LogInformation("  • Authenticating using blueprint client credentials...");
+            _logger.LogInformation("  - Display Name: {Name}", displayName);
+            _logger.LogInformation("  - Agent Blueprint ID: {Id}", agentBlueprintId);
+            _logger.LogInformation("  - Authenticating using blueprint client credentials...");
 
             // Validate that we have client secret
             if (string.IsNullOrWhiteSpace(agentBlueprintClientSecret))
@@ -504,7 +504,7 @@ public sealed class A365CreateInstanceRunner
                         var meJson = await meResponse.Content.ReadAsStringAsync(ct);
                         var me = JsonNode.Parse(meJson)!.AsObject();
                         currentUserId = me["id"]!.GetValue<string>();
-                        _logger.LogInformation("  • Current user ID (sponsor): {UserId}", currentUserId);
+                        _logger.LogInformation("  - Current user ID (sponsor): {UserId}", currentUserId);
                     }
                 }
             }
@@ -530,7 +530,7 @@ public sealed class A365CreateInstanceRunner
                 };
             }
 
-            _logger.LogInformation("  • Sending request to create agent identity...");
+            _logger.LogInformation("  - Sending request to create agent identity...");
             var identityResponse = await httpClient.PostAsync(
                 createIdentityUrl,
                 new StringContent(identityBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
@@ -549,8 +549,8 @@ public sealed class A365CreateInstanceRunner
                     _logger.LogError("This usually means the blueprint application doesn't have the required permissions");
                     _logger.LogError("");
                     _logger.LogError("REQUIRED PERMISSIONS:");
-                    _logger.LogError("  • Application.ReadWrite.All (Application permission)");
-                    _logger.LogError("  • AgentIdentity.Create.OwnedBy (Application permission)");
+                    _logger.LogError("  - Application.ReadWrite.All (Application permission)");
+                    _logger.LogError("  - AgentIdentity.Create.OwnedBy (Application permission)");
                     _logger.LogError("");
                     return (false, null);
                 }
@@ -587,7 +587,7 @@ public sealed class A365CreateInstanceRunner
             var identityId = identity["id"]!.GetValue<string>();
 
             _logger.LogInformation("Agent Identity created successfully!");
-            _logger.LogInformation("  • Agent Identity ID: {Id}", identityId);
+            _logger.LogInformation("  - Agent Identity ID: {Id}", identityId);
 
             return (true, identityId);
         }
@@ -676,9 +676,9 @@ public sealed class A365CreateInstanceRunner
         try
         {
             _logger.LogInformation("Creating Agent User using Graph API...");
-            _logger.LogInformation("  • Display Name: {Name}", displayName);
-            _logger.LogInformation("  • User Principal Name: {UPN}", userPrincipalName);
-            _logger.LogInformation("  • Agent Identity ID: {Id}", agenticAppId);
+            _logger.LogInformation("  - Display Name: {Name}", displayName);
+            _logger.LogInformation("  - User Principal Name: {UPN}", userPrincipalName);
+            _logger.LogInformation("  - Agent Identity ID: {Id}", agenticAppId);
 
             // Get Graph access token
             var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
@@ -750,8 +750,8 @@ public sealed class A365CreateInstanceRunner
             var userId = user["id"]!.GetValue<string>();
 
             _logger.LogInformation("Agent User created successfully!");
-            _logger.LogInformation("  • Agent User ID: {Id}", userId);
-            _logger.LogInformation("  • User Principal Name: {UPN}", userPrincipalName);
+            _logger.LogInformation("  - Agent User ID: {Id}", userId);
+            _logger.LogInformation("  - User Principal Name: {UPN}", userPrincipalName);
 
             // Assign manager if provided
             if (!string.IsNullOrWhiteSpace(managerEmail))
@@ -779,7 +779,7 @@ public sealed class A365CreateInstanceRunner
     {
         try
         {
-            _logger.LogInformation("  • Assigning manager");
+            _logger.LogInformation("  - Assigning manager");
 
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
@@ -822,7 +822,7 @@ public sealed class A365CreateInstanceRunner
 
             if (assignResponse.IsSuccessStatusCode)
             {
-                _logger.LogInformation("  • Manager assigned");
+                _logger.LogInformation("  - Manager assigned");
             }
             else
             {
@@ -952,7 +952,7 @@ public sealed class A365CreateInstanceRunner
             // Set usage location if provided
             if (!string.IsNullOrWhiteSpace(usageLocation))
             {
-                _logger.LogInformation("  • Setting usage location: {Location}", usageLocation);
+                _logger.LogInformation("  - Setting usage location: {Location}", usageLocation);
                 var updateUserUrl = $"https://graph.microsoft.com/v1.0/users/{userId}";
                 var updateBody = new JsonObject
                 {
@@ -972,7 +972,7 @@ public sealed class A365CreateInstanceRunner
             }
 
             // Assign licenses
-            _logger.LogInformation("  • Assigning Microsoft 365 licenses");
+            _logger.LogInformation("  - Assigning Microsoft 365 licenses");
             var assignLicenseUrl = $"https://graph.microsoft.com/v1.0/users/{userId}/assignLicense";
             var licenseBody = new JsonObject
             {
@@ -992,8 +992,8 @@ public sealed class A365CreateInstanceRunner
             if (licenseResponse.IsSuccessStatusCode)
             {
                 _logger.LogInformation("Licenses assigned successfully");
-                _logger.LogInformation("  • Microsoft Teams Enterprise");
-                _logger.LogInformation("  • Microsoft 365 E5 (no Teams)");
+                _logger.LogInformation("  - Microsoft Teams Enterprise");
+                _logger.LogInformation("  - Microsoft 365 E5 (no Teams)");
             }
             else
             {
@@ -1240,8 +1240,8 @@ public sealed class A365CreateInstanceRunner
                 var spDisplayName = sp["displayName"]?.GetValue<string>();
                 
                 _logger.LogInformation("  Service Principal found:");
-                _logger.LogInformation("    • Object ID: {ObjectId}", spObjectId);
-                _logger.LogInformation("    • Display Name: {DisplayName}", spDisplayName);
+                _logger.LogInformation("    - Object ID: {ObjectId}", spObjectId);
+                _logger.LogInformation("    - Display Name: {DisplayName}", spDisplayName);
                 return true;
             }
 
