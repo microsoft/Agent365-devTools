@@ -309,8 +309,8 @@ public class SetupCommand
 
             // Configuration files
             logger.LogInformation("Configuration Files:");
-            logger.LogInformation("   • Setup Config: {SetupConfig}", setupConfigFile.FullName);
-            logger.LogInformation("   • Generated Config: {GeneratedConfig}", generatedConfigPath);
+            logger.LogInformation("   - Setup Config: {SetupConfig}", setupConfigFile.FullName);
+            logger.LogInformation("   - Generated Config: {GeneratedConfig}", generatedConfigPath);
 
             logger.LogInformation("");
             logger.LogInformation("Next Steps:");
@@ -347,7 +347,7 @@ public class SetupCommand
         }
 
         // Register Bot Service provider (hidden as messaging endpoint provider)
-        logger.LogInformation("   • Ensuring messaging endpoint provider is registered");
+        logger.LogInformation("   - Ensuring messaging endpoint provider is registered");
         var providerRegistered = await botConfigurator.EnsureBotServiceProviderAsync(
             setupConfig.SubscriptionId, 
             setupConfig.ResourceGroup);
@@ -362,10 +362,10 @@ public class SetupCommand
         var endpointName = $"{setupConfig.WebAppName}-endpoint";
         var messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
         
-        logger.LogInformation("   • Registering blueprint messaging endpoint");
-        logger.LogInformation("     - Endpoint Name: {EndpointName}", endpointName);
-        logger.LogInformation("     - Messaging Endpoint: {Endpoint}", messagingEndpoint);
-        logger.LogInformation("     - Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
+        logger.LogInformation("   - Registering blueprint messaging endpoint");
+        logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
+        logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
+        logger.LogInformation("     * Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
         
         var endpointRegistered = await botConfigurator.CreateOrUpdateBotWithAgentBlueprintAsync(
             appServiceName: setupConfig.WebAppName,
@@ -385,7 +385,7 @@ public class SetupCommand
         }
 
         // Configure channels (Teams, Email) as messaging integrations
-        logger.LogInformation("   • Configuring messaging integrations");
+        logger.LogInformation("   - Configuring messaging integrations");
         var integrationsConfigured = await botConfigurator.ConfigureChannelsAsync(
             endpointName,
             setupConfig.ResourceGroup,
@@ -435,7 +435,7 @@ public class SetupCommand
         var Agent365ToolsSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(cfg.TenantId, resourceAppId, ct)
             ?? throw new InvalidOperationException("Agent 365 Tools Service Principal not found for appId " + resourceAppId);
 
-        logger.LogInformation("   • OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
+        logger.LogInformation("   - OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
             blueprintSpObjectId, Agent365ToolsSpObjectId, string.Join(' ', scopes));
 
         var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
@@ -456,7 +456,7 @@ public class SetupCommand
 
         var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(cfg.Environment);
 
-        logger.LogInformation("   • Inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+        logger.LogInformation("   - Inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
             cfg.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
         var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(

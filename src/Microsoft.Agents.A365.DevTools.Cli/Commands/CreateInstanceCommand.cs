@@ -113,17 +113,17 @@ public class CreateInstanceCommand
                 logger.LogInformation("     Agent User ID: {AgenticUserId}", instanceConfig.AgenticUserId ?? "(not set)");
                 logger.LogInformation("     Agent User Principal Name: {AgentUserPrincipalName}", instanceConfig.AgentUserPrincipalName ?? "(not set)");
 
-                // Step 4: Admin consent for MCP scopes (oauth2PermissionGrants)
-                logger.LogInformation("Step 5/5: Granting MCP scopes to Agent Identity via oauth2PermissionGrants");
+                // Admin consent for MCP scopes (oauth2PermissionGrants)
+                logger.LogInformation("Granting MCP scopes to Agent Identity via oauth2PermissionGrants");
 
                 var manifestPath = Path.Combine(instanceConfig.DeploymentProjectPath ?? string.Empty, "ToolingManifest.json");
                 var scopesForAgent = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
-                // clientId must be the *service principal objectId* of the agent identity app
-                var agentIdentitySpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(
+                // clientId must be the *service principal objectId* of the agentic app
+                var agenticAppSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(
                     instanceConfig.TenantId,
                     instanceConfig.AgenticAppId ?? string.Empty
-                ) ?? throw new InvalidOperationException($"Service Principal not found for agent identity appId {instanceConfig.AgenticAppId}");
+                ) ?? throw new InvalidOperationException($"Service Principal not found for agentic app Id {instanceConfig.AgenticAppId}");
 
                 var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(instanceConfig.Environment);
                 var Agent365ToolsResourceSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(instanceConfig.TenantId, resourceAppId)
@@ -131,7 +131,7 @@ public class CreateInstanceCommand
 
                 var response = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
                     instanceConfig.TenantId,
-                    agentIdentitySpObjectId,
+                    agenticAppSpObjectId,
                     Agent365ToolsResourceSpObjectId,
                     scopesForAgent
                 );
@@ -154,7 +154,7 @@ public class CreateInstanceCommand
                 // Grant oauth2PermissionGrants: *agent identity SP* -> Messaging Bot API SP
                 var botApiGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
                     instanceConfig.TenantId,
-                    agentIdentitySpObjectId,
+                    agenticAppSpObjectId,
                     botApiResourceSpObjectId,
                     new[] { "Authorization.ReadWrite", "user_impersonation" });
 

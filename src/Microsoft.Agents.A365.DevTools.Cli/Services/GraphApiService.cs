@@ -566,6 +566,7 @@ public class GraphApiService
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         _httpClient.DefaultRequestHeaders.Remove("ConsistencyLevel");
         _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("ConsistencyLevel", "eventual");
+
         return true;
     }
 
@@ -578,6 +579,7 @@ public class GraphApiService
         var resp = await _httpClient.GetAsync(url, ct);
         if (!resp.IsSuccessStatusCode) return null;
         var json = await resp.Content.ReadAsStringAsync(ct);
+
         return JsonDocument.Parse(json);
     }
 
@@ -591,6 +593,7 @@ public class GraphApiService
         var resp = await _httpClient.PostAsync(url, content, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode) return null;
+
         return string.IsNullOrWhiteSpace(body) ? null : JsonDocument.Parse(body);
     }
 
@@ -603,8 +606,37 @@ public class GraphApiService
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
         var resp = await _httpClient.SendAsync(request, ct);
+
         // Many PATCH calls return 204 NoContent on success
         return resp.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> GraphDeleteAsync(
+        string tenantId,
+        string relativePath,
+        CancellationToken ct = default,
+        bool treatNotFoundAsSuccess = true)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct)) return false;
+
+        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? relativePath
+            : $"https://graph.microsoft.com{relativePath}";
+
+        using var req = new HttpRequestMessage(HttpMethod.Delete, url);
+        using var resp = await _httpClient.SendAsync(req, ct);
+
+        // 404 can be considered success for idempotent deletes
+        if (treatNotFoundAsSuccess && (int)resp.StatusCode == 404) return true;
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+            return false;
+        }
+
+        return true;
     }
 
     public async Task<string?> LookupServicePrincipalByAppIdAsync(string tenantId, string appId, CancellationToken ct = default)
@@ -706,6 +738,8 @@ public class GraphApiService
                 ct);
 
             // Success => created or updated
+            _logger.LogInformation("Inheritable permissions set: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+                blueprintAppId, resourceAppId, scopesString);
             return (ok: true, alreadyExists: false, error: null);
         }
         catch (Exception ex)
@@ -715,9 +749,83 @@ public class GraphApiService
                 msg.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
                 msg.Contains("409"))
             {
+                _logger.LogWarning("Inheritable permissions already exist: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+                    blueprintAppId, resourceAppId, scopesString);
                 return (ok: true, alreadyExists: true, error: null);
             }
+            _logger.LogError("Failed to set inheritable permissions: {Error}", msg);
             return (ok: false, alreadyExists: false, error: msg);
         }
+    }
+
+    public async Task<bool> ReplaceOauth2PermissionGrantAsync(
+        string tenantId,
+        string clientSpObjectId,  
+        string resourceSpObjectId,
+        IEnumerable<string> scopes,
+        CancellationToken ct = default)
+    {
+        // Normalize scopes -> single space-delimited string (Graph’s required shape)
+        var desiredSet = new HashSet<string>(
+            (scopes ?? Enumerable.Empty<string>())
+                .SelectMany(s => (s ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
+            StringComparer.OrdinalIgnoreCase);
+
+        var desiredScopeString = string.Join(' ', desiredSet.OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
+
+        // 1) Find existing grant(s) for client resource
+        var listDoc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
+            ct);
+
+        var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true ? arr : default;
+
+        // 2) Delete all existing grants for this pair (rare but possible to have >1)
+        if (existing.ValueKind == JsonValueKind.Array && existing.GetArrayLength() > 0)
+        {
+            foreach (var item in existing.EnumerateArray())
+            {
+                var id = item.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    _logger.LogDebug("Deleting existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}", 
+                        id, clientSpObjectId, resourceSpObjectId);
+
+                    var ok = await GraphDeleteAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", ct);
+                    if (!ok)
+                    {
+                        _logger.LogError("Failed to delete existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}. " +
+                                       "This may indicate insufficient permissions or the grant is protected. " +
+                                       "Required permissions: DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All", 
+                                       id, clientSpObjectId, resourceSpObjectId);
+                        _logger.LogError("Troubleshooting steps:");
+                        _logger.LogError("  1. Verify your account has sufficient Azure AD permissions");
+                        _logger.LogError("  2. Check if you are a Global Administrator or Application Administrator");
+                        _logger.LogError("  3. Ensure the oauth2PermissionGrant exists and is not system-protected");
+                        _logger.LogError("  4. Try running: az login --tenant {TenantId} with elevated privileges", tenantId);
+                        
+                        throw new InvalidOperationException($"Failed to delete existing oauth2PermissionGrant {id}");
+                    }
+
+                    _logger.LogDebug("Successfully deleted oauth2PermissionGrant {Id}", id);
+                }
+            }
+        }
+
+        // If no scopes desired, we’re done (revoke only)
+        if (desiredSet.Count == 0) return true;
+
+        // 3) Create the new grant with exactly the desired scopes
+        var payload = new
+        {
+            clientId = clientSpObjectId,
+            consentType = "AllPrincipals",
+            resourceId = resourceSpObjectId,
+            scope = desiredScopeString
+        };
+
+        var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
+        return created != null;
     }
 }
