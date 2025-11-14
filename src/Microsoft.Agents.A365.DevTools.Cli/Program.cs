@@ -100,7 +100,7 @@ class Program
         }
         catch (Exceptions.Agent365Exception ex)
         {
-            // Structured Agent365 exception - display user-friendly error message
+            // Structured Microsoft Agent 365 exception - display user-friendly error message
             // No stack trace for user errors (validation, config, auth issues)
             HandleAgent365Exception(ex);
             return ex.ExitCode;
@@ -112,7 +112,7 @@ class Program
             Console.ForegroundColor = ConsoleColor.Red;
             Console.Error.WriteLine();
             Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
-            Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365/issues");
+            Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
             Console.Error.WriteLine();
             Console.ResetColor();
             return 1;
@@ -139,7 +139,7 @@ class Program
         if (!ex.IsUserError)
         {
             Console.Error.WriteLine("If this error persists, please report it at:");
-            Console.Error.WriteLine("https://github.com/microsoft/Agent365/issues");
+            Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
             Console.Error.WriteLine();
         }
         
@@ -170,7 +170,7 @@ class Program
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
         
-        // Add Agent365 Tooling Service with environment detection
+        // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
         {
             var configService = provider.GetRequiredService<IConfigService>();
@@ -252,3 +252,4 @@ class Program
             .Replace("_", "-");
     }
 }
+
