@@ -138,5 +138,55 @@ public static class McpConstants
             return ServerToScope.Values.Select(v => v.Scope).Distinct().OrderBy(s => s).ToArray();
         }
     }
-  
+
+    // PackageMCPServer constants
+    public static class PackageMCPServer
+    {
+        public const string OutlinePngIconFileName = "outline.png";
+        public const string ColorPngIconFileName = "color.png";
+        public const string ManifestFileName = "manifest.json";
+        public const string TemplateManifestJson =
+        @"
+        {
+            ""$schema"": ""https://developer.microsoft.com/en-us/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json"",
+            ""manifestVersion"": ""devPreview"",
+            ""agentConnectors"": [
+                {
+                    ""id"": ""11111111-1111-1111-1111-111111111112"",
+                    ""displayName"": ""DUMMY_DISPLAY_NAME"",
+                    ""description"": ""DUMMY_DESCRIPTION"",
+                    ""toolSource"": {
+                        ""remoteMcpServer"": {
+                            ""mcpServerUrl"": ""https://example.com/mcpServer"",
+                            ""authorization"": {
+                                ""type"": ""None""
+                            }
+                        }
+                    }
+                }
+            ],
+            ""version"": ""1.0.0"",
+            ""id"": ""11111111-1111-1111-1111-111111111112"",
+            ""developer"": {
+                ""name"": ""DUMMY_DEVELOPER"",
+                ""websiteUrl"": ""https://go.microsoft.com/fwlink/?linkid=2138949"",
+                ""privacyUrl"": ""https://go.microsoft.com/fwlink/?linkid=2138865"",
+                ""termsOfUseUrl"": ""https://go.microsoft.com/fwlink/?linkid=2138950""
+            },
+            ""name"": {
+                ""short"": ""DUMMY_SHORT_NAME"",
+                ""full"": ""DUMMY_FULL_NAME""
+            },
+            ""description"": {
+                ""short"": ""DUMMY_SHORT_DESCRIPTION"",
+                ""full"": ""DUMMY_FULL_DESCRIPTION""
+            },
+            ""icons"": {
+                ""outline"": ""outline.png"",
+                ""color"": ""color.png""
+            },
+            ""accentColor"": ""#E0F6FC""
+        }";
+    }
+
 }
