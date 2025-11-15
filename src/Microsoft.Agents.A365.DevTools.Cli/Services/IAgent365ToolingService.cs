@@ -73,10 +73,14 @@ public interface IAgent365ToolingService
         string serverName,
         CancellationToken cancellationToken = default);
 
-	/// <summary>
-	/// Gets MCP server information
-	/// </summary>
-	/// <param name="serverName">MCP server name</param>
-	public Task<ServerInfo> GetServerInfoAsync(String serverName);
+    /// <summary>
+    /// Gets MCP server information
+    /// </summary>
+    /// <param name="serverName">MCP server name</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>ServerInfo</returns>
+    public Task<ServerInfo> GetServerInfoAsync(
+        string serverName,
+        CancellationToken cancellationToken = default);
 }
 

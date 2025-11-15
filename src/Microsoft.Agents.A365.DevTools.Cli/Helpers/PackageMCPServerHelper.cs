@@ -1,4 +1,7 @@
-﻿using System;
+﻿// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System;
 using System.Collections.Generic;
 using System.IO.Compression;
 using System.Linq;
@@ -13,6 +16,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Helpers
 {
     public class PackageMCPServerHelper
     {
+        /// <summary>
+        /// Generates a manifest JSON for an MCP server package.
+        /// </summary>
+        /// <param name="p">Server information to include in the manifest</param>
+        /// <param name="developerName">Name of the developer/publisher</param>
+        /// <param name="logger">Logger</param>
+        /// <returns>JSON string containing the manifest</returns>
         public static string GenerateManifestJson(ServerInfo p, string developerName, ILogger logger)
         {
             JsonNode root;
@@ -86,7 +96,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Helpers
         /// <summary>
         /// The method to build the MCP package as a zip file.
         /// </summary>
-        public static string BuildPackage(string manifestJson, ServerInfo info, String iconUrl, String outputPath)
+        /// <param name="manifestJson">JSON content for the manifest.json file</param>
+        /// <param name="info">Server information used for package naming</param>
+        /// <param name="iconUrl">Public URL to download the icon from</param>
+        /// <param name="outputPath">Directory where the ZIP package will be created</param>
+        /// <returns>Full path to the created ZIP file</returns>
+        public static string BuildPackage(string manifestJson, ServerInfo info, string iconUrl, string outputPath)
         {
             Directory.CreateDirectory(outputPath);
 
@@ -102,8 +117,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Helpers
             }
             var safeName = sb.ToString();
             var zipFilePath = Path.Combine(outputPath, $"{safeName}.zip");
-
-            var fileMode = FileMode.Create;
 
             // Download icon (both outline.png and color.png will use same bytes)
             byte[] iconBytes;
@@ -122,7 +135,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Helpers
                 }
             }
 
-            using (var fileStream = new FileStream(zipFilePath, fileMode, FileAccess.Write, FileShare.None))
+            using (var fileStream = new FileStream(zipFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
                 using (var zipArchive = new ZipArchive(fileStream, ZipArchiveMode.Create, leaveOpen: false))
                 {

@@ -618,7 +618,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <inheritdoc />
-    public async Task<ServerInfo> GetServerInfoAsync(String serverName)
+    public async Task<ServerInfo> GetServerInfoAsync(string serverName, CancellationToken cancellationToken = default)
     {
         var endpointUrl = BuildGetMCPServerUrl(_environment);
 
