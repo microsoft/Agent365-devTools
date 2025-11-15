@@ -18,17 +18,14 @@ public static class ConfigCommand
         var directory = configDir ?? Services.ConfigService.GetGlobalConfigDirectory();
         var command = new Command("config", "Configure Azure subscription, resource settings, and deployment options\nfor a365 CLI commands");
         
-        if (wizardService != null)
-        {
-            command.AddCommand(CreateInitSubcommand(logger, directory, wizardService));
-        }
-        
+        // Always add init command - it supports both wizard and direct import (-c option)
+        command.AddCommand(CreateInitSubcommand(logger, directory, wizardService));
         command.AddCommand(CreateDisplaySubcommand(logger, directory));
         
         return command;
     }
 
-    private static Command CreateInitSubcommand(ILogger logger, string configDir, IConfigurationWizardService wizardService)
+    private static Command CreateInitSubcommand(ILogger logger, string configDir, IConfigurationWizardService? wizardService)
     {
         var cmd = new Command("init", "Interactive wizard to configure Agent 365 with Azure CLI integration and smart defaults")
         {
@@ -86,8 +83,11 @@ public static class ConfigCommand
                         return;
                     }
 
-                    // Save to target location
-                    var outputJson = JsonSerializer.Serialize(importedConfig, new JsonSerializerOptions { WriteIndented = true });
+                    // CRITICAL: Only serialize static properties when saving to a365.config.json
+                    // This prevents dynamic properties (e.g., agentBlueprintId, managedIdentityPrincipalId) 
+                    // from being written to the static config file
+                    var staticConfig = importedConfig.GetStaticConfig();
+                    var outputJson = JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true });
                     await File.WriteAllTextAsync(configPath, outputJson);
                     
                     // Also save to global if saving locally
@@ -124,6 +124,14 @@ public static class ConfigCommand
                 }
             }
 
+            // If no config file specified, run wizard
+            if (wizardService == null)
+            {
+                logger.LogError("Wizard service not available. Use -c option to import a config file, or run from full CLI.");
+                context.ExitCode = 1;
+                return;
+            }
+
             try
             {
                 // Run the wizard with existing config
@@ -131,8 +139,10 @@ public static class ConfigCommand
                 
                 if (config != null)
                 {
-                    // Save the configuration
-                    var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+                    // CRITICAL: Only serialize static properties (init-only) to a365.config.json
+                    // Dynamic properties (get/set) should only be in a365.generated.config.json
+                    var staticConfig = config.GetStaticConfig();
+                    var json = JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true });
                     
                     // Save to primary location (local or global based on flag)
                     await File.WriteAllTextAsync(configPath, json);

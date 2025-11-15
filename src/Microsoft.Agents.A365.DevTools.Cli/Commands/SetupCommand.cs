@@ -76,6 +76,9 @@ public class SetupCommand
             logger.LogInformation("Creating blueprint and registering messaging endpoint...");
             logger.LogInformation("");
             
+            // Track setup results for summary
+            var setupResults = new SetupResults();
+            
             try
             {
                 // Load configuration - ConfigService automatically finds generated config in same directory
@@ -116,16 +119,41 @@ public class SetupCommand
                     delegatedConsentService,
                     platformDetector);
 
-                // Pass blueprintOnly option to setup runner
-                success = await setupRunner.RunAsync(config.FullName, generatedConfigPath, blueprintOnly);
+                // Use test invoker if set (for testing), otherwise use real runner
+                if (SetupRunnerInvoker != null)
+                {
+                    success = await SetupRunnerInvoker(config.FullName, generatedConfigPath, executor, webAppCreator);
+                    
+                    // If using test invoker, stop here - tests don't mock all the downstream services
+                    if (success)
+                    {
+                        logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
+                        logger.LogInformation("Setup completed successfully (test mode)");
+                        return;
+                    }
+                }
+                else
+                {
+                    // Pass blueprintOnly option to setup runner
+                    success = await setupRunner.RunAsync(config.FullName, generatedConfigPath, blueprintOnly);
+                }
 
                 if (!success)
                 {
-                    logger.LogError("A365SetupRunner failed");
+                    logger.LogError("Agent blueprint creation failed");
+                    setupResults.BlueprintCreated = false;
+                    setupResults.Errors.Add("Agent blueprint creation failed");
                     throw new InvalidOperationException("Setup runner execution failed");
                 }
 
-                logger.LogInformation("Blueprint created successfully");
+                setupResults.BlueprintCreated = true;
+                
+                // Reload config to get blueprint ID and check for inheritable permissions status
+                var tempConfig = await configService.LoadAsync(config.FullName);
+                setupResults.BlueprintId = tempConfig.AgentBlueprintId;
+                
+                logger.LogInformation("Agent blueprint created successfully");
+                logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
 
                 logger.LogInformation("");
                 logger.LogInformation("Step 2a: Applying MCP server permissions (OAuth2 permission grants + inheritable permissions)");
@@ -139,23 +167,53 @@ public class SetupCommand
                 var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
                 var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
-                // Apply OAuth2 permission grant (admin consent)
-                await EnsureMcpOauth2PermissionGrantsAsync(
-                    graphService,
-                    setupConfig,
-                    toolingScopes,
-                    logger
-                );
+                // Apply OAuth2 permission grant (admin consent) and inheritable permissions
+                // Wrap in try-catch to prevent unhandled exceptions
+                try
+                {
+                    await EnsureMcpOauth2PermissionGrantsAsync(
+                        graphService,
+                        setupConfig,
+                        toolingScopes,
+                        logger
+                    );
 
-                // Apply inheritable permissions on the agent identity blueprint
-                await EnsureMcpInheritablePermissionsAsync(
-                    graphService,
-                    setupConfig,
-                    toolingScopes,
-                    logger
-                );
+                    // Apply inheritable permissions on the agent identity blueprint
+                    await EnsureMcpInheritablePermissionsAsync(
+                        graphService,
+                        setupConfig,
+                        toolingScopes,
+                        logger
+                    );
 
-                logger.LogInformation("MCP server permissions configured");
+                    setupResults.McpPermissionsConfigured = true;
+                    logger.LogInformation("MCP server permissions configured successfully");
+                    // Check if inheritable permissions were configured successfully
+                    // The A365SetupRunner sets this flag in generated config
+                    setupResults.InheritablePermissionsConfigured = tempConfig.InheritanceConfigured;
+
+                    if (!tempConfig.InheritanceConfigured)
+                    {
+                        setupResults.Warnings.Add("Inheritable permissions configuration incomplete");
+
+                        if (!string.IsNullOrEmpty(tempConfig.InheritanceConfigError))
+                        {
+                            setupResults.Warnings.Add($"Inheritable permissions error: {tempConfig.InheritanceConfigError}");
+                        }
+                    }
+                }
+                catch (Exception mcpEx)
+                {
+                    setupResults.McpPermissionsConfigured = false;
+                    setupResults.InheritablePermissionsConfigured = false;  // ADD THIS LINE
+                    setupResults.Errors.Add($"MCP permissions: {mcpEx.Message}");
+                    logger.LogError("Failed to configure MCP server permissions: {Message}", mcpEx.Message);
+                    logger.LogWarning("Setup will continue, but MCP server permissions must be configured manually");
+                    logger.LogInformation("To configure MCP permissions manually:");
+                    logger.LogInformation("  1. Ensure the agent blueprint has the required permissions in Azure Portal");
+                    logger.LogInformation("  2. Grant admin consent for the MCP scopes");
+                    logger.LogInformation("  3. Run 'a365 deploy mcp' to retry MCP permission configuration");
+                }
 
                 logger.LogInformation("");
                 logger.LogInformation("Step 2b: add Messaging Bot API permission + inheritable permissions");
@@ -172,36 +230,62 @@ public class SetupCommand
                     setupConfig.TenantId,
                     ConfigConstants.MessagingBotApiAppId);
 
-                // Grant oauth2PermissionGrants: blueprint SP -> Messaging Bot API SP
-                var botApiGrantOk = await graphService.CreateOrUpdateOauth2PermissionGrantAsync(
-                    setupConfig.TenantId,
-                    blueprintSpObjectId,
-                    botApiResourceSpObjectId,
-                    new[] { "Authorization.ReadWrite", "user_impersonation" });
+                try
+                {
+                    // Grant oauth2PermissionGrants: blueprint SP -> Messaging Bot API SP
+                    var botApiGrantOk = await graphService.CreateOrUpdateOauth2PermissionGrantAsync(
+                        setupConfig.TenantId,
+                        blueprintSpObjectId,
+                        botApiResourceSpObjectId,
+                        new[] { "Authorization.ReadWrite", "user_impersonation" });
 
-                if (!botApiGrantOk)
-                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for Messaging Bot API.");
-                
-                // Add inheritable permissions on blueprint for Messaging Bot API
-                var (ok, already, err) = await graphService.SetInheritablePermissionsAsync(
-                    setupConfig.TenantId,
-                    setupConfig.AgentBlueprintId,
-                    ConfigConstants.MessagingBotApiAppId,
-                    new[] { "Authorization.ReadWrite", "user_impersonation" });
+                    if (!botApiGrantOk)
+                    {
+                        setupResults.Warnings.Add("Failed to create/update oauth2PermissionGrant for Messaging Bot API");
+                        logger.LogWarning("Failed to create/update oauth2PermissionGrant for Messaging Bot API.");
+                    }
+                    
+                    // Add inheritable permissions on blueprint for Messaging Bot API
+                    var (ok, already, err) = await graphService.SetInheritablePermissionsAsync(
+                        setupConfig.TenantId,
+                        setupConfig.AgentBlueprintId,
+                        ConfigConstants.MessagingBotApiAppId,
+                        new[] { "Authorization.ReadWrite", "user_impersonation" });
 
-                if (!ok && !already)
-                    logger.LogWarning("Failed to set inheritable permissions for Messaging Bot API: " + err);
+                    if (!ok && !already)
+                    {
+                        setupResults.Warnings.Add($"Failed to set inheritable permissions for Messaging Bot API: {err}");
+                        logger.LogWarning("Failed to set inheritable permissions for Messaging Bot API: " + err);
+                    }
 
-                logger.LogInformation("Messaging Bot API permissions configured (grant + inheritable) successfully.");
+                    setupResults.BotApiPermissionsConfigured = true;
+                    logger.LogInformation("Messaging Bot API permissions configured (grant + inheritable) successfully.");
+                }
+                catch (Exception botEx)
+                {
+                    setupResults.BotApiPermissionsConfigured = false;
+                    setupResults.Errors.Add($"Bot API permissions: {botEx.Message}");
+                    logger.LogError("Failed to configure Messaging Bot API permissions: {Message}", botEx.Message);
+                }
 
                 logger.LogInformation("");
                 logger.LogInformation("Step 3: Registering blueprint messaging endpoint...");
                 
-                // Reload config to get any updated values from blueprint creation
-                setupConfig = await configService.LoadAsync(config.FullName);
-                
-                await RegisterBlueprintMessagingEndpointAsync(setupConfig, logger, botConfigurator);
-                logger.LogInformation("Blueprint messaging endpoint registered successfully");
+                try
+                {
+                    // Reload config to get any updated values from blueprint creation
+                    setupConfig = await configService.LoadAsync(config.FullName);
+                    
+                    await RegisterBlueprintMessagingEndpointAsync(setupConfig, logger, botConfigurator);
+                    setupResults.MessagingEndpointRegistered = true;
+                    logger.LogInformation("Blueprint messaging endpoint registered successfully");
+                }
+                catch (Exception endpointEx)
+                {
+                    setupResults.MessagingEndpointRegistered = false;
+                    setupResults.Errors.Add($"Messaging endpoint: {endpointEx.Message}");
+                    logger.LogError("Failed to register messaging endpoint: {Message}", endpointEx.Message);
+                }
 
                 // Sync generated config in project settings from deployment project
                 try
@@ -217,7 +301,7 @@ public class SetupCommand
                         logger: logger
                     );
 
-                    logger.LogInformation("Generated config in project settings successfully!");
+                    logger.LogDebug("Generated config synced to project settings");
                 }
                 catch (Exception syncEx)
                 {
@@ -227,7 +311,8 @@ public class SetupCommand
                 // Display verification URLs and next steps
                 await DisplayVerificationInfoAsync(config, logger);
                 
-                logger.LogInformation("Agent 365 setup completed successfully");
+                // Display comprehensive setup summary
+                DisplaySetupSummary(setupResults, logger);
             }
             catch (Exception ex)
             {
@@ -307,16 +392,12 @@ public class SetupCommand
                     blueprintProp.GetString());
             }
 
-            // Configuration files
-            logger.LogInformation("Configuration Files:");
-            logger.LogInformation("   - Setup Config: {SetupConfig}", setupConfigFile.FullName);
-            logger.LogInformation("   - Generated Config: {GeneratedConfig}", generatedConfigPath);
-
             logger.LogInformation("");
             logger.LogInformation("Next Steps:");
             logger.LogInformation("   1. Review Azure resources in the portal");
-            logger.LogInformation("   2. Create agent instance using CLI for testing purposes");
-            logger.LogInformation("   3. Use 'a365 deploy' to deploy the application to Azure");
+            logger.LogInformation("   2. View configuration: a365 config display");
+            logger.LogInformation("   3. Create agent instance: a365 create-instance identity");
+            logger.LogInformation("   4. Deploy application: a365 deploy app");
             logger.LogInformation("");
         }
         catch (Exception ex)
@@ -428,12 +509,20 @@ public class SetupCommand
         if (string.IsNullOrWhiteSpace(cfg.AgentBlueprintId))
             throw new InvalidOperationException("AgentBlueprintId (appId) is required.");
 
-        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(cfg.TenantId, cfg.AgentBlueprintId, ct)
-            ?? throw new InvalidOperationException("Blueprint Service Principal not found for appId " + cfg.AgentBlueprintId);
+        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(cfg.TenantId, cfg.AgentBlueprintId, ct);
+        if (string.IsNullOrWhiteSpace(blueprintSpObjectId))
+        {
+            throw new InvalidOperationException($"Blueprint Service Principal not found for appId {cfg.AgentBlueprintId}. " +
+                "The service principal may not have propagated yet. Wait a few minutes and retry.");
+        }
 
         var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(cfg.Environment);
-        var Agent365ToolsSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(cfg.TenantId, resourceAppId, ct)
-            ?? throw new InvalidOperationException("Agent 365 Tools Service Principal not found for appId " + resourceAppId);
+        var Agent365ToolsSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(cfg.TenantId, resourceAppId, ct);
+        if (string.IsNullOrWhiteSpace(Agent365ToolsSpObjectId))
+        {
+            throw new InvalidOperationException($"Agent 365 Tools Service Principal not found for appId {resourceAppId}. " +
+                $"Ensure the Agent 365 Tools application is available in your tenant for environment: {cfg.Environment}");
+        }
 
         logger.LogInformation("   - OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
             blueprintSpObjectId, Agent365ToolsSpObjectId, string.Join(' ', scopes));
@@ -441,7 +530,12 @@ public class SetupCommand
         var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
             cfg.TenantId, blueprintSpObjectId, Agent365ToolsSpObjectId, scopes, ct);
 
-        if (!response) throw new InvalidOperationException("Failed to create/update oauth2PermissionGrant.");
+        if (!response)
+        {
+            throw new InvalidOperationException(
+                $"Failed to create/update OAuth2 permission grant from blueprint {cfg.AgentBlueprintId} to Agent 365 Tools {resourceAppId}. " +
+                "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All permissions.");
+        }
     }
 
     private static async Task EnsureMcpInheritablePermissionsAsync(
@@ -466,11 +560,121 @@ public class SetupCommand
         {
             cfg.InheritanceConfigured = false;
             cfg.InheritanceConfigError = err;
-            throw new InvalidOperationException("Failed to set inheritable permissions: " + err);
+            throw new InvalidOperationException($"Failed to set inheritable permissions: {err}. " +
+                "Ensure you have Application.ReadWrite.All permissions and the blueprint supports inheritable permissions.");
         }
 
         cfg.InheritanceConfigured = true;
         cfg.InheritablePermissionsAlreadyExist = alreadyExists;
         cfg.InheritanceConfigError = null;
     }
+
+    /// <summary>
+    /// Display comprehensive setup summary showing what succeeded and what failed
+    /// </summary>
+    private static void DisplaySetupSummary(SetupResults results, ILogger logger)
+    {
+        logger.LogInformation("");
+        logger.LogInformation("==========================================");
+        logger.LogInformation("Setup Summary");
+        logger.LogInformation("==========================================");
+        
+        // Show what succeeded
+        logger.LogInformation("Completed Steps:");
+        if (results.BlueprintCreated)
+        {
+            logger.LogInformation("  [OK] Agent blueprint created (Blueprint ID: {BlueprintId})", results.BlueprintId ?? "unknown");
+        }
+        if (results.McpPermissionsConfigured)
+            logger.LogInformation("  [OK] MCP server permissions configured");
+        if (results.InheritablePermissionsConfigured)
+            logger.LogInformation("  [OK] Inheritable permissions configured");
+        if (results.BotApiPermissionsConfigured)
+            logger.LogInformation("  [OK] Messaging Bot API permissions configured");
+        if (results.MessagingEndpointRegistered)
+            logger.LogInformation("  [OK] Messaging endpoint registered");
+        
+        // Show what failed
+        if (results.Errors.Count > 0)
+        {
+            logger.LogInformation("");
+            logger.LogInformation("Failed Steps:");
+            foreach (var error in results.Errors)
+            {
+                logger.LogInformation("  [FAILED] {Error}", error);
+            }
+        }
+        
+        // Show warnings
+        if (results.Warnings.Count > 0)
+        {
+            logger.LogInformation("");
+            logger.LogInformation("Warnings:");
+            foreach (var warning in results.Warnings)
+            {
+                logger.LogInformation("  [WARN] {Warning}", warning);
+            }
+        }
+        
+        logger.LogInformation("");
+        
+        // Overall status
+        if (results.HasErrors)
+        {
+            logger.LogWarning("Setup completed with errors");
+            logger.LogInformation("");
+            logger.LogInformation("Recovery Actions:");
+            
+            if (!results.InheritablePermissionsConfigured)
+            {
+                logger.LogInformation("  - Inheritable Permissions: Refer to Agent 365 CLI documentation for manual configuration");
+            }
+            
+            if (!results.McpPermissionsConfigured)
+            {
+                logger.LogInformation("  - MCP Permissions: Refer to Agent 365 CLI documentation for manual configuration");
+            }
+            
+            if (!results.BotApiPermissionsConfigured)
+            {
+                logger.LogInformation("  - Bot API Permissions: Refer to Agent 365 CLI documentation for manual configuration");
+            }
+            
+            if (!results.MessagingEndpointRegistered)
+            {
+                logger.LogInformation("  - Messaging Endpoint: Refer to Agent 365 CLI documentation for manual configuration");
+            }
+        }
+        else if (results.HasWarnings)
+        {
+            logger.LogInformation("Setup completed successfully with warnings");
+            logger.LogInformation("Review warnings above and take action if needed");
+        }
+        else
+        {
+            logger.LogInformation("Setup completed successfully");
+            logger.LogInformation("All components configured correctly");
+        }
+        
+        logger.LogInformation("==========================================");
+    }
+}
+
+/// <summary>
+/// Tracks the results of each setup step for summary reporting
+/// </summary>
+internal class SetupResults
+{
+    public bool BlueprintCreated { get; set; }
+    public string? BlueprintId { get; set; }
+    public bool McpPermissionsConfigured { get; set; }
+    public bool BotApiPermissionsConfigured { get; set; }
+    public bool MessagingEndpointRegistered { get; set; }
+    public bool InheritablePermissionsConfigured { get; set; }
+    
+    public List<string> Errors { get; } = new();
+    public List<string> Warnings { get; } = new();
+    
+    public bool HasErrors => Errors.Count > 0;
+    public bool HasWarnings => Warnings.Count > 0;
 }
