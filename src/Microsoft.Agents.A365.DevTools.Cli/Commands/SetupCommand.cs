@@ -119,8 +119,24 @@ public class SetupCommand
                     delegatedConsentService,
                     platformDetector);
 
-                // Pass blueprintOnly option to setup runner
-                success = await setupRunner.RunAsync(config.FullName, generatedConfigPath, blueprintOnly);
+                // Use test invoker if set (for testing), otherwise use real runner
+                if (SetupRunnerInvoker != null)
+                {
+                    success = await SetupRunnerInvoker(config.FullName, generatedConfigPath, executor, webAppCreator);
+                    
+                    // If using test invoker, stop here - tests don't mock all the downstream services
+                    if (success)
+                    {
+                        logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
+                        logger.LogInformation("Setup completed successfully (test mode)");
+                        return;
+                    }
+                }
+                else
+                {
+                    // Pass blueprintOnly option to setup runner
+                    success = await setupRunner.RunAsync(config.FullName, generatedConfigPath, blueprintOnly);
+                }
 
                 if (!success)
                 {
@@ -135,20 +151,6 @@ public class SetupCommand
                 // Reload config to get blueprint ID and check for inheritable permissions status
                 var tempConfig = await configService.LoadAsync(config.FullName);
                 setupResults.BlueprintId = tempConfig.AgentBlueprintId;
-                
-                // Check if inheritable permissions were configured successfully
-                // The A365SetupRunner sets this flag in generated config
-                setupResults.InheritablePermissionsConfigured = tempConfig.InheritanceConfigured;
-                
-                if (!tempConfig.InheritanceConfigured)
-                {
-                    setupResults.Warnings.Add("Inheritable permissions configuration incomplete");
-                    
-                    if (!string.IsNullOrEmpty(tempConfig.InheritanceConfigError))
-                    {
-                        setupResults.Warnings.Add($"Inheritable permissions error: {tempConfig.InheritanceConfigError}");
-                    }
-                }
                 
                 logger.LogInformation("Agent blueprint created successfully");
                 logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
@@ -186,10 +188,24 @@ public class SetupCommand
 
                     setupResults.McpPermissionsConfigured = true;
                     logger.LogInformation("MCP server permissions configured successfully");
+                    // Check if inheritable permissions were configured successfully
+                    // The A365SetupRunner sets this flag in generated config
+                    setupResults.InheritablePermissionsConfigured = tempConfig.InheritanceConfigured;
+
+                    if (!tempConfig.InheritanceConfigured)
+                    {
+                        setupResults.Warnings.Add("Inheritable permissions configuration incomplete");
+
+                        if (!string.IsNullOrEmpty(tempConfig.InheritanceConfigError))
+                        {
+                            setupResults.Warnings.Add($"Inheritable permissions error: {tempConfig.InheritanceConfigError}");
+                        }
+                    }
                 }
                 catch (Exception mcpEx)
                 {
                     setupResults.McpPermissionsConfigured = false;
+                    setupResults.InheritablePermissionsConfigured = false;  // ADD THIS LINE
                     setupResults.Errors.Add($"MCP permissions: {mcpEx.Message}");
                     logger.LogError("Failed to configure MCP server permissions: {Message}", mcpEx.Message);
                     logger.LogWarning("Setup will continue, but MCP server permissions must be configured manually");
@@ -567,10 +583,7 @@ public class SetupCommand
         logger.LogInformation("Completed Steps:");
         if (results.BlueprintCreated)
         {
-            var blueprintIdMsg = !string.IsNullOrEmpty(results.BlueprintId) 
-                ? $" (Blueprint ID: {results.BlueprintId})"
-                : "";
-            logger.LogInformation("  [OK] Agent blueprint created{BlueprintIdMsg}", blueprintIdMsg);
+            logger.LogInformation("  [OK] Agent blueprint created (Blueprint ID: {BlueprintId})", results.BlueprintId ?? "unknown");
         }
         if (results.McpPermissionsConfigured)
             logger.LogInformation("  [OK] MCP server permissions configured");

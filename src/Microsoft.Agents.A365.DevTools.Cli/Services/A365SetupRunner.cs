@@ -893,16 +893,13 @@ public sealed class A365SetupRunner
                     lastError = error;
 
                     // Check if it's a propagation issue (resource not found)
-                    if (error.Contains("Request_ResourceNotFound") || error.Contains("does not exist"))
-                    {
-                        if (attempt < maxRetries)
-                        {
-                            var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1); // Exponential backoff
-                            _logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...", 
-                                attempt, maxRetries, delayMs);
-                            await Task.Delay(delayMs, ct);
-                            continue;
-                        }
+                    if ((error.Contains("Request_ResourceNotFound") || error.Contains("does not exist")) && attempt < maxRetries)
+                    { 
+                        var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1); // Exponential backoff
+                        _logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...", 
+                            attempt, maxRetries, delayMs);
+                        await Task.Delay(delayMs, ct);
+                        continue;
                     }
 
                     // Check if it's an Agent Blueprint API version error - try fallback URL

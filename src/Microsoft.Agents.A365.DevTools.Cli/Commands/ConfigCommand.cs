@@ -18,17 +18,14 @@ public static class ConfigCommand
         var directory = configDir ?? Services.ConfigService.GetGlobalConfigDirectory();
         var command = new Command("config", "Configure Azure subscription, resource settings, and deployment options\nfor a365 CLI commands");
         
-        if (wizardService != null)
-        {
-            command.AddCommand(CreateInitSubcommand(logger, directory, wizardService));
-        }
-        
+        // Always add init command - it supports both wizard and direct import (-c option)
+        command.AddCommand(CreateInitSubcommand(logger, directory, wizardService));
         command.AddCommand(CreateDisplaySubcommand(logger, directory));
         
         return command;
     }
 
-    private static Command CreateInitSubcommand(ILogger logger, string configDir, IConfigurationWizardService wizardService)
+    private static Command CreateInitSubcommand(ILogger logger, string configDir, IConfigurationWizardService? wizardService)
     {
         var cmd = new Command("init", "Interactive wizard to configure Agent 365 with Azure CLI integration and smart defaults")
         {
@@ -125,6 +122,14 @@ public static class ConfigCommand
                 {
                     logger.LogWarning($"Could not load existing config from {configPath}: {ex.Message}");
                 }
+            }
+
+            // If no config file specified, run wizard
+            if (wizardService == null)
+            {
+                logger.LogError("Wizard service not available. Use -c option to import a config file, or run from full CLI.");
+                context.ExitCode = 1;
+                return;
             }
 
             try
