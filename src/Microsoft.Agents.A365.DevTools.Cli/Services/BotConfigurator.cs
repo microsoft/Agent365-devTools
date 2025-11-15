@@ -177,7 +177,7 @@ public class BotConfigurator : IBotConfigurator
 
             if (string.IsNullOrEmpty(tenantId))
             {
-                _logger.LogError("Could not determine tenant ID for endpoint creation");
+                _logger.LogError("Could not determine tenant ID for endpoint deletion");
                 return false;
             }
 
