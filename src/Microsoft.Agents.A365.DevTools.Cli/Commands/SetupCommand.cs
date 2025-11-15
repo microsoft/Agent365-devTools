@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -228,6 +229,10 @@ public class SetupCommand
                 await DisplayVerificationInfoAsync(config, logger);
                 
                 logger.LogInformation("Agent 365 setup completed successfully");
+            }
+            catch (Agent365Exception ex)
+            {
+                ExceptionHandler.HandleAgent365Exception(ex);
             }
             catch (Exception ex)
             {

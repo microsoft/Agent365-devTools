@@ -11,6 +11,7 @@ using Microsoft.Graph;
 using Azure.Identity;
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -274,16 +275,23 @@ public sealed class A365SetupRunner
             }
 
             // Web App
-            var webShow = await _executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+            var webShow = await _executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true);
             if (!webShow.Success)
             {
                 var runtime = GetRuntimeForPlatform(platform);
                 _logger.LogInformation("Creating web app {App} with runtime {Runtime}", webAppName, runtime);
-                var createResult = await _executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}");
+                var createResult = await _executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
                 {
-                    _logger.LogError("ERROR: Web app creation failed: {Err}", createResult.StandardError);
-                    throw new InvalidOperationException($"Failed to create web app '{webAppName}'. Setup cannot continue.");
+                    if (createResult.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new AzureResourceException("WebApp", webAppName, createResult.StandardError, true);
+                    }
+                    else
+                    {
+                        _logger.LogError("ERROR: Web app creation failed: {Err}", createResult.StandardError);
+                        throw new InvalidOperationException($"Failed to create web app '{webAppName}'. Setup cannot continue.");
+                    }
                 }
             }
             else
@@ -1173,12 +1181,17 @@ public sealed class A365SetupRunner
 
     private async Task AzWarnAsync(string args, string description)
     {
-        var result = await _executor.ExecuteAsync("az", args);
+        var result = await _executor.ExecuteAsync("az", args, suppressErrorLogging: true);
         if (!result.Success)
         {
             if (result.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("{Description} already exists (skipping creation)", description);
+            }
+            else if (result.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
+            {
+                var exception = new AzureResourceException(description, string.Empty, result.StandardError, true);
+                ExceptionHandler.HandleAgent365Exception(exception);
             }
             else
             {

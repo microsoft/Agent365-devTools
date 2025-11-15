@@ -58,7 +58,7 @@ public class AzureResourceException : Agent365Exception
             return new List<string>
             {
                 "Check your Azure subscription permissions",
-                $"Ensure you have Contributor or Owner role on the subscription",
+                $"Ensure you have Contributor or Owner role on the subscription or at least the Resource Group",
                 "Contact your Azure administrator if needed",
                 "Run 'az account show' to verify your account"
             };
