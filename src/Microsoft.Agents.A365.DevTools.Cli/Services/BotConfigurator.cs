@@ -168,7 +168,7 @@ public class BotConfigurator : IBotConfigurator
 
             if (!subscriptionResult.Success)
             {
-                _logger.LogError("Failed to get subscription information for endpoint creation");
+                _logger.LogError("Failed to get subscription information for endpoint deletion");
                 return false;
             }
 
