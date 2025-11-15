@@ -1,4 +1,4 @@
-# Microsoft.Agents.A365.DevTools.Cli - Developer Guide
+ # Microsoft.Agents.A365.DevTools.Cli - Developer Guide
 
 This guide is for contributors and maintainers of the Microsoft Agent 365 CLI codebase. For end-user installation and usage, see [README.md](./README.md).
 
@@ -1318,5 +1318,6 @@ Logging is implemented using Serilog with dual sinks:
 Command name detection is automatic - the CLI analyzes command-line arguments to determine which command is running.
 
 ---
+
 
 
