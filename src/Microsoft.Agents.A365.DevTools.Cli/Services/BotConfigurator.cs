@@ -226,7 +226,7 @@ public class BotConfigurator : IBotConfigurator
                 // Call the endpoint
                 _logger.LogInformation("Making request to delete endpoint.");
 
-                var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
+                using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
                 request.Content = new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
                 var response = await httpClient.SendAsync(request);
 

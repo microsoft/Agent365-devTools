@@ -30,11 +30,8 @@ public class CreateInstanceCommandTests
         // Use NullLogger instead of console logger to avoid I/O bottleneck
         _mockConfigService = Substitute.ForPartsOf<ConfigService>(NullLogger<ConfigService>.Instance);
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(NullLogger<CommandExecutor>.Instance);
-        var mockAuthLogger = Substitute.For<ILogger<AuthenticationService>>();
-        var mockAuthService = Substitute.ForPartsOf<AuthenticationService>(mockAuthLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(NullLogger<GraphApiService>.Instance, _mockExecutor);
-        
         _mockAzureValidator = Substitute.For<IAzureValidator>();
     }
 

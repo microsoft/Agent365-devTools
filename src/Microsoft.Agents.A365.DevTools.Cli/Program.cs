@@ -15,6 +15,11 @@ class Program
 {
     static async Task<int> Main(string[] args)
     {
+        Environment.SetEnvironmentVariable("A365_CREATE_ENDPOINT_PREPROD", "https://test.agent365.svc.cloud.dev.microsoft/agents/botManagement/createAgentBlueprint");
+        Environment.SetEnvironmentVariable("A365_DELETE_ENDPOINT_PREPROD", "https://test.agent365.svc.cloud.dev.microsoft/agents/botManagement/deleteAgentBlueprint");
+        Environment.SetEnvironmentVariable("A365_DEPLOYMENT_ENVIRONMENT_PREPROD", "tst");
+        Environment.SetEnvironmentVariable("A365_CLUSTER_CATEGORY_PREPROD", "test");
+        Environment.SetEnvironmentVariable("A365_MCP_APP_ID_PREPROD", "05879165-0320-489e-b644-f72b33f3edf0");
         // Detect which command is being run for log file naming
         var commandName = DetectCommandName(args);
         var logFilePath = ConfigService.GetCommandLogPath(commandName);

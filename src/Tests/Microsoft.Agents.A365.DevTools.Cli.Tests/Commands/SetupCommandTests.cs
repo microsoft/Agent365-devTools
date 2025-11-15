@@ -50,9 +50,6 @@ public class SetupCommandTests
             mockDotNetLogger,
             mockNodeLogger,
             mockPythonLogger);
-        var mockBotLogger = Substitute.For<ILogger<IBotConfigurator>>();
-        var mockAuthLogger = Substitute.For<ILogger<AuthenticationService>>();
-        var mockAuthService = Substitute.ForPartsOf<AuthenticationService>(mockAuthLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockAzureValidator = Substitute.For<IAzureValidator>();
         _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());

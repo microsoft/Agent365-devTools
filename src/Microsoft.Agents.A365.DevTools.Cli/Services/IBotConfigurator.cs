@@ -4,6 +4,9 @@
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services
 {
+    /// <summary>
+    /// Service for configuring messaging endpoints.
+    /// </summary>
     public interface IBotConfigurator
     {
         Task<bool> CreateEndpointWithAgentBlueprintAsync(string endpointName, string location, string messagingEndpoint, string agentDescription, string agentBlueprintId);
