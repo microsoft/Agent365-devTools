@@ -83,7 +83,8 @@ public class PublishCommand
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        ManifestTemplateService manifestTemplateService)
     {
         var command = new Command("publish", "Update manifest.json IDs and publish package; configure federated identity and app role assignments");
 
@@ -116,8 +117,24 @@ public class PublishCommand
 
                 // Use deploymentProjectPath from config for portability
                 var baseDir = GetProjectDirectory(config, logger);
-                var manifestPath = Path.Combine(baseDir, "manifest", "manifest.json");
-                var manifestDir = Path.GetDirectoryName(manifestPath)!;
+                var manifestDir = Path.Combine(baseDir, "manifest");
+                var manifestPath = Path.Combine(manifestDir, "manifest.json");
+                
+                // If manifest directory doesn't exist, extract templates from embedded resources
+                if (!Directory.Exists(manifestDir))
+                {
+                    logger.LogInformation("Manifest directory not found. Extracting templates from embedded resources...");
+                    Directory.CreateDirectory(manifestDir);
+                    
+                    if (!manifestTemplateService.ExtractTemplates(manifestDir))
+                    {
+                        logger.LogError("Failed to extract manifest templates from embedded resources");
+                        return;
+                    }
+                    
+                    logger.LogInformation("Successfully extracted manifest templates to {ManifestDir}", manifestDir);
+                    logger.LogInformation("Please customize the manifest files before publishing");
+                }
                 
                 if (!File.Exists(manifestPath))
                 {
@@ -294,7 +311,29 @@ public class PublishCommand
                     var fileContent = new StreamContent(zipFs);
                     fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
                     form.Add(fileContent, "package", Path.GetFileName(zipPath));
-                    var uploadResp = await http.PostAsync(packagesUrl, form);
+                    
+                    HttpResponseMessage uploadResp;
+                    try
+                    {
+                        uploadResp = await http.PostAsync(packagesUrl, form);
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        logger.LogError("Network error during package upload: {Message}", ex.Message);
+                        logger.LogInformation("The manifest package is available at: {ZipPath}", zipPath);
+                        logger.LogInformation("You can manually upload it at: {Url}", packagesUrl);
+                        logger.LogInformation("When network connectivity is restored, you can retry the publish command.");
+                        return;
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        logger.LogError("Upload request timed out: {Message}", ex.Message);
+                        logger.LogInformation("The manifest package is available at: {ZipPath}", zipPath);
+                        logger.LogInformation("You can manually upload it at: {Url}", packagesUrl);
+                        logger.LogInformation("When network connectivity is restored, you can retry the publish command.");
+                        return;
+                    }
+
                     var uploadBody = await uploadResp.Content.ReadAsStringAsync();
                     logger.LogInformation("Titles upload HTTP {StatusCode}. Raw body length={Length} bytes", (int)uploadResp.StatusCode, uploadBody?.Length ?? 0);
                     if (!uploadResp.IsSuccessStatusCode)
@@ -352,7 +391,25 @@ public class PublishCommand
                     // POST titles with operationId - using tenant-specific URL
                     var titlesUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/packages/titles";
                     var titlePayload = JsonSerializer.Serialize(new { operationId });
-                    var titlesResp = await http.PostAsync(titlesUrl, new StringContent(titlePayload, System.Text.Encoding.UTF8, "application/json"));
+                    
+                    HttpResponseMessage titlesResp;
+                    try
+                    {
+                        titlesResp = await http.PostAsync(titlesUrl, new StringContent(titlePayload, System.Text.Encoding.UTF8, "application/json"));
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        logger.LogError("Network error during title creation: {Message}", ex.Message);
+                        logger.LogInformation("Package was uploaded successfully (operationId={Op}), but title creation failed.", operationId);
+                        return;
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        logger.LogError("Title creation request timed out: {Message}", ex.Message);
+                        logger.LogInformation("Package was uploaded successfully (operationId={Op}), but title creation failed.", operationId);
+                        return;
+                    }
+
                     var titlesBody = await titlesResp.Content.ReadAsStringAsync();
                     if (!titlesResp.IsSuccessStatusCode)
                     {
@@ -375,7 +432,25 @@ public class PublishCommand
                             Entities = Array.Empty<object>()
                         }
                     });
-                    var allowResp = await http.PostAsync(allowUrl, new StringContent(allowedPayload, System.Text.Encoding.UTF8, "application/json"));
+                    
+                    HttpResponseMessage allowResp;
+                    try
+                    {
+                        allowResp = await http.PostAsync(allowUrl, new StringContent(allowedPayload, System.Text.Encoding.UTF8, "application/json"));
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        logger.LogError("Network error during access configuration: {Message}", ex.Message);
+                        logger.LogInformation("Title was created (titleId={Title}), but access configuration failed.", titleId);
+                        return;
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        logger.LogError("Access configuration request timed out: {Message}", ex.Message);
+                        logger.LogInformation("Title was created (titleId={Title}), but access configuration failed.", titleId);
+                        return;
+                    }
+
                     var allowBody = await allowResp.Content.ReadAsStringAsync();
                     if (!allowResp.IsSuccessStatusCode)
                     {

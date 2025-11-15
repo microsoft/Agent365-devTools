@@ -91,10 +91,11 @@ class Program
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
             var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
             var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
+            var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, executor));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService, manifestTemplateService));
 
             // Invoke
             return await rootCommand.InvokeAsync(args);
@@ -217,6 +218,7 @@ class Program
         services.AddSingleton<BotConfigurator>();
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
+        services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
         
         // Register AzureWebAppCreator for SDK-based web app creation
         services.AddSingleton<AzureWebAppCreator>();

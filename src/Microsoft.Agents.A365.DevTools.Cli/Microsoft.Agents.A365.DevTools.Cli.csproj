@@ -57,4 +57,12 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Embed manifest templates as resources -->
+    <EmbeddedResource Include="Templates\manifest.json" />
+    <EmbeddedResource Include="Templates\agenticUserTemplateManifest.json" />
+    <EmbeddedResource Include="Templates\color.png" />
+    <EmbeddedResource Include="Templates\outline.png" />
+  </ItemGroup>
+
 </Project>
