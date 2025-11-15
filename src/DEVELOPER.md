@@ -1,12 +1,12 @@
 # Microsoft.Agents.A365.DevTools.Cli - Developer Guide
 
-This guide is for contributors and maintainers of the Agent 365 CLI codebase. For end-user installation and usage, see [README.md](./README.md).
+This guide is for contributors and maintainers of the Microsoft Agent 365 CLI codebase. For end-user installation and usage, see [README.md](./README.md).
 
 ---
 
 ## Project Overview
 
-The Agent 365 CLI (`a365`) is a .NET tool that automates the deployment and management of Agent 365 applications on Azure. It handles:
+The Microsoft Agent 365 CLI (`a365`) is a .NET tool that automates the deployment and management of Microsoft Agent 365 applications on Azure. It handles:
 
 - **Multiplatform deployment** (.NET, Node.js, Python) with automatic platform detection
 - Agent blueprint and identity creation
@@ -95,9 +95,18 @@ Microsoft.Agents.A365.DevTools.Cli/
 
 The CLI provides a `config` command for managing configuration:
 
-- `a365 config init` — Interactively prompts for required config values and writes `a365.config.json`.
-- `a365 config init -c <file>` — Imports and validates a config file, then writes it to the standard location.
+- `a365 config init` — Interactive wizard with Azure CLI integration and smart defaults. Prompts for agent name, deployment path, and manager email. Auto-generates resource names and validates configuration.
+- `a365 config init -c <file>` — Imports and validates a config file from the specified path.
+- `a365 config init --global` — Creates configuration in global directory (AppData) instead of current directory.
 - `a365 config display` — Prints the current configuration.
+
+**Configuration Wizard Features:**
+- **Azure CLI Integration**: Automatically detects subscription, tenant, resource groups, and app service plans
+- **Smart Defaults**: Uses existing configuration values or generates intelligent defaults
+- **Minimal Input**: Only requires 2-3 core fields (agent name, deployment path, manager email)
+- **Auto-Generation**: Creates webapp names, identity names, and UPNs from the agent name
+- **Platform Detection**: Validates project type (.NET, Node.js, Python) in deployment path
+- **Dual Save**: Saves to both local project directory and global cache for reuse
 
 ### MCP Server Management Command
 
@@ -173,6 +182,112 @@ a365 develop-mcp list-servers -e "myenv" --verbose
 - Program.cs detects --config option and extracts environment from config file
 - Defaults to "prod" when no config file is specified
 - Follows KISS principles to avoid over-engineering common scenarios
+
+### Publish Command
+
+The `publish` command packages and publishes your agent manifest to the MOS (Microsoft Online Services) Titles service. It uses **embedded templates** for complete portability - no external file dependencies required.
+
+**Key Features:**
+- **Embedded Templates**: Manifest templates (JSON + PNG) are embedded in the CLI binary
+- **Fully Portable**: No external file dependencies - works from any directory
+- **Automatic ID Updates**: Updates both `manifest.json` and `agenticUserTemplateManifest.json` with agent blueprint ID
+- **Interactive Customization**: Prompts for manifest customization before upload
+- **Graceful Degradation**: Falls back to manual upload if permissions are insufficient
+- **Graph API Integration**: Configures federated identity credentials and role assignments
+
+**Command Options:**
+- `a365 publish` — Publish agent manifest with embedded templates
+- `a365 publish --dry-run` — Preview changes without uploading
+- `a365 publish --skip-graph` — Skip Graph API operations (federated identity, role assignments)
+- `a365 publish --mos-env <env>` — Target specific MOS environment (default: prod)
+- `a365 publish --mos-token <token>` — Override MOS authentication token
+
+**Manifest Structure:**
+
+The publish command works with two manifest files:
+
+1. **`manifest.json`** - Teams app manifest with agent metadata
+   - Updated fields: `id`, `name.short`, `name.full`, `bots[0].botId`
+   
+2. **`agenticUserTemplateManifest.json`** - Agent identity blueprint configuration
+   - Updated fields: `agentIdentityBlueprintId` (replaces old `webApplicationInfo.id`)
+
+**Workflow:**
+
+```bash
+# 1. Ensure you have a valid configuration
+a365 config display
+
+# 2. Run setup to create agent blueprint (if not already done)
+a365 setup
+
+# 3. Publish the manifest
+a365 publish
+```
+
+**Interactive Customization Prompt:**
+
+Before uploading, you'll be prompted to customize:
+- **Version**: Must increment for republishing (e.g., 1.0.0 → 1.0.1)
+- **Agent Name**: Short (≤30 chars) and full display names
+- **Descriptions**: Short (1-2 sentences) and full capabilities
+- **Developer Info**: Name, website URL, privacy URL
+- **Icons**: Custom branding (color.png, outline.png)
+
+**Manual Upload Fallback:**
+
+If you receive an authorization error (401/403), the CLI will:
+1. Create the manifest package locally in a temporary directory
+2. Display the package location
+3. Provide instructions for manual upload to MOS Titles portal
+4. Reference documentation for detailed steps
+
+**Example:**
+
+```bash
+# Standard publish
+a365 publish
+
+# Dry run to preview changes
+a365 publish --dry-run
+
+# Skip Graph API operations
+a365 publish --skip-graph
+
+# Use custom MOS environment
+$env:MOS_TITLES_URL = "https://titles.dev.mos.microsoft.com"
+a365 publish
+```
+
+**Manual Upload Instructions:**
+
+If automated upload fails due to insufficient privileges:
+
+1. Locate the generated `manifest.zip` file (path shown in error message)
+2. Navigate to MOS Titles portal: `https://titles.prod.mos.microsoft.com`
+3. Go to Packages section
+4. Upload the manifest.zip file
+5. Follow the portal workflow to complete publishing
+
+For detailed MOS upload instructions, see the [MOS Titles Documentation](https://aka.ms/mos-titles-docs).
+
+**Architecture Details:**
+
+- **ManifestTemplateService**: Handles embedded resource extraction and manifest customization
+- **Embedded Resources**: 4 files embedded at build time:
+  - `manifest.json` - Base Teams app manifest
+  - `agenticUserTemplateManifest.json` - Agent identity blueprint manifest
+  - `color.png` - Color icon (192x192)
+  - `outline.png` - Outline icon (32x32)
+- **Temporary Working Directory**: Templates extracted to temp directory, customized, then zipped
+- **Automatic Cleanup**: Temp directory removed after successful publish
+
+**Error Handling:**
+
+- **401 Unauthorized / 403 Forbidden**: Graceful fallback with manual upload instructions
+- **Missing Blueprint ID**: Clear error message directing user to run `a365 setup`
+- **Invalid Manifest**: JSON validation errors with specific field information
+- **Network Errors**: Detailed HTTP status codes and response bodies for troubleshooting
 
 ## Inheritable Permissions: Best Practice
 
@@ -552,8 +667,8 @@ a365 deploy --restart --inspect
 
 ```bash
 # Clone repository
-git clone https://github.com/microsoft/Agent365.git
-cd Agent365/utils/scripts/developer
+git clone https://github.com/microsoft/Agent365-devTools.git
+cd Agent365-devTools/utils/scripts/developer
 
 # Restore dependencies
 cd Microsoft.Agents.A365.DevTools.Cli
@@ -1112,6 +1227,49 @@ Follow Semantic Versioning: `MAJOR.MINOR.PATCH[-PRERELEASE]`
 - Uninstall first: `dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli`
 - Use `.\install-cli.ps1` which handles this automatically
 
+**"a365: The term 'a365' is not recognized" after installation**
+
+This happens when `%USERPROFILE%\.dotnet\tools` is not in your PATH environment variable.
+
+**Quick Fix (Current Session Only):**
+```powershell
+# Add to current PowerShell session
+$env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+a365 --version  # Test it works
+```
+
+**Permanent Fix (Recommended):**
+```powershell
+# Add permanently to user PATH
+$userToolsPath = "$env:USERPROFILE\.dotnet\tools"
+$currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+if ($currentUserPath -like "*$userToolsPath*") {
+    Write-Host "Already in user PATH: $userToolsPath" -ForegroundColor Green
+} else {
+    [Environment]::SetEnvironmentVariable("Path", "$currentUserPath;$userToolsPath", "User")
+    Write-Host "Added to user PATH permanently" -ForegroundColor Green
+    Write-Host "Restart PowerShell/Terminal for this to take effect" -ForegroundColor Yellow
+}
+```
+
+After permanent fix:
+1. Close and reopen PowerShell/Terminal
+2. Run `a365 --version` to verify
+
+**Alternative: Manual PATH Update (Windows)**
+1. Open System Properties → Environment Variables
+2. Under "User variables", select "Path" → Edit
+3. Add new entry: `C:\Users\YourUsername\.dotnet\tools`
+4. Click OK and restart terminal
+
+**Linux/Mac:**
+Add to `~/.bashrc` or `~/.zshrc`:
+```bash
+export PATH="$PATH:$HOME/.dotnet/tools"
+```
+Then run: `source ~/.bashrc` (or `source ~/.zshrc`)
+
 ---
 
 ## Contributing
@@ -1266,4 +1424,5 @@ Logging is implemented using Serilog with dual sinks:
 Command name detection is automatic - the CLI analyzes command-line arguments to determine which command is running.
 
 ---
+
 

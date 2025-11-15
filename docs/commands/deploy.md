@@ -1,7 +1,7 @@
-# Agent365 CLI – Deploy Command Guide
+# Microsoft Agent 365 CLI – Deploy Command Guide
 
 > **Command**: `a365 deploy`  
-> **Purpose**: Deploy your application to Azure App Service **and** update Agent365 Tool (MCP) permissions in one run. Subcommands let you run either phase independently.
+> **Purpose**: Deploy your application to Azure App Service **and** update Microsoft Agent 365 Tool (MCP) permissions in one run. Subcommands let you run either phase independently.
 ---
 
 ## TL;DR
@@ -190,3 +190,4 @@ Use Log Stream in the Azure Portal for runtime stdout/stderr.
 - [`a365 config init`](./config-init.md) — initialize configuration
 
 ---
+

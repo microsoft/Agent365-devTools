@@ -90,17 +90,19 @@ class Program
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
             var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
-            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger));
+            var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
+            var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
+            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService, manifestTemplateService));
 
             // Invoke
             return await rootCommand.InvokeAsync(args);
         }
         catch (Exceptions.Agent365Exception ex)
         {
-            // Structured Agent365 exception - display user-friendly error message
+            // Structured Microsoft Agent 365 exception - display user-friendly error message
             // No stack trace for user errors (validation, config, auth issues)
             HandleAgent365Exception(ex);
             return ex.ExitCode;
@@ -112,7 +114,7 @@ class Program
             Console.ForegroundColor = ConsoleColor.Red;
             Console.Error.WriteLine();
             Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
-            Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365/issues");
+            Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
             Console.Error.WriteLine();
             Console.ResetColor();
             return 1;
@@ -139,7 +141,7 @@ class Program
         if (!ex.IsUserError)
         {
             Console.Error.WriteLine("If this error persists, please report it at:");
-            Console.Error.WriteLine("https://github.com/microsoft/Agent365/issues");
+            Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
             Console.Error.WriteLine();
         }
         
@@ -170,7 +172,7 @@ class Program
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
         
-        // Add Agent365 Tooling Service with environment detection
+        // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
         {
             var configService = provider.GetRequiredService<IConfigService>();
@@ -216,9 +218,14 @@ class Program
         services.AddSingleton<IBotConfigurator, BotConfigurator>();
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
+        services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
         
         // Register AzureWebAppCreator for SDK-based web app creation
         services.AddSingleton<AzureWebAppCreator>();
+        
+        // Register Azure CLI service and Configuration Wizard
+        services.AddSingleton<IAzureCliService, AzureCliService>();
+        services.AddSingleton<IConfigurationWizardService, ConfigurationWizardService>();
     }
 
     public static string GetDisplayVersion()
@@ -252,3 +259,4 @@ class Program
             .Replace("_", "-");
     }
 }
+

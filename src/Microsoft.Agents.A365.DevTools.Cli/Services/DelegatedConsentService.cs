@@ -454,7 +454,7 @@ public sealed class DelegatedConsentService
             if (!updateResponse.IsSuccessStatusCode)
             {
                 var error = await updateResponse.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogWarning("Grant update returned error (may be transient): {Error}", error);
+                _logger.LogDebug("Grant update returned error (may be transient): {Error}", error);
                 // Note: We return true here because the grant update failure is often transient
                 // and the setup can continue. The "Successfully ensured grant" message below
                 // indicates the overall operation succeeded even if this specific update had issues.

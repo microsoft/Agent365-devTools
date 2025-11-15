@@ -41,7 +41,7 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(6);
+        command.Subcommands.Should().HaveCount(7);
         
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         subcommandNames.Should().Contain(new[] 
@@ -51,7 +51,8 @@ public class DevelopMcpCommandTests
             "publish", 
             "unpublish", 
             "approve", 
-            "block" 
+            "block",
+            "package-mcp-server"
         });
     }
 
@@ -177,6 +178,37 @@ public class DevelopMcpCommandTests
         
         var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
         serverOption!.Aliases.Should().Contain("-s");
+    }
+
+    [Fact]
+    public void PackageMcpServerSubcommand_HasCorrectOptions()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "package-mcp-server");
+
+        // Assert
+        subcommand.Description.Should().Be("Generate MCP server package for submission on Microsoft admin center");
+
+        var options = subcommand.Options.ToList();
+        options.Should().HaveCount(6); // serverName, developerName, iconUrl, outputPath, dry-run, config
+
+        var optionNames = options.Select(o => o.Name).ToList();
+        optionNames.Should().Contain("server-name");
+        optionNames.Should().Contain("developer-name");
+        optionNames.Should().Contain("icon-url");
+        optionNames.Should().Contain("output-path");
+        optionNames.Should().Contain("dry-run");
+        optionNames.Should().Contain("config");
+
+        options.First(o => o.Name == "server-name").IsRequired.Should().BeTrue();
+        options.First(o => o.Name == "developer-name").IsRequired.Should().BeTrue();
+        options.First(o => o.Name == "icon-url").IsRequired.Should().BeTrue();
+        options.First(o => o.Name == "output-path").IsRequired.Should().BeTrue();
+
+        // Config option keeps Azure CLI style short alias
+        var configOption = options.First(o => o.Name == "config");
+        configOption.Aliases.Should().Contain("-c");
     }
 
     [Fact]

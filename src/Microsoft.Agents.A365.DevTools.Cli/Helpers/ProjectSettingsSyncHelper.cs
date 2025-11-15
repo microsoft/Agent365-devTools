@@ -178,6 +178,7 @@ public static class ProjectSettingsSyncHelper
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
         {
             svcSettings["ClientId"] = pkgConfig.AgentBlueprintId;
+            svcSettings["AgentId"] = pkgConfig.AgentBlueprintId;
         }
 
         svcSettings["Scopes"] = new JsonArray(DEFAULT_SERVICE_CONNECTION_SCOPE);
@@ -214,9 +215,12 @@ public static class ProjectSettingsSyncHelper
             else lines.Add(safe);
         }
 
-         // --- Service Connection ---
+        // --- Service Connection ---
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
+        {
             Set("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID", pkgConfig.AgentBlueprintId);
+            Set("AGENT_ID", pkgConfig.AgentBlueprintId);
+        }
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
             Set("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET", pkgConfig.AgentBlueprintClientSecret);
         if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
@@ -257,7 +261,10 @@ public static class ProjectSettingsSyncHelper
 
         // --- Service Connection ---
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
+        {
             Set("connections__service_connection__settings__clientId", pkgConfig.AgentBlueprintId);
+            Set("agent_id", pkgConfig.AgentBlueprintId);
+        }
 
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
             Set("connections__service_connection__settings__clientSecret", pkgConfig.AgentBlueprintClientSecret);

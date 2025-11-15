@@ -519,12 +519,10 @@ public class ConfigService : IConfigService
         if (File.Exists(currentDirPath))
             return currentDirPath;
 
-        // 2. LocalAppData path
-        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var cacheDir = Path.Combine(appDataPath, AuthenticationConstants.ApplicationName);
-        var appDataConfigPath = Path.Combine(cacheDir, fileName);
-        if (File.Exists(appDataConfigPath))
-            return appDataConfigPath;
+        // 2. Global config directory (use consistent path resolution)
+        var globalConfigPath = Path.Combine(GetGlobalConfigDirectory(), fileName);
+        if (File.Exists(globalConfigPath))
+            return globalConfigPath;
 
         // Not found
         return null;

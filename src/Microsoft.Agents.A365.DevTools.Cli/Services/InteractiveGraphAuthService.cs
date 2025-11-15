@@ -70,10 +70,10 @@ public sealed class InteractiveGraphAuthService
             });
             
             _logger.LogInformation("Opening browser for authentication...");
-            _logger.LogWarning("IMPORTANT: You must grant consent for the following permissions:");
-            _logger.LogWarning("  • Application.ReadWrite.All");
-            _logger.LogWarning("  • Directory.ReadWrite.All");
-            _logger.LogWarning("  • DelegatedPermissionGrant.ReadWrite.All");
+            _logger.LogInformation("IMPORTANT: You must grant consent for the following permissions:");
+            _logger.LogInformation("  - Application.ReadWrite.All");
+            _logger.LogInformation("  - Directory.ReadWrite.All");
+            _logger.LogInformation("  - DelegatedPermissionGrant.ReadWrite.All");
             _logger.LogInformation("");
             
             // Create GraphServiceClient with the credential
