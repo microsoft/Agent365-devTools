@@ -90,11 +90,9 @@ public class DeployCommand
                 logger.LogInformation("Step 2: Start deploying Agent 365 Tool Permissions...");
                 await DeployMcpToolPermissionsAsync(validatedConfig, executor, logger);
             }
-            catch (Exception ex)
+            catch (FileNotFoundException ex)
             {
                 HandleDeploymentException(ex, logger);
-                if (ex is not FileNotFoundException)
-                    throw;
             }
         }, configOption, verboseOption, dryRunOption, inspectOption, restartOption);
 
@@ -160,7 +158,7 @@ public class DeployCommand
 
                 await DeployApplicationAsync(validatedConfig, deploymentService, verbose, inspect, restart, logger);
             }
-            catch (Exception ex)
+            catch (FileNotFoundException ex)
             {
                 HandleDeploymentException(ex, logger);
             }
