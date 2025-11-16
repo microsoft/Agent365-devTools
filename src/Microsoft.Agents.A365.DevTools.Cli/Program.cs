@@ -1,13 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.CommandLine;
-using System.Reflection;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
+using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Parsing;
+using System.Reflection;
 
 namespace Microsoft.Agents.A365.DevTools.Cli;
 
@@ -32,7 +35,7 @@ class Program
                 rollOnFileSizeLimit: false,
                 fileSizeLimitBytes: 10_485_760,  // 10 MB max
                 retainedFileCountLimit: 1,       // Only keep latest run
-                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u3}] {Message:lj}{NewLine}{Exception}")
+                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u3}] {Message:lj}{NewLine}")
             .CreateLogger();
 
         try
@@ -97,25 +100,31 @@ class Program
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, executor));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService, manifestTemplateService));
 
-            // Invoke
-            return await rootCommand.InvokeAsync(args);
-        }
-        catch (Exceptions.Agent365Exception ex)
-        {
-            // Structured Microsoft Agent 365 exception - display user-friendly error message
-            // No stack trace for user errors (validation, config, auth issues)
-            HandleAgent365Exception(ex);
-            return ex.ExitCode;
-        }
-        catch (Exception ex)
-        {
-            // Unexpected error - this is a BUG, show full stack trace
-            Log.Fatal(ex, "Application terminated unexpectedly");
-            Console.Error.WriteLine();
-            Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
-            Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
-            Console.Error.WriteLine();
-            return 1;
+            // Wrap all command handlers with exception handling
+            // Build with middleware for global exception handling
+            var builder = new CommandLineBuilder(rootCommand)
+                .UseDefaults()
+                .UseExceptionHandler((exception, context) =>
+                {
+                    if (exception is Agent365Exception myEx)
+                    {
+                        HandleAgent365Exception(myEx);
+                        context.ExitCode = myEx.ExitCode;
+                    }
+                    else
+                    {
+                        // Unexpected error - this is a BUG
+                        Log.Fatal(exception, "Application terminated unexpectedly");
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
+                        Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
+                        Console.Error.WriteLine();
+                        context.ExitCode = 1;
+                    }
+                });
+
+            var parser = builder.Build();
+            return await parser.InvokeAsync(args);
         }
         finally
         {
@@ -123,34 +132,26 @@ class Program
         }
     }
 
+
     /// <summary>
     /// Handles Agent365Exception with user-friendly output (no stack traces for user errors).
     /// Follows Microsoft CLI best practices (Azure CLI, dotnet CLI patterns).
     /// </summary>
-    private static void HandleAgent365Exception(Exceptions.Agent365Exception ex)
+    private static void HandleAgent365Exception(Agent365Exception ex)
     {
         // Display formatted error message
-        Console.Error.Write(ex.GetFormattedMessage());
-        
+        Console.Error.WriteLine(ex.GetFormattedMessage());
+
         // For system errors (not user errors), suggest reporting as bug
         if (!ex.IsUserError)
         {
             Console.Error.WriteLine("If this error persists, please report it at:");
             Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
-            Console.Error.WriteLine();
         }
-        
-        Console.ResetColor();
-        
-        // Log to Serilog for diagnostics (includes stack trace if available)
-        if (ex.IsUserError)
-        {
-            Log.Error(ex, "[{ErrorCode}] {Message}", ex.ErrorCode, ex.IssueDescription);
-        }
-        else
-        {
-            Log.Error(ex, "[{ErrorCode}] System error: {Message}", ex.ErrorCode, ex.IssueDescription);
-        }
+
+        // Log for diagnostics (but don't show stack trace to user)
+        Log.Error("Operation failed. ErrorCode={ErrorCode}, IssueDescription={IssueDescription}",
+            ex.ErrorCode, ex.IssueDescription);
     }
 
     private static void ConfigureServices(IServiceCollection services)

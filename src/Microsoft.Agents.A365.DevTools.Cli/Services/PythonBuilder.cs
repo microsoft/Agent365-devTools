@@ -136,8 +136,20 @@ public class PythonBuilder : IPlatformBuilder
 
     public async Task<string> BuildAsync(string projectDir, string outputPath, bool verbose)
     {
-        _logger.LogInformation("Building Python project using Azure-native deployment approach...");
-        
+        _logger.LogInformation("Building Python project...");
+
+        // Run python -m py_compile on all .py files to catch syntax errors before packaging
+        var pyFiles = Directory.GetFiles(projectDir, "*.py", SearchOption.AllDirectories);
+        foreach (var pyFile in pyFiles)
+        {
+            var result = await _executor.ExecuteAsync(_pythonExe!, $"-m py_compile \"{pyFile}\"", projectDir, captureOutput: true);
+            if (!result.Success)
+            {
+                _logger.LogError("Python syntax error in {File}:\n{Error}", pyFile, result.StandardError);
+                throw new DeployAppPythonCompileException($"Python syntax error in {pyFile}:\n{result.StandardError}");
+            }
+        }
+
         // Clean up old publish directory for fresh start
         var publishPath = Path.Combine(projectDir, outputPath);
         

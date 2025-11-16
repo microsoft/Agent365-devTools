@@ -93,44 +93,46 @@ public abstract class Agent365Exception : Exception
     public virtual string GetFormattedMessage()
     {
         var sb = new StringBuilder();
-        
-        // Error header
-        sb.AppendLine();
-        sb.AppendLine($"Error: {IssueDescription}");
-        sb.AppendLine();
-        
-        // Error details
+
+        // Error header - Azure CLI style (no leading blank line, ERROR: prefix)
+        sb.AppendLine($"ERROR: {IssueDescription}");
+
+        // Error details (no header, just indented content)
         if (ErrorDetails.Count > 0)
         {
+            sb.AppendLine();
             foreach (var detail in ErrorDetails)
             {
-                sb.AppendLine($"  � {detail}");
+                sb.AppendLine($"  {detail}");
             }
-            sb.AppendLine();
         }
-        
-        // Mitigation steps
+
+        // Mitigation steps - clearer header
         if (MitigationSteps.Count > 0)
         {
-            sb.AppendLine("How to fix:");
+            sb.AppendLine();
+            sb.AppendLine("To resolve this issue:");
             for (int i = 0; i < MitigationSteps.Count; i++)
             {
                 sb.AppendLine($"  {i + 1}. {MitigationSteps[i]}");
             }
-            sb.AppendLine();
         }
-        
+
         // Context information
         if (Context.Count > 0)
         {
-            sb.AppendLine("Context:");
+            sb.AppendLine();
+            sb.AppendLine("Additional context:");
             foreach (var kvp in Context)
             {
-                sb.AppendLine($"  � {kvp.Key}: {kvp.Value}");
+                sb.AppendLine($"  {kvp.Key}: {kvp.Value}");
             }
-            sb.AppendLine();
         }
-        
+
+        // Error code at the end (Azure CLI style)
+        sb.AppendLine();
+        sb.AppendLine($"Error code: {ErrorCode}");
+
         return sb.ToString();
     }
 }
