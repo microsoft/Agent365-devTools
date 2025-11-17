@@ -470,16 +470,16 @@ For security and flexibility, the CLI supports environment variable overrides fo
    ```bash
    # Override create endpoint URL (for custom environments)
    # Internal use only - for non-production Microsoft environments
-   export A365_CREATE_ENDPOINT_URL_STAGING=https://staging.agent365.example.com/agents/createAgentBlueprint
-   export A365_CREATE_ENDPOINT_URL_CUSTOM=https://custom.agent365.example.com/agents/createAgentBlueprint
+   export A365_CREATE_ENDPOINT_STAGING=https://staging.agent365.example.com/agents/createAgentBlueprint
+   export A365_CREATE_ENDPOINT_CUSTOM=https://custom.agent365.example.com/agents/createAgentBlueprint
    ```
 
 7. **Delete endpoint URL**:
    ```bash
    # Override delete endpoint URL (for custom environments)
    # Internal use only - for non-production Microsoft environments
-   export A365_DELETE_ENDPOINT_URL_STAGING=https://staging.agent365.example.com/agents/deleteAgentBlueprint
-   export A365_DELETE_ENDPOINT_URL_CUSTOM=https://custom.agent365.example.com/agents/deleteAgentBlueprint
+   export A365_DELETE_ENDPOINT_STAGING=https://staging.agent365.example.com/agents/deleteAgentBlueprint
+   export A365_DELETE_ENDPOINT_CUSTOM=https://custom.agent365.example.com/agents/deleteAgentBlueprint
    ```
 
 8. **Endpoint deployment Environment**:
