@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.CommandLine;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using System.CommandLine;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -90,7 +91,7 @@ public class DeployCommand
                 logger.LogInformation("Step 2: Start deploying Agent 365 Tool Permissions...");
                 await DeployMcpToolPermissionsAsync(validatedConfig, executor, logger);
             }
-            catch (FileNotFoundException ex)
+            catch (Exception ex)
             {
                 HandleDeploymentException(ex, logger);
             }
@@ -158,7 +159,7 @@ public class DeployCommand
 
                 await DeployApplicationAsync(validatedConfig, deploymentService, verbose, inspect, restart, logger);
             }
-            catch (FileNotFoundException ex)
+            catch (Exception ex)
             {
                 HandleDeploymentException(ex, logger);
             }
@@ -464,8 +465,9 @@ public class DeployCommand
                 logger.LogInformation("");
                 break;
             default:
-                logger.LogError(ex, "Deployment failed: {Message}", ex.Message);
-                break;
+                logger.LogError("Deployment failed: {Message}", ex.Message);
+                
+                throw new DeployAppException($"Deployment failed: {ex.Message}", ex);
         }
     }
 }

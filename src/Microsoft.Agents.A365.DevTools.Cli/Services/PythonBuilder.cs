@@ -136,10 +136,18 @@ public class PythonBuilder : IPlatformBuilder
 
     public async Task<string> BuildAsync(string projectDir, string outputPath, bool verbose)
     {
-        _logger.LogInformation("Building Python project...");
+        // Clean up old publish directory for fresh start
+        var publishPath = Path.Combine(projectDir, outputPath);
 
-        // Run python -m py_compile on all .py files to catch syntax errors before packaging
-        var pyFiles = Directory.GetFiles(projectDir, "*.py", SearchOption.AllDirectories);
+        if (Directory.Exists(publishPath))
+        {
+            _logger.LogInformation("Removing old publish directory...");
+            Directory.Delete(publishPath, recursive: true);
+        }
+
+        _logger.LogInformation("Building Python project...");
+        // Run python -m py_compile on all .py files at the project root to catch syntax errors before packaging
+        var pyFiles = Directory.GetFiles(projectDir, "*.py", SearchOption.TopDirectoryOnly);
         foreach (var pyFile in pyFiles)
         {
             var result = await _executor.ExecuteAsync(_pythonExe!, $"-m py_compile \"{pyFile}\"", projectDir, captureOutput: true);
@@ -150,15 +158,6 @@ public class PythonBuilder : IPlatformBuilder
             }
         }
 
-        // Clean up old publish directory for fresh start
-        var publishPath = Path.Combine(projectDir, outputPath);
-        
-        if (Directory.Exists(publishPath))
-        {
-            _logger.LogInformation("Removing old publish directory...");
-            Directory.Delete(publishPath, recursive: true);
-        }
-        
         Directory.CreateDirectory(publishPath);
 
         // Step 1: Copy entire project structure (excluding unwanted files)
