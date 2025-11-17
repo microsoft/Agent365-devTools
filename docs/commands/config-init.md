@@ -126,7 +126,7 @@ Manager email [agent365demo.manager1@a365preview001.onmicrosoft.com]:
 Choose the Azure region for deployment:
 
 ```
-Azure location [eastus]:
+Azure location [westus]:
 ```
 
 **Smart Defaults**: Uses location from existing config or Azure account
@@ -149,7 +149,7 @@ Manager Email          : agent365demo.manager1@a365preview001.onmicrosoft.com
 Deployment Path        : C:\A365-Ignite-Demo\sample_agent
 Resource Group         : a365demorg
 App Service Plan       : a365agent-app-plan
-Location               : eastus
+Location               : westus
 Subscription           : My Subscription (e09e22f2-9193-4f54-a335-01f59575eefd)
 Tenant                 : adfa4542-3e1e-46f5-9c70-3df0b15b3f6c
 
@@ -195,7 +195,7 @@ The wizard automatically populates these fields:
 | **tenantId** | Azure AD Tenant ID | Azure CLI (`az account show`) | `adfa4542-3e1e-46f5-9c70-3df0b15b3f6c` |
 | **subscriptionId** | Azure Subscription ID | Azure CLI (`az account show`) | `e09e22f2-9193-4f54-a335-01f59575eefd` |
 | **resourceGroup** | Azure Resource Group name | User selection from list | `a365demorg` |
-| **location** | Azure region | Azure account or user input | `eastus` |
+| **location** | Azure region | Azure account or user input | `westus` |
 | **appServicePlanName** | App Service Plan name | User selection from list | `a365agent-app-plan` |
 | **appServicePlanSku** | Service Plan SKU | Default value | `B1` |
 
@@ -242,7 +242,7 @@ After completing the wizard, `a365.config.json` is created:
   "tenantId": "adfa4542-3e1e-46f5-9c70-3df0b15b3f6c",
   "subscriptionId": "e09e22f2-9193-4f54-a335-01f59575eefd",
   "resourceGroup": "a365demorg",
-  "location": "eastus",
+  "location": "westus",
   "environment": "prod",
   "appServicePlanName": "a365agent-app-plan",
   "appServicePlanSku": "B1",

@@ -59,7 +59,7 @@ a365 config init --global
   "tenantId": "your-tenant-id",
   "subscriptionId": "your-subscription-id",
   "resourceGroup": "rg-agent365-dev",
-  "location": "eastus",
+  "location": "westus",
   "webAppName": "webapp-agent365-dev",
   "agentIdentityDisplayName": "Agent 365 Development Agent",
   "agentUserPrincipalName": "agent.username@yourdomain.onmicrosoft.com",
