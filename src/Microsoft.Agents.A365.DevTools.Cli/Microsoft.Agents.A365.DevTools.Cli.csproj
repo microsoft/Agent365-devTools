@@ -19,6 +19,7 @@
   <ItemGroup>
     <!-- CLI Framework -->
     <PackageReference Include="Microsoft.Identity.Client" />
+    <PackageReference Include="Polly" />
     <PackageReference Include="System.CommandLine" />
     
     <!-- Configuration & JSON -->

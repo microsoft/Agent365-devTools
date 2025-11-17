@@ -12,7 +12,7 @@ public class DeployAppException : Agent365Exception
 {
     private const string DeployAppIssueDescription = "App Deployment failed";
 
-    public DeployAppException(string reason)
+    public DeployAppException(string reason, Exception? innerException = null)
         : base(
             errorCode: ErrorCodes.DeploymentAppFailed,
             issueDescription: DeployAppIssueDescription,
@@ -20,7 +20,8 @@ public class DeployAppException : Agent365Exception
             mitigationSteps: new List<string>
             {
                 "Please review the logs and retry the deployment",
-            })
+            },
+            innerException: innerException)
     {
     }
 

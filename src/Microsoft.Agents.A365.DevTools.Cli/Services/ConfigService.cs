@@ -180,7 +180,7 @@ public class ConfigService : IConfigService
             {
                 var msg = $"Warning: The local generated config (at {localPath}) is older than the global config (at {globalPath}). You may be using stale configuration. Consider syncing or running setup again.";
                 if (logger != null)
-                    logger.LogWarning(msg);
+                    logger.LogDebug(msg);
                 else
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
