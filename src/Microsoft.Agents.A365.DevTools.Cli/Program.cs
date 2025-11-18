@@ -9,7 +9,6 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 using System.CommandLine;
-using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
 using System.Reflection;

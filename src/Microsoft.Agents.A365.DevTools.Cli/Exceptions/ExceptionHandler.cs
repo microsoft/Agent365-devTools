@@ -19,9 +19,6 @@ public static class ExceptionHandler
     /// <param name="ex">The Agent365Exception to handle</param>
     public static void HandleAgent365Exception(Agent365Exception ex)
     {
-        // Set console color based on error severity
-        Console.ForegroundColor = ConsoleColor.Red;
-        
         // Display formatted error message
         Console.Error.Write(ex.GetFormattedMessage());
         
@@ -32,17 +29,9 @@ public static class ExceptionHandler
             Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
             Console.Error.WriteLine();
         }
-        
-        Console.ResetColor();
 
-        // Log to Serilog for diagnostics (includes stack trace if available)
-        if (ex.IsUserError)
-        {
-            Log.Error(ex, "[{ErrorCode}] {Message}", ex.ErrorCode, ex.IssueDescription);
-        }
-        else
-        {
-            Log.Error(ex, "[{ErrorCode}] System error: {Message}", ex.ErrorCode, ex.IssueDescription);
-        }
+        // Log for diagnostics (but don't show stack trace to user)
+        Log.Error("Operation failed. ErrorCode={ErrorCode}, IssueDescription={IssueDescription}",
+            ex.ErrorCode, ex.IssueDescription);
     }
 }
