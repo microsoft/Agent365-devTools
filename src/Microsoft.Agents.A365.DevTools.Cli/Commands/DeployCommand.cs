@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.CommandLine;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using System.CommandLine;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -93,8 +94,6 @@ public class DeployCommand
             catch (Exception ex)
             {
                 HandleDeploymentException(ex, logger);
-                if (ex is not FileNotFoundException)
-                    throw;
             }
         }, configOption, verboseOption, dryRunOption, inspectOption, restartOption);
 
@@ -466,8 +465,9 @@ public class DeployCommand
                 logger.LogInformation("");
                 break;
             default:
-                logger.LogError(ex, "Deployment failed: {Message}", ex.Message);
-                break;
+                logger.LogError("Deployment failed: {Message}", ex.Message);
+                
+                throw new DeployAppException($"Deployment failed: {ex.Message}", ex);
         }
     }
 }

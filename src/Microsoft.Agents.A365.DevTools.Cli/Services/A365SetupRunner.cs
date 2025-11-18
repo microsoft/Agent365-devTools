@@ -31,6 +31,7 @@ public sealed class A365SetupRunner
     private const string ConnectivityResourceAppId = "0ddb742a-e7dc-4899-a31e-80e797ec7144"; // Connectivity
     private const string InheritablePermissionsResourceAppIdId = "00000003-0000-0ff1-ce00-000000000000";
     private const string MicrosoftGraphCommandLineToolsAppId = "14d82eec-204b-4c2f-b7e8-296a70dab67e"; // Microsoft Graph Command Line Tools
+    private const string DocumentationMessage = "See documentation at https://aka.ms/agent365/setup for more information.";
 
     public A365SetupRunner(
         ILogger<A365SetupRunner> logger, 
@@ -494,36 +495,17 @@ public sealed class A365SetupRunner
         generatedConfig["completedAt"] = DateTime.UtcNow.ToString("o");
         await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
-        _logger.LogInformation("Setup completed. Generated config at {Path}", generatedConfigPath);
+        _logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
         _logger.LogInformation("");
-        _logger.LogInformation("==========================================");
-        _logger.LogInformation("INSTALLATION COMPLETED SUCCESSFULLY!");
-        _logger.LogInformation("==========================================");
-        _logger.LogInformation("");
-        _logger.LogInformation("Agent Blueprint Details:");
-        _logger.LogInformation("  - Display Name: {Name}", cfg["agentBlueprintDisplayName"]?.GetValue<string>());
-        _logger.LogInformation("  - Object ID: {Id}", generatedConfig["agentBlueprintObjectId"]?.GetValue<string>());
-        _logger.LogInformation("  - Identifier URI: api://{Id}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
-
-        // Print summary to console as the very last output
-        AppDomain.CurrentDomain.ProcessExit += (_, __) =>
-        {
-            Console.WriteLine();
-            Console.WriteLine("==========================================");
-            Console.WriteLine(" AGENT BLUEPRINT CREATED SUCCESSFULLY! ");
-            Console.WriteLine("==========================================");
-            Console.WriteLine($"Blueprint ID: {generatedConfig["agentBlueprintId"]?.GetValue<string>()}");
-            Console.WriteLine();
-            Console.WriteLine($"Generated config saved at: {generatedConfigPath}");
-            Console.WriteLine();
-        };
+        _logger.LogInformation("Blueprint installation completed successfully");
+        _logger.LogInformation("Blueprint ID: {BlueprintId}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
+        _logger.LogInformation("Identifier URI: api://{AppId}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
 
         return true;
     }
 
     /// <summary>
-    /// Create Agent Blueprint using Microsoft Graph API (native C# implementation)
-    /// Replaces createAgentBlueprint.ps1
+    /// Create Agent Blueprint using Microsoft Graph API 
     /// 
     /// IMPORTANT: This requires interactive authentication with Application.ReadWrite.All permission.
     /// Uses the same authentication flow as Connect-MgGraph in PowerShell.
@@ -744,6 +726,7 @@ public sealed class A365SetupRunner
                     objectId,
                     credentialName,
                     managedIdentityPrincipalId,
+                    graphToken,
                     ct);
 
                 if (ficSuccess)
@@ -854,20 +837,24 @@ public sealed class A365SetupRunner
     /// <summary>
     /// Create Federated Identity Credential to link managed identity to blueprint
     /// Equivalent to createFederatedIdentityCredential function in PowerShell
+    /// Implements retry logic to handle Azure AD propagation delays
     /// </summary>
     private async Task<bool> CreateFederatedIdentityCredentialAsync(
         string tenantId,
         string blueprintObjectId,
         string credentialName,
         string msiPrincipalId,
+        string graphToken,
         CancellationToken ct)
     {
+        const int maxRetries = 5;
+        const int initialDelayMs = 2000; // Start with 2 seconds
+
         try
         {
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
-                _logger.LogError("Failed to acquire Graph API access token for FIC creation");
+                _logger.LogError("Graph token is required for FIC creation");
                 return false;
             }
 
@@ -881,25 +868,64 @@ public sealed class A365SetupRunner
 
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
 
-            var url = $"https://graph.microsoft.com/v1.0/applications/{blueprintObjectId}/federatedIdentityCredentials";
-            var response = await httpClient.PostAsync(
-                url,
-                new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
-
-            if (!response.IsSuccessStatusCode)
+            // Try standard endpoint first, then fallback to Agent Blueprint-specific path
+            var urls = new[]
             {
-                var error = await response.Content.ReadAsStringAsync(ct);
-                _logger.LogError("Failed to create federated identity credential: {Error}", error);
-                return false;
+                $"https://graph.microsoft.com/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
+                $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials"
+            };
+
+            string? lastError = null;
+
+            foreach (var url in urls)
+            {
+                // Retry loop to handle propagation delays
+                for (int attempt = 1; attempt <= maxRetries; attempt++)
+                {
+                    var response = await httpClient.PostAsync(
+                        url,
+                        new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        ct);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("  - Credential Name: {Name}", credentialName);
+                        _logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+                        _logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                        return true;
+                    }
+
+                    var error = await response.Content.ReadAsStringAsync(ct);
+                    lastError = error;
+
+                    // Check if it's a propagation issue (resource not found)
+                    if ((error.Contains("Request_ResourceNotFound") || error.Contains("does not exist")) && attempt < maxRetries)
+                    { 
+                        var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1); // Exponential backoff
+                        _logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...", 
+                            attempt, maxRetries, delayMs);
+                        await Task.Delay(delayMs, ct);
+                        continue;
+                    }
+
+                    // Check if it's an Agent Blueprint API version error - try fallback URL
+                    if (error.Contains("Agent Blueprints are not supported on the API version"))
+                    {
+                        _logger.LogDebug("Standard endpoint not supported, trying Agent Blueprint-specific path...");
+                        break; // Break retry loop to try next URL
+                    }
+
+                    // Other error - break retry loop to try next URL
+                    _logger.LogDebug("FIC creation failed with error: {Error}", error);
+                    break;
+                }
             }
 
-            _logger.LogInformation("  - Credential Name: {Name}", credentialName);
-            _logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-            _logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
-
-            return true;
+            // All attempts failed
+            _logger.LogDebug("Failed to create federated identity credential after trying all endpoints (may not be supported for Agent Blueprints yet): {Error}", lastError);
+            return false;
         }
         catch (Exception ex)
         {
@@ -1042,7 +1068,6 @@ public sealed class A365SetupRunner
 
     /// <summary>
     /// Create a client secret for the Agent Blueprint using Microsoft Graph API.
-    /// Native C# implementation - no PowerShell dependencies.
     /// The secret is encrypted using DPAPI on Windows before storage.
     /// </summary>
     private async Task CreateBlueprintClientSecretAsync(
@@ -1304,6 +1329,14 @@ public sealed class A365SetupRunner
             {
                 _logger.LogError(ex, "Failed to get authenticated Graph client.");
                 _logger.LogWarning("Authentication failed, skipping inheritable permissions configuration.");
+                _logger.LogWarning("");
+                _logger.LogWarning("MANUAL CONFIGURATION REQUIRED:");
+                _logger.LogWarning("  You need to configure inheritable permissions manually in Azure Portal.");
+                _logger.LogWarning("  {DocumentationMessage}", DocumentationMessage);
+                _logger.LogWarning("");
+                
+                generatedConfig["inheritanceConfigured"] = false;
+                generatedConfig["inheritanceConfigError"] = "Authentication failed: " + ex.Message;
                 return;
             }
 
@@ -1311,7 +1344,16 @@ public sealed class A365SetupRunner
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token");
-                throw new InvalidOperationException("Cannot update inheritable permissions without Graph API token");
+                _logger.LogWarning("Skipping inheritable permissions configuration");
+                _logger.LogWarning("");
+                _logger.LogWarning("MANUAL CONFIGURATION REQUIRED:");
+                _logger.LogWarning("  You need to configure inheritable permissions manually in Azure Portal.");
+                _logger.LogWarning("  {DocumentationMessage}", DocumentationMessage);
+                _logger.LogWarning("");
+                
+                generatedConfig["inheritanceConfigured"] = false;
+                generatedConfig["inheritanceConfigError"] = "Failed to acquire Graph API access token";
+                return;
             }
 
             // Read scopes from a365.config.json
@@ -1335,8 +1377,8 @@ public sealed class A365SetupRunner
             var graphUrl = $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
             
             _logger.LogInformation("Configuring Graph inheritable permissions");
-            _logger.LogInformation("  - Request URL: {Url}", graphUrl);
-            _logger.LogInformation("  - Blueprint Object ID: {ObjectId}", blueprintObjectId);
+            _logger.LogDebug("  - Request URL: {Url}", graphUrl);
+            _logger.LogDebug("  - Blueprint Object ID: {ObjectId}", blueprintObjectId);
 
             // Convert scope list to JsonArray
             var scopesArray = new JsonArray();
@@ -1355,7 +1397,7 @@ public sealed class A365SetupRunner
                 }
             };
 
-            _logger.LogInformation("  - Request body: {Body}", graphBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            _logger.LogDebug("  - Request body: {Body}", graphBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             
             var graphResponse = await httpClient.PostAsync(
                 graphUrl,
@@ -1377,10 +1419,39 @@ public sealed class A365SetupRunner
                 }
                 else
                 {
-                    _logger.LogError("Failed to configure Graph inheritable permissions: {Status} - {Error}", 
-                        graphResponse.StatusCode, error);
-                    generatedConfig["inheritanceConfigured"] = false;
-                    generatedConfig["graphInheritanceError"] = error;
+                    // Check if this is an authorization error
+                    bool isAuthorizationError = 
+                        error.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
+                        error.Contains("Insufficient privileges", StringComparison.OrdinalIgnoreCase) ||
+                        graphResponse.StatusCode == System.Net.HttpStatusCode.Forbidden ||
+                        graphResponse.StatusCode == System.Net.HttpStatusCode.Unauthorized;
+                    
+                    if (isAuthorizationError)
+                    {
+                        _logger.LogError("Failed to configure Graph inheritable permissions: {Status} - {Error}", 
+                            graphResponse.StatusCode, error);
+                        _logger.LogError("");
+                        _logger.LogError("=== INSUFFICIENT PERMISSIONS DETECTED ===");
+                        _logger.LogError("");
+                        _logger.LogError("The current user account does not have sufficient privileges to configure inheritable permissions.");
+                        _logger.LogError("");
+                        foreach (var scope in inheritableScopes)
+                        {
+                            _logger.LogError("     - {Scope}", scope);
+                        }
+                        _logger.LogError("  5. Click 'Grant admin consent'");
+                        _logger.LogError("");
+                        
+                        generatedConfig["inheritanceConfigured"] = false;
+                        generatedConfig["graphInheritanceError"] = error;
+                    }
+                    else
+                    {
+                        _logger.LogError("Failed to configure Graph inheritable permissions: {Status} - {Error}", 
+                            graphResponse.StatusCode, error);
+                        generatedConfig["inheritanceConfigured"] = false;
+                        generatedConfig["graphInheritanceError"] = error;
+                    }
                 }
             }
             else
@@ -1398,7 +1469,7 @@ public sealed class A365SetupRunner
             
             _logger.LogInformation("");
             _logger.LogInformation("Configuring Connectivity inheritable permissions");
-            _logger.LogInformation("  - Request URL: {Url}", connectivityUrl);
+            _logger.LogDebug("  - Request URL: {Url}", connectivityUrl);
             
             var connectivityBody = new JsonObject
             {
@@ -1410,7 +1481,7 @@ public sealed class A365SetupRunner
                 }
             };
 
-            _logger.LogInformation("  - Request body: {Body}", connectivityBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            _logger.LogDebug("  - Request body: {Body}", connectivityBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
             var connectivityResponse = await httpClient.PostAsync(
                 connectivityUrl,
@@ -1432,9 +1503,26 @@ public sealed class A365SetupRunner
                 }
                 else
                 {
-                    _logger.LogError("Failed to configure Connectivity inheritable permissions: {Status} - {Error}", 
-                        connectivityResponse.StatusCode, error);
-                    generatedConfig["connectivityInheritanceError"] = error;
+                    // Check if this is an authorization error
+                    bool isAuthorizationError = 
+                        error.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
+                        error.Contains("Insufficient privileges", StringComparison.OrdinalIgnoreCase) ||
+                        connectivityResponse.StatusCode == System.Net.HttpStatusCode.Forbidden ||
+                        connectivityResponse.StatusCode == System.Net.HttpStatusCode.Unauthorized;
+                    
+                    if (isAuthorizationError)
+                    {
+                        _logger.LogError("Failed to configure Connectivity inheritable permissions: {Status} - {Error}", 
+                            connectivityResponse.StatusCode, error);
+                        _logger.LogError("See the troubleshooting steps above for resolving permission issues.");
+                        generatedConfig["connectivityInheritanceError"] = error;
+                    }
+                    else
+                    {
+                        _logger.LogError("Failed to configure Connectivity inheritable permissions: {Status} - {Error}", 
+                            connectivityResponse.StatusCode, error);
+                        generatedConfig["connectivityInheritanceError"] = error;
+                    }
                 }
             }
             else
@@ -1538,9 +1626,9 @@ public sealed class A365SetupRunner
     private async Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(string tenantId, CancellationToken ct)
     {
         _logger.LogInformation("Authenticating to Microsoft Graph using interactive browser authentication...");
-        _logger.LogWarning("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
-        _logger.LogWarning("This will open a browser window for interactive authentication.");
-        _logger.LogWarning("Please sign in with a Global Administrator account.");
+        _logger.LogInformation("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
+        _logger.LogInformation("This will open a browser window for interactive authentication.");
+        _logger.LogInformation("Please sign in with a Global Administrator account.");
         _logger.LogInformation("");
         
         // Use InteractiveGraphAuthService to get proper authentication

@@ -9,6 +9,9 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 using System.CommandLine;
+using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Parsing;
 using System.Reflection;
 
 namespace Microsoft.Agents.A365.DevTools.Cli;
@@ -36,7 +39,7 @@ class Program
                 rollOnFileSizeLimit: false,
                 fileSizeLimitBytes: 10_485_760,  // 10 MB max
                 retainedFileCountLimit: 1,       // Only keep latest run
-                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u3}] {Message:lj}{NewLine}{Exception}")
+                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u3}] {Message:lj}{NewLine}")
             .CreateLogger();
 
         try
@@ -76,7 +79,7 @@ class Program
 
             // Get services needed by commands
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
-            var botConfigurator = serviceProvider.GetRequiredService<BotConfigurator>();
+            var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var webAppCreator = serviceProvider.GetRequiredService<AzureWebAppCreator>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
@@ -94,37 +97,65 @@ class Program
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
             var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
-            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger));
+            var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
+            var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
+            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, executor));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService, manifestTemplateService));
 
-            // Invoke
-            return await rootCommand.InvokeAsync(args);
-        }
-        catch (Exceptions.Agent365Exception ex)
-        {
-            // Structured Microsoft Agent 365 exception - display user-friendly error message
-            // No stack trace for user errors (validation, config, auth issues)
-            ExceptionHandler.HandleAgent365Exception(ex);
-            return ex.ExitCode;
-        }
-        catch (Exception ex)
-        {
-            // Unexpected error - this is a BUG, show full stack trace
-            Log.Fatal(ex, "Application terminated unexpectedly");
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.Error.WriteLine();
-            Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
-            Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
-            Console.Error.WriteLine();
-            Console.ResetColor();
-            return 1;
+            // Wrap all command handlers with exception handling
+            // Build with middleware for global exception handling
+            var builder = new CommandLineBuilder(rootCommand)
+                .UseDefaults()
+                .UseExceptionHandler((exception, context) =>
+                {
+                    if (exception is Agent365Exception myEx)
+                    {
+                        HandleAgent365Exception(myEx);
+                        context.ExitCode = myEx.ExitCode;
+                    }
+                    else
+                    {
+                        // Unexpected error - this is a BUG
+                        Log.Fatal(exception, "Application terminated unexpectedly");
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
+                        Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
+                        Console.Error.WriteLine();
+                        context.ExitCode = 1;
+                    }
+                });
+
+            var parser = builder.Build();
+            return await parser.InvokeAsync(args);
         }
         finally
         {
             Log.CloseAndFlush();
         }
+    }
+
+
+    /// <summary>
+    /// Handles Agent365Exception with user-friendly output (no stack traces for user errors).
+    /// Follows Microsoft CLI best practices (Azure CLI, dotnet CLI patterns).
+    /// </summary>
+    private static void HandleAgent365Exception(Agent365Exception ex)
+    {
+        // Display formatted error message
+        Console.Error.WriteLine(ex.GetFormattedMessage());
+
+        // For system errors (not user errors), suggest reporting as bug
+        if (!ex.IsUserError)
+        {
+            Console.Error.WriteLine("If this error persists, please report it at:");
+            Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
+        }
+
+        // Log for diagnostics (but don't show stack trace to user)
+        Log.Error("Operation failed. ErrorCode={ErrorCode}, IssueDescription={IssueDescription}",
+            ex.ErrorCode, ex.IssueDescription);
     }
 
     private static void ConfigureServices(IServiceCollection services)
@@ -184,12 +215,17 @@ class Program
         services.AddSingleton<DeploymentService>();
         
         // Add other services
-        services.AddSingleton<BotConfigurator>();
+        services.AddSingleton<IBotConfigurator, BotConfigurator>();
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
+        services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
         
         // Register AzureWebAppCreator for SDK-based web app creation
         services.AddSingleton<AzureWebAppCreator>();
+        
+        // Register Azure CLI service and Configuration Wizard
+        services.AddSingleton<IAzureCliService, AzureCliService>();
+        services.AddSingleton<IConfigurationWizardService, ConfigurationWizardService>();
     }
 
     public static string GetDisplayVersion()

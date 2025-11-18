@@ -29,10 +29,29 @@ public static class ConfigConstants
     public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/discoverToolServers";
 
     /// <summary>
+    /// Production Agent 365 Tools Create endpoint URL
+    /// </summary>
+    public const string ProductionCreateEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/botManagement/createAgentBlueprint";
+
+    /// <summary>
+    /// Production Agent 365 Tools Delete endpoint URL
+    /// </summary>
+    public const string ProductionDeleteEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/botManagement/deleteAgentBlueprint";
+
+    /// <summary>
     /// Messaging Bot API App ID
     /// </summary>
     public const string MessagingBotApiAppId = "5a807f24-c9de-44ee-a3a7-329e88a00ffc";
 
+    /// <summary>
+    /// Production deployment environment
+    /// </summary>
+    public const string ProductionDeploymentEnvironment = "prd";
+
+    /// <summary>
+    /// Production cluster category
+    /// </summary>
+    public const string ProductionClusterCategory = "prod";
 
     // Hardcoded default scopes
 
@@ -66,7 +85,6 @@ public static class ConfigConstants
     /// <summary>
     /// Get Discover endpoint URL based on environment
     /// </summary>
-
     public static string GetDiscoverEndpointUrl(string environment)
     {
         // Check for custom endpoint in environment variable first

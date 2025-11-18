@@ -14,7 +14,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// <summary>
 /// C# implementation fully equivalent to a365-createinstance.ps1.
 /// Supports all phases: Identity/User creation and License assignment.
-/// Native C# implementation - no PowerShell script dependencies.
 /// MCP permissions are configured via inheritable permissions during setup phase.
 /// </summary>
 public sealed class A365CreateInstanceRunner
@@ -187,12 +186,12 @@ public sealed class A365CreateInstanceRunner
         await SaveInstanceAsync(generatedConfigPath, instance, cancellationToken);
         _logger.LogInformation("Core inputs mapped and instance seed saved to {Path}", generatedConfigPath);
 
-        // ========================================================================
-        // Phase 1: Agent Identity + Agent User Creation (Native C# Implementation)
-        // ========================================================================
+        // ==============================================
+        // Phase 1: Agent Identity + Agent User Creation 
+        // ==============================================
         if (step == "identity" || step == "all")
         {
-            _logger.LogInformation("Phase 1: Creating Agent Identity and Agent User (Native C# Implementation)");
+            _logger.LogInformation("Phase 1: Creating Agent Identity and Agent User");
 
             var agentIdentityDisplayName = GetConfig("agentIdentityDisplayName");
             var agentUserDisplayName = GetConfig("agentUserDisplayName");
@@ -415,7 +414,7 @@ public sealed class A365CreateInstanceRunner
         // ============================
         if (step == "licenses" || step == "all")
         {
-            _logger.LogInformation("Phase 2: License assignment (Native C# Implementation)");
+            _logger.LogInformation("Phase 2: License assignment");
 
             if (instance.TryGetPropertyValue("AgenticUserId", out var userIdNode))
             {
@@ -439,10 +438,6 @@ public sealed class A365CreateInstanceRunner
 
         return true;
     }
-
-    // ========================================================================
-    // Native C# Implementation Methods (Replace PowerShell Scripts)
-    // ========================================================================
 
     /// <summary>
     /// Create Agent Identity using Microsoft Graph API

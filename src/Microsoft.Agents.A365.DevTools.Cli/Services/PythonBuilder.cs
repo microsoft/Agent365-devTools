@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -13,6 +14,7 @@ public class PythonBuilder : IPlatformBuilder
 {
     private readonly ILogger<PythonBuilder> _logger;
     private readonly CommandExecutor _executor;
+    private string ? _pythonExe;
 
     public PythonBuilder(ILogger<PythonBuilder> logger, CommandExecutor executor)
     {
@@ -23,19 +25,26 @@ public class PythonBuilder : IPlatformBuilder
     public async Task<bool> ValidateEnvironmentAsync()
     {
         _logger.LogInformation("Validating Python environment...");
-        
-        var pythonResult = await _executor.ExecuteAsync("python", "--version", captureOutput: true);
+
+        _pythonExe = await PythonLocator.FindPythonExecutableAsync(_executor);
+        if (string.IsNullOrWhiteSpace(_pythonExe))
+        {
+            _logger.LogError("Python not found. Please install Python from https://www.python.org/");
+            throw new PythonLocatorException("Python executable could not be located.");
+        }
+
+        var pythonResult = await _executor.ExecuteAsync(_pythonExe, "--version", captureOutput: true);
         if (!pythonResult.Success)
         {
             _logger.LogError("Python not found. Please install Python from https://www.python.org/");
-            return false;
+            throw new PythonLocatorException("Python executable could not be located.");
         }
 
-        var pipResult = await _executor.ExecuteAsync("pip", "--version", captureOutput: true);
+        var pipResult = await _executor.ExecuteAsync(_pythonExe, "-m pip --version", captureOutput: true);
         if (!pipResult.Success)
         {
             _logger.LogError("pip not found. Please ensure pip is installed with Python.");
-            return false;
+            throw new PythonLocatorException("Unable to locate pip.");
         }
 
         _logger.LogInformation("Python version: {Version}", pythonResult.StandardOutput.Trim());
@@ -127,17 +136,28 @@ public class PythonBuilder : IPlatformBuilder
 
     public async Task<string> BuildAsync(string projectDir, string outputPath, bool verbose)
     {
-        _logger.LogInformation("Building Python project using Azure-native deployment approach...");
-        
         // Clean up old publish directory for fresh start
         var publishPath = Path.Combine(projectDir, outputPath);
-        
+
         if (Directory.Exists(publishPath))
         {
             _logger.LogInformation("Removing old publish directory...");
             Directory.Delete(publishPath, recursive: true);
         }
-        
+
+        _logger.LogInformation("Building Python project...");
+        // Run python -m py_compile on all .py files at the project root to catch syntax errors before packaging
+        var pyFiles = Directory.GetFiles(projectDir, "*.py", SearchOption.TopDirectoryOnly);
+        foreach (var pyFile in pyFiles)
+        {
+            var result = await _executor.ExecuteAsync(_pythonExe!, $"-m py_compile \"{pyFile}\"", projectDir, captureOutput: true);
+            if (!result.Success)
+            {
+                _logger.LogError("Python syntax error in {File}:\n{Error}", pyFile, result.StandardError);
+                throw new DeployAppPythonCompileException($"Python syntax error in {pyFile}:\n{result.StandardError}");
+            }
+        }
+
         Directory.CreateDirectory(publishPath);
 
         // Step 1: Copy entire project structure (excluding unwanted files)
@@ -203,7 +223,13 @@ public class PythonBuilder : IPlatformBuilder
         else
         {
             // Try to get from current python
-            var versionResult = await _executor.ExecuteAsync("python", "--version", captureOutput: true);
+            _pythonExe = _pythonExe ?? await PythonLocator.FindPythonExecutableAsync(_executor);
+            if (string.IsNullOrWhiteSpace(_pythonExe))
+            {
+                _logger.LogError("Python not found. Please install Python from https://www.python.org/");
+                throw new PythonLocatorException("Python executable could not be located.");
+            }
+            var versionResult = await _executor.ExecuteAsync(_pythonExe, "--version", captureOutput: true);
             if (versionResult.Success)
             {
                 var match = System.Text.RegularExpressions.Regex.Match(

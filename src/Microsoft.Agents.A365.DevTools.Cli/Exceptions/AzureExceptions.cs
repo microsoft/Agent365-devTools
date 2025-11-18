@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 /// <summary>
@@ -11,7 +13,7 @@ public class AzureAuthenticationException : Agent365Exception
 {
     public AzureAuthenticationException(string reason)
         : base(
-            errorCode: "AZURE_AUTH_FAILED",
+            errorCode: ErrorCodes.AzureAuthFailed,
             issueDescription: "Azure CLI authentication failed",
             errorDetails: new List<string> { reason },
             mitigationSteps: new List<string>

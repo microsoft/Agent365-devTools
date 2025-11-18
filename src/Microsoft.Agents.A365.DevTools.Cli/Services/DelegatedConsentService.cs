@@ -46,9 +46,9 @@ public sealed class DelegatedConsentService
         try
         {
             _logger.LogInformation("==> Ensuring AgentApplication.Create permission for Microsoft Graph Command Line Tools");
-            _logger.LogInformation("  • Calling App ID: {AppId}", callingAppId);
-            _logger.LogInformation("  • Tenant ID: {TenantId}", tenantId);
-            _logger.LogInformation("  • Required Scope: {Scope}", TargetScope);
+            _logger.LogInformation("    Calling App ID: {AppId}", callingAppId);
+            _logger.LogInformation("    Tenant ID: {TenantId}", tenantId);
+            _logger.LogInformation("    Required Scope: {Scope}", TargetScope);
 
             // Validate inputs
             if (!Guid.TryParse(callingAppId, out _))
@@ -76,7 +76,7 @@ public sealed class DelegatedConsentService
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
 
             // Step 1: Get or create service principal for calling app (Microsoft Graph Command Line Tools)
-            _logger.LogInformation("  • Looking up service principal for calling app");
+            _logger.LogInformation("    Looking up service principal for calling app");
             var clientSp = await GetOrCreateServicePrincipalAsync(httpClient, callingAppId, tenantId, cancellationToken);
             if (clientSp == null)
             {
@@ -85,10 +85,10 @@ public sealed class DelegatedConsentService
             }
 
             var clientSpId = clientSp.RootElement.GetProperty("id").GetString()!;
-            _logger.LogInformation("  • Client Service Principal ID: {SpId}", clientSpId);
+            _logger.LogInformation("    Client Service Principal ID: {SpId}", clientSpId);
 
             // Step 2: Get Microsoft Graph service principal
-            _logger.LogInformation("  • Looking up Microsoft Graph service principal");
+            _logger.LogInformation("    Looking up Microsoft Graph service principal");
             var graphSp = await GetServicePrincipalAsync(httpClient, GraphAppId, cancellationToken);
             if (graphSp == null)
             {
@@ -97,15 +97,15 @@ public sealed class DelegatedConsentService
             }
 
             var graphSpId = graphSp.RootElement.GetProperty("id").GetString()!;
-            _logger.LogInformation("  • Graph Service Principal ID: {SpId}", graphSpId);
+            _logger.LogInformation("    Graph Service Principal ID: {SpId}", graphSpId);
 
             // Step 3: Check if grant already exists
-            _logger.LogInformation("  • Checking for existing permission grant");
+            _logger.LogInformation("    Checking for existing permission grant");
             var existingGrants = await GetExistingGrantsAsync(httpClient, clientSpId, graphSpId, cancellationToken);
 
             if (existingGrants != null && existingGrants.Count > 0)
             {
-                _logger.LogInformation("  • Found {Count} existing grant(s)", existingGrants.Count);
+                _logger.LogInformation("    Found {Count} existing grant(s)", existingGrants.Count);
 
                 // Update existing grant(s) to include required scope
                 foreach (var grant in existingGrants)
@@ -115,7 +115,7 @@ public sealed class DelegatedConsentService
             }
             else
             {
-                _logger.LogInformation("  • No existing grants found, creating new grant");
+                _logger.LogInformation("    No existing grants found, creating new grant");
 
                 // Create new grant with required scope
                 var success = await CreateGrantAsync(httpClient, clientSpId, graphSpId, TargetScope, cancellationToken);
@@ -127,7 +127,7 @@ public sealed class DelegatedConsentService
             }
 
             _logger.LogInformation("Successfully ensured grant for scope: {Scope}", TargetScope);
-            _logger.LogInformation("  • You can now create Agent Blueprints");
+            _logger.LogInformation("    You can now create Agent Blueprints");
 
             return true;
         }
@@ -163,7 +163,7 @@ public sealed class DelegatedConsentService
             var getSp = await GetServicePrincipalAsync(httpClient, appId, cancellationToken);
             if (getSp != null)
             {
-                _logger.LogInformation("  • Service principal already exists for app {AppId}", appId);
+                _logger.LogInformation("    Service principal already exists for app {AppId}", appId);
                 return getSp;
             }
 
@@ -221,7 +221,7 @@ public sealed class DelegatedConsentService
                     }
                     
                     var retrySpJson = await retryResponse.Content.ReadAsStringAsync(cancellationToken);
-                    _logger.LogInformation("  • Service principal created successfully after re-authentication");
+                    _logger.LogInformation("    Service principal created successfully after re-authentication");
                     return JsonDocument.Parse(retrySpJson);
                 }
                 
@@ -230,7 +230,7 @@ public sealed class DelegatedConsentService
             }
 
             var spJson = await createResponse.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogInformation("  • Service principal created successfully");
+            _logger.LogInformation("    Service principal created successfully");
             return JsonDocument.Parse(spJson);
         }
         catch (Exception ex)
@@ -248,7 +248,7 @@ public sealed class DelegatedConsentService
     {
         try
         {
-            _logger.LogInformation("  • Logging out of Azure CLI...");
+            _logger.LogInformation("    Logging out of Azure CLI...");
             
             // Logout using CommandExecutor
             var executor = new CommandExecutor(
@@ -256,7 +256,7 @@ public sealed class DelegatedConsentService
             
             await executor.ExecuteAsync("az", "logout", suppressErrorLogging: true, cancellationToken: cancellationToken);
             
-            _logger.LogInformation("  • Initiating fresh login...");
+            _logger.LogInformation("    Initiating fresh login...");
             var loginResult = await executor.ExecuteAsync(
                 "az",
                 $"login --tenant {tenantId}",
@@ -268,7 +268,7 @@ public sealed class DelegatedConsentService
                 return null;
             }
             
-            _logger.LogInformation("  • Acquiring fresh Graph API token...");
+            _logger.LogInformation("    Acquiring fresh Graph API token...");
             
             // Get fresh token
             var tokenResult = await executor.ExecuteAsync(
@@ -280,7 +280,7 @@ public sealed class DelegatedConsentService
             if (tokenResult.Success && !string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
             {
                 var token = tokenResult.StandardOutput.Trim();
-                _logger.LogInformation("  • Fresh token acquired successfully");
+                _logger.LogInformation("    Fresh token acquired successfully");
                 return token;
             }
             
@@ -426,7 +426,7 @@ public sealed class DelegatedConsentService
             // Check if scope already exists
             if (existingScopes.Contains(scopeToAdd))
             {
-                _logger.LogInformation("  • Scope '{Scope}' already exists on grant {GrantId}", scopeToAdd, grantId);
+                _logger.LogInformation("    Scope '{Scope}' already exists on grant {GrantId}", scopeToAdd, grantId);
                 return true;
             }
 
@@ -434,7 +434,7 @@ public sealed class DelegatedConsentService
             existingScopes.Add(scopeToAdd);
             var newScope = string.Join(' ', existingScopes.OrderBy(s => s));
 
-            _logger.LogInformation("  • Updating grant {GrantId} to include scope: {Scope}", grantId, scopeToAdd);
+            _logger.LogInformation("    Updating grant {GrantId} to include scope: {Scope}", grantId, scopeToAdd);
 
             // Update the grant
             var updateUrl = $"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/{grantId}";
@@ -454,14 +454,14 @@ public sealed class DelegatedConsentService
             if (!updateResponse.IsSuccessStatusCode)
             {
                 var error = await updateResponse.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogWarning("Grant update returned error (may be transient): {Error}", error);
+                _logger.LogDebug("Grant update returned error (may be transient): {Error}", error);
                 // Note: We return true here because the grant update failure is often transient
                 // and the setup can continue. The "Successfully ensured grant" message below
                 // indicates the overall operation succeeded even if this specific update had issues.
                 return true;
             }
 
-            _logger.LogInformation("  • Grant updated successfully");
+            _logger.LogInformation("    Grant updated successfully");
             return true;
         }
         catch (Exception ex)
@@ -512,7 +512,7 @@ public sealed class DelegatedConsentService
             var response = JsonDocument.Parse(responseJson);
             var grantId = response.RootElement.GetProperty("id").GetString();
 
-            _logger.LogInformation("  • Permission grant created successfully (ID: {GrantId})", grantId);
+            _logger.LogInformation("    Permission grant created successfully (ID: {GrantId})", grantId);
             return true;
         }
         catch (Exception ex)

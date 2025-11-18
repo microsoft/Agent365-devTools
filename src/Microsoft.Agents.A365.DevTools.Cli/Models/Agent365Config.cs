@@ -119,7 +119,7 @@ public class Agent365Config
     /// User Principal Name (UPN) for the agentic user to be created in Azure AD.
     /// </summary>
     [JsonPropertyName("agentUserPrincipalName")]
-    public string? AgentUserPrincipalName { get; set; }
+    public string? AgentUserPrincipalName { get; init; }
 
     /// <summary>
     /// Display name for the agentic user to be created in Azure AD.
@@ -163,10 +163,10 @@ public class Agent365Config
 
     // BotName and BotDisplayName are now derived properties
     /// <summary>
-    /// Gets the internal name for the bot registration, derived from WebAppName.
+    /// Gets the internal name for the endpoint registration, derived from WebAppName.
     /// </summary>
     [JsonIgnore]
-    public string BotName => string.IsNullOrWhiteSpace(WebAppName) ? string.Empty : $"{WebAppName}-bot";
+    public string BotName => string.IsNullOrWhiteSpace(WebAppName) ? string.Empty : $"{WebAppName}-endpoint";
 
     /// <summary>
     /// Gets the display name for the bot, derived from AgentBlueprintDisplayName.

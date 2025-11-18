@@ -56,8 +56,9 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
   </ItemGroup>
   
-  <ItemGroup>
-    <None Include="$(RepositoryRoot)\LICENSE" Pack="true" PackagePath="" />
-    <None Include="$(RepositoryRoot)\README.md" Pack="true" PackagePath="" />
+  <!-- Only include LICENSE and README in packable projects -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="$(RepositoryRoot)LICENSE" Pack="true" PackagePath="" Condition="Exists('$(RepositoryRoot)LICENSE')" />
+    <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="" Condition="Exists('$(RepositoryRoot)README.md')" />
   </ItemGroup>
 </Project>

@@ -26,12 +26,11 @@ public sealed class InteractiveGraphAuthService
     // Microsoft Graph PowerShell app ID (first-party Microsoft app with elevated privileges)
     private const string PowerShellAppId = "14d82eec-204b-4c2f-b7e8-296a70dab67e";
 
-    // Scopes required for Agent Blueprint creation
+    // Scopes required for Agent Blueprint creation and inheritable permissions configuration
     private static readonly string[] RequiredScopes = new[]
     {
         "https://graph.microsoft.com/Application.ReadWrite.All",
-        "https://graph.microsoft.com/Directory.ReadWrite.All",
-        "https://graph.microsoft.com/DelegatedPermissionGrant.ReadWrite.All"
+        "https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All"
     };
 
     public InteractiveGraphAuthService(ILogger<InteractiveGraphAuthService> logger)
@@ -42,15 +41,13 @@ public sealed class InteractiveGraphAuthService
     /// <summary>
     /// Gets an authenticated GraphServiceClient using interactive browser authentication.
     /// This uses the Microsoft Graph PowerShell app ID to get the same elevated privileges.
-    /// 
-    /// PURE C# - NO POWERSHELL REQUIRED
     /// </summary>
     public Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(
         string tenantId,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Attempting to authenticate to Microsoft Graph interactively...");
-        _logger.LogInformation("This requires Application.ReadWrite.All permission which is needed for Agent Blueprints.");
+        _logger.LogInformation("This requires Application.ReadWrite.All and AgentIdentityBlueprint.ReadWrite.All permissions for Agent Blueprint operations.");
         _logger.LogInformation("");
         _logger.LogInformation("IMPORTANT: A browser window will open for authentication.");
         _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
@@ -63,17 +60,16 @@ public sealed class InteractiveGraphAuthService
             var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
             {
                 TenantId = tenantId,
-                ClientId = PowerShellAppId, // Use same app ID as PowerShell for consistency
+                ClientId = PowerShellAppId,
                 AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
                 // Redirect URI for interactive browser auth (standard for public clients)
                 RedirectUri = new Uri("http://localhost")
             });
             
             _logger.LogInformation("Opening browser for authentication...");
-            _logger.LogWarning("IMPORTANT: You must grant consent for the following permissions:");
-            _logger.LogWarning("  • Application.ReadWrite.All");
-            _logger.LogWarning("  • Directory.ReadWrite.All");
-            _logger.LogWarning("  • DelegatedPermissionGrant.ReadWrite.All");
+            _logger.LogInformation("IMPORTANT: You must grant consent for the following permissions:");
+            _logger.LogInformation("  - Application.ReadWrite.All (for creating applications and blueprints)");
+            _logger.LogInformation("  - AgentIdentityBlueprint.ReadWrite.All (for configuring inheritable permissions)");
             _logger.LogInformation("");
             
             // Create GraphServiceClient with the credential

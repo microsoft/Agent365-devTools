@@ -141,19 +141,19 @@ public class QueryEntraCommand
                                             var individualScopes = scopeValue.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                                             foreach (var individualScope in individualScopes)
                                             {
-                                                logger.LogInformation("    • {Scope}", individualScope);
+                                                logger.LogInformation("      {Scope}", individualScope);
                                             }
                                         }
                                     }
                                 }
                                 else
                                 {
-                                    logger.LogInformation("    • No inheritable scopes found");
+                                    logger.LogInformation("      No inheritable scopes found");
                                 }
                             }
                             else
                             {
-                                logger.LogInformation("    • No inheritable scopes configuration found");
+                                logger.LogInformation("      No inheritable scopes configuration found");
                             }
                             
                             logger.LogInformation("");
@@ -342,7 +342,7 @@ public class QueryEntraCommand
                                 }
                                 else
                                 {
-                                    logger.LogInformation("  • No specific scopes granted");
+                                    logger.LogInformation("    No specific scopes granted");
                                 }
                                 logger.LogInformation("");
                             }
@@ -356,8 +356,8 @@ public class QueryEntraCommand
 
                 if (!hasGrants)
                 {
-                    logger.LogInformation("  • No OAuth2 permission grants found");
-                    logger.LogInformation("  • This means admin consent has not been granted for any API permissions");
+                    logger.LogInformation("    No OAuth2 permission grants found");
+                    logger.LogInformation("    This means admin consent has not been granted for any API permissions");
                     logger.LogInformation("");
                     logger.LogInformation("To grant admin consent:");
                     logger.LogInformation("  1. Visit the Azure portal: https://portal.azure.com");

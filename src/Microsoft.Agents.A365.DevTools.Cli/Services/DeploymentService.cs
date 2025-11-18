@@ -1,9 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.IO.Compression;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
+using System.IO.Compression;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -173,10 +174,6 @@ public class DeploymentService
         _logger.LogInformation("Monitor progress: https://{AppName}.scm.azurewebsites.net/api/deployments/latest", config.AppName);
         _logger.LogInformation("");
         
-        // Use async deployment to avoid Azure SCM gateway timeout
-        // Azure App Service SCM/Kudu has a hard-coded 4-5 minute gateway timeout
-        // The --async flag uploads the package and returns immediately while deployment continues in background
-        // This prevents 504 Gateway Timeout errors for long-running Python/Oryx builds
         var deployArgs = $"webapp deploy --resource-group {config.ResourceGroup} --name {config.AppName} --src-path \"{zipPath}\" --type zip --async true";
         _logger.LogInformation("Uploading deployment package...");
         
@@ -188,8 +185,34 @@ public class DeploymentService
             if (!string.IsNullOrWhiteSpace(deployResult.StandardError))
             {
                 _logger.LogError("Deployment error: {Error}", deployResult.StandardError);
+
+                // Graceful handling for site start timeout
+                if (deployResult.StandardError.Contains("site failed to start within 10 mins", StringComparison.OrdinalIgnoreCase) ||
+                    deployResult.StandardError.Contains("worker proccess failed to start", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError("The deployment failed because the site did not start within the expected time.");
+                    _logger.LogError("This is often caused by application startup issues, missing dependencies, or misconfiguration.");
+                    _logger.LogError("Check the runtime logs for more details: https://{AppName}.scm.azurewebsites.net/api/logs/docker", config.AppName);
+                    _logger.LogError("Common causes include:");
+                    _logger.LogError("  - Incorrect startup command or entry point");
+                    _logger.LogError("  - Missing Python/Node/.NET dependencies");
+                    _logger.LogError("  - Application errors on startup");
+                    _logger.LogError("  - Port binding issues (ensure your app listens on the correct port)");
+                    _logger.LogError("  - Long initialization times");
+                    _logger.LogError("Review your application logs and configuration, then redeploy.");
+                }
             }
-            throw new Exception($"Azure deployment failed: {deployResult.StandardError}");
+
+            // Print a summary for the user
+            _logger.LogInformation("========================================");
+            _logger.LogInformation("Deployment Summary");
+            _logger.LogInformation("App Name: {AppName}", config.AppName);
+            _logger.LogInformation("App URL: https://{AppName}.azurewebsites.net", config.AppName);
+            _logger.LogInformation("Resource Group: {ResourceGroup}", config.ResourceGroup);
+            _logger.LogInformation("Deployment failed. See error details above.");
+            _logger.LogInformation("========================================");
+
+            throw new DeployAppException($"Azure deployment failed: {deployResult.StandardError}");
         }
 
         _logger.LogInformation("");
@@ -199,9 +222,18 @@ public class DeploymentService
         _logger.LogInformation("Application will be available in 2-5 minutes");
         _logger.LogInformation("");
         _logger.LogInformation("Monitor deployment status:");
-        _logger.LogInformation("  • Web: https://{AppName}.scm.azurewebsites.net/api/deployments/latest", config.AppName);
-        _logger.LogInformation("  • CLI: az webapp log tail --name {AppName} --resource-group {ResourceGroup}", config.AppName, config.ResourceGroup);
+        _logger.LogInformation("    Web: https://{AppName}.scm.azurewebsites.net/api/deployments/latest", config.AppName);
+        _logger.LogInformation("    CLI: az webapp log tail --name {AppName} --resource-group {ResourceGroup}", config.AppName, config.ResourceGroup);
         _logger.LogInformation("");
+
+        // Print a summary for the user
+        _logger.LogInformation("========================================");
+        _logger.LogInformation("Deployment Summary");
+        _logger.LogInformation("App Name: {AppName}", config.AppName);
+        _logger.LogInformation("App URL: https://{AppName}.azurewebsites.net", config.AppName);
+        _logger.LogInformation("Resource Group: {ResourceGroup}", config.ResourceGroup);
+        _logger.LogInformation("Deployment completed successfully");
+        _logger.LogInformation("========================================");
     }
 
     /// <summary>

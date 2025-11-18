@@ -12,13 +12,14 @@
     <PackageId>Microsoft.Agents.A365.DevTools.Cli</PackageId>
     <Description>CLI tool for Microsoft Agents 365 development</Description>
     <PackageProjectUrl>https://github.com/microsoft/Agent365-devTools</PackageProjectUrl>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- PackageReadmeFile is already included via Directory.Build.props -->
     <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- CLI Framework -->
     <PackageReference Include="Microsoft.Identity.Client" />
+    <PackageReference Include="Polly" />
     <PackageReference Include="System.CommandLine" />
     
     <!-- Configuration & JSON -->
@@ -54,7 +55,15 @@
       <Link>a365-develop.config.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <!-- README.md is already included via Directory.Build.props -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embed manifest templates as resources -->
+    <EmbeddedResource Include="Templates\manifest.json" />
+    <EmbeddedResource Include="Templates\agenticUserTemplateManifest.json" />
+    <EmbeddedResource Include="Templates\color.png" />
+    <EmbeddedResource Include="Templates\outline.png" />
   </ItemGroup>
 
 </Project>

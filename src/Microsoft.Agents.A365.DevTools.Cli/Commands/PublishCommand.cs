@@ -8,9 +8,9 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Reflection;
-using System.Net.Http;
 using System.Net.Http.Headers;
 using System.IO.Compression;
+using Polly;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -83,7 +83,8 @@ public class PublishCommand
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        ManifestTemplateService manifestTemplateService)
     {
         var command = new Command("publish", "Update manifest.json IDs and publish package; configure federated identity and app role assignments");
 
@@ -116,9 +117,26 @@ public class PublishCommand
 
                 // Use deploymentProjectPath from config for portability
                 var baseDir = GetProjectDirectory(config, logger);
-                var manifestPath = Path.Combine(baseDir, "manifest", "manifest.json");
-                var manifestDir = Path.GetDirectoryName(manifestPath)!;
-                
+                var manifestDir = Path.Combine(baseDir, "manifest");
+                var manifestPath = Path.Combine(manifestDir, "manifest.json");
+                var agenticUserManifestTemplatePath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
+
+                // If manifest directory doesn't exist, extract templates from embedded resources
+                if (!Directory.Exists(manifestDir))
+                {
+                    logger.LogInformation("Manifest directory not found. Extracting templates from embedded resources...");
+                    Directory.CreateDirectory(manifestDir);
+
+                    if (!manifestTemplateService.ExtractTemplates(manifestDir))
+                    {
+                        logger.LogError("Failed to extract manifest templates from embedded resources");
+                        return;
+                    }
+
+                    logger.LogInformation("Successfully extracted manifest templates to {ManifestDir}", manifestDir);
+                    logger.LogInformation("Please customize the manifest files before publishing");
+                }
+
                 if (!File.Exists(manifestPath))
                 {
                     logger.LogError("Manifest file not found at {Path}", manifestPath);
@@ -136,61 +154,23 @@ public class PublishCommand
                     logger.LogWarning("tenantId missing in configuration; using default production MOS URL. Graph operations will be skipped.");
                 }
 
-                // Load manifest as mutable JsonNode
-                var manifestText = await File.ReadAllTextAsync(manifestPath);
-                var node = JsonNode.Parse(manifestText) ?? new JsonObject();
+                string updatedManifest = await UpdateManifestFileAsync(logger, agentBlueprintDisplayName, blueprintId, manifestPath);
 
-                // Update top-level id
-                node["id"] = blueprintId;
-
-                // Update name.short and name.full if agentBlueprintDisplayName is available
-                if (!string.IsNullOrWhiteSpace(agentBlueprintDisplayName))
-                {
-                    if (node["name"] is not JsonObject nameObj)
-                    {
-                        nameObj = new JsonObject();
-                        node["name"] = nameObj;
-                    }
-                    else
-                    {
-                        nameObj = (JsonObject)node["name"]!;
-                    }
-
-                    nameObj["short"] = agentBlueprintDisplayName;
-                    nameObj["full"] = agentBlueprintDisplayName;
-                    logger.LogInformation("Updated manifest name to: {Name}", agentBlueprintDisplayName);
-                }
-
-                // bots[0].botId
-                if (node["bots"] is JsonArray bots && bots.Count > 0 && bots[0] is JsonObject botObj)
-                {
-                    botObj["botId"] = blueprintId;
-                }
-
-                // webApplicationInfo.id + resource
-                if (node["webApplicationInfo"] is JsonObject webInfo)
-                {
-                    webInfo["id"] = blueprintId;
-                    webInfo["resource"] = $"api://{blueprintId}";
-                }
-
-                // copilotAgents.customEngineAgents[0].id
-                if (node["copilotAgents"] is JsonObject ca && ca["customEngineAgents"] is JsonArray cea && cea.Count > 0 && cea[0] is JsonObject ceObj)
-                {
-                    ceObj["id"] = blueprintId;
-                }
-
-                var updated = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                string updatedAgenticUserManifestTemplate = await UpdateAgenticUserManifestTemplateFileAsync(logger, agentBlueprintDisplayName, blueprintId, agenticUserManifestTemplatePath);
 
                 if (dryRun)
                 {
-                    logger.LogInformation("DRY RUN: Updated manifest (not saved):\n{Json}", updated);
+                    logger.LogInformation("DRY RUN: Updated manifest (not saved):\n{Json}", updatedManifest);
+                    logger.LogInformation("DRY RUN: Updated agentic user manifest template (not saved):\n{Json}", updatedAgenticUserManifestTemplate);
                     logger.LogInformation("DRY RUN: Skipping zipping & API calls");
                     return;
                 }
 
-                await File.WriteAllTextAsync(manifestPath, updated);
-                logger.LogInformation("Manifest updated successfully with agentBlueprintId {Id}", blueprintId);
+                await File.WriteAllTextAsync(manifestPath, updatedManifest);
+                logger.LogInformation("Manifest updatedManifest successfully with agentBlueprintId {Id}", blueprintId);
+
+                await File.WriteAllTextAsync(agenticUserManifestTemplatePath, updatedAgenticUserManifestTemplate);
+                logger.LogInformation("Manifest agentic user manifest template successfully with agentBlueprintId {Id}", blueprintId);
 
                 // Interactive pause for user customization
                 logger.LogInformation("");
@@ -199,19 +179,19 @@ public class PublishCommand
                 logger.LogInformation("Your manifest has been updated at: {ManifestPath}", manifestPath);
                 logger.LogInformation("");
                 logger.LogInformation("Please customize these fields before publishing:");
-                logger.LogInformation("  • Version ('version'): Increment for republishing (e.g., 1.0.0 to 1.0.1)");
+                logger.LogInformation("    Version ('version'): Increment for republishing (e.g., 1.0.0 to 1.0.1)");
                 logger.LogInformation("    REQUIRED: Must be higher than previously published version");
-                logger.LogInformation("  • Agent Name ('name.short' and 'name.full'): Make it descriptive and user-friendly");
+                logger.LogInformation("    Agent Name ('name.short' and 'name.full'): Make it descriptive and user-friendly");
                 logger.LogInformation("    Currently: {Name}", agentBlueprintDisplayName);
                 logger.LogInformation("    IMPORTANT: 'name.short' must be 30 characters or less");
-                logger.LogInformation("  • Descriptions ('description.short' and 'description.full'): Explain what your agent does");
+                logger.LogInformation("    Descriptions ('description.short' and 'description.full'): Explain what your agent does");
                 logger.LogInformation("    Short: 1-2 sentences, Full: Detailed capabilities");
-                logger.LogInformation("  • Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
+                logger.LogInformation("    Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
                 logger.LogInformation("    Should reflect your organization details");
-                logger.LogInformation("  • Icons: Replace 'color.png' and 'outline.png' with your custom branding");
+                logger.LogInformation("    Icons: Replace 'color.png' and 'outline.png' with your custom branding");
                 logger.LogInformation("");
                 logger.LogInformation("When you're done customizing, type 'continue' (or 'c') and press Enter to proceed:");
-                
+
                 // Wait for user confirmation
                 string? userInput;
                 do
@@ -219,7 +199,7 @@ public class PublishCommand
                     Console.Write("> ");
                     userInput = Console.ReadLine()?.Trim().ToLowerInvariant();
                 } while (userInput != "continue" && userInput != "c");
-                
+
                 logger.LogInformation("Continuing with publish process...");
                 logger.LogInformation("");
 
@@ -294,7 +274,29 @@ public class PublishCommand
                     var fileContent = new StreamContent(zipFs);
                     fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
                     form.Add(fileContent, "package", Path.GetFileName(zipPath));
-                    var uploadResp = await http.PostAsync(packagesUrl, form);
+
+                    HttpResponseMessage uploadResp;
+                    try
+                    {
+                        uploadResp = await http.PostAsync(packagesUrl, form);
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        logger.LogError("Network error during package upload: {Message}", ex.Message);
+                        logger.LogInformation("The manifest package is available at: {ZipPath}", zipPath);
+                        logger.LogInformation("You can manually upload it at: {Url}", packagesUrl);
+                        logger.LogInformation("When network connectivity is restored, you can retry the publish command.");
+                        return;
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        logger.LogError("Upload request timed out: {Message}", ex.Message);
+                        logger.LogInformation("The manifest package is available at: {ZipPath}", zipPath);
+                        logger.LogInformation("You can manually upload it at: {Url}", packagesUrl);
+                        logger.LogInformation("When network connectivity is restored, you can retry the publish command.");
+                        return;
+                    }
+
                     var uploadBody = await uploadResp.Content.ReadAsStringAsync();
                     logger.LogInformation("Titles upload HTTP {StatusCode}. Raw body length={Length} bytes", (int)uploadResp.StatusCode, uploadBody?.Length ?? 0);
                     if (!uploadResp.IsSuccessStatusCode)
@@ -352,7 +354,28 @@ public class PublishCommand
                     // POST titles with operationId - using tenant-specific URL
                     var titlesUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/packages/titles";
                     var titlePayload = JsonSerializer.Serialize(new { operationId });
-                    var titlesResp = await http.PostAsync(titlesUrl, new StringContent(titlePayload, System.Text.Encoding.UTF8, "application/json"));
+
+                    HttpResponseMessage titlesResp;
+                    try
+                    {
+                        using (var content = new StringContent(titlePayload, System.Text.Encoding.UTF8, "application/json"))
+                        {
+                            titlesResp = await http.PostAsync(titlesUrl, content);
+                        }
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        logger.LogError("Network error during title creation: {Message}", ex.Message);
+                        logger.LogInformation("Package was uploaded successfully (operationId={Op}), but title creation failed.", operationId);
+                        return;
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        logger.LogError("Title creation request timed out: {Message}", ex.Message);
+                        logger.LogInformation("Package was uploaded successfully (operationId={Op}), but title creation failed.", operationId);
+                        return;
+                    }
+
                     var titlesBody = await titlesResp.Content.ReadAsStringAsync();
                     if (!titlesResp.IsSuccessStatusCode)
                     {
@@ -362,10 +385,7 @@ public class PublishCommand
                     logger.LogInformation("Title creation initiated. Response body length={Length} bytes", titlesBody?.Length ?? 0);
 
                     // Wait 10 seconds before allowing all users to ensure title is fully created
-                    logger.LogInformation("Waiting 10 seconds before configuring title access...");
-                    await Task.Delay(TimeSpan.FromSeconds(10));
-
-                    // Allow all users - using tenant-specific URL
+                    logger.LogInformation("Configuring title access for all users with retry and exponential backoff...");
                     var allowUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/titles/{titleId}/allowed";
                     var allowedPayload = JsonSerializer.Serialize(new
                     {
@@ -375,8 +395,51 @@ public class PublishCommand
                             Entities = Array.Empty<object>()
                         }
                     });
-                    var allowResp = await http.PostAsync(allowUrl, new StringContent(allowedPayload, System.Text.Encoding.UTF8, "application/json"));
-                    var allowBody = await allowResp.Content.ReadAsStringAsync();
+
+                    // Define the retry policy (can be reused across multiple calls)
+                    var retryPolicy = Policy
+                        .HandleResult<(HttpResponseMessage resp, string body)>(result =>
+                        {
+                            var (resp, body) = result;
+
+                            if (resp.IsSuccessStatusCode)
+                                return false;
+
+                            if ((int)resp.StatusCode == 404 && body.Contains("Title Not Found", StringComparison.OrdinalIgnoreCase))
+                            {
+                                logger.LogWarning("Title not found yet (HTTP 404). Will retry...");
+                                return true;
+                            }
+
+                            return false;
+                        })
+                        .Or<HttpRequestException>()
+                        .Or<TaskCanceledException>()
+                        .WaitAndRetryAsync(
+                            retryCount: 5,
+                            sleepDurationProvider: retryAttempt =>
+                                TimeSpan.FromSeconds(Math.Min(10 * Math.Pow(2, retryAttempt - 1), 60)),
+                            onRetry: (outcome, timespan, retryCount, context) =>
+                            {
+                                logger.LogInformation(
+                                    "Retry attempt {RetryCount} of 5. Waiting {Delay} seconds...",
+                                    retryCount, (int)timespan.TotalSeconds);
+
+                                if (outcome.Exception != null)
+                                {
+                                    logger.LogWarning("Exception: {Message}", outcome.Exception.Message);
+                                }
+                            });
+
+                    var allowResult = await retryPolicy.ExecuteAsync(async () =>
+                    {
+                        using var content = new StringContent(allowedPayload, System.Text.Encoding.UTF8, "application/json");
+                        var resp = await http.PostAsync(allowUrl, content);
+                        var body = await resp.Content.ReadAsStringAsync();
+                        return (resp, body);
+                    });
+
+                    var (allowResp, allowBody) = allowResult;
                     if (!allowResp.IsSuccessStatusCode)
                     {
                         logger.LogError("Allow users failed ({Status}). URL={Url} Payload={Payload} Body:\n{Body}", allowResp.StatusCode, allowUrl, allowedPayload, allowBody);
@@ -399,8 +462,7 @@ public class PublishCommand
                     return;
                 }
 
-                // Use native C# service for Graph operations
-                logger.LogInformation("Executing Graph API operations (native C# implementation)...");
+                logger.LogInformation("Executing Graph API operations...");
                 logger.LogInformation("TenantId: {TenantId}, BlueprintId: {BlueprintId}", tenantId, blueprintId);
 
                 var graphSuccess = await graphApiService.ExecutePublishGraphStepsAsync(
@@ -425,5 +487,69 @@ public class PublishCommand
 
         return command;
     }
+
+    private static async Task<string> UpdateManifestFileAsync(ILogger<PublishCommand> logger, string? agentBlueprintDisplayName, string blueprintId, string manifestPath)
+    {
+        // Load manifest as mutable JsonNode
+        var manifestText = await File.ReadAllTextAsync(manifestPath);
+        var node = JsonNode.Parse(manifestText) ?? new JsonObject();
+
+        // Update top-level id
+        node["id"] = blueprintId;
+
+        // Update name.short and name.full if agentBlueprintDisplayName is available
+        if (!string.IsNullOrWhiteSpace(agentBlueprintDisplayName))
+        {
+            if (node["name"] is not JsonObject nameObj)
+            {
+                nameObj = new JsonObject();
+                node["name"] = nameObj;
+            }
+            else
+            {
+                nameObj = (JsonObject)node["name"]!;
+            }
+
+            nameObj["short"] = agentBlueprintDisplayName;
+            nameObj["full"] = agentBlueprintDisplayName;
+            logger.LogInformation("Updated manifest name to: {Name}", agentBlueprintDisplayName);
+        }
+
+        // bots[0].botId
+        if (node["bots"] is JsonArray bots && bots.Count > 0 && bots[0] is JsonObject botObj)
+        {
+            botObj["botId"] = blueprintId;
+        }
+
+        // webApplicationInfo.id + resource
+        if (node["webApplicationInfo"] is JsonObject webInfo)
+        {
+            webInfo["id"] = blueprintId;
+            webInfo["resource"] = $"api://{blueprintId}";
+        }
+
+        // copilotAgents.customEngineAgents[0].id
+        if (node["copilotAgents"] is JsonObject ca && ca["customEngineAgents"] is JsonArray cea && cea.Count > 0 && cea[0] is JsonObject ceObj)
+        {
+            ceObj["id"] = blueprintId;
+        }
+
+        var updated = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        return updated;
+    }
+
+    private static async Task<string> UpdateAgenticUserManifestTemplateFileAsync(ILogger<PublishCommand> logger, string? agentBlueprintDisplayName, string blueprintId, string agenticUserManifestTemplateFilePath)
+    {
+        // Load manifest as mutable JsonNode
+        var agenticUserManifestTemplateFileContents = await File.ReadAllTextAsync(agenticUserManifestTemplateFilePath);
+        var node = JsonNode.Parse(agenticUserManifestTemplateFileContents) ?? new JsonObject();
+
+        // Update top-level id
+        node["agentIdentityBlueprintId"] = blueprintId;
+
+        var updated = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        return updated;
+    }
+
 }
 
