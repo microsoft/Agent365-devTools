@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
+using Serilog.Events;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
@@ -28,7 +29,9 @@ class Program
         // Configure Serilog with both console and file output
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Is(isVerbose ? Serilog.Events.LogEventLevel.Debug : Serilog.Events.LogEventLevel.Information)
-            .WriteTo.Console()  // Console output (user-facing)
+            .WriteTo.Logger(lc => lc
+                .Filter.ByExcluding(e => e.Level >= LogEventLevel.Error)  // ✅ Exclude Error/Fatal from console
+                .WriteTo.Console())
             .WriteTo.File(      // File output (for debugging)
                 path: logFilePath,
                 rollingInterval: RollingInterval.Infinite,
@@ -108,7 +111,7 @@ class Program
                 {
                     if (exception is Agent365Exception myEx)
                     {
-                        HandleAgent365Exception(myEx);
+                        ExceptionHandler.HandleAgent365Exception(myEx);
                         context.ExitCode = myEx.ExitCode;
                     }
                     else
@@ -130,28 +133,6 @@ class Program
         {
             Log.CloseAndFlush();
         }
-    }
-
-
-    /// <summary>
-    /// Handles Agent365Exception with user-friendly output (no stack traces for user errors).
-    /// Follows Microsoft CLI best practices (Azure CLI, dotnet CLI patterns).
-    /// </summary>
-    private static void HandleAgent365Exception(Agent365Exception ex)
-    {
-        // Display formatted error message
-        Console.Error.WriteLine(ex.GetFormattedMessage());
-
-        // For system errors (not user errors), suggest reporting as bug
-        if (!ex.IsUserError)
-        {
-            Console.Error.WriteLine("If this error persists, please report it at:");
-            Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
-        }
-
-        // Log for diagnostics (but don't show stack trace to user)
-        Log.Error("Operation failed. ErrorCode={ErrorCode}, IssueDescription={IssueDescription}",
-            ex.ErrorCode, ex.IssueDescription);
     }
 
     private static void ConfigureServices(IServiceCollection services)

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -314,6 +315,10 @@ public class SetupCommand
                 
                 // Display comprehensive setup summary
                 DisplaySetupSummary(setupResults, logger);
+            }
+            catch (Agent365Exception ex)
+            {
+                ExceptionHandler.HandleAgent365Exception(ex);
             }
             catch (Exception ex)
             {
