@@ -2,6 +2,8 @@
 <Project Sdk="Microsoft.Build.Traversal">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <!-- This is a traversal project - do not pack it -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
