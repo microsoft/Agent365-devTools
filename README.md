@@ -20,20 +20,6 @@ The Microsoft Agent 365 DevTools CLI focuses on these core areas:
 - **Development Tools**: Local development support with hot-reload and debugging capabilities
 - **Deployment Automation**: Streamlined deployment workflows for production and development environments
 
-## Deploy command behavior
-
-Note: The `deploy` command behavior has been simplified. The root `a365 deploy` command now runs only the application deployment flow (the same behavior as `a365 deploy app`). MCP-related permission updates and scope management are available via the following subcommands:
-
-- `a365 deploy mcp` - Update MCP OAuth2 permission grants and inheritable permissions on an existing agent blueprint.
-- `a365 deploy scopes` - Grant or update OAuth2 scopes for a specific resource app ID on the agent blueprint.
-
-The root `a365 deploy` command and the `app` subcommand both respect the following flags:
-
-- `--dry-run` - Show what would be done without executing
-- `--inspect` - Pause before deployment to inspect publish folder and ZIP contents
-- `--restart` - Skip build and start from compressing existing publish folder (for quick iteration after manual changes)
-- `--verbose` (`-v`) - Enable verbose logging
-
 ## Current Project State
 
 This project is currently in active development. The CLI is being actively developed and improved based on community feedback.
