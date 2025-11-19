@@ -3,6 +3,7 @@
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/microsoft/Agent365-devTools)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET Version](https://img.shields.io/badge/.NET-8.0-512BD4)](https://dotnet.microsoft.com/)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/Microsoft.Agents.A365.DevTools.Cli?label=downloads)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
 
 > **Note:**  
 > Use the information in this README to contribute to this open-source project. To learn about using this CLI in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://aka.ms/agents365/docs).
