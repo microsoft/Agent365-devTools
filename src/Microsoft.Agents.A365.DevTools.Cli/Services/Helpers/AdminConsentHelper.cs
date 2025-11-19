@@ -31,54 +31,65 @@ public static class AdminConsentHelper
         var start = DateTime.UtcNow;
         string? spId = null;
 
-        while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
+        try
         {
-            if (spId == null)
+            while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
             {
-                var spResult = await executor.ExecuteAsync("az",
-                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
-                    captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
-
-                if (spResult.Success)
+                if (spId == null)
                 {
-                    try
+                    var spResult = await executor.ExecuteAsync("az",
+                        $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
+                        captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+
+                    if (spResult.Success)
                     {
-                        using var doc = JsonDocument.Parse(spResult.StandardOutput);
-                        var value = doc.RootElement.GetProperty("value");
-                        if (value.GetArrayLength() > 0)
+                        try
                         {
-                            spId = value[0].GetProperty("id").GetString();
+                            using var doc = JsonDocument.Parse(spResult.StandardOutput);
+                            var value = doc.RootElement.GetProperty("value");
+                            if (value.GetArrayLength() > 0)
+                            {
+                                spId = value[0].GetProperty("id").GetString();
+                            }
                         }
+                        catch { }
                     }
-                    catch { }
                 }
+
+                if (spId != null)
+                {
+                    var grants = await executor.ExecuteAsync("az",
+                        $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
+                        captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+
+                    if (grants.Success)
+                    {
+                        try
+                        {
+                            using var gdoc = JsonDocument.Parse(grants.StandardOutput);
+                            var arr = gdoc.RootElement.GetProperty("value");
+                            if (arr.GetArrayLength() > 0)
+                            {
+                                logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
+                                return true;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                // Delay between polls. If cancellation is requested this will throw OperationCanceledException,
+                // which we catch below and treat as a graceful cancellation resulting in 'false'.
+                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
             }
 
-            if (spId != null)
-            {
-                var grants = await executor.ExecuteAsync("az",
-                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
-                    captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
-
-                if (grants.Success)
-                {
-                    try
-                    {
-                        using var gdoc = JsonDocument.Parse(grants.StandardOutput);
-                        var arr = gdoc.RootElement.GetProperty("value");
-                        if (arr.GetArrayLength() > 0)
-                        {
-                            logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
-                            return true;
-                        }
-                    }
-                    catch { }
-                }
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
+            return false;
         }
-
-        return false;
+        catch (OperationCanceledException)
+        {
+            // Treat cancellation as a graceful timeout/no-consent scenario
+            logger.LogDebug("Polling for admin consent was cancelled or timed out for app {AppId} ({Scope}).", appId, scopeDescriptor);
+            return false;
+        }
     }
 }
