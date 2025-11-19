@@ -251,6 +251,7 @@ public class PythonBuilder : IPlatformBuilder
             Platform = "python",
             Version = pythonVersion,
             Command = startCommand,
+            BuildCommand = "pip install -r requirements.txt",
             BuildRequired = true
         };
     }

@@ -47,28 +47,13 @@ public class NodeBuilder : IPlatformBuilder
     public async Task CleanAsync(string projectDir)
     {
         _logger.LogInformation("Cleaning Node.js project...");
-        
+
         // Remove node_modules if it exists
         var nodeModulesPath = Path.Combine(projectDir, "node_modules");
         if (Directory.Exists(nodeModulesPath))
         {
             _logger.LogInformation("Removing node_modules directory...");
             Directory.Delete(nodeModulesPath, recursive: true);
-        }
-
-        // Remove build output directories
-        var distPath = Path.Combine(projectDir, "dist");
-        if (Directory.Exists(distPath))
-        {
-            _logger.LogInformation("Removing dist directory...");
-            Directory.Delete(distPath, recursive: true);
-        }
-
-        var buildPath = Path.Combine(projectDir, "build");
-        if (Directory.Exists(buildPath))
-        {
-            _logger.LogInformation("Removing build directory...");
-            Directory.Delete(buildPath, recursive: true);
         }
 
         await Task.CompletedTask;
@@ -134,42 +119,39 @@ public class NodeBuilder : IPlatformBuilder
             File.Copy(packageLockPath, Path.Combine(publishPath, "package-lock.json"));
         }
 
-        // Copy built files (dist, build) or source files
-        if (Directory.Exists(Path.Combine(projectDir, "dist")))
+        // Copy ts build config
+        var tsConfigPath = Path.Combine(projectDir, "tsconfig.json");
+        if (File.Exists(tsConfigPath))
         {
-            CopyDirectory(Path.Combine(projectDir, "dist"), Path.Combine(publishPath, "dist"));
-        }
-        else if (Directory.Exists(Path.Combine(projectDir, "build")))
-        {
-            CopyDirectory(Path.Combine(projectDir, "build"), Path.Combine(publishPath, "build"));
-        }
-        else
-        {
-            // Copy source files (src, lib, etc.)
-            var srcDir = Path.Combine(projectDir, "src");
-            if (Directory.Exists(srcDir))
-            {
-                CopyDirectory(srcDir, Path.Combine(publishPath, "src"));
-            }
-
-            // Copy server files (.js files in root)
-            foreach (var jsFile in Directory.GetFiles(projectDir, "*.js"))
-            {
-                File.Copy(jsFile, Path.Combine(publishPath, Path.GetFileName(jsFile)));
-            }
-            foreach (var tsFile in Directory.GetFiles(projectDir, "*.ts"))
-            {
-                File.Copy(tsFile, Path.Combine(publishPath, Path.GetFileName(tsFile)));
-            }
+            File.Copy(tsConfigPath, Path.Combine(publishPath, "tsconfig.json"));
         }
 
-        // Copy node_modules (required for Azure deployment)
-        var nodeModulesSource = Path.Combine(projectDir, "node_modules");
-        if (Directory.Exists(nodeModulesSource))
+        // Copy ToolingManifest if exists
+        var toolingManifestPath = Path.Combine(projectDir, "ToolingManifest.json");
+        if (File.Exists(toolingManifestPath))
         {
-            _logger.LogInformation("Copying node_modules...");
-            CopyDirectory(nodeModulesSource, Path.Combine(publishPath, "node_modules"));
+            File.Copy(toolingManifestPath, Path.Combine(publishPath, "ToolingManifest.json"));
         }
+
+        // Copy source files (src, lib, etc.)
+        var srcDir = Path.Combine(projectDir, "src");
+        if (Directory.Exists(srcDir))
+        {
+            CopyDirectory(srcDir, Path.Combine(publishPath, "src"));
+        }
+
+        // Copy server files (.js files in root)
+        foreach (var jsFile in Directory.GetFiles(projectDir, "*.js"))
+        {
+            File.Copy(jsFile, Path.Combine(publishPath, Path.GetFileName(jsFile)));
+        }
+        foreach (var tsFile in Directory.GetFiles(projectDir, "*.ts"))
+        {
+            File.Copy(tsFile, Path.Combine(publishPath, Path.GetFileName(tsFile)));
+        }
+
+        // Step 4.5: Create .deployment file to force Oryx build
+        await CreateDeploymentFile(publishPath);
 
         return publishPath;
     }
@@ -186,7 +168,7 @@ public class NodeBuilder : IPlatformBuilder
         var root = doc.RootElement;
 
         // Detect Node version
-        var nodeVersion = "18"; // Default
+        var nodeVersion = "20"; // Default
         if (root.TryGetProperty("engines", out var engines) && 
             engines.TryGetProperty("node", out var nodeVersionProp))
         {
@@ -233,8 +215,19 @@ public class NodeBuilder : IPlatformBuilder
         {
             Platform = "nodejs",
             Version = nodeVersion,
-            Command = startCommand
+            Command = startCommand,
+            BuildCommand = "npm run build",
+            BuildRequired = true,
         };
+    }
+
+    private async Task CreateDeploymentFile(string publishPath)
+    {
+        var deploymentPath = Path.Combine(publishPath, ".deployment");
+        var content = "[config]\nSCM_DO_BUILD_DURING_DEPLOYMENT=true\n";
+
+        await File.WriteAllTextAsync(deploymentPath, content);
+        _logger.LogInformation("Created .deployment file to force Oryx build");
     }
 
     private void CopyDirectory(string sourceDir, string destDir)
