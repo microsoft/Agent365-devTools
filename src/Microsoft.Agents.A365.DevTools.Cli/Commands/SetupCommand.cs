@@ -495,7 +495,7 @@ public class SetupCommand
             cfg.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
         var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(
-            cfg.TenantId, cfg.AgentBlueprintId, resourceAppId, scopes, ct);
+            cfg.TenantId, cfg.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
 
         if (!ok && !alreadyExists)
         {

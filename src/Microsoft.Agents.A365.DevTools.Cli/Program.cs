@@ -74,6 +74,7 @@ class Program
             var toolingService = serviceProvider.GetRequiredService<IAgent365ToolingService>();
 
             // Get services needed by commands
+            services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
@@ -88,7 +89,7 @@ class Program
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService, azureValidator));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, azureValidator));
+                deploymentService, azureValidator, graphApiService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
@@ -209,9 +210,13 @@ class Program
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
         services.AddSingleton<DeploymentService>();
-        
+
         // Add other services
         services.AddSingleton<IBotConfigurator, BotConfigurator>();
+
+        // Register process executor adapter and Microsoft Graph token provider before GraphApiService
+        services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
+
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction

@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -19,6 +20,7 @@ public class GraphApiService
     private readonly ILogger<GraphApiService> _logger;
     private readonly CommandExecutor _executor;
     private readonly HttpClient _httpClient;
+    private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
 
     // Lightweight wrapper to surface HTTP status, reason and body to callers
     public record GraphResponse
@@ -31,11 +33,12 @@ public class GraphApiService
     }
 
     // Allow injecting a custom HttpMessageHandler for unit testing
-    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null)
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null)
     {
         _logger = logger;
         _executor = executor;
         _httpClient = handler != null ? new HttpClient(handler) : new HttpClient();
+        _tokenProvider = tokenProvider;
     }
 
     // Parameterless constructor to ease test mocking/substitution frameworks which may
@@ -48,7 +51,7 @@ public class GraphApiService
     // Two-argument convenience constructor used by tests and callers that supply
     // a logger and an existing CommandExecutor (no custom handler).
     public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor)
-        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null)
+        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null, null)
     {
     }
 
@@ -584,9 +587,9 @@ public class GraphApiService
 
     #endregion
     
-    private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default)
+    private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        var token = await GetGraphAccessTokenAsync(tenantId, ct);
+        var token = (scopes != null && _tokenProvider != null) ? await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, ct) : await GetGraphAccessTokenAsync(tenantId, ct);
         if (string.IsNullOrWhiteSpace(token)) return false;
 
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -609,9 +612,9 @@ public class GraphApiService
         return JsonDocument.Parse(json);
     }
 
-    public async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default)
+    public async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct)) return null;
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
@@ -626,9 +629,9 @@ public class GraphApiService
     /// <summary>
     /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
     /// </summary>
-    public async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default)
+    public async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct))
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
         {
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
         }
@@ -657,7 +660,7 @@ public class GraphApiService
         };
     }
 
-    public async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default)
+    public async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct)) return false;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
@@ -771,11 +774,12 @@ public class GraphApiService
         return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct);
     }
 
-    public async Task<(bool ok, bool alreadyExists, string? error)> SetInheritablePermissionsAsync(
+    public async Task<(bool ok, bool alreadyExists, string? error)> SetInheritablePermissionsAsyncV2(
         string tenantId,
         string blueprintAppId,
         string resourceAppId,
         IEnumerable<string> scopes,
+        IEnumerable<string>? requiredScopes = null,
         CancellationToken ct = default)
     {
         var desiredSet = new HashSet<string>(scopes ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
@@ -862,7 +866,7 @@ public class GraphApiService
                     }
                 };
 
-                var patched = await GraphPatchAsync(tenantId, patchPath, patchPayload, ct);
+                var patched = await GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
                 if (!patched)
                 {
                     return (ok: false, alreadyExists: false, error: "PATCH failed");
@@ -883,7 +887,7 @@ public class GraphApiService
                 }
             };
 
-            var createdResp = await GraphPostWithResponseAsync(tenantId, postPath, postPayload, ct);
+            var createdResp = await GraphPostWithResponseAsync(tenantId, postPath, postPayload, ct, requiredScopes);
             if (!createdResp.IsSuccess)
             {
                 var err = string.IsNullOrWhiteSpace(createdResp.Body)
@@ -900,6 +904,55 @@ public class GraphApiService
         {
             _logger.LogError("Failed to set inheritable permissions: {Error}", ex.Message);
             return (ok: false, alreadyExists: false, error: ex.Message);
+        }
+    }
+
+    public async Task<(bool ok, bool alreadyExists, string? error)> SetInheritablePermissionsAsync(
+        string tenantId,
+        string blueprintAppId,
+        string resourceAppId,
+        IEnumerable<string> scopes,
+        IEnumerable<string>? requiredScopes = null,
+        CancellationToken ct = default)
+    {
+        var scopesString = string.Join(' ', scopes);
+
+        var payload = new
+        {
+            resourceAppId = resourceAppId,
+            inheritableScopes = new EnumeratedScopes
+            {
+                Scopes = new[] { scopesString }
+            }
+        };
+
+        try
+        {
+            var doc = await GraphPostAsync(
+                tenantId,
+                $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintAppId}/inheritablePermissions",
+                payload,
+                ct,
+                requiredScopes);
+
+            // Success => created or updated
+            _logger.LogInformation("Inheritable permissions set: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+                blueprintAppId, resourceAppId, scopesString);
+            return (ok: true, alreadyExists: false, error: null);
+        }
+        catch (Exception ex)
+        {
+            var msg = ex.Message ?? string.Empty;
+            if (msg.Contains("already", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("409"))
+            {
+                _logger.LogWarning("Inheritable permissions already exist: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+                    blueprintAppId, resourceAppId, scopesString);
+                return (ok: true, alreadyExists: true, error: null);
+            }
+            _logger.LogError("Failed to set inheritable permissions: {Error}", msg);
+            return (ok: false, alreadyExists: false, error: msg);
         }
     }
 

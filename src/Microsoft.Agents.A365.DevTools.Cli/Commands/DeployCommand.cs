@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -18,7 +19,8 @@ public class DeployCommand
         IConfigService configService, 
         CommandExecutor executor,
         DeploymentService deploymentService,
-        IAzureValidator azureValidator)
+        IAzureValidator azureValidator,
+        GraphApiService graphApiService)
     {
         var command = new Command("deploy", "Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions");
 
@@ -51,8 +53,8 @@ public class DeployCommand
 
         // Add subcommands
         command.AddCommand(CreateAppSubcommand(logger, configService, executor, deploymentService, azureValidator));
-        command.AddCommand(CreateMcpSubcommand(logger, configService, executor));
-        command.AddCommand(CreateScopesSubcommand(logger, configService, executor));
+        command.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService));
+        command.AddCommand(CreateScopesSubcommand(logger, configService, executor, graphApiService));
 
         // Single handler for the deploy command - runs only the application deployment flow
         command.SetHandler(async (config, verbose, dryRun, inspect, restart) =>
@@ -158,7 +160,8 @@ public class DeployCommand
     private static Command CreateMcpSubcommand(
         ILogger<DeployCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var command = new Command("mcp", "Update mcp servers scopes and permissions on existing agent blueprint");
 
@@ -200,7 +203,7 @@ public class DeployCommand
                 var updateConfig = await configService.LoadAsync(config.FullName);
                 if (updateConfig == null) Environment.Exit(1);
 
-                await DeployMcpToolPermissionsAsync(updateConfig, executor, logger);
+                await DeployMcpToolPermissionsAsync(updateConfig, executor, logger, graphApiService);
             }
             catch (DeployMcpException)
             {
@@ -219,7 +222,8 @@ public class DeployCommand
     private static Command CreateScopesSubcommand(
         ILogger<DeployCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var command = new Command("scopes", "Grant or update OAuth2 scopes for a specific resource app ID on the agent blueprint");
 
@@ -304,45 +308,7 @@ public class DeployCommand
                     return;
                 }
 
-                logger.LogInformation("Granting scopes [{Scopes}] to resource app {ResourceAppId} for blueprint {BlueprintAppId} in tenant {TenantId}",
-                    string.Join(", ", scopes), resourceAppId, effectiveBlueprintAppId, effectiveTenantId);
-
-                var graphService = new GraphApiService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
-                    executor);
-
-                // Lookup service principal object IDs
-                var blueprintSpObjectId = await graphService.LookupServicePrincipalByAppIdAsync(effectiveTenantId, effectiveBlueprintAppId)
-                    ?? throw new DeployScopesException("Blueprint Service Principal not found for appId " + effectiveBlueprintAppId);
-
-                var resourceSpObjectId = await graphService.LookupServicePrincipalByAppIdAsync(effectiveTenantId, resourceAppId)
-                    ?? throw new DeployScopesException("Resource Service Principal not found for appId " + resourceAppId);
-
-                // Use create-or-update semantics to merge scopes when possible (matches PowerShell behavior)
-                var ok = await graphService.CreateOrUpdateOauth2PermissionGrantAsync(
-                    effectiveTenantId, blueprintSpObjectId, resourceSpObjectId, scopes);
-
-                if (!ok)
-                    throw new DeployScopesException("Failed to update oauth2PermissionGrant.");
-
-                // Also attempt to set inheritable permissions on the blueprint so delegated permissions
-                // are available to resource apps that support inheritance (same behavior as deploy mcp)
-                var (permOk, alreadyExists, permErr) = await graphService.SetInheritablePermissionsAsync(
-                    effectiveTenantId, effectiveBlueprintAppId, resourceAppId, scopes);
-
-                if (!permOk && !alreadyExists)
-                {
-                    // Record error on config for diagnostics and surface structured exception
-                    config.InheritanceConfigured = false;
-                    config.InheritanceConfigError = permErr;
-                    throw new DeployScopesException("Failed to set inheritable permissions: " + permErr);
-                }
-
-                // Update config state to reflect success/exists
-                config.InheritanceConfigured = true;
-                config.InheritablePermissionsAlreadyExist = alreadyExists;
-                config.InheritanceConfigError = null;
-
+                await DeployScopesPermissionsAsync(config, effectiveBlueprintAppId, effectiveTenantId, resourceAppId, scopes, executor, logger, graphApiService);
                 logger.LogInformation("   - Inheritable permissions completed: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
                     effectiveBlueprintAppId, resourceAppId, string.Join(' ', scopes));
 
@@ -457,38 +423,35 @@ public class DeployCommand
     private static async Task DeployMcpToolPermissionsAsync(
         Agent365Config config,
         CommandExecutor executor,
-        ILogger logger)
+        ILogger logger,
+        GraphApiService graphApiService)
     {
         // Read scopes from toolingManifest.json (at deploymentProjectPath)
         var manifestPath = Path.Combine(config.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
         var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
-        var graphService = new GraphApiService(
-            LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
-            executor);
-
         // 1. Apply MCP OAuth2 permission grants
         logger.LogInformation("1. Applying MCP OAuth2 permission grants...");
         await EnsureMcpOauth2PermissionGrantsAsync(
-            graphService,
+            graphApiService,
             config,
             toolingScopes,
             logger
         );
 
-        // 2. Apply inheritable permissions on the agent identity blueprint
-        logger.LogInformation("2. Applying MCP inheritable permissions...");
+        // 2. Consent to required scopes for the agent identity
+        logger.LogInformation("2. Consenting to required MCP scopes for the agent identity...");
+        await EnsureMcpAdminConsentForAgenticAppAsync(
+            graphApiService,
+            config,
+            toolingScopes,
+            logger
+        );
+
+        // 3. Apply inheritable permissions on the agent identity blueprint
+        logger.LogInformation("3. Applying MCP inheritable permissions...");
         await EnsureMcpInheritablePermissionsAsync(
-            graphService,
-            config,
-            toolingScopes,
-            logger
-        );
-
-        // 3. Consent to required scopes for the agent identity
-        logger.LogInformation("3. Consenting to required MCP scopes for the agent identity...");
-        await EnsureAdminConsentForAgenticAppAsync(
-            graphService,
+            graphApiService,
             config,
             toolingScopes,
             logger
@@ -536,7 +499,7 @@ public class DeployCommand
         var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
 
         var (ok, alreadyExists, err) = await graphService.SetInheritablePermissionsAsync(
-            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, ct);
+            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
 
         if (!ok && !alreadyExists)
         {
@@ -553,7 +516,7 @@ public class DeployCommand
             config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
     }
 
-    private static async Task EnsureAdminConsentForAgenticAppAsync(
+    private static async Task EnsureMcpAdminConsentForAgenticAppAsync(
         GraphApiService graphService,
         Agent365Config config,
         string[] scopes,
@@ -585,6 +548,132 @@ public class DeployCommand
 
         logger.LogInformation("   - Admin consented: agent identity {AgenticAppId} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
             config.AgenticAppId, resourceAppId, string.Join(' ', scopes));
+    }
+
+    /// <summary>
+    /// Performs MCP tool permissions deployment
+    /// </summary>
+    private static async Task DeployScopesPermissionsAsync(
+        Agent365Config config,
+        string blueprintAppId,
+        string tenantId,
+        string resourceAppId,
+        string[] scopes,
+        CommandExecutor executor,
+        ILogger logger,
+        GraphApiService graphApiService)
+    {
+        // 1. Ensure admin consent (programmatic preferred, fallback to interactive)
+        logger.LogInformation("1. Ensuring admin consent for blueprint (programmatic preferred, interactive fallback)...");
+        await EnsureNewScopesBlueprintAsync(
+            graphApiService,
+            tenantId,
+            blueprintAppId,
+            resourceAppId,
+            scopes,
+            executor,
+            logger
+        );
+
+        // 2. Apply inheritable permissions on the agent identity blueprint
+        logger.LogInformation("2. Applying inheritable permissions...");
+        await EnsureInheritablePermissionsAsync(
+            graphApiService,
+            tenantId,
+            blueprintAppId,
+            resourceAppId,
+            scopes,
+            logger
+        );
+
+        logger.LogInformation("Deploy Microsoft Agent 365 Tool Permissions completed successfully!");
+    }
+
+    private static async Task EnsureInheritablePermissionsAsync(
+        GraphApiService graphService,
+        string tenantId,
+        string blueprintAppId,
+        string resourceAppId,
+        string[] scopes,
+        ILogger logger,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(blueprintAppId))
+            throw new InvalidOperationException("AgentBlueprintId (appId) is required.");
+
+        var (ok, alreadyExists, err) = await graphService.SetInheritablePermissionsAsyncV2(
+           tenantId, blueprintAppId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
+
+        logger.LogInformation("   - Inheritable permissions completed: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+            blueprintAppId, resourceAppId, string.Join(' ', scopes));
+    }
+
+    private static async Task EnsureNewScopesBlueprintAsync(
+        GraphApiService graphService,
+        string tenantId,
+        string blueprintAppId,
+        string resourceAppId,
+        string[] scopes,
+        CommandExecutor executor,
+        ILogger logger,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(blueprintAppId))
+            throw new InvalidOperationException("BlueprintAppId is required.");
+
+        // clientId must be the *service principal objectId* of the blueprint app
+        var blueprintAppSpObjectId = await graphService.LookupServicePrincipalByAppIdAsync(
+            tenantId,
+            blueprintAppId ?? string.Empty
+        ) ?? throw new InvalidOperationException($"Service Principal not found for agentic appId {blueprintAppId}");
+
+        var objectId = await graphService.LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId)
+            ?? throw new InvalidOperationException("Object id not found for appId " + resourceAppId);
+
+        // First, attempt programmatic admin consent by creating/updating oauth2PermissionGrant
+        try
+        {
+            var ok = await graphService.ReplaceOauth2PermissionGrantAsync(tenantId, blueprintAppSpObjectId, objectId, scopes, ct);
+            if (ok)
+            {
+                logger.LogInformation("   - Programmatic admin consent applied for blueprint {Blueprint}", blueprintAppId);
+                return;
+            }
+            logger.LogWarning("Programmatic admin consent not applied for blueprint {Blueprint}; falling back to interactive consent", blueprintAppId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Programmatic admin consent attempt threw an exception: {Message}", ex.Message);
+        }
+
+        // Programmatic consent failed - fall back to interactive admin consent URL
+        var scopesJoined = string.Join(' ', scopes);
+        var consentUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={blueprintAppId}&scope={Uri.EscapeDataString(scopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
+
+        logger.LogInformation("Opening browser for admin consent: {Url}", consentUrl);
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = consentUrl,
+                UseShellExecute = true
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch
+        {
+            // Best-effort; continue to poll even if browser cannot be opened
+            logger.LogWarning("Failed to open browser for admin consent. Please open the following URL manually:\n{Url}", consentUrl);
+        }
+
+        var granted = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, blueprintAppId ?? string.Empty, "OAuth2 Scopes", 180, 5, ct);
+        if (!granted)
+        {
+            throw new InvalidOperationException("Failed to detect admin consent for blueprint after interactive flow.");
+        }
+
+        logger.LogInformation("   - Admin consent detected for blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+            blueprintAppId, resourceAppId, string.Join(' ', scopes));
     }
 
     /// <summary>
