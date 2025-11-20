@@ -30,6 +30,7 @@ public class SetupCommandTests
     private readonly IAzureValidator _mockAzureValidator;
     private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
+    private readonly GraphApiService _mockGraphApiService;
 
     public SetupCommandTests()
     {
@@ -53,6 +54,7 @@ public class SetupCommandTests
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockAzureValidator = Substitute.For<IAzureValidator>();
         _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
+        _mockGraphApiService = Substitute.For<GraphApiService>();
 
         // Prevent the real setup runner from running during tests by short-circuiting it
         SetupCommand.SetupRunnerInvoker = (setupPath, generatedPath, exec, webApp) => Task.FromResult(true);
@@ -64,7 +66,7 @@ public class SetupCommandTests
         // Arrange
         var config = new Agent365Config { TenantId = "tenant", SubscriptionId = "sub", ResourceGroup = "rg", Location = "loc", AppServicePlanName = "plan", WebAppName = "web", AgentIdentityDisplayName = "agent", DeploymentProjectPath = "." };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
-        var command = SetupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockExecutor, _mockDeploymentService, _mockBotConfigurator, _mockAzureValidator, _mockWebAppCreator, _mockPlatformDetector);
+        var command = SetupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockExecutor, _mockDeploymentService, _mockBotConfigurator, _mockAzureValidator, _mockWebAppCreator, _mockPlatformDetector, _mockGraphApiService);
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
@@ -124,7 +126,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
         
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -197,7 +200,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -248,7 +252,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -308,7 +313,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -371,7 +377,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
