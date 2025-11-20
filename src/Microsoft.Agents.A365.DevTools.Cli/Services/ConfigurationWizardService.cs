@@ -107,12 +107,27 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 return null;
             }
 
-            // Step 6: Select App Service Plan
-            var appServicePlan = await PromptForAppServicePlanAsync(existingConfig, resourceGroup);
-            if (string.IsNullOrWhiteSpace(appServicePlan))
+            // Step 6: Select Web App Service Plan or Messaging endpoint
+            string appServicePlan = string.Empty;
+            string messagingEndpoint = string.Empty;
+
+            if (await PromptForWebAppCreateAsync(existingConfig, derivedNames))
             {
-                _logger.LogError("Configuration wizard cancelled: App Service Plan not selected");
-                return null;
+                appServicePlan = await PromptForAppServicePlanAsync(existingConfig, resourceGroup);
+                if (string.IsNullOrWhiteSpace(appServicePlan))
+                {
+                    _logger.LogError("Configuration wizard cancelled: App Service Plan not selected");
+                    return null;
+                }
+            }
+            else
+            {
+                messagingEndpoint = await PromptForMessagingEndpointAsync(existingConfig);
+                if (string.IsNullOrWhiteSpace(messagingEndpoint))
+                {
+                    _logger.LogError("Configuration wizard cancelled: Messaging Endpoint not provided");
+                    return null;
+                }
             }
 
             // Step 7: Get manager email (required for agent creation)
@@ -132,7 +147,17 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine(" Configuration Summary");
             Console.WriteLine("=================================================================");
             Console.WriteLine($"Agent Name             : {agentName}");
-            Console.WriteLine($"Web App Name           : {derivedNames.WebAppName}");
+            
+            if (string.IsNullOrWhiteSpace(messagingEndpoint))
+            {
+                Console.WriteLine($"Web App Name           : {derivedNames.WebAppName}");
+                Console.WriteLine($"App Service Plan       : {appServicePlan}");
+            }
+            else
+            {
+                Console.WriteLine($"Messaging Endpoint     : {messagingEndpoint}");
+            }
+
             Console.WriteLine($"Agent Identity Name    : {derivedNames.AgentIdentityDisplayName}");
             Console.WriteLine($"Agent Blueprint Name   : {derivedNames.AgentBlueprintDisplayName}");
             Console.WriteLine($"Agent UPN              : {derivedNames.AgentUserPrincipalName}");
@@ -140,7 +165,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine($"Manager Email          : {managerEmail}");
             Console.WriteLine($"Deployment Path        : {deploymentPath}");
             Console.WriteLine($"Resource Group         : {resourceGroup}");
-            Console.WriteLine($"App Service Plan       : {appServicePlan}");
             Console.WriteLine($"Location               : {location}");
             Console.WriteLine($"Subscription           : {accountInfo.Name} ({accountInfo.Id})");
             Console.WriteLine($"Tenant                 : {accountInfo.TenantId}");
@@ -169,8 +193,9 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 Location = location,
                 Environment = existingConfig?.Environment ?? "prod", // Default to prod, not asking for this
                 AppServicePlanName = appServicePlan,
-                AppServicePlanSku = existingConfig?.AppServicePlanSku ?? "B1", // Default to B1, not asking
-                WebAppName = customizedNames.WebAppName,
+                AppServicePlanSku = string.IsNullOrWhiteSpace(appServicePlan) ? string.Empty : (existingConfig?.AppServicePlanSku ?? "B1"), // Default to B1, if appServicePlan is selected
+                WebAppName = string.IsNullOrWhiteSpace(appServicePlan) ? string.Empty : customizedNames.WebAppName,
+                MessagingEndpoint = messagingEndpoint,
                 AgentIdentityDisplayName = customizedNames.AgentIdentityDisplayName,
                 AgentBlueprintDisplayName = customizedNames.AgentBlueprintDisplayName,
                 AgentUserPrincipalName = customizedNames.AgentUserPrincipalName,
@@ -389,6 +414,31 @@ public class ConfigurationWizardService : IConfigurationWizardService
         );
     }
 
+    private async Task<bool> PromptForWebAppCreateAsync(Agent365Config? existingConfig, ConfigDerivedNames? configDerivedNames)
+    {
+        Console.WriteLine();
+        Console.Write($"Would you like to create a Web App [https://{configDerivedNames?.WebAppName}.azurewebsites.net] in Azure for this Agent? (Y/n): ");
+        var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+
+        await Task.CompletedTask; // Satisfy async requirement
+
+        // Default to Yes - only return false if explicitly "n" or "no"
+        return response != "n" && response != "no";
+    }
+
+    private async Task<string> PromptForMessagingEndpointAsync(Agent365Config? existingConfig)
+    {
+        Console.WriteLine("Provide the messaging endpoint URL where your Agent will receive messages.");
+        Console.WriteLine("[Example: https://SampleAgent.azurewebsites.net/api/messages]");
+
+        await Task.CompletedTask; // Satisfy async requirement
+        return PromptWithDefault(
+            "Messaging endpoint URL",
+            existingConfig?.MessagingEndpoint ?? "",
+            ValidateUrl
+        );
+    }
+
     private async Task<string> PromptForLocationAsync(Agent365Config? existingConfig, AzureAccountInfo accountInfo)
     {
         // Try to get a smart default location
@@ -550,6 +600,20 @@ public class ConfigurationWizardService : IConfigurationWizardService
         var parts = input.Split('@');
         if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
             return (false, "Invalid email format. Use: username@domain");
+
+        return (true, "");
+    }
+
+    private static (bool isValid, string error) ValidateUrl(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return (false, "URL cannot be empty");
+
+        if (!Uri.TryCreate(input, UriKind.Absolute, out Uri? uri))
+            return (false, "Must be a valid URL format");
+
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            return (false, "URL must use HTTP or HTTPS protocol");
 
         return (true, "");
     }

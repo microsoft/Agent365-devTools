@@ -1,19 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
-using Microsoft.Extensions.Logging;
-using Microsoft.Agents.A365.DevTools.Cli.Commands;
-using Microsoft.Agents.A365.DevTools.Cli.Models;
-using Microsoft.Agents.A365.DevTools.Cli.Services;
-using NSubstitute;
-using Xunit;
 using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
-using FluentAssertions;
+using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
@@ -390,6 +391,23 @@ public class SetupCommandTests
                        level == LogLevel.Information;
             });
         infoLogCount.Should().BeGreaterThan(0, "Setup should show success message when all steps complete");
+    }
+
+    [Theory]
+    [InlineData("https://test.azurewebsites.net:8080/api/messages", "test")]
+    [InlineData("https://agent.azurewebsites.net:443/api/messages", "agent")]
+    public void ExtractWebAppNameFromUrl_HandlesPortNumbers(string input, string expectedName)
+    {
+        // Arrange
+        var method = typeof(SetupCommand)
+            .GetMethod("ExtractWebAppNameFromUrl", BindingFlags.NonPublic | BindingFlags.Static);
+        method.Should().NotBeNull();
+
+        // Act
+        var result = method!.Invoke(null, new object[] { input }) as string;
+
+        // Assert
+        result.Should().Be(expectedName, "should extract subdomain correctly even with port number");
     }
 }
 

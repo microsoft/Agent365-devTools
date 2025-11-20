@@ -408,14 +408,16 @@ public class SetupCommand
             throw new InvalidOperationException("Agent Blueprint ID is required for messaging endpoint registration");
         }
 
-        if (string.IsNullOrEmpty(setupConfig.WebAppName))
+        if (string.IsNullOrEmpty(setupConfig.WebAppName) && string.IsNullOrEmpty(setupConfig.MessagingEndpoint))
         {
             logger.LogError("Web App Name not configured in a365.config.json");
             throw new InvalidOperationException("Web App Name is required for messaging endpoint registration");
         }
 
         // Generate endpoint name with Azure Bot Service constraints (4-42 chars)
-        var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
+        var baseEndpointName = !string.IsNullOrEmpty(setupConfig.WebAppName)
+            ? $"{setupConfig.WebAppName}-endpoint"
+            : $"{ExtractWebAppNameFromUrl(setupConfig.MessagingEndpoint)}-endpoint";
         var endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
         if (endpointName.Length < 4)
         {
@@ -424,7 +426,7 @@ public class SetupCommand
         }
         
         // Register messaging endpoint using agent blueprint identity and deployed web app URL
-        var messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
+        var messagingEndpoint = !string.IsNullOrEmpty(setupConfig.WebAppName) ? $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages" : setupConfig.MessagingEndpoint;
         
         logger.LogInformation("   - Registering blueprint messaging endpoint");
         logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
@@ -603,6 +605,29 @@ public class SetupCommand
         }
         
         logger.LogInformation("==========================================");
+    }
+
+    /// <summary>
+    /// Extract web app name from Azure Web App URL (e.g., "SampleAgent" from "https://SampleAgent.azurewebsites.net/api/messages")
+    /// </summary>
+    private static string? ExtractWebAppNameFromUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+
+        try
+        {
+            var host = new Uri(url).Host;
+
+            // Split by '.' and take the first segment
+            var segments = host.Split('.');
+            return segments.Length > 0 ? segments[0] : null;
+        }
+        catch
+        {
+            // If URL parsing fails, return null
+            return null;
+        }
     }
 }
 
