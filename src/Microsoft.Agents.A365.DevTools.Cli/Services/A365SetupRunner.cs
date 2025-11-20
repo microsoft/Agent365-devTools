@@ -1,18 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Runtime.InteropServices;
-using Microsoft.Graph;
-using Azure.Identity;
 using Azure.Core;
+using Azure.Identity;
+using System.Linq;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Extensions.Logging;
+using Microsoft.Graph;
+using Microsoft.Graph.Models;
+using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using static System.Formats.Asn1.AsnWriter;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -48,6 +51,50 @@ public sealed class A365SetupRunner
         _webAppCreator = webAppCreator;
         _delegatedConsentService = delegatedConsentService;
         _platformDetector = platformDetector;
+    }
+
+    /// <summary>
+    /// Validates Graph token string for disallowed high-privilege scopes.
+    /// Throws GraphTokenScopeException if Directory.AccessAsUser.All is present.
+    /// </summary>
+    private void ValidateGraphToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return;
+
+        try
+        {
+            // JWT format: header.payload.signature
+            var parts = token.Split('.');
+            if (parts.Length < 2) return;
+
+            string payload = parts[1];
+            // Base64URL decode
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
+
+            // scopes may appear as 'scp' (space-separated) or 'roles' or 'wids'. Check scp
+            if (doc.RootElement.TryGetProperty("scp", out var scp))
+            {
+                var scpValue = scp.GetString() ?? string.Empty;
+                if (scpValue.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(s => s.Equals("Directory.AccessAsUser.All", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogError("Detected high-privilege scope in token: Directory.AccessAsUser.All");
+                    throw new GraphTokenScopeException("Directory.AccessAsUser.All");
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not Agent365Exception)
+        {
+            _logger.LogDebug(ex, "Failed to validate graph token payload");
+        }
     }
 
     /// <summary>
@@ -451,7 +498,7 @@ public sealed class A365SetupRunner
             await CreateBlueprintClientSecretAsync(blueprintObjectId!, blueprintAppId!, generatedConfig, generatedConfigPath, cancellationToken);
 
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not Agent365Exception)
         {
             _logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
             return false;
@@ -828,7 +875,7 @@ public sealed class A365SetupRunner
 
             return (true, appId, objectId, servicePrincipalId);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not Agent365Exception)
         {
             _logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
             return (false, null, null, null);
@@ -1227,8 +1274,6 @@ public sealed class A365SetupRunner
         }
     }
 
-    // PollAdminConsentAsync logic moved to AdminConsentHelper to enable reuse.
-
     private void TryOpenBrowser(string url)
     {
         try
@@ -1603,34 +1648,22 @@ public sealed class A365SetupRunner
     private static string Short(string? text)
         => string.IsNullOrWhiteSpace(text) ? string.Empty : (text.Length <= 180 ? text.Trim() : text[..177] + "...");
     
-    /// <summary>
-    /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
-    /// This uses InteractiveBrowserCredential directly which is simpler and more reliable.
-    /// </summary>
     private async Task<string?> GetTokenFromGraphClient(GraphServiceClient graphClient, string tenantId)
     {
-        try
+        // Use Azure.Identity to get the token directly with specific scopes
+        var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
         {
-            // Use Azure.Identity to get the token directly
-            // This is cleaner and more reliable than trying to extract it from GraphServiceClient
-            var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
-            {
-                TenantId = tenantId,
-                ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e" // Microsoft Graph PowerShell app ID
-            });
-            
-            var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
-            var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
-            
-            return token.Token;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get access token");
-            return null;
-        }
+            TenantId = tenantId,
+            ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e" // Microsoft Graph PowerShell app ID
+        });
+
+        var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
+        var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
+        ValidateGraphToken(token.Token);
+
+        return token.Token;
     }
-    
+
     /// <summary>
     /// Ensures delegated consent with retry logic (3 attempts with 5-second delays)
     /// Matches the PowerShell script's retry behavior for DelegatedAgentApplicationCreateConsent.ps1

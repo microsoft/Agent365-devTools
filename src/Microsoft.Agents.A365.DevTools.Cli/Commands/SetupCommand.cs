@@ -30,7 +30,8 @@ public class SetupCommand
         IBotConfigurator botConfigurator,
         IAzureValidator azureValidator,
         AzureWebAppCreator webAppCreator,
-        PlatformDetector platformDetector)
+        PlatformDetector platformDetector,
+        GraphApiService graphApiService)
     {
         var command = new Command("setup", "Set up your Agent 365 environment by creating Azure resources, configuring\npermissions, and registering your agent blueprint for deployment");
 
@@ -104,19 +105,14 @@ public class SetupCommand
 
                 bool success;
 
-                // Use C# runner with GraphApiService
-                var graphService = new GraphApiService(
-                        LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
-                        executor);
-
                 var delegatedConsentService = new DelegatedConsentService(
                     LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<DelegatedConsentService>(),
-                    graphService);
+                    graphApiService);
 
                 var setupRunner = new A365SetupRunner(
                     LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<A365SetupRunner>(),
                     executor,
-                    graphService,
+                    graphApiService,
                     webAppCreator,
                     delegatedConsentService,
                     platformDetector);
@@ -174,7 +170,7 @@ public class SetupCommand
                 try
                 {
                     await EnsureMcpOauth2PermissionGrantsAsync(
-                        graphService,
+                        graphApiService,
                         setupConfig,
                         toolingScopes,
                         logger
@@ -182,7 +178,7 @@ public class SetupCommand
 
                     // Apply inheritable permissions on the agent identity blueprint
                     await EnsureMcpInheritablePermissionsAsync(
-                        graphService,
+                        graphApiService,
                         setupConfig,
                         toolingScopes,
                         logger
@@ -224,18 +220,18 @@ public class SetupCommand
                 if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
                     throw new InvalidOperationException("AgentBlueprintId is required.");
 
-                var blueprintSpObjectId = await graphService.LookupServicePrincipalByAppIdAsync(setupConfig.TenantId, setupConfig.AgentBlueprintId)
+                var blueprintSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(setupConfig.TenantId, setupConfig.AgentBlueprintId)
                     ?? throw new InvalidOperationException($"Blueprint Service Principal not found for appId {setupConfig.AgentBlueprintId}");
 
                 // Ensure Messaging Bot API SP exists
-                var botApiResourceSpObjectId = await graphService.EnsureServicePrincipalForAppIdAsync(
+                var botApiResourceSpObjectId = await graphApiService.EnsureServicePrincipalForAppIdAsync(
                     setupConfig.TenantId,
                     ConfigConstants.MessagingBotApiAppId);
 
                 try
                 {
                     // Grant oauth2PermissionGrants: blueprint SP -> Messaging Bot API SP
-                    var botApiGrantOk = await graphService.CreateOrUpdateOauth2PermissionGrantAsync(
+                    var botApiGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
                         setupConfig.TenantId,
                         blueprintSpObjectId,
                         botApiResourceSpObjectId,
@@ -248,7 +244,7 @@ public class SetupCommand
                     }
                     
                     // Add inheritable permissions on blueprint for Messaging Bot API
-                    var (ok, already, err) = await graphService.SetInheritablePermissionsAsync(
+                    var (ok, already, err) = await graphApiService.SetInheritablePermissionsAsync(
                         setupConfig.TenantId,
                         setupConfig.AgentBlueprintId,
                         ConfigConstants.MessagingBotApiAppId,
