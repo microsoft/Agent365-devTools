@@ -377,20 +377,32 @@ public class ConfigService : IConfigService
         var errors = new List<string>();
         var warnings = new List<string>();
 
-        // Validate required static properties
         ValidateRequired(config.TenantId, nameof(config.TenantId), errors);
-        ValidateRequired(config.SubscriptionId, nameof(config.SubscriptionId), errors);
-        ValidateRequired(config.ResourceGroup, nameof(config.ResourceGroup), errors);
-        ValidateRequired(config.Location, nameof(config.Location), errors);
-
-        // Validate GUID formats
         ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
-        ValidateGuid(config.SubscriptionId, nameof(config.SubscriptionId), errors);
 
-        // Validate Azure naming conventions
-        ValidateResourceGroupName(config.ResourceGroup, errors);
-        ValidateAppServicePlanName(config.AppServicePlanName, errors);
-        ValidateWebAppName(config.WebAppName, errors);
+        if (!config.NeedWebAppDeployment)
+        {
+            // Validate required static properties
+            ValidateRequired(config.SubscriptionId, nameof(config.SubscriptionId), errors);
+            ValidateRequired(config.ResourceGroup, nameof(config.ResourceGroup), errors);
+            ValidateRequired(config.Location, nameof(config.Location), errors);
+            ValidateRequired(config.AppServicePlanName, nameof(config.AppServicePlanName), errors);
+            ValidateRequired(config.WebAppName, nameof(config.WebAppName), errors);
+
+            // Validate GUID formats
+            ValidateGuid(config.SubscriptionId, nameof(config.SubscriptionId), errors);
+
+            // Validate Azure naming conventions
+            ValidateResourceGroupName(config.ResourceGroup, errors);
+            ValidateAppServicePlanName(config.AppServicePlanName, errors);
+            ValidateWebAppName(config.WebAppName, errors);
+        }
+        else
+        {
+            // Only validate bot messaging endpoint
+            ValidateRequired(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
+            ValidateUrl(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
+        }
 
         // Validate dynamic properties if they exist
         if (config.ManagedIdentityPrincipalId != null)

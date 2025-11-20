@@ -136,10 +136,10 @@ public sealed class A365SetupRunner
         if (string.IsNullOrWhiteSpace(planSku)) planSku = "B1";
         
         var deploymentProjectPath = Get("deploymentProjectPath");
-        var hostingModeRaw = Get("hostingMode");
-        var isExternalHosting = string.Equals(hostingModeRaw, "External", StringComparison.OrdinalIgnoreCase);
+        var needDeploymentRaw = Get("needDeployment");
+        var needWebAppDeployment = !string.Equals(needDeploymentRaw, "no", StringComparison.OrdinalIgnoreCase);
         
-        var skipInfra = blueprintOnly || isExternalHosting;
+        var skipInfra = blueprintOnly || !needWebAppDeployment;
         if (!skipInfra)
         {
             // Azure hosting scenario – need full infra details

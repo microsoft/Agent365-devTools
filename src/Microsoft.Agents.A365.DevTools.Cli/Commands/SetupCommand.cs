@@ -65,9 +65,6 @@ public class SetupCommand
             {
                 // Validate configuration even in dry-run mode
                 var dryRunConfig = await configService.LoadAsync(config.FullName);
-
-                // Validate non-Azure messaging endpoint
-                ValidateMessagingEndpointForNonAzure(dryRunConfig, logger);
                 
                 logger.LogInformation("DRY RUN: Agent 365 Setup - Blueprint + Messaging Endpoint Registration");
                 logger.LogInformation("This would execute the following operations:");
@@ -89,14 +86,17 @@ public class SetupCommand
             {
                 // Load configuration - ConfigService automatically finds generated config in same directory
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                
-                // Early fail for non-Azure if no MessagingEndpoint
-                ValidateMessagingEndpointForNonAzure(setupConfig, logger);
-
-                // Validate Azure CLI authentication, subscription, and environment
-                if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
+                if (setupConfig.NeedWebAppDeployment)
                 {
-                    Environment.Exit(1);
+                    // Validate Azure CLI authentication, subscription, and environment
+                    if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
+                    {
+                        Environment.Exit(1);
+                    }
+                }
+                else
+                {
+                    logger.LogInformation("NeedWebAppDeployment=no – skipping Azure subscription validation.");
                 }
                 
                 logger.LogInformation("");
@@ -412,7 +412,7 @@ public class SetupCommand
 
         string messagingEndpoint;
         string endpointName;
-        if (string.Equals(setupConfig.HostingMode, "AzureAppService", StringComparison.OrdinalIgnoreCase))
+        if (setupConfig.NeedWebAppDeployment) 
         {
             if (string.IsNullOrEmpty(setupConfig.WebAppName))
             {
@@ -427,8 +427,9 @@ public class SetupCommand
             // Construct messaging endpoint URL from web app name
             messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
         }
-        else // External hosting (non-Azure)
+        else // Non-Azure hosting
         {
+            // No deployment – use the provided botMessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogError("MessagingEndpoint must be provided in a365.config.json for External hosting mode");
@@ -439,7 +440,7 @@ public class SetupCommand
                 uri.Scheme != Uri.UriSchemeHttps)
             {
                 logger.LogError("MessagingEndpoint must be a valid HTTPS URL. Current value: {Endpoint}",
-                    setupConfig.MessagingEndpoint);
+                    setupConfig.BotMessagingEndpoint);
                 throw new InvalidOperationException("MessagingEndpoint must be a valid HTTPS URL.");
             }
 
@@ -550,37 +551,6 @@ public class SetupCommand
         config.InheritanceConfigured = true;
         config.InheritablePermissionsAlreadyExist = alreadyExists;
         config.InheritanceConfigError = null;
-    }
-
-    /// <summary>
-    /// Validate messaging endpoint configuration for non-Azure deployments
-    /// </summary>
-    private static void ValidateMessagingEndpointForNonAzure(Agent365Config config, ILogger logger)
-    {
-        if (!string.Equals(config.HostingMode, "External", StringComparison.OrdinalIgnoreCase))
-            return;
-
-        if (string.IsNullOrWhiteSpace(config.MessagingEndpoint))
-        {
-            logger.LogError(
-                "For non-Azure deployments (hostingMode=External), 'messagingEndpoint' is required in a365.config.json. " +
-                "This is the HTTPS URL that Bot Framework will call (e.g. https://your-host.com/api/messages).");
-
-            throw new InvalidOperationException("Missing MessagingEndpoint for non-Azure deployment.");
-        }
-
-        if (!Uri.TryCreate(config.MessagingEndpoint, UriKind.Absolute, out var uri) ||
-            uri.Scheme != Uri.UriSchemeHttps)
-        {
-            logger.LogError(
-                "MessagingEndpoint must be a valid HTTPS URL for non-Azure deployments. Current value: {Endpoint}",
-                config.MessagingEndpoint);
-
-            throw new InvalidOperationException("Invalid MessagingEndpoint URL for non-Azure deployment.");
-        }
-
-        logger.LogInformation("Non-Azure hosting detected. Using external messaging endpoint: {Endpoint}",
-            config.MessagingEndpoint);
     }
 
     /// <summary>
