@@ -100,7 +100,7 @@ public class Agent365Config
     /// Whether the CLI should create and deploy an Azure Web App for this agent.
     /// Backed by the 'needDeployment' config value:
     /// - "yes" (default) => CLI provisions App Service + MSI, a365 deploy app is active.
-    /// - "no"  => CLI does NOT create a web app; a365 deploy app is a no-op and botMessagingEndpoint must be provided.
+    /// - "no"  => CLI does NOT create a web app; a365 deploy app is a no-op and MessagingEndpoint must be provided.
     /// </summary>
     [JsonPropertyName("needDeployment")]
     public string NeedDeployment { get; init; } = "yes";
@@ -194,7 +194,7 @@ public class Agent365Config
     /// <summary>
     /// Gets the internal name for the endpoint registration.
     /// - For AzureAppService, derived from WebAppName.
-    /// - For non-Azure hosting, derived from BotMessagingEndpoint host if possible.
+    /// - For non-Azure hosting, derived from MessagingEndpoint host if possible.
     /// </summary>
     [JsonIgnore]
     public string BotName

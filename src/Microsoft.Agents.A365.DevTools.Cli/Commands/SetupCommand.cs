@@ -429,7 +429,7 @@ public class SetupCommand
         }
         else // Non-Azure hosting
         {
-            // No deployment – use the provided botMessagingEndpoint
+            // No deployment – use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogError("MessagingEndpoint must be provided in a365.config.json for External hosting mode");
@@ -440,7 +440,7 @@ public class SetupCommand
                 uri.Scheme != Uri.UriSchemeHttps)
             {
                 logger.LogError("MessagingEndpoint must be a valid HTTPS URL. Current value: {Endpoint}",
-                    setupConfig.BotMessagingEndpoint);
+                    setupConfig.MessagingEndpoint);
                 throw new InvalidOperationException("MessagingEndpoint must be a valid HTTPS URL.");
             }
 
