@@ -27,7 +27,7 @@ public class Agent365Config
 
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
 
-        if (HostingMode.Equals("AzureAppService", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(HostingMode, "AzureAppService", StringComparison.OrdinalIgnoreCase))
         {
             if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
             if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
@@ -98,7 +98,7 @@ public class Agent365Config
     public string HostingMode { get; init; } = "AzureAppService";
 
     /// <summary>
-    /// For External hosting, this is the HTTPS messaging endpoint that Bot Framework will call,
+    /// For External hosting, this is the HTTPS messaging endpoint that Bot Framework will call.
     /// For AzureAppService, this is optional; the CLI derives the endpoint from webAppName.
     /// </summary>
     [JsonPropertyName("messagingEndpoint")]

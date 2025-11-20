@@ -448,7 +448,7 @@ public class SetupCommand
             // Derive endpoint name from host when there's no WebAppName
             var hostPart = uri.Host.Replace('.', '-');
             var baseEndpointName = $"{hostPart}-endpoint";
-            endpointName = EndpointHelper.GetEndpointName(baseEndpointName );
+            endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
         }
 
         if (endpointName.Length < 4)

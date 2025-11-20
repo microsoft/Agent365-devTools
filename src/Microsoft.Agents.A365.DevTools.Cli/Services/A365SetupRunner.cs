@@ -140,13 +140,6 @@ public sealed class A365SetupRunner
         var isExternalHosting = string.Equals(hostingModeRaw, "External", StringComparison.OrdinalIgnoreCase);
         
         var skipInfra = blueprintOnly || isExternalHosting;
-
-        if (new[] { subscriptionId, tenantId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
-        {
-            _logger.LogError("Config missing required properties. Need subscriptionId, tenantId, resourceGroup, appServicePlanName, webAppName, location.");
-            return false;
-        }
-
         if (!skipInfra)
         {
             // Azure hosting scenario – need full infra details
