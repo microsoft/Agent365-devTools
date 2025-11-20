@@ -64,6 +64,9 @@ public class SetupCommand
             {
                 // Validate configuration even in dry-run mode
                 var dryRunConfig = await configService.LoadAsync(config.FullName);
+
+                // Validate non-Azure messaging endpoint
+                ValidateMessagingEndpointForNonAzure(dryRunConfig, logger);
                 
                 logger.LogInformation("DRY RUN: Agent 365 Setup - Blueprint + Messaging Endpoint Registration");
                 logger.LogInformation("This would execute the following operations:");
@@ -85,6 +88,9 @@ public class SetupCommand
             {
                 // Load configuration - ConfigService automatically finds generated config in same directory
                 var setupConfig = await configService.LoadAsync(config.FullName);
+                
+                // Early fail for non-Azure if no MessagingEndpoint
+                ValidateMessagingEndpointForNonAzure(setupConfig, logger);
 
                 // Validate Azure CLI authentication, subscription, and environment
                 if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
@@ -408,23 +414,52 @@ public class SetupCommand
             throw new InvalidOperationException("Agent Blueprint ID is required for messaging endpoint registration");
         }
 
-        if (string.IsNullOrEmpty(setupConfig.WebAppName))
+        string messagingEndpoint;
+        string endpointName;
+        if (string.Equals(setupConfig.HostingMode, "AzureAppService", StringComparison.OrdinalIgnoreCase))
         {
-            logger.LogError("Web App Name not configured in a365.config.json");
-            throw new InvalidOperationException("Web App Name is required for messaging endpoint registration");
+            if (string.IsNullOrEmpty(setupConfig.WebAppName))
+            {
+                logger.LogError("Web App Name not configured in a365.config.json");
+                throw new InvalidOperationException("Web App Name is required for messaging endpoint registration");
+            }
+
+            // Generate endpoint name with Azure Bot Service constraints (4-42 chars)
+            var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
+            endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
+            
+            // Construct messaging endpoint URL from web app name
+            messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
+        }
+        else // External hosting (non-Azure)
+        {
+            if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
+            {
+                logger.LogError("MessagingEndpoint must be provided in a365.config.json for External hosting mode");
+                throw new InvalidOperationException("MessagingEndpoint is required for messaging endpoint registration");
+            }
+
+            if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var uri) ||
+                uri.Scheme != Uri.UriSchemeHttps)
+            {
+                logger.LogError("MessagingEndpoint must be a valid HTTPS URL. Current value: {Endpoint}",
+                    setupConfig.MessagingEndpoint);
+                throw new InvalidOperationException("MessagingEndpoint must be a valid HTTPS URL.");
+            }
+
+            messagingEndpoint = setupConfig.MessagingEndpoint;
+
+            // Derive endpoint name from host when there's no WebAppName
+            var hostPart = uri.Host.Replace('.', '-');
+            var baseEndpointName = $"{hostPart}-endpoint";
+            endpointName = EndpointHelper.GetEndpointName(baseEndpointName );
         }
 
-        // Generate endpoint name with Azure Bot Service constraints (4-42 chars)
-        var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
-        var endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
         if (endpointName.Length < 4)
         {
             logger.LogError("Bot endpoint name '{EndpointName}' is too short (must be at least 4 characters)", endpointName);
             throw new InvalidOperationException($"Bot endpoint name '{endpointName}' is too short (must be at least 4 characters)");
         }
-        
-        // Register messaging endpoint using agent blueprint identity and deployed web app URL
-        var messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
         
         logger.LogInformation("   - Registering blueprint messaging endpoint");
         logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
@@ -445,74 +480,111 @@ public class SetupCommand
         }
     }
 
+    /// <summary>
+    /// Ensure OAuth2 permission grants are set from blueprint to MCP server
+    /// </summary>
     private static async Task EnsureMcpOauth2PermissionGrantsAsync(
         GraphApiService graph,
-        Agent365Config cfg,
+        Agent365Config config,
         string[] scopes,
         ILogger logger,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(cfg.AgentBlueprintId))
+        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
             throw new InvalidOperationException("AgentBlueprintId (appId) is required.");
 
-        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(cfg.TenantId, cfg.AgentBlueprintId, ct);
+        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct);
         if (string.IsNullOrWhiteSpace(blueprintSpObjectId))
         {
-            throw new InvalidOperationException($"Blueprint Service Principal not found for appId {cfg.AgentBlueprintId}. " +
+            throw new InvalidOperationException($"Blueprint Service Principal not found for appId {config.AgentBlueprintId}. " +
                 "The service principal may not have propagated yet. Wait a few minutes and retry.");
         }
 
-        var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(cfg.Environment);
-        var Agent365ToolsSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(cfg.TenantId, resourceAppId, ct);
+        var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+        var Agent365ToolsSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct);
         if (string.IsNullOrWhiteSpace(Agent365ToolsSpObjectId))
         {
             throw new InvalidOperationException($"Agent 365 Tools Service Principal not found for appId {resourceAppId}. " +
-                $"Ensure the Agent 365 Tools application is available in your tenant for environment: {cfg.Environment}");
+                $"Ensure the Agent 365 Tools application is available in your tenant for environment: {config.Environment}");
         }
 
         logger.LogInformation("   - OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
             blueprintSpObjectId, Agent365ToolsSpObjectId, string.Join(' ', scopes));
 
         var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
-            cfg.TenantId, blueprintSpObjectId, Agent365ToolsSpObjectId, scopes, ct);
+            config.TenantId, blueprintSpObjectId, Agent365ToolsSpObjectId, scopes, ct);
 
         if (!response)
         {
             throw new InvalidOperationException(
-                $"Failed to create/update OAuth2 permission grant from blueprint {cfg.AgentBlueprintId} to Agent 365 Tools {resourceAppId}. " +
+                $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to Agent 365 Tools {resourceAppId}. " +
                 "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All permissions.");
         }
     }
 
+    /// <summary>
+    /// Ensure inheritable permissions are set from blueprint to MCP server
+    /// </summary>
     private static async Task EnsureMcpInheritablePermissionsAsync(
         GraphApiService graph,
-        Agent365Config cfg,
+        Agent365Config config,
         string[] scopes,
         ILogger logger,
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(cfg.AgentBlueprintId))
+        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
             throw new InvalidOperationException("AgentBlueprintId (appId) is required.");
 
-        var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(cfg.Environment);
+        var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
 
         logger.LogInformation("   - Inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
-            cfg.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
+            config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
         var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(
-            cfg.TenantId, cfg.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
+            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
 
         if (!ok && !alreadyExists)
         {
-            cfg.InheritanceConfigured = false;
-            cfg.InheritanceConfigError = err;
+            config.InheritanceConfigured = false;
+            config.InheritanceConfigError = err;
             throw new InvalidOperationException($"Failed to set inheritable permissions: {err}. " +
                 "Ensure you have Application.ReadWrite.All permissions and the blueprint supports inheritable permissions.");
         }
 
-        cfg.InheritanceConfigured = true;
-        cfg.InheritablePermissionsAlreadyExist = alreadyExists;
-        cfg.InheritanceConfigError = null;
+        config.InheritanceConfigured = true;
+        config.InheritablePermissionsAlreadyExist = alreadyExists;
+        config.InheritanceConfigError = null;
+    }
+
+    /// <summary>
+    /// Validate messaging endpoint configuration for non-Azure deployments
+    /// </summary>
+    private static void ValidateMessagingEndpointForNonAzure(Agent365Config config, ILogger logger)
+    {
+        if (!string.Equals(config.HostingMode, "External", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (string.IsNullOrWhiteSpace(config.MessagingEndpoint))
+        {
+            logger.LogError(
+                "For non-Azure deployments (hostingMode=External), 'messagingEndpoint' is required in a365.config.json. " +
+                "This is the HTTPS URL that Bot Framework will call (e.g. https://your-host.com/api/messages).");
+
+            throw new InvalidOperationException("Missing MessagingEndpoint for non-Azure deployment.");
+        }
+
+        if (!Uri.TryCreate(config.MessagingEndpoint, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps)
+        {
+            logger.LogError(
+                "MessagingEndpoint must be a valid HTTPS URL for non-Azure deployments. Current value: {Endpoint}",
+                config.MessagingEndpoint);
+
+            throw new InvalidOperationException("Invalid MessagingEndpoint URL for non-Azure deployment.");
+        }
+
+        logger.LogInformation("Non-Azure hosting detected. Using external messaging endpoint: {Endpoint}",
+            config.MessagingEndpoint);
     }
 
     /// <summary>

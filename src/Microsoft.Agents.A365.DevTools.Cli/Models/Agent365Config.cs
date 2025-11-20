@@ -24,14 +24,27 @@ public class Agent365Config
     public List<string> Validate()
     {
         var errors = new List<string>();
+
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
-        if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
-        if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
-        if (string.IsNullOrWhiteSpace(Location)) errors.Add("location is required.");
-        if (string.IsNullOrWhiteSpace(AppServicePlanName)) errors.Add("appServicePlanName is required.");
-        if (string.IsNullOrWhiteSpace(WebAppName)) errors.Add("webAppName is required.");
+
+        if (HostingMode.Equals("AzureAppService", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
+            if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
+            if (string.IsNullOrWhiteSpace(Location)) errors.Add("location is required.");
+            if (string.IsNullOrWhiteSpace(AppServicePlanName)) errors.Add("appServicePlanName is required.");
+            if (string.IsNullOrWhiteSpace(WebAppName)) errors.Add("webAppName is required.");
+        }
+        else
+        {
+            // External / non-Azure hosting
+            if (string.IsNullOrWhiteSpace(MessagingEndpoint))
+                errors.Add("messagingEndpoint is required when hostingMode is 'External'.");
+        }
+
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
         if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
+
         // agentIdentityScopes and agentApplicationScopes are now hardcoded defaults
         // botName and botDisplayName are now derived, not required in config
         // Add more validation as needed (e.g., GUID format, allowed values, etc.)
@@ -75,6 +88,21 @@ public class Agent365Config
     /// </summary>
     [JsonPropertyName("environment")]
     public string Environment { get; init; } = "preprod";
+
+    /// <summary>
+    /// Hosting mode for the agent runtime.
+    /// - "AzureAppService" (default): CLI provisions App Service + MSI, uses webAppName.
+    /// - "External": non-Azure hosting (K8s, other cloud, on-prem). CLI skips Azure infra.
+    /// </summary>
+    [JsonPropertyName("hostingMode")]
+    public string HostingMode { get; init; } = "AzureAppService";
+
+    /// <summary>
+    /// For External hosting, this is the HTTPS messaging endpoint that Bot Framework will call,
+    /// For AzureAppService, this is optional; the CLI derives the endpoint from webAppName.
+    /// </summary>
+    [JsonPropertyName("messagingEndpoint")]
+    public string? MessagingEndpoint { get; init; }
 
     #endregion
 
@@ -163,13 +191,32 @@ public class Agent365Config
 
     // BotName and BotDisplayName are now derived properties
     /// <summary>
-    /// Gets the internal name for the endpoint registration, derived from WebAppName.
+    /// Gets the internal name for the endpoint registration.
+    /// - For AzureAppService, derived from WebAppName.
+    /// - For External hosting, derived from MessagingEndpoint host if possible.
     /// </summary>
     [JsonIgnore]
-    public string BotName => string.IsNullOrWhiteSpace(WebAppName) ? string.Empty : $"{WebAppName}-endpoint";
+    public string BotName
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(WebAppName))
+            {
+                return $"{WebAppName}-endpoint";
+            }
+
+            if (!string.IsNullOrWhiteSpace(MessagingEndpoint) &&
+                Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri))
+            {
+                return $"{uri.Host.Replace('.', '-')}-endpoint";
+            }
+
+            return string.Empty;
+        }
+    }
 
     /// <summary>
-    /// Gets the display name for the bot, derived from AgentBlueprintDisplayName.
+    /// Gets the display name for the bot, derived from AgentBlueprintDisplayName or WebAppName.
     /// </summary>
     [JsonIgnore]
     public string BotDisplayName => !string.IsNullOrWhiteSpace(AgentBlueprintDisplayName) ? AgentBlueprintDisplayName! : WebAppName;

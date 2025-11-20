@@ -89,11 +89,37 @@ public sealed class A365SetupRunner
         if (string.IsNullOrWhiteSpace(planSku)) planSku = "B1";
         
         var deploymentProjectPath = Get("deploymentProjectPath");
+        var hostingModeRaw = Get("hostingMode");
+        var isExternalHosting = string.Equals(hostingModeRaw, "External", StringComparison.OrdinalIgnoreCase);
+        
+        var skipInfra = blueprintOnly || isExternalHosting;
 
         if (new[] { subscriptionId, tenantId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
         {
             _logger.LogError("Config missing required properties. Need subscriptionId, tenantId, resourceGroup, appServicePlanName, webAppName, location.");
             return false;
+        }
+
+        if (!skipInfra)
+        {
+            // Azure hosting scenario – need full infra details
+            if (new[] { subscriptionId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
+            {
+                _logger.LogError(
+                    "Config missing required properties for Azure hosting. " +
+                    "Need subscriptionId, resourceGroup, appServicePlanName, webAppName, location.");
+                return false;
+            }
+        }
+        else
+        {
+            // Non-Azure hosting or --blueprint: no infra required
+            if (string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                _logger.LogWarning(
+                    "subscriptionId is not set. This is acceptable for blueprint-only or External hosting mode " +
+                    "as Azure infrastructure will not be provisioned.");
+            }
         }
 
         // Detect project platform for appropriate runtime configuration
@@ -119,86 +145,93 @@ public sealed class A365SetupRunner
         // ========================================================================
         // Phase 0: Ensure Azure CLI is logged in with proper scope
         // ========================================================================
-        _logger.LogInformation("==> [0/5] Verifying Azure CLI authentication");
-        
-        // Check if logged in
-        var accountCheck = await _executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true);
-        if (!accountCheck.Success)
+        if (!skipInfra)
         {
-            _logger.LogInformation("Azure CLI not authenticated. Initiating login with management scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
+            _logger.LogInformation("==> [0/5] Verifying Azure CLI authentication");
             
-            // Use standard login without scope parameter (more reliable)
-            var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
-            if (!loginResult.Success)
+            // Check if logged in
+            var accountCheck = await _executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true);
+            if (!accountCheck.Success)
             {
-                _logger.LogError("Azure CLI login failed. Please run manually: az login --scope https://management.core.windows.net//.default");
-                return false;
+                _logger.LogInformation("Azure CLI not authenticated. Initiating login with management scope...");
+                _logger.LogInformation("A browser window will open for authentication.");
+                
+                // Use standard login without scope parameter (more reliable)
+                var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
+                
+                if (!loginResult.Success)
+                {
+                    _logger.LogError("Azure CLI login failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                    return false;
+                }
+                
+                _logger.LogInformation("Azure CLI login successful!");
+                
+                // Wait a moment for the login to fully complete
+                await Task.Delay(2000, cancellationToken);
+            }
+            else
+            {
+                _logger.LogInformation("Azure CLI already authenticated");
             }
             
-            _logger.LogInformation("Azure CLI login successful!");
-            
-            // Wait a moment for the login to fully complete
-            await Task.Delay(2000, cancellationToken);
-        }
-        else
-        {
-            _logger.LogInformation("Azure CLI already authenticated");
-        }
-        
-        // Verify we have the management scope - if not, try to acquire it
-        _logger.LogInformation("Verifying access to Azure management resources...");
-        var tokenCheck = await _executor.ExecuteAsync(
-            "az", 
-            "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
-            captureOutput: true, 
-            suppressErrorLogging: true,
-            cancellationToken: cancellationToken);
-            
-        if (!tokenCheck.Success)
-        {
-            _logger.LogWarning("Unable to acquire management scope token. Attempting re-authentication...");
-            _logger.LogInformation("A browser window will open for authentication.");
-            
-            // Try standard login first (more reliable than scope-specific login)
-            var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
-            if (!loginResult.Success)
-            {
-                    _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
-                return false;
-            }
-            
-            _logger.LogInformation("Azure CLI re-authentication successful!");
-            
-            // Wait a moment for the token cache to update
-            await Task.Delay(2000, cancellationToken);
-            
-            // Verify management token is now available
-            var retryTokenCheck = await _executor.ExecuteAsync(
+            // Verify we have the management scope - if not, try to acquire it
+            _logger.LogInformation("Verifying access to Azure management resources...");
+            var tokenCheck = await _executor.ExecuteAsync(
                 "az", 
                 "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
                 captureOutput: true, 
                 suppressErrorLogging: true,
                 cancellationToken: cancellationToken);
                 
-            if (!retryTokenCheck.Success)
+            if (!tokenCheck.Success)
             {
-                _logger.LogWarning("Still unable to acquire management scope token after re-authentication.");
-                _logger.LogWarning("Continuing anyway - you may encounter permission errors later.");
+                _logger.LogWarning("Unable to acquire management scope token. Attempting re-authentication...");
+                _logger.LogInformation("A browser window will open for authentication.");
+                
+                // Try standard login first (more reliable than scope-specific login)
+                var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
+                
+                if (!loginResult.Success)
+                {
+                        _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                    return false;
+                }
+                
+                _logger.LogInformation("Azure CLI re-authentication successful!");
+                
+                // Wait a moment for the token cache to update
+                await Task.Delay(2000, cancellationToken);
+                
+                // Verify management token is now available
+                var retryTokenCheck = await _executor.ExecuteAsync(
+                    "az", 
+                    "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
+                    captureOutput: true, 
+                    suppressErrorLogging: true,
+                    cancellationToken: cancellationToken);
+                    
+                if (!retryTokenCheck.Success)
+                {
+                    _logger.LogWarning("Still unable to acquire management scope token after re-authentication.");
+                    _logger.LogWarning("Continuing anyway - you may encounter permission errors later.");
+                }
+                else
+                {
+                    _logger.LogInformation("Management scope token acquired successfully!");
+                }
             }
             else
             {
-                _logger.LogInformation("Management scope token acquired successfully!");
+                _logger.LogInformation("Management scope verified successfully");
             }
+            
+            _logger.LogInformation("");
         }
         else
         {
-            _logger.LogInformation("Management scope verified successfully");
+            _logger.LogInformation("==> [0/5] Skipping Azure management authentication (blueprint-only or External hosting)");
         }
-        
-        _logger.LogInformation("");
 
         // ========================================================================
         // Phase 1: Deploy Agent runtime (App Service) + System-assigned Managed Identity
@@ -206,9 +239,14 @@ public sealed class A365SetupRunner
         string? principalId = null;
         JsonObject generatedConfig = new JsonObject();
 
-        if (blueprintOnly)
+        if (skipInfra)
         {
-            _logger.LogInformation("==> [1/5] Skipping Azure infrastructure (--blueprint mode)");
+            // Covers BOTH:
+            //  - blueprintOnly == true
+            //  - hostingMode == External (non-Azure)
+            var modeMessage = blueprintOnly ? "--blueprint mode" : "External hosting (non-Azure)";
+
+            _logger.LogInformation("==> [1/5] Skipping Azure infrastructure ({Mode})", modeMessage);
             _logger.LogInformation("Loading existing configuration...");
 
             // Load existing generated config if available
