@@ -74,6 +74,12 @@ public class DeployCommand
                     return;
                 }
 
+                // Check if web app deployment should be skipped (external messaging endpoint)
+                if (ShouldSkipWebAppDeployment(configData, logger))
+                {
+                    return;
+                }
+
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
                     config.FullName, configService, azureValidator, executor, logger);
                 if (validatedConfig == null) return;
@@ -139,6 +145,12 @@ public class DeployCommand
                     logger.LogInformation("Target resource group: {ResourceGroup}", configData.ResourceGroup);
                     logger.LogInformation("Target web app: {WebAppName}", configData.WebAppName);
                     logger.LogInformation("Configuration file validated: {ConfigFile}", config.FullName);
+                    return;
+                }
+
+                // Check if web app deployment should be skipped (external messaging endpoint)
+                if (ShouldSkipWebAppDeployment(configData, logger))
+                {
                     return;
                 }
 
@@ -697,6 +709,23 @@ public class DeployCommand
                 
                 throw new DeployAppException($"Deployment failed: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Determines if web app deployment should be skipped because an external messaging endpoint is configured
+    /// </summary>
+    /// <param name="config">Configuration to check</param>
+    /// <param name="logger">Logger for informational messages</param>
+    /// <returns>True if deployment should be skipped, false otherwise</returns>
+    private static bool ShouldSkipWebAppDeployment(Agent365Config config, ILogger logger)
+    {
+        if (string.IsNullOrWhiteSpace(config.WebAppName) && !string.IsNullOrWhiteSpace(config.MessagingEndpoint))
+        {
+            logger.LogInformation($"MessagingEndpoint {config.MessagingEndpoint} is already provided and hence WebApp deployment is skipped.");
+            return true;
+        }
+
+        return false;
     }
 }
 

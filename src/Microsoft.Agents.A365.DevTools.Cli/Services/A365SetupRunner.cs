@@ -86,14 +86,28 @@ public sealed class A365SetupRunner
         var webAppName = Get("webAppName");
         var location = Get("location");
         var planSku = Get("appServicePlanSku");
+        var messagingEndpoint = Get("messagingEndpoint");
         if (string.IsNullOrWhiteSpace(planSku)) planSku = "B1";
         
         var deploymentProjectPath = Get("deploymentProjectPath");
 
-        if (new[] { subscriptionId, tenantId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
+        if (new[] { subscriptionId, tenantId, resourceGroup, location }.Any(string.IsNullOrWhiteSpace))
         {
-            _logger.LogError("Config missing required properties. Need subscriptionId, tenantId, resourceGroup, appServicePlanName, webAppName, location.");
+            _logger.LogError("Config missing required properties. Need subscriptionId, tenantId, resourceGroup, location.");
             return false;
+        }
+
+        // Validate Web App and Plan names or switch to blueprint-only mode
+        if (string.IsNullOrWhiteSpace(webAppName) || string.IsNullOrWhiteSpace(planName))
+        {
+            if (string.IsNullOrWhiteSpace(messagingEndpoint))
+            {
+                _logger.LogError("Config missing required properties. Need appServicePlanName, webAppName.");
+                return false;
+            }
+
+            _logger.LogInformation("appServicePlanName or webAppName not specified, switching to --blueprint mode and skipping Web App creation.");
+            blueprintOnly = true;
         }
 
         // Detect project platform for appropriate runtime configuration
@@ -166,7 +180,7 @@ public sealed class A365SetupRunner
             
             if (!loginResult.Success)
             {
-                    _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
                 return false;
             }
             

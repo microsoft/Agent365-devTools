@@ -162,11 +162,19 @@ public class CleanupCommand
                 }
 
                 // Azure CLI cleanup commands
-                var commandsList = new List<(string, string)>
+                var commandsList = new List<(string, string)>();
+
+                // If WebAppName is configured
+                if (!string.IsNullOrWhiteSpace(config.WebAppName))
                 {
-                    ($"az webapp delete --name {config.WebAppName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId}", "Web App"),
-                    ($"az appservice plan delete --name {config.AppServicePlanName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId} --yes", "App Service Plan")
-                };
+                    commandsList.Add(($"az webapp delete --name {config.WebAppName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId}", "Web App"));
+                }
+
+                // Only add App Service Plan deletion if AppServicePlanName is configured
+                if (!string.IsNullOrWhiteSpace(config.AppServicePlanName))
+                {
+                    commandsList.Add(($"az appservice plan delete --name {config.AppServicePlanName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId} --yes", "App Service Plan"));
+                }
 
                 // Add bot deletion if bot exists
                 if (!string.IsNullOrEmpty(config.BotName))
@@ -192,21 +200,31 @@ public class CleanupCommand
                     }
                 }
 
-                var commands = commandsList.ToArray();
-
-                foreach (var (cmd, name) in commands)
+                // Check if there are any Azure resources to delete
+                if (commandsList.Count == 0)
                 {
-                    logger.LogInformation("Deleting {Name}...", name);
-                    var parts = cmd.Split(' ', 2);
-                    var result = await executor.ExecuteAsync(parts[0], parts[1], captureOutput: true);
-                    
-                    if (result.ExitCode == 0)
+                    logger.LogInformation("No Azure Web App resources found to clean up.");
+                    logger.LogInformation("This agent is configured with an external messaging endpoint: {MessagingEndpoint}",
+                        config.MessagingEndpoint ?? "(not configured)");
+                }
+                else
+                {
+                    var commands = commandsList.ToArray();
+
+                    foreach (var (cmd, name) in commands)
                     {
-                        logger.LogInformation("{Name} deleted successfully", name);
-                    }
-                    else
-                    {
-                        logger.LogWarning("Failed to delete {Name}: {Error}", name, result.StandardError);
+                        logger.LogInformation("Deleting {Name}...", name);
+                        var parts = cmd.Split(' ', 2);
+                        var result = await executor.ExecuteAsync(parts[0], parts[1], captureOutput: true);
+
+                        if (result.ExitCode == 0)
+                        {
+                            logger.LogInformation("{Name} deleted successfully", name);
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete {Name}: {Error}", name, result.StandardError);
+                        }
                     }
                 }
 
