@@ -83,6 +83,7 @@ public class DeploymentService
         else
         {
             // 1. Detect platform
+            _logger.LogInformation("[1/7] Detecting environment...");
             var platform = config.Platform ?? _platformDetector.Detect(projectDir);
             if (platform == ProjectPlatform.Unknown)
             {
@@ -94,32 +95,33 @@ public class DeploymentService
             _logger.LogInformation("Detected platform: {Platform}", platform);
 
             // 2. Get appropriate builder
+            _logger.LogInformation("[2/7] Getting appropriate builder for {Platform} environment...", platform);
             if (!_builders.TryGetValue(platform, out var builder))
             {
                 throw new NotSupportedException($"Platform {platform} is not yet supported for deployment");
             }
 
             // 3. Validate environment
-            _logger.LogInformation("[1/7] Validating {Platform} environment...", platform);
+            _logger.LogInformation("[3/7] Validating {Platform} environment...", platform);
             if (!await builder.ValidateEnvironmentAsync())
             {
                 throw new Exception($"Environment validation failed for {platform}");
             }
 
             // 4. Build application (BuildAsync will handle cleaning the publish directory)
-            _logger.LogInformation("[2/7] Building {Platform} application...", platform);
+            _logger.LogInformation("[4/7] Building {Platform} application...", platform);
             publishPath = await builder.BuildAsync(projectDir, config.PublishOutputPath, verbose);
             _logger.LogInformation("Build output: {Path}", publishPath);
 
             // 5. Create Oryx manifest
-            _logger.LogInformation("[3/7] Creating Oryx manifest...");
+            _logger.LogInformation("[5/7] Creating Oryx manifest...");
             var manifest = await builder.CreateManifestAsync(projectDir, publishPath);
             var manifestPath = Path.Combine(publishPath, "oryx-manifest.toml");
             await manifest.WriteToFileAsync(manifestPath);
             _logger.LogInformation("Manifest command: {Command}", manifest.Command);
 
             // 6. Convert .env to Azure App Settings (if it exists)
-            _logger.LogInformation("[4/7] Converting .env to Azure App Settings...");
+            _logger.LogInformation("[6/7] Converting .env to Azure App Settings...");
             var envResult = await builder.ConvertEnvToAzureAppSettingsAsync(projectDir, config.ResourceGroup, config.AppName, verbose);
             if (!envResult)
             {
@@ -129,7 +131,7 @@ public class DeploymentService
             // 7. Set startup command for Python apps
             if (platform == ProjectPlatform.Python && builder is PythonBuilder pythonBuilder)
             {
-                _logger.LogInformation("[6/7] Setting Python startup command...");
+                _logger.LogInformation("[7/7] Setting Python startup command...");
                 var startupResult = await pythonBuilder.SetStartupCommandAsync(projectDir, config.ResourceGroup, config.AppName, verbose);
                 if (!startupResult)
                 {

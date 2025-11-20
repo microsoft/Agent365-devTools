@@ -155,7 +155,7 @@ public class NodeBuilder : IPlatformBuilder
             File.Copy(tsFile, Path.Combine(publishPath, Path.GetFileName(tsFile)));
         }
 
-        // Step 4.5: Create .deployment file to force Oryx build
+        // Create .deployment file to force Oryx build during Azure deployment
         await CreateDeploymentFile(publishPath);
 
         return publishPath;
@@ -216,13 +216,21 @@ public class NodeBuilder : IPlatformBuilder
             }
         }
 
+        var buildCommand = "npm run build";
+        var hasBuildScript = scripts.TryGetProperty("build", out var buildScript);
+        if (hasBuildScript)
+        {
+            buildCommand = buildScript.GetString() ?? buildCommand;
+            _logger.LogInformation("Detected build command from package.json: {Command}", buildCommand);
+        }
+        
         return new OryxManifest
         {
             Platform = "nodejs",
             Version = nodeVersion,
             Command = startCommand,
-            BuildCommand = "npm run build",
-            BuildRequired = true,
+            BuildCommand = hasBuildScript ? buildCommand : "",
+            BuildRequired = hasBuildScript
         };
     }
     
