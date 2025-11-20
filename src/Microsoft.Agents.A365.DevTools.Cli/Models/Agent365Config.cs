@@ -220,8 +220,7 @@ public class Agent365Config
     /// Whether the CLI should perform web app deployment for the agent.
     /// </summary>
     [JsonIgnore]
-    public bool NeedWebAppDeployment =>
-        !string.Equals(NeedDeployment, "no", StringComparison.OrdinalIgnoreCase);
+    public bool NeedWebAppDeployment => !string.Equals(NeedDeployment, "no", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets the display name for the bot, derived from AgentBlueprintDisplayName or WebAppName.

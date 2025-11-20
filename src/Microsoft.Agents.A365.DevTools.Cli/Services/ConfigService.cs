@@ -312,7 +312,7 @@ public class ConfigService : IConfigService
             _logger?.LogError("Configuration validation failed:");
             foreach (var error in validationResult.Errors)
             {
-                _logger?.LogError("  � {Error}", error);
+                _logger?.LogError("  * {Error}", error);
             }
             
             // Convert validation errors to structured exception
@@ -328,7 +328,7 @@ public class ConfigService : IConfigService
         {
             foreach (var warning in validationResult.Warnings)
             {
-                _logger?.LogWarning("  � {Warning}", warning);
+                _logger?.LogWarning("  * {Warning}", warning);
             }
         }
 
@@ -380,7 +380,7 @@ public class ConfigService : IConfigService
         ValidateRequired(config.TenantId, nameof(config.TenantId), errors);
         ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
 
-        if (!config.NeedWebAppDeployment)
+        if (config.NeedWebAppDeployment)
         {
             // Validate required static properties
             ValidateRequired(config.SubscriptionId, nameof(config.SubscriptionId), errors);
@@ -483,7 +483,8 @@ public class ConfigService : IConfigService
             AgentIdentityDisplayName = string.Empty,
             // AgentIdentityScopes and AgentApplicationScopes are now hardcoded defaults
             DeploymentProjectPath = string.Empty,
-            AgentDescription = string.Empty
+            AgentDescription = string.Empty,
+            NeedDeployment = "yes"
         };
 
         // Only serialize static (init) properties for the config file
