@@ -187,7 +187,7 @@ public sealed class A365SetupRunner
                 
                 if (!loginResult.Success)
                 {
-                        _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                    _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
                     return false;
                 }
                 
