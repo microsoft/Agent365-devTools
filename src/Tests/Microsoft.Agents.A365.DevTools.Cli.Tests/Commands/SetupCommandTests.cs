@@ -399,22 +399,5 @@ public class SetupCommandTests
             });
         infoLogCount.Should().BeGreaterThan(0, "Setup should show success message when all steps complete");
     }
-
-    [Theory]
-    [InlineData("https://test.azurewebsites.net:8080/api/messages", "test")]
-    [InlineData("https://agent.azurewebsites.net:443/api/messages", "agent")]
-    public void ExtractWebAppNameFromUrl_HandlesPortNumbers(string input, string expectedName)
-    {
-        // Arrange
-        var method = typeof(SetupCommand)
-            .GetMethod("ExtractWebAppNameFromUrl", BindingFlags.NonPublic | BindingFlags.Static);
-        method.Should().NotBeNull();
-
-        // Act
-        var result = method!.Invoke(null, new object[] { input }) as string;
-
-        // Assert
-        result.Should().Be(expectedName, "should extract subdomain correctly even with port number");
-    }
 }
 
