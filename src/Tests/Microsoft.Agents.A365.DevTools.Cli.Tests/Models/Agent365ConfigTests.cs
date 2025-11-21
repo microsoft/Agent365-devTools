@@ -365,7 +365,8 @@ public class Agent365ConfigTests
             Location = "eastus",
             MessagingEndpoint = "https://external-agent.example.com/api/messages",
             AgentIdentityDisplayName = "Test Agent Identity",
-            DeploymentProjectPath = "."
+            DeploymentProjectPath = ".",
+            NeedDeployment = false
             // AppServicePlanName and WebAppName not provided
         };
 

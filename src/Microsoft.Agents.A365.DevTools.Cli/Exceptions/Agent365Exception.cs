@@ -80,7 +80,7 @@ public abstract class Agent365Exception : Exception
             sb.AppendLine();
             foreach (var detail in errorDetails)
             {
-                sb.AppendLine($"  � {detail}");
+                sb.AppendLine($"  * {detail}");
             }
         }
         
