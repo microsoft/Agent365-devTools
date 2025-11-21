@@ -30,7 +30,6 @@ class Program
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Is(isVerbose ? Serilog.Events.LogEventLevel.Debug : Serilog.Events.LogEventLevel.Information)
             .WriteTo.Logger(lc => lc
-                .Filter.ByExcluding(e => e.Level >= LogEventLevel.Error)  // ✅ Exclude Error/Fatal from console
                 .WriteTo.Console())
             .WriteTo.File(      // File output (for debugging)
                 path: logFilePath,
