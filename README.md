@@ -1,8 +1,10 @@
 # Microsoft Agent 365 DevTools CLI
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/microsoft/Agent365-devTools)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![.NET Version](https://img.shields.io/badge/.NET-8.0-512BD4)](https://dotnet.microsoft.com/)
+[![NuGet](https://img.shields.io/badge/NuGet-v0.1.0-blue)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli) [![Downloads](https://img.shields.io/nuget/dt/Microsoft.Agents.A365.DevTools.Cli?label=Downloads&color=green)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-devTools/.github/workflows/ci.yml?branch=main&label=Build&logo=github)](https://github.com/microsoft/Agent365-devTools/actions)
+[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
+[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4)](https://dotnet.microsoft.com/)
+[![Contributors](https://img.shields.io/github/contributors/microsoft/Agent365-devTools?label=Contributors)](https://github.com/microsoft/Agent365-devTools/graphs/contributors)
 
 > **Note:**  
 > Use the information in this README to contribute to this open-source project. To learn about using this CLI in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://aka.ms/agents365/docs).
@@ -18,20 +20,6 @@ The Microsoft Agent 365 DevTools CLI focuses on these core areas:
 - **MCP Server Support**: Package, deploy, and manage Model Context Protocol servers
 - **Development Tools**: Local development support with hot-reload and debugging capabilities
 - **Deployment Automation**: Streamlined deployment workflows for production and development environments
-
-## Deploy command behavior
-
-Note: The `deploy` command behavior has been simplified. The root `a365 deploy` command now runs only the application deployment flow (the same behavior as `a365 deploy app`). MCP-related permission updates and scope management are available via the following subcommands:
-
-- `a365 deploy mcp` - Update MCP OAuth2 permission grants and inheritable permissions on an existing agent blueprint.
-- `a365 deploy scopes` - Grant or update OAuth2 scopes for a specific resource app ID on the agent blueprint.
-
-The root `a365 deploy` command and the `app` subcommand both respect the following flags:
-
-- `--dry-run` - Show what would be done without executing
-- `--inspect` - Pause before deployment to inspect publish folder and ZIP contents
-- `--restart` - Skip build and start from compressing existing publish folder (for quick iteration after manual changes)
-- `--verbose` (`-v`) - Enable verbose logging
 
 ## Current Project State
 

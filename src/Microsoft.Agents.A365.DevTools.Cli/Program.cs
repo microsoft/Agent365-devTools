@@ -87,7 +87,7 @@ class Program
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor, 
-                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector));
+                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService, azureValidator));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,

@@ -1,18 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Runtime.InteropServices;
-using Microsoft.Graph;
-using Azure.Identity;
 using Azure.Core;
+using Azure.Identity;
+using System.Linq;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Extensions.Logging;
+using Microsoft.Graph;
+using Microsoft.Graph.Models;
+using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using static System.Formats.Asn1.AsnWriter;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -48,6 +51,50 @@ public sealed class A365SetupRunner
         _webAppCreator = webAppCreator;
         _delegatedConsentService = delegatedConsentService;
         _platformDetector = platformDetector;
+    }
+
+    /// <summary>
+    /// Validates Graph token string for disallowed high-privilege scopes.
+    /// Throws GraphTokenScopeException if Directory.AccessAsUser.All is present.
+    /// </summary>
+    private void ValidateGraphToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return;
+
+        try
+        {
+            // JWT format: header.payload.signature
+            var parts = token.Split('.');
+            if (parts.Length < 2) return;
+
+            string payload = parts[1];
+            // Base64URL decode
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
+
+            // scopes may appear as 'scp' (space-separated) or 'roles' or 'wids'. Check scp
+            if (doc.RootElement.TryGetProperty("scp", out var scp))
+            {
+                var scpValue = scp.GetString() ?? string.Empty;
+                if (scpValue.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(s => s.Equals("Directory.AccessAsUser.All", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogError("Detected high-privilege scope in token: Directory.AccessAsUser.All");
+                    throw new GraphTokenScopeException("Directory.AccessAsUser.All");
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not Agent365Exception)
+        {
+            _logger.LogDebug(ex, "Failed to validate graph token payload");
+        }
     }
 
     /// <summary>
@@ -89,11 +136,30 @@ public sealed class A365SetupRunner
         if (string.IsNullOrWhiteSpace(planSku)) planSku = "B1";
         
         var deploymentProjectPath = Get("deploymentProjectPath");
+        
+        bool needDeployment = CheckNeedDeployment(cfg);
 
-        if (new[] { subscriptionId, tenantId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
+        var skipInfra = blueprintOnly || !needDeployment;
+        if (!skipInfra)
         {
-            _logger.LogError("Config missing required properties. Need subscriptionId, tenantId, resourceGroup, appServicePlanName, webAppName, location.");
-            return false;
+            // Azure hosting scenario – need full infra details
+            if (new[] { subscriptionId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
+            {
+                _logger.LogError(
+                    "Config missing required properties for Azure hosting. " +
+                    "Need subscriptionId, resourceGroup, appServicePlanName, webAppName, location.");
+                return false;
+            }
+        }
+        else
+        {
+            // Non-Azure hosting or --blueprint: no infra required
+            if (string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                _logger.LogWarning(
+                    "subscriptionId is not set. This is acceptable for blueprint-only or External hosting mode " +
+                    "as Azure infrastructure will not be provisioned.");
+            }
         }
 
         // Detect project platform for appropriate runtime configuration
@@ -119,86 +185,93 @@ public sealed class A365SetupRunner
         // ========================================================================
         // Phase 0: Ensure Azure CLI is logged in with proper scope
         // ========================================================================
-        _logger.LogInformation("==> [0/5] Verifying Azure CLI authentication");
-        
-        // Check if logged in
-        var accountCheck = await _executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true);
-        if (!accountCheck.Success)
+        if (!skipInfra)
         {
-            _logger.LogInformation("Azure CLI not authenticated. Initiating login with management scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
+            _logger.LogInformation("==> [0/5] Verifying Azure CLI authentication");
             
-            // Use standard login without scope parameter (more reliable)
-            var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
-            if (!loginResult.Success)
+            // Check if logged in
+            var accountCheck = await _executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true);
+            if (!accountCheck.Success)
             {
-                _logger.LogError("Azure CLI login failed. Please run manually: az login --scope https://management.core.windows.net//.default");
-                return false;
+                _logger.LogInformation("Azure CLI not authenticated. Initiating login with management scope...");
+                _logger.LogInformation("A browser window will open for authentication.");
+                
+                // Use standard login without scope parameter (more reliable)
+                var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
+                
+                if (!loginResult.Success)
+                {
+                    _logger.LogError("Azure CLI login failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                    return false;
+                }
+                
+                _logger.LogInformation("Azure CLI login successful!");
+                
+                // Wait a moment for the login to fully complete
+                await Task.Delay(2000, cancellationToken);
+            }
+            else
+            {
+                _logger.LogInformation("Azure CLI already authenticated");
             }
             
-            _logger.LogInformation("Azure CLI login successful!");
-            
-            // Wait a moment for the login to fully complete
-            await Task.Delay(2000, cancellationToken);
-        }
-        else
-        {
-            _logger.LogInformation("Azure CLI already authenticated");
-        }
-        
-        // Verify we have the management scope - if not, try to acquire it
-        _logger.LogInformation("Verifying access to Azure management resources...");
-        var tokenCheck = await _executor.ExecuteAsync(
-            "az", 
-            "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
-            captureOutput: true, 
-            suppressErrorLogging: true,
-            cancellationToken: cancellationToken);
-            
-        if (!tokenCheck.Success)
-        {
-            _logger.LogWarning("Unable to acquire management scope token. Attempting re-authentication...");
-            _logger.LogInformation("A browser window will open for authentication.");
-            
-            // Try standard login first (more reliable than scope-specific login)
-            var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
-            if (!loginResult.Success)
-            {
-                    _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
-                return false;
-            }
-            
-            _logger.LogInformation("Azure CLI re-authentication successful!");
-            
-            // Wait a moment for the token cache to update
-            await Task.Delay(2000, cancellationToken);
-            
-            // Verify management token is now available
-            var retryTokenCheck = await _executor.ExecuteAsync(
+            // Verify we have the management scope - if not, try to acquire it
+            _logger.LogInformation("Verifying access to Azure management resources...");
+            var tokenCheck = await _executor.ExecuteAsync(
                 "az", 
                 "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
                 captureOutput: true, 
                 suppressErrorLogging: true,
                 cancellationToken: cancellationToken);
                 
-            if (!retryTokenCheck.Success)
+            if (!tokenCheck.Success)
             {
-                _logger.LogWarning("Still unable to acquire management scope token after re-authentication.");
-                _logger.LogWarning("Continuing anyway - you may encounter permission errors later.");
+                _logger.LogWarning("Unable to acquire management scope token. Attempting re-authentication...");
+                _logger.LogInformation("A browser window will open for authentication.");
+                
+                // Try standard login first (more reliable than scope-specific login)
+                var loginResult = await _executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
+                
+                if (!loginResult.Success)
+                {
+                    _logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                    return false;
+                }
+                
+                _logger.LogInformation("Azure CLI re-authentication successful!");
+                
+                // Wait a moment for the token cache to update
+                await Task.Delay(2000, cancellationToken);
+                
+                // Verify management token is now available
+                var retryTokenCheck = await _executor.ExecuteAsync(
+                    "az", 
+                    "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
+                    captureOutput: true, 
+                    suppressErrorLogging: true,
+                    cancellationToken: cancellationToken);
+                    
+                if (!retryTokenCheck.Success)
+                {
+                    _logger.LogWarning("Still unable to acquire management scope token after re-authentication.");
+                    _logger.LogWarning("Continuing anyway - you may encounter permission errors later.");
+                }
+                else
+                {
+                    _logger.LogInformation("Management scope token acquired successfully!");
+                }
             }
             else
             {
-                _logger.LogInformation("Management scope token acquired successfully!");
+                _logger.LogInformation("Management scope verified successfully");
             }
+            
+            _logger.LogInformation("");
         }
         else
         {
-            _logger.LogInformation("Management scope verified successfully");
+            _logger.LogInformation("==> [0/5] Skipping Azure management authentication (blueprint-only or External hosting)");
         }
-        
-        _logger.LogInformation("");
 
         // ========================================================================
         // Phase 1: Deploy Agent runtime (App Service) + System-assigned Managed Identity
@@ -206,9 +279,14 @@ public sealed class A365SetupRunner
         string? principalId = null;
         JsonObject generatedConfig = new JsonObject();
 
-        if (blueprintOnly)
+        if (skipInfra)
         {
-            _logger.LogInformation("==> [1/5] Skipping Azure infrastructure (--blueprint mode)");
+            // Covers BOTH:
+            //  - blueprintOnly == true
+            //  - hostingMode == External (non-Azure)
+            var modeMessage = blueprintOnly ? "--blueprint mode" : "External hosting (non-Azure)";
+
+            _logger.LogInformation("==> [1/5] Skipping Azure infrastructure ({Mode})", modeMessage);
             _logger.LogInformation("Loading existing configuration...");
 
             // Load existing generated config if available
@@ -451,7 +529,7 @@ public sealed class A365SetupRunner
             await CreateBlueprintClientSecretAsync(blueprintObjectId!, blueprintAppId!, generatedConfig, generatedConfigPath, cancellationToken);
 
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not Agent365Exception)
         {
             _logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
             return false;
@@ -828,7 +906,7 @@ public sealed class A365SetupRunner
 
             return (true, appId, objectId, servicePrincipalId);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not Agent365Exception)
         {
             _logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
             return (false, null, null, null);
@@ -1227,8 +1305,6 @@ public sealed class A365SetupRunner
         }
     }
 
-    // PollAdminConsentAsync logic moved to AdminConsentHelper to enable reuse.
-
     private void TryOpenBrowser(string url)
     {
         try
@@ -1603,34 +1679,22 @@ public sealed class A365SetupRunner
     private static string Short(string? text)
         => string.IsNullOrWhiteSpace(text) ? string.Empty : (text.Length <= 180 ? text.Trim() : text[..177] + "...");
     
-    /// <summary>
-    /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
-    /// This uses InteractiveBrowserCredential directly which is simpler and more reliable.
-    /// </summary>
     private async Task<string?> GetTokenFromGraphClient(GraphServiceClient graphClient, string tenantId)
     {
-        try
+        // Use Azure.Identity to get the token directly with specific scopes
+        var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
         {
-            // Use Azure.Identity to get the token directly
-            // This is cleaner and more reliable than trying to extract it from GraphServiceClient
-            var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
-            {
-                TenantId = tenantId,
-                ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e" // Microsoft Graph PowerShell app ID
-            });
-            
-            var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
-            var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
-            
-            return token.Token;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get access token");
-            return null;
-        }
+            TenantId = tenantId,
+            ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e" // Microsoft Graph PowerShell app ID
+        });
+
+        var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
+        var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
+        ValidateGraphToken(token.Token);
+
+        return token.Token;
     }
-    
+
     /// <summary>
     /// Ensures delegated consent with retry logic (3 attempts with 5-second delays)
     /// Matches the PowerShell script's retry behavior for DelegatedAgentApplicationCreateConsent.ps1
@@ -1684,6 +1748,29 @@ public sealed class A365SetupRunner
         
         return false;
     }
+
+    private bool CheckNeedDeployment(JsonObject setupConfig)
+    {
+        bool needDeployment = true; // default
+        if (setupConfig.TryGetPropertyValue("needDeployment", out var needDeploymentNode) &&
+            needDeploymentNode is JsonValue nv)
+        {
+            // Prefer native bool
+            if (nv.TryGetValue<bool>(out var boolVal))
+            {
+                needDeployment = boolVal;
+            }
+            else if (nv.TryGetValue<string?>(out var strVal) && !string.IsNullOrWhiteSpace(strVal))
+            {
+                // Backward compatibility with "yes"/"no" / "true"/"false"
+                needDeployment =
+                    !string.Equals(strVal, "no", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(strVal, "false", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        return needDeployment;
+    }
     
     /// <summary>
     /// Get the Azure Web App runtime string based on the detected platform
@@ -1693,7 +1780,7 @@ public sealed class A365SetupRunner
         return platform switch
         {
             Models.ProjectPlatform.Python => "PYTHON:3.11",
-            Models.ProjectPlatform.NodeJs => "NODE:18-lts", 
+            Models.ProjectPlatform.NodeJs => "NODE:20-lts", 
             Models.ProjectPlatform.DotNet => "DOTNETCORE:8.0",
             _ => "DOTNETCORE:8.0" // Default fallback
         };
@@ -1707,7 +1794,7 @@ public sealed class A365SetupRunner
         return platform switch
         {
             Models.ProjectPlatform.Python => "PYTHON|3.11",
-            Models.ProjectPlatform.NodeJs => "NODE|18-lts",
+            Models.ProjectPlatform.NodeJs => "NODE|20-lts",
             Models.ProjectPlatform.DotNet => "DOTNETCORE|8.0",
             _ => "DOTNETCORE|8.0" // Default fallback
         };

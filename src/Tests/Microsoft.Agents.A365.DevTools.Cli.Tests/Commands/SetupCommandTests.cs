@@ -251,9 +251,9 @@ public class SetupCommandTests
             _mockDeploymentService, 
             _mockBotConfigurator, 
             _mockAzureValidator, 
-            _mockWebAppCreator, 
+            _mockWebAppCreator,
             _mockPlatformDetector);
-        
+
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
@@ -288,17 +288,17 @@ public class SetupCommandTests
         };
         
         _mockConfigService.LoadAsync(Arg.Any<string>()).Returns(Task.FromResult(config));
-        
+
         var command = SetupCommand.CreateCommand(
-            _mockLogger, 
-            _mockConfigService, 
-            _mockExecutor, 
-            _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator, 
-            _mockWebAppCreator, 
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
+            _mockBotConfigurator,
+            _mockAzureValidator,
+            _mockWebAppCreator,
             _mockPlatformDetector);
-        
+
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
@@ -342,7 +342,6 @@ public class SetupCommandTests
             _mockAzureValidator, 
             _mockWebAppCreator, 
             _mockPlatformDetector);
-        
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
