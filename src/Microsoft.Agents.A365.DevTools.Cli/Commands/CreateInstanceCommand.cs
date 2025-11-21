@@ -219,11 +219,6 @@ public class CreateInstanceCommand
                 // Update configuration with the populated values
                 logger.LogInformation("Updating configuration with generated values...");
                 
-                // Update Agent365Config state properties
-                instanceConfig.BotId = instanceConfig.AgentBlueprintId ?? endpointName;
-                instanceConfig.BotMsaAppId = instanceConfig.AgentBlueprintId;
-                instanceConfig.BotMessagingEndpoint = $"https://{instanceConfig.WebAppName}.azurewebsites.net/api/messages";
-                
                 logger.LogInformation("     Agent Blueprint ID: {AgentBlueprintId}", instanceConfig.AgentBlueprintId);
                 logger.LogInformation("     Agent Instance ID: {AgenticAppId}", instanceConfig.AgenticAppId);
                 logger.LogInformation("     Agent User ID: {AgenticUserId}", instanceConfig.AgenticUserId);

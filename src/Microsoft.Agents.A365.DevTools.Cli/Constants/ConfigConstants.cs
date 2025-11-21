@@ -69,6 +69,8 @@ public static class ConfigConstants
         "Sites.Read.All"
     };
 
+    public const string DefaultAppServicePlanSku = "B1";
+
     /// <summary>
     /// Default Microsoft Graph API scopes for agent application
     /// </summary>

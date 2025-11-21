@@ -1,19 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
-using Microsoft.Extensions.Logging;
-using Microsoft.Agents.A365.DevTools.Cli.Commands;
-using Microsoft.Agents.A365.DevTools.Cli.Models;
-using Microsoft.Agents.A365.DevTools.Cli.Services;
-using NSubstitute;
-using Xunit;
 using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
-using FluentAssertions;
+using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
