@@ -118,7 +118,6 @@ class Program
                     {
                         // Unexpected error - this is a BUG
                         Log.Fatal(exception, "Application terminated unexpectedly");
-                        Console.Error.WriteLine();
                         Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
                         Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
                         Console.Error.WriteLine();
