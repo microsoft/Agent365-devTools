@@ -11,6 +11,7 @@ public class OryxManifest
     public string Platform { get; set; } = string.Empty;
     public string Version { get; set; } = string.Empty;
     public string Command { get; set; } = string.Empty;
+    public string BuildCommand { get; set; } = string.Empty;
     public bool BuildRequired { get; set; } = true;
 
     /// <summary>
@@ -18,16 +19,14 @@ public class OryxManifest
     /// </summary>
     public async Task WriteToFileAsync(string filePath)
     {
-        var buildSection = BuildRequired ? $@"[build]
-platform = ""{Platform}""
-version = ""{Version}""
-build-command = ""pip install -r requirements.txt""
+        var buildSection = BuildRequired ? "[build]\n" +
+            $@"platform = ""{Platform}""" + "\n" +
+            $@"version = ""{Version}""" + "\n" +
+            $@"build-command = ""{BuildCommand}""" +"\n\n" : "";
 
-" : "";
+        var content = $@"{buildSection}[run]" + "\n" +
+            $@"command = ""{Command}""";
 
-        var content = $@"{buildSection}[run]
-command = ""{Command}""
-";
         await File.WriteAllTextAsync(filePath, content);
     }
 }

@@ -27,17 +27,17 @@ public class Agent365Config
 
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
 
+        if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
+        if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
+
         if (NeedDeployment)
         {
-            if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
-            if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
             if (string.IsNullOrWhiteSpace(Location)) errors.Add("location is required.");
             if (string.IsNullOrWhiteSpace(AppServicePlanName)) errors.Add("appServicePlanName is required.");
             if (string.IsNullOrWhiteSpace(WebAppName)) errors.Add("webAppName is required.");
         }
         else
         {
-            // Non-Azure hosting
             if (string.IsNullOrWhiteSpace(MessagingEndpoint))
                 errors.Add("messagingEndpoint is required when needDeployment is 'no'.");
         }
@@ -45,9 +45,6 @@ public class Agent365Config
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
         if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
 
-        // agentIdentityScopes and agentApplicationScopes are now hardcoded defaults
-        // botName and botDisplayName are now derived, not required in config
-        // Add more validation as needed (e.g., GUID format, allowed values, etc.)
         return errors;
     }
     // ========================================================================
@@ -87,14 +84,14 @@ public class Agent365Config
     /// Default: preprod
     /// </summary>
     [JsonPropertyName("environment")]
-    public string Environment { get; init; } = "preprod";
+    public string Environment { get; init; } = "prod";
 
     /// <summary>
     /// For External hosting, this is the HTTPS messaging endpoint that Bot Framework will call.
     /// For AzureAppService, this is optional; the CLI derives the endpoint from webAppName.
     /// </summary>
     [JsonPropertyName("messagingEndpoint")]
-    public string? MessagingEndpoint { get; init; }
+    public string MessagingEndpoint { get; init; } = string.Empty;
 
     /// <summary>
     /// Whether the CLI should create and deploy an Azure Web App for this agent.
@@ -119,7 +116,7 @@ public class Agent365Config
     /// App Service Plan SKU/pricing tier (e.g., "B1", "S1", "P1v2").
     /// </summary>
     [JsonPropertyName("appServicePlanSku")]
-    public string AppServicePlanSku { get; init; } = "B1";
+    public string AppServicePlanSku { get; init; } = string.Empty;
 
     /// <summary>
     /// Name of the Azure Web App (must be globally unique).

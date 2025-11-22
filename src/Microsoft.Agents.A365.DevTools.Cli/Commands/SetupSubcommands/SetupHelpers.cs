@@ -367,5 +367,10 @@ internal static class SetupHelpers
             logger.LogError("Failed to register blueprint messaging endpoint");
             throw new SetupValidationException("Blueprint messaging endpoint registration failed");
         }
+
+        // Update Agent365Config state properties
+        setupConfig.BotId = setupConfig.AgentBlueprintId;
+        setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
+        setupConfig.BotMessagingEndpoint = messagingEndpoint;
     }
 }

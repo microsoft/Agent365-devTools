@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Text.Json;
+using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using System.Text.Json;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Models;
@@ -59,7 +60,6 @@ public class Agent365ConfigTests
         };
 
         // Assert - check default values
-        Assert.Equal("B1", config.AppServicePlanSku); // Has default
         Assert.NotNull(config.AgentIdentityScopes); // Hardcoded defaults
         Assert.NotEmpty(config.AgentIdentityScopes); // Should contain default scopes
     }
@@ -347,6 +347,102 @@ public class Agent365ConfigTests
         Assert.True(config.McpDefaultServers[0].IsValid());
         Assert.Equal("Server 2", config.McpDefaultServers[1].McpServerName);
         Assert.True(config.McpDefaultServers[1].IsValid());
+    }
+
+    #endregion
+
+    #region MessagingEndpoint Tests
+
+    [Fact]
+    public void Validate_WithMessagingEndpoint_DoesNotRequireAppServiceFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            MessagingEndpoint = "https://external-agent.example.com/api/messages",
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = ".",
+            NeedDeployment = false
+            // AppServicePlanName and WebAppName not provided
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().BeEmpty("messaging endpoint makes App Service fields optional");
+    }
+
+    [Fact]
+    public void Validate_WithoutMessagingEndpoint_RequiresAppServiceFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = "."
+            // AppServicePlanName, WebAppName, and MessagingEndpoint not provided
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain("appServicePlanName is required.");
+        errors.Should().Contain("webAppName is required.");
+    }
+
+    [Fact]
+    public void Validate_WithEmptyMessagingEndpoint_RequiresAppServiceFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            MessagingEndpoint = "", // Empty string should be treated as not provided
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = "."
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain("appServicePlanName is required.");
+        errors.Should().Contain("webAppName is required.");
+    }
+
+    [Fact]
+    public void Validate_WithMessagingEndpoint_StillRequiresBaseFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            MessagingEndpoint = "https://external-agent.example.com/api/messages"
+            // Missing all required base fields
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain("tenantId is required.");
+        errors.Should().Contain("subscriptionId is required.");
+        errors.Should().Contain("resourceGroup is required.");
+        errors.Should().Contain("location is required.");
+        errors.Should().Contain("agentIdentityDisplayName is required.");
+        errors.Should().Contain("deploymentProjectPath is required.");
     }
 
     #endregion

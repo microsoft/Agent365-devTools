@@ -3,6 +3,7 @@
 
 using System.Text;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -14,11 +15,13 @@ public class DotNetBuilder : IPlatformBuilder
 {
     private readonly ILogger<DotNetBuilder> _logger;
     private readonly CommandExecutor _executor;
+    private readonly BuilderHelper _helper;
 
     public DotNetBuilder(ILogger<DotNetBuilder> logger, CommandExecutor executor)
     {
         _logger = logger;
         _executor = executor;
+        _helper = new BuilderHelper(logger, executor);
     }
 
     public async Task<bool> ValidateEnvironmentAsync()
@@ -81,7 +84,7 @@ public class DotNetBuilder : IPlatformBuilder
         // Publish
         _logger.LogInformation("Publishing .NET application...");
         var publishArgs = $"publish \"{projectFile}\" -c Release -o \"{outputPath}\" --self-contained false --verbosity minimal";
-        var publishResult = await ExecuteWithOutputAsync("dotnet", publishArgs, projectDir, verbose);
+        var publishResult = await _helper.ExecuteWithOutputAsync("dotnet", publishArgs, projectDir, verbose);
         
         if (!publishResult.Success)
         {
@@ -137,6 +140,12 @@ public class DotNetBuilder : IPlatformBuilder
         };
     }
 
+    public async Task<bool> ConvertEnvToAzureAppSettingsAsync(string projectDir, string resourceGroup, string webAppName, bool verbose)
+    {
+        // Not needed for dotnet projects.
+        return await Task.FromResult(true);
+    }
+
     private string? ResolveProjectFile(string projectDir)
     {
         var csprojFiles = Directory.GetFiles(projectDir, "*.csproj", SearchOption.TopDirectoryOnly);
@@ -158,24 +167,5 @@ public class DotNetBuilder : IPlatformBuilder
         }
 
         return Path.GetFileName(allProjectFiles[0]);
-    }
-
-    private async Task<CommandResult> ExecuteWithOutputAsync(string command, string arguments, string workingDirectory, bool verbose)
-    {
-        var result = await _executor.ExecuteAsync(command, arguments, workingDirectory);
-        
-        if (verbose || !result.Success)
-        {
-            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
-            {
-                _logger.LogInformation("Output:\n{Output}", result.StandardOutput);
-            }
-            if (!string.IsNullOrWhiteSpace(result.StandardError))
-            {
-                _logger.LogWarning("Warnings/Errors:\n{Error}", result.StandardError);
-            }
-        }
-        
-        return result;
     }
 }

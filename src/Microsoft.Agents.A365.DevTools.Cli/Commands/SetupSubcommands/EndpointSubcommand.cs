@@ -104,6 +104,7 @@ internal static class EndpointSubcommand
 
         await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
             setupConfig, logger, botConfigurator);
+        await configService.SaveStateAsync(setupConfig);
 
         logger.LogInformation("");
         logger.LogInformation("Blueprint messaging endpoint registered successfully");

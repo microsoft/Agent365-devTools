@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -145,11 +146,9 @@ internal static class InfrastructureSubcommand
         var webAppName = Get("webAppName");
         var location = Get("location");
         var planSku = Get("appServicePlanSku");
-        if (string.IsNullOrWhiteSpace(planSku)) planSku = "B1";
+        if (string.IsNullOrWhiteSpace(planSku)) planSku = ConfigConstants.DefaultAppServicePlanSku;
 
         var deploymentProjectPath = Get("deploymentProjectPath");
-
-        bool needDeployment = CheckNeedDeployment(cfg);
 
         if (new[] { subscriptionId, tenantId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
         {

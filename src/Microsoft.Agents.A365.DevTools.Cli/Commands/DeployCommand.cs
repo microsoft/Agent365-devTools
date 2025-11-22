@@ -73,6 +73,13 @@ public class DeployCommand
                     return;
                 }
 
+                // Check if web app deployment should be skipped (external messaging endpoint)
+                if (!configData.NeedDeployment)
+                {
+                    logger.LogInformation("Web App deployment is skipped as per configuration.");
+                    return;
+                }
+
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
                     config.FullName, configService, azureValidator, executor, logger);
                 if (validatedConfig == null) return;
@@ -138,6 +145,13 @@ public class DeployCommand
                     logger.LogInformation("Target resource group: {ResourceGroup}", configData.ResourceGroup);
                     logger.LogInformation("Target web app: {WebAppName}", configData.WebAppName);
                     logger.LogInformation("Configuration file validated: {ConfigFile}", config.FullName);
+                    return;
+                }
+
+                // Check if web app deployment should be skipped (external messaging endpoint)
+                if (!configData.NeedDeployment)
+                {
+                    logger.LogInformation("Web App deployment is skipped as per configuration.");
                     return;
                 }
 

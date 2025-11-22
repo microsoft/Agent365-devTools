@@ -354,6 +354,76 @@ public class ConfigCommandStaticDynamicSeparationTests
             "static property should NOT be included in GetGeneratedConfig()");
     }
 
+    [Fact]
+    public async Task ConfigInit_WithWizard_MessagingEndpoint()
+    {
+        // Arrange
+        var logger = _loggerFactory.CreateLogger("Test");
+        var configDir = GetTestConfigDir();
+        var localConfigPath = Path.Combine(configDir, "a365.config.json");
+
+        // Create a mock wizard that returns a complete config object
+        var mockWizard = Substitute.For<IConfigurationWizardService>();
+        var wizardResult = new Agent365Config
+        {
+            // Static properties (should be saved)
+            TenantId = "12345678-1234-1234-1234-123456789012",
+            SubscriptionId = "87654321-4321-4321-4321-210987654321",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            MessagingEndpoint = "https://custom-endpoint.contoso.com/api/messages",
+            AgentIdentityDisplayName = "Test Agent",
+            AgentBlueprintDisplayName = "Test Blueprint",
+            AgentUserPrincipalName = "agent.test@contoso.com",
+            AgentUserDisplayName = "Test Agent User",
+            ManagerEmail = "manager@contoso.com",
+            AgentUserUsageLocation = "US",
+            DeploymentProjectPath = configDir,
+            AgentDescription = "Test Agent Description"
+        };
+
+        mockWizard.RunWizardAsync(Arg.Any<Agent365Config?>()).Returns(wizardResult);
+
+        var originalDir = Environment.CurrentDirectory;
+        try
+        {
+            Environment.CurrentDirectory = configDir;
+
+            // Act - Run config init
+            var root = new RootCommand();
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, mockWizard));
+            var result = await root.InvokeAsync("config init");
+
+            // Assert
+            result.Should().Be(0, "command should succeed");
+            File.Exists(localConfigPath).Should().BeTrue("config file should be created");
+
+            // Read the saved config file
+            var savedJson = await File.ReadAllTextAsync(localConfigPath);
+            var savedDoc = JsonDocument.Parse(savedJson);
+            var rootElement = savedDoc.RootElement;
+
+            // Verify STATIC properties ARE present
+            rootElement.TryGetProperty("tenantId", out _).Should().BeTrue("static property tenantId should be saved");
+            rootElement.TryGetProperty("subscriptionId", out _).Should().BeTrue("static property subscriptionId should be saved");
+            rootElement.TryGetProperty("resourceGroup", out _).Should().BeTrue("static property resourceGroup should be saved");
+            rootElement.TryGetProperty("location", out _).Should().BeTrue("static property location should be saved");
+            rootElement.TryGetProperty("appServicePlanName", out _).Should().BeFalse("static property appServicePlanName should not be saved");
+            rootElement.TryGetProperty("webAppName", out _).Should().BeFalse("static property webAppName should not be saved");
+            rootElement.TryGetProperty("messagingEndpoint", out _).Should().BeTrue("static property messagingEndpoint should be saved");
+            rootElement.TryGetProperty("agentIdentityDisplayName", out _).Should().BeTrue("static property agentIdentityDisplayName should be saved");
+            rootElement.TryGetProperty("deploymentProjectPath", out _).Should().BeTrue("static property deploymentProjectPath should be saved");
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDir;
+            if (Directory.Exists(configDir))
+            {
+                await CleanupTestDirectoryAsync(configDir);
+            }
+        }
+    }
+
     /// <summary>
     /// Helper method to clean up test directories with retry logic
     /// </summary>
