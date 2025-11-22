@@ -51,7 +51,7 @@ public class SetupCommandTests
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockAzureValidator = Substitute.For<IAzureValidator>();
         _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
-        _mockGraphApiService = Substitute.For<GraphApiService>(Substitute.For<ILogger<GraphApiService>>());
+        _mockGraphApiService = Substitute.For<GraphApiService>();
     }
 
     [Fact]
