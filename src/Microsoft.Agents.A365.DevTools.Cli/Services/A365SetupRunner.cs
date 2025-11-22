@@ -135,8 +135,9 @@ public sealed class A365SetupRunner
         var deploymentProjectPath = Get("deploymentProjectPath");
         
         bool needDeployment = CheckNeedDeployment(cfg);
-
         var skipInfra = blueprintOnly || !needDeployment;
+        var externalHosting = !needDeployment && !blueprintOnly;
+
         if (!skipInfra)
         {
             // Azure hosting scenario – need full infra details
@@ -293,10 +294,18 @@ public sealed class A365SetupRunner
                 {
                     generatedConfig = JsonNode.Parse(await File.ReadAllTextAsync(generatedConfigPath, cancellationToken))?.AsObject() ?? new JsonObject();
 
-                    if (generatedConfig.TryGetPropertyValue("managedIdentityPrincipalId", out var existingPrincipalId))
+                    if (blueprintOnly && generatedConfig.TryGetPropertyValue("managedIdentityPrincipalId", out var existingPrincipalId))
                     {
+                        // Only reuse MSI in blueprint-only mode
                         principalId = existingPrincipalId?.GetValue<string>();
                         _logger.LogInformation("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
+                    }
+                    else if (externalHosting)
+                    {
+                        _logger.LogInformation("External hosting selected – Managed Identity will NOT be used.");
+
+                        // Make sure we don't create FIC later
+                        principalId = null;
                     }
 
                     _logger.LogInformation("Existing configuration loaded successfully");
@@ -478,12 +487,15 @@ public sealed class A365SetupRunner
 
         try
         {
+            var useManagedIdentity = needDeployment || blueprintOnly;
+
             // Create the agent blueprint using Graph API directly (no PowerShell)
             var blueprintResult = await CreateAgentBlueprintAsync(
                 tenantId, 
                 agentBlueprintDisplayName,
                 agentIdentityDisplayName,
                 principalId,
+                useManagedIdentity,
                 generatedConfig,
                 cfg,
                 cancellationToken);
@@ -591,6 +603,7 @@ public sealed class A365SetupRunner
         string displayName,
         string? agentIdentityDisplayName,
         string? managedIdentityPrincipalId,
+        bool useManagedIdentity,
         JsonObject generatedConfig,
         JsonObject setupConfig,
         CancellationToken ct)
@@ -791,10 +804,10 @@ public sealed class A365SetupRunner
             _logger.LogInformation("Waiting 10 seconds to ensure Service Principal is fully propagated...");
             await Task.Delay(10000, ct);
 
-            // Create Federated Identity Credential (if managed identity provided)
-            if (!string.IsNullOrWhiteSpace(managedIdentityPrincipalId))
+            // Create Federated Identity Credential ONLY when MSI is relevant (if managed identity provided)
+            if (useManagedIdentity && !string.IsNullOrWhiteSpace(managedIdentityPrincipalId))
             {
-                _logger.LogInformation("Creating Federated Identity Credential...");
+                _logger.LogInformation("Creating Federated Identity Credential for Managed Identity...");
                 var credentialName = $"{displayName.Replace(" ", "")}-MSI";
                 
                 var ficSuccess = await CreateFederatedIdentityCredentialAsync(
@@ -813,6 +826,10 @@ public sealed class A365SetupRunner
                 {
                     _logger.LogWarning("Failed to create Federated Identity Credential");
                 }
+            }
+            else if (!useManagedIdentity)
+            {
+                _logger.LogInformation("Skipping Federated Identity Credential creation (external hosting / no MSI configured)");
             }
             else
             {
