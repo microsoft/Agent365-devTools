@@ -149,6 +149,8 @@ internal static class InfrastructureSubcommand
 
         var deploymentProjectPath = Get("deploymentProjectPath");
 
+        bool needDeployment = CheckNeedDeployment(cfg);
+
         if (new[] { subscriptionId, tenantId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
         {
             logger.LogError("Config missing required properties. Need subscriptionId, tenantId, resourceGroup, appServicePlanName, webAppName, location.");

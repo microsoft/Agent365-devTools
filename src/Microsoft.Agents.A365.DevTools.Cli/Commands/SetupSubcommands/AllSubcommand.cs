@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using System.Text.Json.Nodes;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
@@ -27,7 +28,8 @@ internal static class AllSubcommand
         IBotConfigurator botConfigurator,
         IAzureValidator azureValidator,
         AzureWebAppCreator webAppCreator,
-        PlatformDetector platformDetector)
+        PlatformDetector platformDetector,
+        GraphApiService graphApiService)
     {
         var command = new Command("all", 
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -189,6 +191,7 @@ internal static class AllSubcommand
                         logger,
                         configService,
                         executor,
+                        graphApiService,
                         setupConfig);
 
                     setupResults.McpPermissionsConfigured = true;
@@ -219,7 +222,8 @@ internal static class AllSubcommand
                         logger,
                         configService,
                         executor,
-                        setupConfig);
+                        setupConfig,
+                        graphApiService);
 
                     setupResults.BotApiPermissionsConfigured = true;
                     logger.LogInformation("Messaging Bot API permissions configured successfully");
@@ -273,5 +277,28 @@ internal static class AllSubcommand
         }, configOption, verboseOption, dryRunOption, skipInfrastructureOption);
 
         return command;
+    }
+
+    private static bool CheckNeedDeployment(JsonObject setupConfig)
+    {
+        bool needDeployment = true; // default
+        if (setupConfig.TryGetPropertyValue("needDeployment", out var needDeploymentNode) &&
+            needDeploymentNode is JsonValue nv)
+        {
+            // Prefer native bool
+            if (nv.TryGetValue<bool>(out var boolVal))
+            {
+                needDeployment = boolVal;
+            }
+            else if (nv.TryGetValue<string?>(out var strVal) && !string.IsNullOrWhiteSpace(strVal))
+            {
+                // Backward compatibility with "yes"/"no" / "true"/"false"
+                needDeployment =
+                    !string.Equals(strVal, "no", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(strVal, "false", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        return needDeployment;
     }
 }

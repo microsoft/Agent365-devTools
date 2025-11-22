@@ -22,7 +22,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             IBotConfigurator botConfigurator,
             IAzureValidator azureValidator,
             AzureWebAppCreator webAppCreator,
-            PlatformDetector platformDetector)
+            PlatformDetector platformDetector,
+            GraphApiService graphApiService)
         {
             var command = new Command("setup", 
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
@@ -44,13 +45,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, executor, azureValidator, webAppCreator, platformDetector));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
-                logger, configService, executor));
+                logger, configService, executor, graphApiService));
 
             command.AddCommand(EndpointSubcommand.CreateCommand(
                 logger, configService, botConfigurator, platformDetector));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, azureValidator, webAppCreator, platformDetector));
+                logger, configService, executor, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService));
 
             return command;
         }

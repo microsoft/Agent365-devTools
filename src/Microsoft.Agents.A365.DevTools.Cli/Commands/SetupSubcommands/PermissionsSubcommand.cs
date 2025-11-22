@@ -20,15 +20,16 @@ internal static class PermissionsSubcommand
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var permissionsCommand = new Command("permissions", 
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
-        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor));
-        permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor));
+        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService));
+        permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor, graphApiService));
 
         return permissionsCommand;
     }
@@ -39,7 +40,8 @@ internal static class PermissionsSubcommand
     private static Command CreateMcpSubcommand(
         ILogger logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var command = new Command("mcp", 
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
@@ -91,6 +93,7 @@ internal static class PermissionsSubcommand
                 logger,
                 configService,
                 executor,
+                graphApiService,
                 setupConfig);
 
         }, configOption, verboseOption, dryRunOption);
@@ -104,7 +107,8 @@ internal static class PermissionsSubcommand
     private static Command CreateBotSubcommand(
         ILogger logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var command = new Command("bot", 
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
@@ -153,7 +157,8 @@ internal static class PermissionsSubcommand
                 logger,
                 configService,
                 executor,
-                setupConfig);
+                setupConfig,
+                graphApiService);
 
         }, configOption, verboseOption, dryRunOption);
 
@@ -169,15 +174,12 @@ internal static class PermissionsSubcommand
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
+        GraphApiService graphApiService,
         Models.Agent365Config setupConfig,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("Configuring MCP server permissions...");
         logger.LogInformation("");
-
-        var graphService = new GraphApiService(
-            LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
-            executor);
 
         try
         {
@@ -187,11 +189,11 @@ internal static class PermissionsSubcommand
 
             // OAuth2 permission grants
             await SetupHelpers.EnsureMcpOauth2PermissionGrantsAsync(
-                graphService, setupConfig, toolingScopes, logger);
+                graphApiService, setupConfig, toolingScopes, logger);
 
             // Inheritable permissions
             await SetupHelpers.EnsureMcpInheritablePermissionsAsync(
-                graphService, setupConfig, toolingScopes, logger);
+                graphApiService, setupConfig, toolingScopes, logger);
 
             logger.LogInformation("");
             logger.LogInformation("MCP server permissions configured successfully");
@@ -220,14 +222,11 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         Models.Agent365Config setupConfig,
+        GraphApiService graphService,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("Configuring Messaging Bot API permissions...");
         logger.LogInformation("");
-
-        var graphService = new GraphApiService(
-            LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
-            executor);
 
         try
         {

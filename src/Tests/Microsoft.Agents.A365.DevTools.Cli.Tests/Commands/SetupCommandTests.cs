@@ -30,6 +30,7 @@ public class SetupCommandTests
     private readonly IAzureValidator _mockAzureValidator;
     private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
+    private readonly GraphApiService _mockGraphApiService;
 
     public SetupCommandTests()
     {
@@ -53,6 +54,7 @@ public class SetupCommandTests
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockAzureValidator = Substitute.For<IAzureValidator>();
         _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
+        _mockGraphApiService = Substitute.For<GraphApiService>(Substitute.For<ILogger<GraphApiService>>());
     }
 
     [Fact]
@@ -81,7 +83,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
         
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -127,7 +130,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
         
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -156,7 +160,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         // Assert - Verify all required subcommands exist
         var subcommandNames = command.Subcommands.Select(c => c.Name).ToList();
@@ -180,7 +185,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         var permissionsCmd = command.Subcommands.FirstOrDefault(c => c.Name == "permissions");
 
@@ -207,7 +213,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
         
         // Assert - Command structure should support clear error messaging
         command.Should().NotBeNull();
@@ -252,7 +259,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator,
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -297,7 +305,8 @@ public class SetupCommandTests
             _mockBotConfigurator,
             _mockAzureValidator,
             _mockWebAppCreator,
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -341,7 +350,8 @@ public class SetupCommandTests
             _mockBotConfigurator, 
             _mockAzureValidator, 
             _mockWebAppCreator, 
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
