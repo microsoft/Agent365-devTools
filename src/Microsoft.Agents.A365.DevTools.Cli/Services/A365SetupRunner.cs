@@ -302,7 +302,7 @@ public sealed class A365SetupRunner
                     }
                     else if (externalHosting)
                     {
-                        _logger.LogInformation("External hosting selected – Managed Identity will NOT be used.");
+                        _logger.LogInformation("External hosting selected - Managed Identity will NOT be used.");
 
                         // Make sure we don't create FIC later
                         principalId = null;
@@ -487,7 +487,14 @@ public sealed class A365SetupRunner
 
         try
         {
-            var useManagedIdentity = needDeployment || blueprintOnly;
+            // Validate that needDeployment and blueprintOnly are not both true
+            if (needDeployment && blueprintOnly)
+            {
+                _logger.LogError("Invalid configuration: both needDeployment and blueprintOnly are true. This is not supported, as it may result in attempting to use a managed identity that was not created.");
+                return false;
+            }
+
+            var useManagedIdentity = (needDeployment && !blueprintOnly) || blueprintOnly;
 
             // Create the agent blueprint using Graph API directly (no PowerShell)
             var blueprintResult = await CreateAgentBlueprintAsync(
