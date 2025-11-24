@@ -1,13 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
-using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
-using System.Text.Json.Nodes;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
@@ -66,8 +63,6 @@ internal static class AllSubcommand
         {
             if (dryRun)
             {
-                var dryRunConfig = await configService.LoadAsync(config.FullName);
-                
                 logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
                 logger.LogInformation("This would execute the following operations:");
                 
@@ -88,7 +83,7 @@ internal static class AllSubcommand
                 return;
             }
 
-            logger.LogInformation("Agent 365 Setup - Complete");
+            logger.LogInformation("Agent 365 Setup");
             logger.LogInformation("Running all setup steps...");
             
             if (skipInfrastructure)
@@ -120,7 +115,7 @@ internal static class AllSubcommand
                 // Step 1: Infrastructure (optional)
                 try
                 {
-                    logger.LogInformation("Step 1: Creating/Checking infrastructure...");
+                    logger.LogInformation("Step 1:");
                     logger.LogInformation("");
 
                     bool setupInfra =await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
@@ -133,7 +128,7 @@ internal static class AllSubcommand
                         skipInfrastructure,
                         CancellationToken.None);
 
-                    setupResults.InfrastructureCreated = setupInfra;
+                    setupResults.InfrastructureCreated = skipInfrastructure ? false : setupInfra;
                 }
                 catch (Exception infraEx)
                 {
@@ -145,7 +140,7 @@ internal static class AllSubcommand
 
                 // Step 2: Blueprint
                 logger.LogInformation("");
-                logger.LogInformation("Step 2: Creating agent blueprint...");
+                logger.LogInformation("Step 2:");
                 logger.LogInformation("");
 
                 try
@@ -161,9 +156,24 @@ internal static class AllSubcommand
 
                     setupResults.BlueprintCreated = blueprintCreated;
 
+                    // CRITICAL: Wait for file system to ensure config file is fully written
+                    // Blueprint creation writes directly to disk and may not be immediately readable
+                    logger.LogInformation("Ensuring configuration file is synchronized...");
+                    await Task.Delay(2000); // 2 second delay to ensure file write is complete
+                    
                     // Reload config to get blueprint ID
-                    var tempConfig = await configService.LoadAsync(config.FullName);
-                    setupResults.BlueprintId = tempConfig.AgentBlueprintId;
+                    // Use full path to ensure we're reading from the correct location
+                    var fullConfigPath = Path.GetFullPath(config.FullName);
+                    setupConfig = await configService.LoadAsync(fullConfigPath);
+                    setupResults.BlueprintId = setupConfig.AgentBlueprintId;
+
+                    // Validate blueprint ID was properly saved
+                    if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+                    {
+                        throw new SetupValidationException(
+                            "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
+                            "This is required for the next steps (MCP permissions, Bot permissions, and endpoint registration).");
+                    }
                 }
                 catch (Exception blueprintEx)
                 {
@@ -175,54 +185,62 @@ internal static class AllSubcommand
 
                 // Step 3: MCP Permissions
                 logger.LogInformation("");
-                logger.LogInformation("Step 3: Configuring MCP server permissions...");
+                logger.LogInformation("Step 3:");
                 logger.LogInformation("");
 
-                bool mcpPermissionSetup = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
-                    config.FullName,
-                    logger,
-                    configService,
-                    executor,
-                    graphApiService,
-                    setupConfig,
-                    true);
-
-                setupResults.McpPermissionsConfigured = mcpPermissionSetup;
-
-                if (mcpPermissionSetup)
+                try
                 {
-                    var tempConfig = await configService.LoadAsync(config.FullName);
-                    setupResults.InheritablePermissionsConfigured = tempConfig.InheritanceConfigured;
+                    bool mcpPermissionSetup = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
+                        config.FullName,
+                        logger,
+                        configService,
+                        executor,
+                        graphApiService,
+                        setupConfig,
+                        true);
+
+                    setupResults.McpPermissionsConfigured = mcpPermissionSetup;
+                    if (mcpPermissionSetup)
+                    {
+                        setupResults.InheritablePermissionsConfigured = setupConfig.InheritanceConfigured;
+                    }
                 }
-                else
+                catch (Exception mcpPermEx)
                 {
+                    setupResults.McpPermissionsConfigured = false;
+                    setupResults.Errors.Add($"MCP Permissions: {mcpPermEx.Message}");
                     logger.LogWarning("Setup will continue, but MCP server permissions must be configured manually");
                 }
 
                 // Step 4: Bot API Permissions
 
-                bool botPermissionSetup = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
-                    config.FullName,
-                    logger,
-                    configService,
-                    executor,
-                    setupConfig,
-                    graphApiService,
-                    true);
+                logger.LogInformation("");
+                logger.LogInformation("Step 4:");
+                logger.LogInformation("");
 
-                setupResults.BotApiPermissionsConfigured = botPermissionSetup;
-                if (botPermissionSetup)
+                try
                 {
-                    logger.LogInformation("Messaging Bot API permissions configured successfully");
+                    bool botPermissionSetup = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+                        config.FullName,
+                        logger,
+                        configService,
+                        executor,
+                        setupConfig,
+                        graphApiService,
+                        true);
+
+                    setupResults.BotApiPermissionsConfigured = botPermissionSetup;
                 }
-                else
+                catch (Exception botPermEx)
                 {
+                    setupResults.BotApiPermissionsConfigured = false;
+                    setupResults.Errors.Add($"Bot API Permissions: {botPermEx.Message}");
                     logger.LogWarning("Setup will continue, but Bot API permissions must be configured manually");
                 }
 
                 // Step 5: Register endpoint and sync
                 logger.LogInformation("");
-                logger.LogInformation("Step 5: Registering blueprint messaging endpoint...");
+                logger.LogInformation("Step 5:");
                 logger.LogInformation("");
 
                 try

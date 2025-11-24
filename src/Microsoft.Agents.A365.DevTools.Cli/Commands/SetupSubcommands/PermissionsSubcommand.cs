@@ -215,6 +215,10 @@ internal static class PermissionsSubcommand
             logger.LogInformation("  1. Ensure the agent blueprint has the required permissions in Azure Portal");
             logger.LogInformation("  2. Grant admin consent for the MCP scopes");
             logger.LogInformation("  3. Run 'a365 setup mcp' to retry MCP permission configuration");
+            if (iSetupAll)
+            {
+                throw;
+            }
             return false;
         }
     }
@@ -288,6 +292,10 @@ internal static class PermissionsSubcommand
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to configure Bot API permissions: {Message}", ex.Message);
+            if (iSetupAll)
+            {
+                throw;
+            }
             return false;
         }
     }

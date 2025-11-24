@@ -16,7 +16,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// Required Permissions: Azure Subscription Contributor/Owner
 /// COMPLETE REPLICATION of A365SetupRunner Phase 0 and Phase 1 functionality
 /// </summary>
-internal static class InfrastructureSubcommand
+public static class InfrastructureSubcommand
 {
     public static Command CreateCommand(
         ILogger logger,
@@ -190,7 +190,7 @@ internal static class InfrastructureSubcommand
             logger.LogWarning("No deploymentProjectPath specified, defaulting to .NET runtime");
         }
 
-        logger.LogInformation("Agent 365 Setup - Starting...");
+        logger.LogInformation("Agent 365 Setup Infrastructure - Starting...");
         logger.LogInformation("Subscription: {Sub}", subscriptionId);
         logger.LogInformation("Resource Group: {RG}", resourceGroup);
         logger.LogInformation("App Service Plan: {Plan}", planName);

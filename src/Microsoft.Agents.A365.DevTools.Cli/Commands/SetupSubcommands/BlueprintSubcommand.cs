@@ -141,9 +141,6 @@ internal static class BlueprintSubcommand
                 LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
                 executor));
 
-        var interactiveAuth = new InteractiveGraphAuthService(
-            LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<InteractiveGraphAuthService>());
-
         var graphService = new GraphApiService(
             LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
             executor);

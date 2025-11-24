@@ -90,6 +90,10 @@ internal static class SetupHelpers
         
         // Show what succeeded
         logger.LogInformation("Completed Steps:");
+        if (results.InfrastructureCreated)
+        {
+            logger.LogInformation("  [OK] Infrastructure created");
+        }
         if (results.BlueprintCreated)
         {
             logger.LogInformation("  [OK] Agent blueprint created (Blueprint ID: {BlueprintId})", results.BlueprintId ?? "unknown");
