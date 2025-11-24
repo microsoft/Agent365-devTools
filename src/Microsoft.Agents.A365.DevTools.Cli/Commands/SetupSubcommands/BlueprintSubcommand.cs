@@ -182,12 +182,6 @@ internal static class BlueprintSubcommand
             throw new InvalidOperationException("agentBlueprintDisplayName missing in configuration");
         }
 
-        if (setupConfig.NeedDeployment && skipInfrastructure)
-        {
-            logger.LogError("Invalid configuration: both needDeployment and blueprintOnly are true. This is not supported, as it may result in attempting to use a managed identity that was not created.");
-            return false;
-        }
-
         var useManagedIdentity = (setupConfig.NeedDeployment && !skipInfrastructure) || skipInfrastructure;
 
         var blueprintResult = await CreateAgentBlueprintAsync(
@@ -826,84 +820,6 @@ internal static class BlueprintSubcommand
 
     #region Private Helper Methods
 
-    private static async Task WaitForApplicationPropagationAsync(HttpClient httpClient, string objectId, ILogger logger, CancellationToken ct)
-    {
-        const int maxRetries = 30;
-        const int delayMs = 4000;
-
-        for (int i = 0; i < maxRetries; i++)
-        {
-            var checkResp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/applications/{objectId}", ct);
-            if (checkResp.IsSuccessStatusCode)
-            {
-                return;
-            }
-            logger.LogInformation("Waiting for application object to be available in directory (attempt {Attempt}/{Max})...", i + 1, maxRetries);
-            await Task.Delay(delayMs, ct);
-        }
-
-        logger.LogError("App object not available after creation. Aborting setup.");
-        throw new InvalidOperationException("Application object did not propagate in Azure AD");
-    }
-
-    private static async Task SetIdentifierUriAsync(HttpClient httpClient, string objectId, string appId, ILogger logger, CancellationToken ct)
-    {
-        var identifierUri = $"api://{appId}";
-        var patchAppUrl = $"https://graph.microsoft.com/v1.0/applications/{objectId}";
-        var patchBody = new JsonObject
-        {
-            ["identifierUris"] = new JsonArray { identifierUri }
-        };
-
-        var patchResponse = await httpClient.PatchAsync(
-            patchAppUrl,
-            new StringContent(patchBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-            ct);
-
-        if (!patchResponse.IsSuccessStatusCode)
-        {
-            var patchError = await patchResponse.Content.ReadAsStringAsync(ct);
-            logger.LogInformation("Waiting for application propagation before setting identifier URI...");
-            logger.LogDebug("Identifier URI update deferred (propagation delay): {Error}", patchError);
-        }
-        else
-        {
-            logger.LogInformation("Identifier URI set to: {Uri}", identifierUri);
-        }
-    }
-
-    private static async Task<string?> CreateServicePrincipalAsync(HttpClient httpClient, string appId, ILogger logger, CancellationToken ct)
-    {
-        logger.LogInformation("Creating service principal...");
-
-        var spManifest = new JsonObject
-        {
-            ["appId"] = appId
-        };
-
-        var createSpUrl = "https://graph.microsoft.com/v1.0/servicePrincipals";
-        var spResponse = await httpClient.PostAsync(
-            createSpUrl,
-            new StringContent(spManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-            ct);
-
-        if (spResponse.IsSuccessStatusCode)
-        {
-            var spJson = await spResponse.Content.ReadAsStringAsync(ct);
-            var sp = JsonNode.Parse(spJson)!.AsObject();
-            var servicePrincipalId = sp["id"]!.GetValue<string>();
-            logger.LogInformation("Service principal created: {SpId}", servicePrincipalId);
-            return servicePrincipalId;
-        }
-        else
-        {
-            var spError = await spResponse.Content.ReadAsStringAsync(ct);
-            logger.LogInformation("Waiting for application propagation before creating service principal...");
-            logger.LogDebug("Service principal creation deferred (propagation delay): {Error}", spError);
-            return null;
-        }
-    }
-
     private static async Task<bool> CreateFederatedIdentityCredentialAsync(
         string tenantId,
         string blueprintObjectId,
@@ -988,98 +904,6 @@ internal static class BlueprintSubcommand
         }
     }
 
-    private static async Task RequestAdminConsentAsync(
-        string tenantId,
-        string appId,
-        JsonObject setupConfig,
-        JsonObject generatedConfig,
-        ILogger logger,
-        CommandExecutor executor,
-        CancellationToken ct)
-    {
-        logger.LogInformation("Requesting admin consent for application");
-
-        // Get application scopes from config
-        var applicationScopes = new List<string>();
-        if (setupConfig.TryGetPropertyValue("agentApplicationScopes", out var appScopesNode) &&
-            appScopesNode is JsonArray appScopesArr)
-        {
-            logger.LogInformation("  Found 'agentApplicationScopes' in config");
-            foreach (var scopeItem in appScopesArr)
-            {
-                var scope = scopeItem?.GetValue<string>();
-                if (!string.IsNullOrWhiteSpace(scope))
-                {
-                    applicationScopes.Add(scope);
-                }
-            }
-        }
-        else
-        {
-            logger.LogInformation("  'agentApplicationScopes' not found in config, using hardcoded defaults");
-            applicationScopes.AddRange(ConfigConstants.DefaultAgentApplicationScopes);
-        }
-
-        if (applicationScopes.Count == 0)
-        {
-            logger.LogWarning("No application scopes available, falling back to User.Read");
-            applicationScopes.Add("User.Read");
-        }
-
-        logger.LogInformation("  - Application scopes: {Scopes}", string.Join(", ", applicationScopes));
-
-        // Generate consent URLs
-        var applicationScopesJoined = string.Join(' ', applicationScopes);
-        var consentUrlGraph = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={appId}&scope={Uri.EscapeDataString(applicationScopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
-        var consentUrlConnectivity = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={appId}&scope=0ddb742a-e7dc-4899-a31e-80e797ec7144/Connectivity.Connections.Read&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
-
-        // Request Graph consent
-        logger.LogInformation("Opening browser for Graph API admin consent...");
-        TryOpenBrowser(consentUrlGraph, logger);
-
-        var consent1Success = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
-
-        if (consent1Success)
-        {
-            logger.LogInformation("Graph API admin consent granted successfully!");
-        }
-        else
-        {
-            logger.LogWarning("Graph API admin consent may not have completed");
-        }
-
-        // Request Connectivity consent
-        logger.LogInformation("");
-        logger.LogInformation("Opening browser for Connectivity admin consent...");
-        TryOpenBrowser(consentUrlConnectivity, logger);
-
-        var consent2Success = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Connectivity Scope", 180, 5, ct);
-
-        if (consent2Success)
-        {
-            logger.LogInformation("Connectivity admin consent granted successfully!");
-        }
-        else
-        {
-            logger.LogWarning("Connectivity admin consent may not have completed");
-        }
-
-        // Save consent URLs and status
-        generatedConfig["consentUrlGraph"] = consentUrlGraph;
-        generatedConfig["consentUrlConnectivity"] = consentUrlConnectivity;
-        generatedConfig["consent1Granted"] = consent1Success;
-        generatedConfig["consent2Granted"] = consent2Success;
-
-        if (!consent1Success || !consent2Success)
-        {
-            logger.LogWarning("");
-            logger.LogWarning("One or more consents may not have been detected");
-            logger.LogWarning("The setup will continue, but you may need to grant consent manually.");
-            logger.LogWarning("Consent URL (Graph): {Url}", consentUrlGraph);
-            logger.LogWarning("Consent URL (Connectivity): {Url}", consentUrlConnectivity);
-        }
-    }
-
     private static string ProtectSecret(string plaintext, ILogger logger)
     {
         if (string.IsNullOrWhiteSpace(plaintext))
@@ -1109,45 +933,6 @@ internal static class BlueprintSubcommand
         {
             logger.LogWarning(ex, "Failed to encrypt secret, storing in plaintext: {Message}", ex.Message);
             return plaintext;
-        }
-    }
-
-    private static async Task<string?> GetTokenFromGraphClientAsync(string tenantId)
-    {
-        try
-        {
-            var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
-            {
-                TenantId = tenantId,
-                ClientId = MicrosoftGraphCommandLineToolsAppId
-            });
-
-            var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
-            var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
-
-            return token.Token;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static void TryOpenBrowser(string url, ILogger logger)
-    {
-        try
-        {
-            using var p = new System.Diagnostics.Process();
-            p.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true
-            };
-            p.Start();
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Failed to open browser for URL: {Url}", url);
         }
     }
 
