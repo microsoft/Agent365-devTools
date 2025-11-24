@@ -4,6 +4,7 @@
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
@@ -75,28 +76,32 @@ internal static class BlueprintSubcommand
                 config,
                 executor,
                 azureValidator,
-                logger);
+                logger,
+                false,
+                false);
 
         }, configOption, verboseOption, dryRunOption);
 
         return command;
     }
 
-    public static async Task CreateBlueprintImplementationAsync(
+    public static async Task<bool> CreateBlueprintImplementationAsync(
         Models.Agent365Config setupConfig,
         FileInfo config,
         CommandExecutor executor,
         IAzureValidator azureValidator,
         ILogger logger,
-         CancellationToken cancellationToken = default)
+        bool skipInfrastructure,
+        bool isSetupAll,
+        CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("==> Creating Agent Blueprint");
         logger.LogInformation("");
+        logger.LogInformation("==> Creating Agent Blueprint");
 
         // Validate Azure authentication
         if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
         {
-            Environment.Exit(1);
+            return false;
         }
 
         var generatedConfigPath = Path.Combine(
@@ -126,13 +131,7 @@ internal static class BlueprintSubcommand
         }
         else
         {
-                logger.LogInformation("No existing configuration found - blueprint will be created without managed identity");
-        }
-
-        // Validate required config
-        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintDisplayName))
-        {
-            throw new InvalidOperationException("agentBlueprintDisplayName missing in configuration");
+            logger.LogInformation("No existing configuration found - blueprint will be created without managed identity");
         }
 
         // Create required services
@@ -170,12 +169,30 @@ internal static class BlueprintSubcommand
         if (!consentResult)
         {
             logger.LogError("Failed to ensure AgentApplication.Create permission after multiple attempts");
-            Environment.Exit(1);
+            return false;
         }
 
         // ========================================================================
         // Phase 2.2: Create Blueprint
         // ========================================================================
+
+        logger.LogInformation("");
+        logger.LogInformation("==> [2.2/5] Creating Agent Blueprint Application");
+
+        // Validate required config
+        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintDisplayName))
+        {
+            throw new InvalidOperationException("agentBlueprintDisplayName missing in configuration");
+        }
+
+        if (setupConfig.NeedDeployment && skipInfrastructure)
+        {
+            logger.LogError("Invalid configuration: both needDeployment and blueprintOnly are true. This is not supported, as it may result in attempting to use a managed identity that was not created.");
+            return false;
+        }
+
+        var useManagedIdentity = (setupConfig.NeedDeployment && !skipInfrastructure) || skipInfrastructure;
+
         var blueprintResult = await CreateAgentBlueprintAsync(
                 logger,
                 executor,
@@ -183,6 +200,7 @@ internal static class BlueprintSubcommand
                 setupConfig.AgentBlueprintDisplayName,
                 setupConfig.AgentIdentityDisplayName,
                 principalId,
+                useManagedIdentity,
                 generatedConfig,
                 setupConfig,
                 cancellationToken);
@@ -190,7 +208,7 @@ internal static class BlueprintSubcommand
         if (!blueprintResult.success)
         {
             logger.LogError("Failed to create agent blueprint");
-            Environment.Exit(1);
+            return false;
         }
 
         var blueprintAppId = blueprintResult.appId;
@@ -220,6 +238,10 @@ internal static class BlueprintSubcommand
         // ========================================================================
         // Phase 2.5: Create Client Secret (logging handled by method)
         // ========================================================================
+
+        logger.LogInformation("");
+        logger.LogInformation("==> [2.5/5] Creating Client Secret for Agent Blueprint");
+
         await CreateBlueprintClientSecretAsync(
             blueprintObjectId!,
             blueprintAppId!,
@@ -233,13 +255,16 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Agent blueprint created successfully");
         logger.LogInformation("Generated config saved: {Path}", generatedConfigPath);
         logger.LogInformation("");
-        logger.LogInformation("Next steps:");
-        logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
-        logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
-        logger.LogInformation("  3. Run 'a365 setup endpoint' to register messaging endpoint");
-    }
+        if (!isSetupAll)
+        {
+            logger.LogInformation("Next steps:");
+            logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
+            logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
+            logger.LogInformation("  3. Run 'a365 setup endpoint' to register messaging endpoint");
+        }
 
-    #region Phase 2 Implementation - Used by both BlueprintSubcommand and A365SetupRunner
+        return true;
+    }
 
     /// <summary>
     /// Ensures AgentApplication.Create permission with retry logic (3 attempts, 5-second delays)
@@ -309,6 +334,7 @@ internal static class BlueprintSubcommand
         string displayName,
         string? agentIdentityDisplayName,
         string? managedIdentityPrincipalId,
+        bool useManagedIdentity,
         JsonObject generatedConfig,
         Models.Agent365Config setupConfig,
         CancellationToken ct)
@@ -509,10 +535,10 @@ internal static class BlueprintSubcommand
             logger.LogInformation("Waiting 10 seconds to ensure Service Principal is fully propagated...");
             await Task.Delay(10000, ct);
 
-            // Create Federated Identity Credential (if managed identity provided)
-            if (!string.IsNullOrWhiteSpace(managedIdentityPrincipalId))
+            // Create Federated Identity Credential ONLY when MSI is relevant (if managed identity provided)
+            if (useManagedIdentity && !string.IsNullOrWhiteSpace(managedIdentityPrincipalId))
             {
-                logger.LogInformation("Creating Federated Identity Credential...");
+                logger.LogInformation("Creating Federated Identity Credential for Managed Identity...");
                 var credentialName = $"{displayName.Replace(" ", "")}-MSI";
 
                 var ficSuccess = await CreateFederatedIdentityCredentialAsync(
@@ -532,6 +558,10 @@ internal static class BlueprintSubcommand
                 {
                     logger.LogWarning("Failed to create Federated Identity Credential");
                 }
+            }
+            else if (!useManagedIdentity)
+            {
+                logger.LogInformation("Skipping Federated Identity Credential creation (external hosting / no MSI configured)");
             }
             else
             {
@@ -796,8 +826,6 @@ internal static class BlueprintSubcommand
             logger.LogInformation("  5. Add it to {Path} as 'agentBlueprintClientSecret'", generatedConfigPath);
         }
     }
-
-    #endregion
 
     #region Private Helper Methods
 

@@ -118,35 +118,29 @@ internal static class AllSubcommand
                     "a365.generated.config.json");
 
                 // Step 1: Infrastructure (optional)
-                if (!skipInfrastructure)
+                try
                 {
-                    logger.LogInformation("Step 1: Creating Azure infrastructure...");
+                    logger.LogInformation("Step 1: Creating/Checking infrastructure...");
                     logger.LogInformation("");
 
-                    try
-                    {
-                        await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
-                            logger,
-                            config.FullName,
-                            generatedConfigPath,
-                            executor,
-                            platformDetector,
-                            CancellationToken.None);
+                    bool setupInfra =await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
+                        logger,
+                        config.FullName,
+                        generatedConfigPath,
+                        executor,
+                        platformDetector,
+                        setupConfig.NeedDeployment,
+                        skipInfrastructure,
+                        CancellationToken.None);
 
-                        setupResults.InfrastructureCreated = true;
-                        logger.LogInformation("Azure infrastructure created successfully");
-                    }
-                    catch (Exception infraEx)
-                    {
-                        setupResults.InfrastructureCreated = false;
-                        setupResults.Errors.Add($"Infrastructure: {infraEx.Message}");
-                        logger.LogError(infraEx, "Failed to create infrastructure: {Message}", infraEx.Message);
-                        throw;
-                    }
+                    setupResults.InfrastructureCreated = setupInfra;
                 }
-                else
+                catch (Exception infraEx)
                 {
-                    logger.LogInformation("Step 1: [SKIPPED] Infrastructure creation (--skip-infrastructure)");
+                    setupResults.InfrastructureCreated = false;
+                    setupResults.Errors.Add($"Infrastructure: {infraEx.Message}");
+                    logger.LogError(infraEx, "Failed to create infrastructure: {Message}", infraEx.Message);
+                    throw;
                 }
 
                 // Step 2: Blueprint
@@ -156,20 +150,20 @@ internal static class AllSubcommand
 
                 try
                 {
-                    await BlueprintSubcommand.CreateBlueprintImplementationAsync(
+                    var blueprintCreated = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
                         setupConfig,
                         config,
                         executor,
                         azureValidator,
-                        logger);
+                        logger,
+                        skipInfrastructure,
+                        true);
 
-                    setupResults.BlueprintCreated = true;
+                    setupResults.BlueprintCreated = blueprintCreated;
 
                     // Reload config to get blueprint ID
                     var tempConfig = await configService.LoadAsync(config.FullName);
                     setupResults.BlueprintId = tempConfig.AgentBlueprintId;
-
-                    logger.LogInformation("Agent blueprint created successfully");
                 }
                 catch (Exception blueprintEx)
                 {
@@ -184,55 +178,46 @@ internal static class AllSubcommand
                 logger.LogInformation("Step 3: Configuring MCP server permissions...");
                 logger.LogInformation("");
 
-                try
-                {
-                    await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        executor,
-                        graphApiService,
-                        setupConfig);
+                bool mcpPermissionSetup = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
+                    config.FullName,
+                    logger,
+                    configService,
+                    executor,
+                    graphApiService,
+                    setupConfig,
+                    true);
 
-                    setupResults.McpPermissionsConfigured = true;
-                    
+                setupResults.McpPermissionsConfigured = mcpPermissionSetup;
+
+                if (mcpPermissionSetup)
+                {
                     var tempConfig = await configService.LoadAsync(config.FullName);
                     setupResults.InheritablePermissionsConfigured = tempConfig.InheritanceConfigured;
-
-                    logger.LogInformation("MCP server permissions configured successfully");
                 }
-                catch (Exception mcpEx)
+                else
                 {
-                    setupResults.McpPermissionsConfigured = false;
-                    setupResults.InheritablePermissionsConfigured = false;
-                    setupResults.Errors.Add($"MCP permissions: {mcpEx.Message}");
-                    logger.LogError("Failed to configure MCP server permissions: {Message}", mcpEx.Message);
                     logger.LogWarning("Setup will continue, but MCP server permissions must be configured manually");
                 }
 
                 // Step 4: Bot API Permissions
-                logger.LogInformation("");
-                logger.LogInformation("Step 4: Configuring Messaging Bot API permissions...");
-                logger.LogInformation("");
 
-                try
+                bool botPermissionSetup = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+                    config.FullName,
+                    logger,
+                    configService,
+                    executor,
+                    setupConfig,
+                    graphApiService,
+                    true);
+
+                setupResults.BotApiPermissionsConfigured = botPermissionSetup;
+                if (botPermissionSetup)
                 {
-                    await PermissionsSubcommand.ConfigureBotPermissionsAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        executor,
-                        setupConfig,
-                        graphApiService);
-
-                    setupResults.BotApiPermissionsConfigured = true;
                     logger.LogInformation("Messaging Bot API permissions configured successfully");
                 }
-                catch (Exception botEx)
+                else
                 {
-                    setupResults.BotApiPermissionsConfigured = false;
-                    setupResults.Errors.Add($"Bot API permissions: {botEx.Message}");
-                    logger.LogError("Failed to configure Bot API permissions: {Message}", botEx.Message);
+                    logger.LogWarning("Setup will continue, but Bot API permissions must be configured manually");
                 }
 
                 // Step 5: Register endpoint and sync
@@ -277,28 +262,5 @@ internal static class AllSubcommand
         }, configOption, verboseOption, dryRunOption, skipInfrastructureOption);
 
         return command;
-    }
-
-    private static bool CheckNeedDeployment(JsonObject setupConfig)
-    {
-        bool needDeployment = true; // default
-        if (setupConfig.TryGetPropertyValue("needDeployment", out var needDeploymentNode) &&
-            needDeploymentNode is JsonValue nv)
-        {
-            // Prefer native bool
-            if (nv.TryGetValue<bool>(out var boolVal))
-            {
-                needDeployment = boolVal;
-            }
-            else if (nv.TryGetValue<string?>(out var strVal) && !string.IsNullOrWhiteSpace(strVal))
-            {
-                // Backward compatibility with "yes"/"no" / "true"/"false"
-                needDeployment =
-                    !string.Equals(strVal, "no", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(strVal, "false", StringComparison.OrdinalIgnoreCase);
-            }
-        }
-
-        return needDeployment;
     }
 }

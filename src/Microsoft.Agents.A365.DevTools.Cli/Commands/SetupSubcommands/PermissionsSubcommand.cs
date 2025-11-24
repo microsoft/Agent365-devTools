@@ -94,7 +94,8 @@ internal static class PermissionsSubcommand
                 configService,
                 executor,
                 graphApiService,
-                setupConfig);
+                setupConfig,
+                false);
 
         }, configOption, verboseOption, dryRunOption);
 
@@ -158,7 +159,8 @@ internal static class PermissionsSubcommand
                 configService,
                 executor,
                 setupConfig,
-                graphApiService);
+                graphApiService,
+                false);
 
         }, configOption, verboseOption, dryRunOption);
 
@@ -169,15 +171,17 @@ internal static class PermissionsSubcommand
     /// Configures MCP server permissions (OAuth2 grants and inheritable permissions).
     /// Public method that can be called by AllSubcommand.
     /// </summary>
-    public static async Task ConfigureMcpPermissionsAsync(
+    public static async Task<bool> ConfigureMcpPermissionsAsync(
         string configPath,
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
         Models.Agent365Config setupConfig,
+        bool iSetupAll,
         CancellationToken cancellationToken = default)
     {
+        logger.LogInformation("");
         logger.LogInformation("Configuring MCP server permissions...");
         logger.LogInformation("");
 
@@ -198,17 +202,20 @@ internal static class PermissionsSubcommand
             logger.LogInformation("");
             logger.LogInformation("MCP server permissions configured successfully");
             logger.LogInformation("");
-            logger.LogInformation("Next step: Run 'a365 setup permissions bot' to configure Bot API permissions");
+            if (!iSetupAll)
+            {
+                logger.LogInformation("Next step: 'a365 setup permissions bot' to configure Bot API permissions");
+            }
+            return true;
         }
         catch (Exception mcpEx)
         {
             logger.LogError("Failed to configure MCP server permissions: {Message}", mcpEx.Message);
-            logger.LogWarning("Setup will continue, but MCP server permissions must be configured manually");
             logger.LogInformation("To configure MCP permissions manually:");
             logger.LogInformation("  1. Ensure the agent blueprint has the required permissions in Azure Portal");
             logger.LogInformation("  2. Grant admin consent for the MCP scopes");
-            logger.LogInformation("  3. Run 'a365 deploy mcp' to retry MCP permission configuration");
-            Environment.Exit(1);
+            logger.LogInformation("  3. Run 'a365 setup mcp' to retry MCP permission configuration");
+            return false;
         }
     }
 
@@ -216,15 +223,17 @@ internal static class PermissionsSubcommand
     /// Configures Bot API permissions (OAuth2 grants and inheritable permissions).
     /// Public method that can be called by AllSubcommand.
     /// </summary>
-    public static async Task ConfigureBotPermissionsAsync(
+    public static async Task<bool> ConfigureBotPermissionsAsync(
         string configPath,
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
         Models.Agent365Config setupConfig,
         GraphApiService graphService,
+        bool iSetupAll,
         CancellationToken cancellationToken = default)
     {
+        logger.LogInformation("");
         logger.LogInformation("Configuring Messaging Bot API permissions...");
         logger.LogInformation("");
 
@@ -270,12 +279,16 @@ internal static class PermissionsSubcommand
             logger.LogInformation("");
             logger.LogInformation("Messaging Bot API permissions configured successfully");
             logger.LogInformation("");
-            logger.LogInformation("Next step: Run 'a365 setup endpoint' to register messaging endpoint");
+            if (!iSetupAll)
+            {
+                logger.LogInformation("Next step: Run 'a365 setup endpoint' to register messaging endpoint");
+            }
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to configure Bot API permissions: {Message}", ex.Message);
-            Environment.Exit(1);
+            return false;
         }
     }
 }

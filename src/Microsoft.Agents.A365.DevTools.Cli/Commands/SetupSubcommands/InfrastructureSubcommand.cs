@@ -99,6 +99,8 @@ internal static class InfrastructureSubcommand
                 generatedConfigPath,
                 executor,
                 platformDetector,
+                setupConfig.NeedDeployment,
+                false,
                 CancellationToken.None);
 
             logger.LogInformation("");
@@ -117,6 +119,8 @@ internal static class InfrastructureSubcommand
         string generatedConfigPath,
         CommandExecutor commandExecutor,
         PlatformDetector platformDetector,
+        bool needDeployment,
+        bool skipInfrastructure,
         CancellationToken cancellationToken)
     {
         if (!File.Exists(configPath))
@@ -149,10 +153,29 @@ internal static class InfrastructureSubcommand
 
         var deploymentProjectPath = Get("deploymentProjectPath");
 
-        if (new[] { subscriptionId, tenantId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
+        var skipInfra = skipInfrastructure || !needDeployment;
+        var externalHosting = !needDeployment && !skipInfrastructure;
+
+        if (!skipInfra)
         {
-            logger.LogError("Config missing required properties. Need subscriptionId, tenantId, resourceGroup, appServicePlanName, webAppName, location.");
-            return false;
+            // Azure hosting scenario – need full infra details
+            if (new[] { subscriptionId, resourceGroup, planName, webAppName, location }.Any(string.IsNullOrWhiteSpace))
+            {
+                logger.LogError(
+                    "Config missing required properties for Azure hosting. " +
+                    "Need subscriptionId, resourceGroup, appServicePlanName, webAppName, location.");
+                return false;
+            }
+        }
+        else
+        {
+            // Non-Azure hosting or --blueprint: no infra required
+            if (string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                logger.LogWarning(
+                    "subscriptionId is not set. This is acceptable for blueprint-only or External hosting mode " +
+                    "as Azure infrastructure will not be provisioned.");
+            }
         }
 
         // Detect project platform for appropriate runtime configuration
@@ -175,16 +198,23 @@ internal static class InfrastructureSubcommand
         logger.LogInformation("Location: {Loc}", location);
         logger.LogInformation("");
 
-        bool isValidated = await ValidateAzureCliAuthenticationAsync(
+        if (!skipInfra)
+        {
+            bool isValidated = await ValidateAzureCliAuthenticationAsync(
             commandExecutor,
             tenantId,
             logger,
             cancellationToken);
 
-       if(!isValidated)
-       {
-            return false;
-       }
+            if (!isValidated)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            logger.LogInformation("==> [0/5] Skipping Azure management authentication (--skipInfrastructure or External hosting)");
+        }
 
         await CreateInfrastructureAsync(
             commandExecutor,
@@ -198,6 +228,9 @@ internal static class InfrastructureSubcommand
             generatedConfigPath,
             platform,
             logger,
+            needDeployment,
+            skipInfra,
+            externalHosting,
             cancellationToken);
 
         return true;
@@ -305,137 +338,185 @@ internal static class InfrastructureSubcommand
         string generatedConfigPath,
         Models.ProjectPlatform platform,
         ILogger logger,
+        bool needDeployment,
+        bool skipInfra,
+        bool externalHosting,
         CancellationToken cancellationToken = default)
     {
         string? principalId = null;
         JsonObject generatedConfig = new JsonObject();
 
-        logger.LogInformation("==> [1/5] Deploying App Service + enabling Managed Identity");
+        if (skipInfra)
+        {
+            var modeMessage = "External hosting (non-Azure)";
 
-        // Set subscription context
-        try
-        {
-            await executor.ExecuteAsync("az", $"account set --subscription {subscriptionId}");
-        }
-        catch (Exception)
-        {
-            logger.LogWarning("Failed to set az subscription context explicitly");
-        }
+            logger.LogInformation("==> [1/5] Skipping Azure infrastructure ({Mode})", modeMessage);
+            logger.LogInformation("Loading existing configuration...");
 
-        // Resource group
-        var rgExists = await executor.ExecuteAsync("az", $"group exists -n {resourceGroup} --subscription {subscriptionId}", captureOutput: true);
-        if (rgExists.Success && rgExists.StandardOutput.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
-        {
-            logger.LogInformation("Resource group already exists: {RG} (skipping creation)", resourceGroup);
-        }
-        else
-        {
-            logger.LogInformation("Creating resource group {RG}", resourceGroup);
-            await AzWarnAsync(executor, logger, $"group create -n {resourceGroup} -l {location} --subscription {subscriptionId}", "Create resource group");
-        }
-
-        // App Service plan
-        var planShow = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-        if (planShow.Success)
-        {
-            logger.LogInformation("App Service plan already exists: {Plan} (skipping creation)", planName);
-        }
-        else
-        {
-            logger.LogInformation("Creating App Service plan {Plan}", planName);
-            await AzWarnAsync(executor, logger, $"appservice plan create -g {resourceGroup} -n {planName} --sku {planSku} --is-linux --subscription {subscriptionId}", "Create App Service plan");
-        }
-
-        // Web App
-        var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-        if (!webShow.Success)
-        {
-            var runtime = GetRuntimeForPlatform(platform);
-            logger.LogInformation("Creating web app {App} with runtime {Runtime}", webAppName, runtime);
-            var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-            if (!createResult.Success)
+            // Load existing generated config if available
+            if (File.Exists(generatedConfigPath))
             {
-                if (createResult.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    throw new AzureResourceException("WebApp", webAppName, createResult.StandardError, true);
+                    generatedConfig = JsonNode.Parse(await File.ReadAllTextAsync(generatedConfigPath, cancellationToken))?.AsObject() ?? new JsonObject();
+
+                    if (generatedConfig.TryGetPropertyValue("managedIdentityPrincipalId", out var existingPrincipalId))
+                    {
+                        // Only reuse MSI in blueprint-only mode
+                        principalId = existingPrincipalId?.GetValue<string>();
+                        logger.LogInformation("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
+                    }
+                    else if (externalHosting)
+                    {
+                        logger.LogInformation("External hosting selected - Managed Identity will NOT be used.");
+
+                        // Make sure we don't create FIC later
+                        principalId = null;
+                    }
+
+                    logger.LogInformation("Existing configuration loaded successfully");
                 }
-                else
+                catch (Exception ex)
                 {
-                    logger.LogError("ERROR: Web app creation failed: {Err}", createResult.StandardError);
-                    throw new InvalidOperationException($"Failed to create web app '{webAppName}'. Setup cannot continue.");
+                    logger.LogWarning("Could not load existing config: {Message}. Starting fresh.", ex.Message);
                 }
             }
+            else
+            {
+                logger.LogInformation("No existing configuration found - blueprint will be created without managed identity");
+            }
+
+            logger.LogInformation("");
         }
         else
         {
-            var linuxFxVersion = GetLinuxFxVersionForPlatform(platform);
-            logger.LogInformation("Web app already exists: {App} (skipping creation)", webAppName);
-            logger.LogInformation("Configuring web app to use {Platform} runtime ({LinuxFxVersion})...", platform, linuxFxVersion);
-            await AzWarnAsync(executor, logger, $"webapp config set -g {resourceGroup} -n {webAppName} --linux-fx-version \"{linuxFxVersion}\" --subscription {subscriptionId}", "Configure runtime");
-        }
+            logger.LogInformation("==> [1/5] Deploying App Service + enabling Managed Identity");
 
-        // Verify web app
-        var verifyResult = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-        if (!verifyResult.Success)
-        {
-            logger.LogWarning("WARNING: Unable to verify web app via az webapp show.");
-        }
-        else
-        {
-            logger.LogInformation("Verified web app presence.");
-        }
-
-        // Managed Identity
-        logger.LogInformation("Assigning (or confirming) system-assigned managed identity");
-        var identity = await executor.ExecuteAsync("az", $"webapp identity assign -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}");
-        if (identity.Success)
-        {
+            // Set subscription context
             try
             {
-                var json = JsonDocument.Parse(identity.StandardOutput);
-                principalId = json.RootElement.GetProperty("principalId").GetString();
-                if (!string.IsNullOrEmpty(principalId))
+                await executor.ExecuteAsync("az", $"account set --subscription {subscriptionId}");
+            }
+            catch (Exception)
+            {
+                logger.LogWarning("Failed to set az subscription context explicitly");
+            }
+
+            // Resource group
+            var rgExists = await executor.ExecuteAsync("az", $"group exists -n {resourceGroup} --subscription {subscriptionId}", captureOutput: true);
+            if (rgExists.Success && rgExists.StandardOutput.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("Resource group already exists: {RG} (skipping creation)", resourceGroup);
+            }
+            else
+            {
+                logger.LogInformation("Creating resource group {RG}", resourceGroup);
+                await AzWarnAsync(executor, logger, $"group create -n {resourceGroup} -l {location} --subscription {subscriptionId}", "Create resource group");
+            }
+
+            // App Service plan
+            var planShow = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+            if (planShow.Success)
+            {
+                logger.LogInformation("App Service plan already exists: {Plan} (skipping creation)", planName);
+            }
+            else
+            {
+                logger.LogInformation("Creating App Service plan {Plan}", planName);
+                await AzWarnAsync(executor, logger, $"appservice plan create -g {resourceGroup} -n {planName} --sku {planSku} --is-linux --subscription {subscriptionId}", "Create App Service plan");
+            }
+
+            // Web App
+            var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+            if (!webShow.Success)
+            {
+                var runtime = GetRuntimeForPlatform(platform);
+                logger.LogInformation("Creating web app {App} with runtime {Runtime}", webAppName, runtime);
+                var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+                if (!createResult.Success)
                 {
-                    logger.LogInformation("Managed Identity principalId: {Id}", principalId);
+                    if (createResult.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new AzureResourceException("WebApp", webAppName, createResult.StandardError, true);
+                    }
+                    else
+                    {
+                        logger.LogError("ERROR: Web app creation failed: {Err}", createResult.StandardError);
+                        throw new InvalidOperationException($"Failed to create web app '{webAppName}'. Setup cannot continue.");
+                    }
                 }
             }
-            catch
+            else
             {
-                // ignore parse error
+                var linuxFxVersion = GetLinuxFxVersionForPlatform(platform);
+                logger.LogInformation("Web app already exists: {App} (skipping creation)", webAppName);
+                logger.LogInformation("Configuring web app to use {Platform} runtime ({LinuxFxVersion})...", platform, linuxFxVersion);
+                await AzWarnAsync(executor, logger, $"webapp config set -g {resourceGroup} -n {webAppName} --linux-fx-version \"{linuxFxVersion}\" --subscription {subscriptionId}", "Configure runtime");
             }
-        }
-        else if (identity.StandardError.Contains("already has a managed identity", StringComparison.OrdinalIgnoreCase) ||
-                 identity.StandardError.Contains("Conflict", StringComparison.OrdinalIgnoreCase))
-        {
-            logger.LogInformation("Managed identity already assigned (ignoring conflict).");
-        }
-        else
-        {
-            logger.LogWarning("WARNING: identity assign returned error: {Err}", identity.StandardError.Trim());
-        }
 
-        // Load or create generated config
-        if (File.Exists(generatedConfigPath))
-        {
-            try
+            // Verify web app
+            var verifyResult = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+            if (!verifyResult.Success)
             {
-                generatedConfig = JsonNode.Parse(await File.ReadAllTextAsync(generatedConfigPath, cancellationToken))?.AsObject() ?? new JsonObject();
+                logger.LogWarning("WARNING: Unable to verify web app via az webapp show.");
             }
-            catch
+            else
             {
-                logger.LogWarning("Could not parse existing generated config, starting fresh");
+                logger.LogInformation("Verified web app presence.");
             }
-        }
 
-        if (!string.IsNullOrWhiteSpace(principalId))
-        {
-            generatedConfig["managedIdentityPrincipalId"] = principalId;
-            await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
-            logger.LogInformation("Generated config updated with MSI principalId: {Id}", principalId);
-        }
+            // Managed Identity
+            logger.LogInformation("Assigning (or confirming) system-assigned managed identity");
+            var identity = await executor.ExecuteAsync("az", $"webapp identity assign -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}");
+            if (identity.Success)
+            {
+                try
+                {
+                    var json = JsonDocument.Parse(identity.StandardOutput);
+                    principalId = json.RootElement.GetProperty("principalId").GetString();
+                    if (!string.IsNullOrEmpty(principalId))
+                    {
+                        logger.LogInformation("Managed Identity principalId: {Id}", principalId);
+                    }
+                }
+                catch
+                {
+                    // ignore parse error
+                }
+            }
+            else if (identity.StandardError.Contains("already has a managed identity", StringComparison.OrdinalIgnoreCase) ||
+                     identity.StandardError.Contains("Conflict", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("Managed identity already assigned (ignoring conflict).");
+            }
+            else
+            {
+                logger.LogWarning("WARNING: identity assign returned error: {Err}", identity.StandardError.Trim());
+            }
 
-        logger.LogInformation("Waiting 10 seconds to ensure Service Principal is fully propagated...");
-        await Task.Delay(10000, cancellationToken);
+            // Load or create generated config
+            if (File.Exists(generatedConfigPath))
+            {
+                try
+                {
+                    generatedConfig = JsonNode.Parse(await File.ReadAllTextAsync(generatedConfigPath, cancellationToken))?.AsObject() ?? new JsonObject();
+                }
+                catch
+                {
+                    logger.LogWarning("Could not parse existing generated config, starting fresh");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(principalId))
+            {
+                generatedConfig["managedIdentityPrincipalId"] = principalId;
+                await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
+                logger.LogInformation("Generated config updated with MSI principalId: {Id}", principalId);
+            }
+
+            logger.LogInformation("Waiting 10 seconds to ensure Service Principal is fully propagated...");
+            await Task.Delay(10000, cancellationToken);
+        }
     }
 
     /// <summary>
