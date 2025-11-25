@@ -144,7 +144,11 @@ public class DeploymentService
             _logger.LogInformation("Waiting for Azure configuration to stabilize...");
             await Task.Delay(TimeSpan.FromSeconds(5));
 
-            await builder.CleanAsync(publishPath);
+            if (platform != ProjectPlatform.DotNet)
+            {
+                // for dotnet, the publish folder does not have the csproj files,
+                await builder.CleanAsync(publishPath);
+            }
         }
 
         // 6. Create deployment ZIP
