@@ -122,7 +122,7 @@ internal static class AllSubcommand
                     logger.LogInformation("Step 1:");
                     logger.LogInformation("");
 
-                    bool setupInfra =await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
+                    bool setupInfra = await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
                         logger,
                         config.FullName,
                         generatedConfigPath,
@@ -268,31 +268,6 @@ internal static class AllSubcommand
                     setupResults.Errors.Add($"Messaging endpoint: {endpointEx.Message}");
                     logger.LogError("Failed to register messaging endpoint: {Message}", endpointEx.Message);
                 }
-
-                /*logger.LogInformation("");
-                logger.LogInformation("==> [5/5] Finalizing Setup");
-
-                try
-                {
-                    JsonObject generatedConfig = new JsonObject();
-                    generatedConfig = JsonNode.Parse(await File.ReadAllTextAsync(generatedConfigPath))?.AsObject() ?? new JsonObject();
-                    generatedConfig["completed"] = true;
-                    generatedConfig["completedAt"] = DateTime.UtcNow.ToString("o");
-                    generatedConfig["inheritanceConfigured"] = setupConfig.InheritanceConfigured;
-                    generatedConfig["inheritablePermissionsAlreadyExist"] = setupConfig.InheritablePermissionsAlreadyExist;
-                    generatedConfig["inheritanceConfigError"] = setupConfig.InheritanceConfigError;
-                    generatedConfig["agentBlueprintClientSecretProtected"] = setupConfig.AgentBlueprintClientSecretProtected;
-                    await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-
-                    logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
-                    logger.LogInformation("");
-                    logger.LogInformation("Blueprint ID: {BlueprintId}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
-                    logger.LogInformation("Identifier URI: api://{AppId}", generatedConfig["agentBlueprintId"]?.GetValue<string>());
-                }
-                catch (Exception finalEx)
-                {
-                    logger.LogWarning(finalEx, "Failed to finalize generated Config");
-                }*/
 
                 // Display verification info and summary
                 logger.LogInformation("");
