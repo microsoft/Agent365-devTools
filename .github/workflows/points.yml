@@ -1,0 +1,52 @@
+name: Points Allocation
+
+on:
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+    
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  assign-points:
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'pull_request_review') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install PyYAML
+
+      - name: Assign points
+        run: |
+          python scripts/assign_points.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update leaderboard
+        run: |
+          python scripts/update_leaderboard.py
+
+      - name: Commit and push leaderboard
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add leaderboard.json LEADERBOARD.md
+          git diff --staged --quiet || git commit -m "Update leaderboard [skip ci]"
+          git diff --staged --quiet || git push origin main
