@@ -17,6 +17,11 @@ PROCESSED_FILE = os.path.join(os.path.dirname(__file__), 'processed_ids.json')
 # Path to leaderboard in repository root (one level up from scripts/)
 LEADERBOARD_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'leaderboard.json')
 
+# Exit codes
+EXIT_SUCCESS = 0
+EXIT_ERROR = 1
+EXIT_NO_OP = 2  # No changes needed
+
 def load_config():
     """
     Load the points configuration from config_points.yml.
@@ -57,6 +62,17 @@ def load_config():
         print(f"Required keys: {', '.join(required_keys)}", file=sys.stderr)
         sys.exit(1)
     
+    # Validate that all required point values are positive integers
+    invalid_keys = [
+        key for key in required_keys
+        if not isinstance(config['points'][key], int) or config['points'][key] <= 0
+    ]
+    if invalid_keys:
+        print(f"ERROR: The following point values are not positive integers: {', '.join(invalid_keys)}", file=sys.stderr)
+        for key in invalid_keys:
+            print(f"  {key}: {config['points'][key]!r}", file=sys.stderr)
+        sys.exit(1)
+    
     return config
 
 def load_event():
@@ -67,29 +83,40 @@ def load_event():
     if not os.path.exists(event_path):
         print(f"ERROR: Event file not found: {event_path}")
         sys.exit(1)
-    with open(event_path, 'r', encoding='utf-8') as f:
-        event = json.load(f)
     
+    try:
+        with open(event_path, 'r', encoding='utf-8') as f:
+            event = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Invalid JSON in event file: {e}", file=sys.stderr)
+        print(f"File location: {event_path}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to read event file: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Check if this is a comment on a regular issue (not a PR)
     if 'issue' in event and 'pull_request' not in event.get('issue', {}):
         print("INFO: Skipping - this is a comment on a regular issue, not a pull request.")
-        sys.exit(2)  # Exit code 2 = no-op
-    
+        sys.exit(EXIT_NO_OP)
+
     return event
 
 def load_processed_ids():
     if os.path.exists(PROCESSED_FILE):
         with open(PROCESSED_FILE, 'r', encoding='utf-8') as f:
             try:
-                return json.load(f)
+                # Load as list, convert to set for efficient lookup
+                return set(json.load(f))
             except json.JSONDecodeError:
-                return []
-    return []
+                return set()
+    return set()
 
 def save_processed_ids(processed_ids):
     try:
         with open(PROCESSED_FILE, 'w', encoding='utf-8') as f:
-            json.dump(processed_ids, f, indent=2)
+            # Convert set to list for JSON serialization
+            json.dump(list(processed_ids), f, indent=2)
     except PermissionError as e:
         print(f"ERROR: Permission denied writing to {PROCESSED_FILE}: {e}", file=sys.stderr)
         print("Check file permissions and ensure the workflow has write access.", file=sys.stderr)
@@ -274,20 +301,20 @@ def main():
         event_id = event.get('comment', {}).get('id')
     if event_id is None:
         print("No unique ID found in event. Skipping duplicate check.")
-        sys.exit(2)  # Exit code 2 = no-op (not an error)
+        sys.exit(EXIT_NO_OP)
 
     processed_ids = load_processed_ids()
     if event_id in processed_ids:
         print(f"Event {event_id} already processed. Skipping scoring.")
-        sys.exit(2)  # Exit code 2 = no-op (not an error)
+        sys.exit(EXIT_NO_OP)
 
     if points <= 0:
         print("No points awarded. Skipping leaderboard update.")
-        sys.exit(2)  # Exit code 2 = no-op (not an error)
+        sys.exit(EXIT_NO_OP)
 
     # Update leaderboard and mark event as processed
     update_leaderboard(user, points)
-    processed_ids.append(event_id)
+    processed_ids.add(event_id)
     save_processed_ids(processed_ids)
     
     print(f"SUCCESS: Awarded {points} points to {user}")
