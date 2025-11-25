@@ -123,7 +123,7 @@ public class CleanupCommand
                 {
                     logger.LogWarning("");
                     logger.LogWarning("Blueprint deletion failed, but local configuration has been cleared.");
-                    logger.LogWarning("Please manually delete the blueprint using one of the methods shown above.");
+                    logger.LogWarning("Please manually delete the blueprint application using the Azure Portal, PowerShell, or Microsoft Graph Explorer.");
                 }
             }
             catch (Exception ex)
