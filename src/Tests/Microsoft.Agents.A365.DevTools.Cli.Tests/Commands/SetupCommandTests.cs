@@ -92,8 +92,8 @@ public class SetupCommandTests
         // Assert
         Assert.Equal(0, result);
 
-        // Dry-run should load config but must not call Azure/Bot services
-        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+        // Dry-run mode does not load config or call Azure/Bot services - it just displays what would be done
+        await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
         await _mockAzureValidator.DidNotReceiveWithAnyArgs().ValidateAllAsync(default!);
         await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!);
     }
@@ -139,8 +139,8 @@ public class SetupCommandTests
         // Assert
         Assert.Equal(0, result);
         
-        // Verify config was loaded (infrastructure would be skipped)
-        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+        // Dry-run mode does not load config - it just displays what would be done (with infrastructure skipped)
+        await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]

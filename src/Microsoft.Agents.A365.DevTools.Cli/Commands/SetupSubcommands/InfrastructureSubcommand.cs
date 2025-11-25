@@ -213,7 +213,7 @@ public static class InfrastructureSubcommand
         }
         else
         {
-            logger.LogInformation("==> [0/5] Skipping Azure management authentication (--skipInfrastructure or External hosting)");
+            logger.LogInformation("==> Skipping Azure management authentication (--skipInfrastructure or External hosting)");
         }
 
         await CreateInfrastructureAsync(
@@ -245,7 +245,7 @@ public static class InfrastructureSubcommand
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("==> [0/5] Verifying Azure CLI authentication");
+        logger.LogInformation("==> Verifying Azure CLI authentication");
         
         // Check if logged in
         var accountCheck = await executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true, cancellationToken: cancellationToken);
@@ -350,7 +350,7 @@ public static class InfrastructureSubcommand
         {
             var modeMessage = "External hosting (non-Azure)";
 
-            logger.LogInformation("==> [1/5] Skipping Azure infrastructure ({Mode})", modeMessage);
+            logger.LogInformation("==> Skipping Azure infrastructure ({Mode})", modeMessage);
             logger.LogInformation("Loading existing configuration...");
 
             // Load existing generated config if available
@@ -390,7 +390,7 @@ public static class InfrastructureSubcommand
         }
         else
         {
-            logger.LogInformation("==> [1/5] Deploying App Service + enabling Managed Identity");
+            logger.LogInformation("==> Deploying App Service + enabling Managed Identity");
 
             // Set subscription context
             try

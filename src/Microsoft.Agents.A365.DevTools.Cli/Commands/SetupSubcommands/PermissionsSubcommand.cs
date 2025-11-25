@@ -206,6 +206,9 @@ internal static class PermissionsSubcommand
             {
                 logger.LogInformation("Next step: 'a365 setup permissions bot' to configure Bot API permissions");
             }
+
+            // write changes to generated config
+            await configService.SaveStateAsync(setupConfig);
             return true;
         }
         catch (Exception mcpEx)
@@ -279,6 +282,9 @@ internal static class PermissionsSubcommand
             {
                 throw new InvalidOperationException($"Failed to set inheritable permissions for Messaging Bot API: {err}");
             }
+
+            // write changes to generated config
+            await configService.SaveStateAsync(setupConfig);
 
             logger.LogInformation("");
             logger.LogInformation("Messaging Bot API permissions configured successfully");

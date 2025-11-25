@@ -105,6 +105,11 @@ internal static class EndpointSubcommand
 
         await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
             setupConfig, logger, botConfigurator);
+
+
+        setupConfig.Completed = true;
+        setupConfig.CompletedAt = DateTime.UtcNow;
+
         await configService.SaveStateAsync(setupConfig);
 
         logger.LogInformation("");

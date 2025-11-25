@@ -150,12 +150,12 @@ internal static class BlueprintSubcommand
         // ========================================================================
 
         logger.LogInformation("");
-        logger.LogInformation("==> [2/5] Creating Agent Blueprint");
+        logger.LogInformation("==> Creating Agent Blueprint");
 
         // CRITICAL: Grant AgentApplication.Create permission BEFORE creating blueprint
         // This replaces the PowerShell call to DelegatedAgentApplicationCreateConsent.ps1
         logger.LogInformation("");
-        logger.LogInformation("==> [2.1/5] Ensuring AgentApplication.Create Permission");
+        logger.LogInformation("==> Ensuring AgentApplication.Create Permission");
         logger.LogInformation("This permission is required to create Agent Blueprints");
 
         var consentResult = await EnsureDelegatedConsentWithRetriesAsync(
@@ -174,7 +174,7 @@ internal static class BlueprintSubcommand
         // ========================================================================
 
         logger.LogInformation("");
-        logger.LogInformation("==> [2.2/5] Creating Agent Blueprint Application");
+        logger.LogInformation("==> Creating Agent Blueprint Application");
 
         // Validate required config
         if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintDisplayName))
@@ -236,7 +236,7 @@ internal static class BlueprintSubcommand
         // ========================================================================
 
         logger.LogInformation("");
-        logger.LogInformation("==> [2.5/5] Creating Client Secret for Agent Blueprint");
+        logger.LogInformation("==> Creating Client Secret for Agent Blueprint");
 
         await CreateBlueprintClientSecretAsync(
             blueprintObjectId!,
@@ -244,6 +244,7 @@ internal static class BlueprintSubcommand
             generatedConfig,
             generatedConfigPath,
             graphService,
+            setupConfig,
             logger);
 
         // Final summary
@@ -739,6 +740,7 @@ internal static class BlueprintSubcommand
         JsonObject generatedConfig,
         string generatedConfigPath,
         GraphApiService graphService,
+        Models.Agent365Config setupConfig,
         ILogger logger,
         CancellationToken ct = default)
     {
@@ -795,11 +797,13 @@ internal static class BlueprintSubcommand
             var isProtected = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             generatedConfig["agentBlueprintClientSecret"] = protectedSecret;
             generatedConfig["agentBlueprintClientSecretProtected"] = isProtected;
+            setupConfig.AgentBlueprintClientSecret = protectedSecret;
+            setupConfig.AgentBlueprintClientSecretProtected = isProtected;
 
             await File.WriteAllTextAsync(
-                generatedConfigPath,
-                generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
-                ct);
+                    generatedConfigPath,
+                    generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                    ct);
 
             logger.LogInformation("Client secret created successfully!");
             logger.LogInformation($"  - Secret stored in generated config (encrypted: {isProtected})");

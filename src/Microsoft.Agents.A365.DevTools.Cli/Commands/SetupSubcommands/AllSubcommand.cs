@@ -269,7 +269,7 @@ internal static class AllSubcommand
                     logger.LogError("Failed to register messaging endpoint: {Message}", endpointEx.Message);
                 }
 
-                logger.LogInformation("");
+                /*logger.LogInformation("");
                 logger.LogInformation("==> [5/5] Finalizing Setup");
 
                 try
@@ -281,6 +281,7 @@ internal static class AllSubcommand
                     generatedConfig["inheritanceConfigured"] = setupConfig.InheritanceConfigured;
                     generatedConfig["inheritablePermissionsAlreadyExist"] = setupConfig.InheritablePermissionsAlreadyExist;
                     generatedConfig["inheritanceConfigError"] = setupConfig.InheritanceConfigError;
+                    generatedConfig["agentBlueprintClientSecretProtected"] = setupConfig.AgentBlueprintClientSecretProtected;
                     await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
                     logger.LogDebug("Generated config saved at: {Path}", generatedConfigPath);
@@ -291,7 +292,7 @@ internal static class AllSubcommand
                 catch (Exception finalEx)
                 {
                     logger.LogWarning(finalEx, "Failed to finalize generated Config");
-                }
+                }*/
 
                 // Display verification info and summary
                 logger.LogInformation("");

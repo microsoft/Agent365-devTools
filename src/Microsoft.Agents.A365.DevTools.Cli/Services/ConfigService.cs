@@ -325,6 +325,7 @@ public class ConfigService : IConfigService
 
         // Log warnings if any
         if (validationResult.Warnings.Count > 0)
+        if (validationResult.Warnings.Count > 0)
         {
             foreach (var warning in validationResult.Warnings)
             {
@@ -678,13 +679,23 @@ public class ConfigService : IConfigService
         var underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
 
         if (underlyingType == typeof(string))
-            return element.GetString();
+            return element.ValueKind == JsonValueKind.String
+                ? element.GetString()
+                : element.GetRawText(); // fallback: convert any other JSON type to string
 
         if (underlyingType == typeof(int))
             return element.GetInt32();
 
         if (underlyingType == typeof(bool))
+        {
+            if (element.ValueKind == JsonValueKind.True) return true;
+            if (element.ValueKind == JsonValueKind.False) return false;
+            if (element.ValueKind == JsonValueKind.String &&
+                bool.TryParse(element.GetString(), out var result))
+                return result;
+
             return element.GetBoolean();
+        }
 
         if (underlyingType == typeof(DateTime))
             return element.GetDateTime();

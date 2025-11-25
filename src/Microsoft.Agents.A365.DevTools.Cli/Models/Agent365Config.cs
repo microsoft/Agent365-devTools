@@ -307,8 +307,7 @@ public class Agent365Config
     public string? AgentBlueprintClientSecret { get; set; }
 
     /// <summary>
-    /// Client secret for the agent blueprint application.
-    /// NOTE: This is sensitive data - consider using Azure Key Vault in production.
+    /// Boolean value indicating if the client secret is stored securely (e.g., in Key Vault).
     /// </summary>
     [JsonPropertyName("agentBlueprintClientSecretProtected")]
     public bool AgentBlueprintClientSecretProtected { get; set; }
