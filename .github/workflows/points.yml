@@ -13,8 +13,9 @@ permissions:
 jobs:
   assign-points:
     runs-on: ubuntu-latest
+    # Only run for PR reviews or comments on PRs (not regular issues)
     if: >
-      (github.event_name == 'pull_request_review') ||
+      github.event_name == 'pull_request_review' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
     steps:
       - name: Checkout repository
@@ -30,13 +31,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install PyYAML
+        run: pip install pyyaml
 
-      - name: Assign points
+      - name: Run points script
         id: assign_points
         run: |
-          set +e
+          set +e  # Don't exit on error
           python scripts/assign_points.py
           exit_code=$?
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
@@ -51,20 +51,29 @@ jobs:
           else
             exit $exit_code
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update leaderboard
+      - name: Update leaderboard markdown
         if: steps.assign_points.outputs.exit_code == '0'
-        run: |
-          python scripts/update_leaderboard.py
+        run: python scripts/update_leaderboard.py
 
-      - name: Commit and push leaderboard
+      - name: Create Pull Request
         if: steps.assign_points.outputs.exit_code == '0'
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add leaderboard.json LEADERBOARD.md
-          git diff --staged --quiet || git commit -m "Update leaderboard [skip ci]"
-          git pull --rebase origin main
-          git push origin main
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Update leaderboard"
+          branch: leaderboard-update-${{ github.run_number }}
+          delete-branch: true
+          title: "Update contributor leaderboard"
+          body: |
+            ## Leaderboard Update
+            
+            This PR updates the contributor leaderboard based on recent PR review activity.
+            
+            **Triggered by:** ${{ github.event_name }}
+            **Run:** ${{ github.run_number }}
+            
+            Please review and merge to update the leaderboard.
+          labels: |
+            leaderboard
+            automated

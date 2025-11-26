@@ -1,5 +1,4 @@
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
+# Copyright (c) Microsoft. All rights reserved.
 
 import os
 import json
@@ -16,11 +15,6 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config_points.yml')
 PROCESSED_FILE = os.path.join(os.path.dirname(__file__), 'processed_ids.json')
 # Path to leaderboard in repository root (one level up from scripts/)
 LEADERBOARD_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'leaderboard.json')
-
-# Exit codes
-EXIT_SUCCESS = 0
-EXIT_ERROR = 1
-EXIT_NO_OP = 2  # No changes needed
 
 def load_config():
     """
@@ -41,7 +35,7 @@ def load_config():
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        print(f"ERROR: Invalid YAML in config file: {e}", file=sys.stderr)
+        print(f"ERROR: Invalid YAML syntax in config file: {e}", file=sys.stderr)
         print(f"File location: {CONFIG_FILE}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
@@ -54,25 +48,6 @@ def load_config():
         print("Expected format: { points: { basic_review: 5, ... } }", file=sys.stderr)
         sys.exit(1)
     
-    # Validate required keys
-    required_keys = ['basic_review', 'detailed_review', 'performance_improvement', 'approve_pr']
-    missing_keys = [key for key in required_keys if key not in config['points']]
-    if missing_keys:
-        print(f"ERROR: Missing required keys in config: {', '.join(missing_keys)}", file=sys.stderr)
-        print(f"Required keys: {', '.join(required_keys)}", file=sys.stderr)
-        sys.exit(1)
-    
-    # Validate that all required point values are positive integers
-    invalid_keys = [
-        key for key in required_keys
-        if not isinstance(config['points'][key], int) or config['points'][key] <= 0
-    ]
-    if invalid_keys:
-        print(f"ERROR: The following point values are not positive integers: {', '.join(invalid_keys)}", file=sys.stderr)
-        for key in invalid_keys:
-            print(f"  {key}: {config['points'][key]!r}", file=sys.stderr)
-        sys.exit(1)
-    
     return config
 
 def load_event():
@@ -83,42 +58,37 @@ def load_event():
     if not os.path.exists(event_path):
         print(f"ERROR: Event file not found: {event_path}")
         sys.exit(1)
+    with open(event_path, 'r', encoding='utf-8') as f:
+        event = json.load(f)
     
-    try:
-        with open(event_path, 'r', encoding='utf-8') as f:
-            event = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"ERROR: Invalid JSON in event file: {e}", file=sys.stderr)
-        print(f"File location: {event_path}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: Failed to read event file: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Check if this is a comment on a regular issue (not a PR)
+    # Validate that this is a PR-related event, not a regular issue comment
     if 'issue' in event and 'pull_request' not in event.get('issue', {}):
         print("INFO: Skipping - this is a comment on a regular issue, not a pull request.")
-        sys.exit(EXIT_NO_OP)
-
+        sys.exit(2)  # Exit code 2 = no-op
+    
     return event
 
 def load_processed_ids():
     if os.path.exists(PROCESSED_FILE):
         with open(PROCESSED_FILE, 'r', encoding='utf-8') as f:
             try:
-                # Load as list, convert to set for efficient lookup
-                return set(json.load(f))
+                return json.load(f)
             except json.JSONDecodeError:
-                return set()
-    return set()
+                return []
+    return []
 
-def save_processed_ids(processed_ids):
+def save_processed_ids(ids):
+    """
+    Save processed event IDs to prevent duplicate scoring.
+    
+    This is critical for data integrity - if this fails after points
+    are awarded, the same event could be scored multiple times on retry.
+    """
     try:
         with open(PROCESSED_FILE, 'w', encoding='utf-8') as f:
-            # Convert set to list for JSON serialization
-            json.dump(list(processed_ids), f, indent=2)
+            json.dump(ids, f, indent=2)
     except PermissionError as e:
-        print(f"ERROR: Permission denied writing to {PROCESSED_FILE}: {e}", file=sys.stderr)
+        print(f"ERROR: Permission denied when saving processed IDs to {PROCESSED_FILE}: {e}", file=sys.stderr)
         print("Check file permissions and ensure the workflow has write access.", file=sys.stderr)
         sys.exit(1)
     except IOError as e:
@@ -150,7 +120,7 @@ def extract_user(event):
             if login:
                 return login, 'review.user'
     
-    # Try comment user
+    # Try comment user second
     comment = event.get('comment')
     if comment and isinstance(comment, dict):
         comment_user = comment.get('user')
@@ -159,59 +129,42 @@ def extract_user(event):
             if login:
                 return login, 'comment.user'
     
-    # Fallback to sender
+    # Fallback to top-level sender (most reliable)
     sender = event.get('sender')
     if sender and isinstance(sender, dict):
         login = sender.get('login')
         if login:
             return login, 'sender'
     
+    # All extraction methods failed
     return None, None
 
 def detect_points(event, cfg):
     """
-    Detect points based on the GitHub event and configuration.
-    
-    All keyword matching is CASE-INSENSITIVE. Contributors can use any capitalization.
+    Calculate points for a GitHub event based on review actions.
     
     Scoring Rules:
-    1. Review types (mutually exclusive - only the highest applies):
-       - Include "detailed" anywhere in your review = detailed_review points (10)
-       - Include "basic review" anywhere in your review = basic_review points (5)
-       - If both keywords present, only "detailed" counts (higher value)
+    1. Any PR review submission = review_submission points (base points)
+    2. PR approval (state=approved) = approve_pr bonus (additive)
+    3. Substantial review (comment length >= 100 characters) = detailed_review bonus (additive)
     
-    2. Bonus points (additive - can stack with review types):
-       - Include "performance" anywhere = performance_improvement bonus (+4)
-       - Approve the PR (state=approved) = approve_pr bonus (+3)
-    
-    Keyword Examples (all case-insensitive):
-    - "detailed", "Detailed", "DETAILED" all work
-    - "basic review", "Basic Review", "BASIC REVIEW" all work
-    - "performance", "Performance", "PERFORMANCE" all work
-    
-    Args:
-        event: GitHub webhook event JSON
-        cfg: Configuration dictionary with points values
-    
-    Returns:
-        tuple: (points: int, user: str)
-    
-    Exits:
-        1 if unable to extract user from event
-        2 if no points criteria matched (not an error)
+    Scoring Examples:
+    - Simple review with short comment = 5 points (base)
+    - Review with detailed feedback (100+ chars) = 5 + 5 = 10 points
+    - Approved PR = 5 + 3 = 8 points
+    - Approved PR with detailed feedback = 5 + 3 + 5 = 13 points
+    - Comment on PR (not a review) = 2 points
     """
-    action = event.get('action')
-    review = event.get('review', {})
-    comment = event.get('comment', {})
+    action = event.get('action', '')
+    review = event.get('review') or {}
+    comment = event.get('comment') or {}
 
-    # Note: The review and comment bodies are user-controlled content from the GitHub API.
-    # No sanitization is performed here because the current usage only checks for keywords.
-    # If this code is extended to process or display these bodies, input validation should be added.
-    review_body = (review.get('body') or '').lower()
+    review_body = review.get('body') or ''
     review_state = (review.get('state') or '').lower()
-    comment_body = (comment.get('body') or '').lower()
+    comment_body = comment.get('body') or ''
 
     user, source = extract_user(event)
+    
     if not user:
         print("ERROR: Unable to extract user from event. Checked review.user, comment.user, and sender fields.")
         print("Event structure:", json.dumps({
@@ -226,24 +179,30 @@ def detect_points(event, cfg):
 
     points = 0
     scoring_breakdown = []
+
+    # Determine if this is a review or just a comment
+    is_review = action == "submitted" and 'review' in event
+    is_comment = 'comment' in event and 'review' not in event
+
+    if is_review:
+        # Base points for any PR review submission
+        points += cfg['points']['review_submission']
+        scoring_breakdown.append(f"review_submission: +{cfg['points']['review_submission']}")
+        
+        # Bonus for substantial review (100+ characters)
+        if len(review_body.strip()) >= 100:
+            points += cfg['points']['detailed_review']
+            scoring_breakdown.append(f"detailed_review: +{cfg['points']['detailed_review']}")
+        
+        # Bonus for approving the PR
+        if review_state == "approved":
+            points += cfg['points']['approve_pr']
+            scoring_breakdown.append(f"approve_pr: +{cfg['points']['approve_pr']}")
     
-    # Review type scoring (mutually exclusive - highest wins)
-    if "detailed" in review_body:
-        points += cfg['points']['detailed_review']
-        scoring_breakdown.append(f"detailed_review: +{cfg['points']['detailed_review']}")
-    elif "basic review" in review_body:
-        points += cfg['points']['basic_review']
-        scoring_breakdown.append(f"basic_review: +{cfg['points']['basic_review']}")
-
-    # Performance improvement bonus (additive)
-    if "performance" in comment_body or "performance" in review_body:
-        points += cfg['points']['performance_improvement']
-        scoring_breakdown.append(f"performance_improvement: +{cfg['points']['performance_improvement']}")
-
-    # PR approval bonus (additive)
-    if action == "submitted" and review_state == "approved":
-        points += cfg['points']['approve_pr']
-        scoring_breakdown.append(f"approve_pr: +{cfg['points']['approve_pr']}")
+    elif is_comment:
+        # Points for commenting on a PR (less than review)
+        points += cfg['points']['pr_comment']
+        scoring_breakdown.append(f"pr_comment: +{cfg['points']['pr_comment']}")
 
     # Log scoring breakdown for transparency
     if scoring_breakdown:
@@ -266,20 +225,17 @@ def update_leaderboard(user, points):
     if os.path.exists(LEADERBOARD_FILE):
         with open(LEADERBOARD_FILE, 'r', encoding='utf-8') as f:
             try:
-                data = json.load(f)
-                # Filter out 'top' key to prevent unbounded growth
-                leaderboard = {k: v for k, v in data.items() if k != 'top' and isinstance(v, (int, float))}
+                leaderboard = json.load(f)
             except json.JSONDecodeError:
                 leaderboard = {}
 
     leaderboard[user] = leaderboard.get(user, 0) + points
-    print(f"Updated {user}: {leaderboard[user]} total points (awarded +{points})")
-    
+
     try:
         with open(LEADERBOARD_FILE, 'w', encoding='utf-8') as f:
             json.dump(leaderboard, f, indent=2)
     except PermissionError as e:
-        print(f"ERROR: Permission denied writing to {LEADERBOARD_FILE}: {e}", file=sys.stderr)
+        print(f"ERROR: Permission denied when saving leaderboard to {LEADERBOARD_FILE}: {e}", file=sys.stderr)
         print("Check file permissions and ensure the workflow has write access.", file=sys.stderr)
         sys.exit(1)
     except IOError as e:
@@ -296,28 +252,27 @@ def main():
     points, user = detect_points(event, cfg)
 
     # Extract unique ID for duplicate prevention
-    event_id = event.get('review', {}).get('id')
-    if event_id is None:
-        event_id = event.get('comment', {}).get('id')
-    if event_id is None:
+    event_id = event.get('review', {}).get('id') or event.get('comment', {}).get('id')
+    if not event_id:
         print("No unique ID found in event. Skipping duplicate check.")
-        sys.exit(EXIT_NO_OP)
+        sys.exit(2)  # Exit code 2 = no-op (not an error)
 
     processed_ids = load_processed_ids()
     if event_id in processed_ids:
         print(f"Event {event_id} already processed. Skipping scoring.")
-        sys.exit(EXIT_NO_OP)
+        sys.exit(2)  # Exit code 2 = no-op (not an error)
 
     if points <= 0:
-        print("No points awarded. Skipping leaderboard update.")
-        sys.exit(EXIT_NO_OP)
+        print("No points awarded for this event.")
+        sys.exit(2)  # Exit code 2 = no-op (not an error)
 
-    # Update leaderboard and mark event as processed
+    # Update leaderboard first, then mark as processed
+    # This order ensures we can retry if processed_ids save fails
     update_leaderboard(user, points)
-    processed_ids.add(event_id)
+    processed_ids.append(event_id)
     save_processed_ids(processed_ids)
-    
-    print(f"SUCCESS: Awarded {points} points to {user}")
+    print(f"Points awarded: {points} to {user}")
+    sys.exit(0)  # Exit code 0 = success (points awarded)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
