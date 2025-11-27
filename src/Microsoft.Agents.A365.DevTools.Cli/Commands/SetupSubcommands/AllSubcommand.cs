@@ -156,9 +156,14 @@ internal static class AllSubcommand
                         azureValidator,
                         logger,
                         skipInfrastructure,
-                        true);
+                        true,
+                        configService,
+                        botConfigurator,
+                        platformDetector
+                        );
 
                     setupResults.BlueprintCreated = blueprintCreated;
+                    setupResults.MessagingEndpointRegistered = blueprintCreated;
 
                     if (blueprintCreated)
                     {
@@ -178,13 +183,14 @@ internal static class AllSubcommand
                         {
                             throw new SetupValidationException(
                                 "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
-                                "This is required for the next steps (MCP permissions, Bot permissions, and endpoint registration).");
+                                "This is required for the next steps (MCP permissions and Bot permissions).");
                         }
                     }
                 }
                 catch (Exception blueprintEx)
                 {
                     setupResults.BlueprintCreated = false;
+                    setupResults.MessagingEndpointRegistered = false;
                     setupResults.Errors.Add($"Blueprint: {blueprintEx.Message}");
                     logger.LogError(blueprintEx, "Failed to create blueprint: {Message}", blueprintEx.Message);
                     throw;
@@ -243,30 +249,6 @@ internal static class AllSubcommand
                     setupResults.BotApiPermissionsConfigured = false;
                     setupResults.Errors.Add($"Bot API Permissions: {botPermEx.Message}");
                     logger.LogWarning("Setup will continue, but Bot API permissions must be configured manually");
-                }
-
-                // Step 5: Register endpoint and sync
-                logger.LogInformation("");
-                logger.LogInformation("Step 5:");
-                logger.LogInformation("");
-
-                try
-                {
-                    await EndpointSubcommand.RegisterEndpointAndSyncAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        botConfigurator,
-                        platformDetector);
-
-                    setupResults.MessagingEndpointRegistered = true;
-                    logger.LogInformation("Blueprint messaging endpoint registered successfully");
-                }
-                catch (Exception endpointEx)
-                {
-                    setupResults.MessagingEndpointRegistered = false;
-                    setupResults.Errors.Add($"Messaging endpoint: {endpointEx.Message}");
-                    logger.LogError("Failed to register messaging endpoint: {Message}", endpointEx.Message);
                 }
 
                 // Display verification info and summary

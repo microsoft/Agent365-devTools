@@ -164,7 +164,6 @@ public class SetupCommandTests
         subcommandNames.Should().Contain("infrastructure", "Setup should have infrastructure subcommand");
         subcommandNames.Should().Contain("blueprint", "Setup should have blueprint subcommand");
         subcommandNames.Should().Contain("permissions", "Setup should have permissions subcommand");
-        subcommandNames.Should().Contain("endpoint", "Setup should have endpoint subcommand");
         subcommandNames.Should().Contain("all", "Setup should have all subcommand");
     }
 
@@ -305,48 +304,6 @@ public class SetupCommandTests
 
         // Act
         var result = await parser.InvokeAsync("blueprint --dry-run", testConsole);
-
-        // Assert
-        Assert.Equal(0, result);
-        
-        // Verify config was loaded in dry-run mode
-        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
-    }
-
-    [Fact]
-    public async Task EndpointSubcommand_DryRun_CompletesSuccessfully()
-    {
-        // Arrange
-        var config = new Agent365Config 
-        { 
-            TenantId = "tenant", 
-            SubscriptionId = "sub", 
-            ResourceGroup = "rg", 
-            Location = "eastus", 
-            AppServicePlanName = "plan", 
-            WebAppName = "web", 
-            AgentIdentityDisplayName = "agent", 
-            DeploymentProjectPath = ".",
-            AgentBlueprintId = "blueprint-id"
-        };
-        
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
-        
-        var command = SetupCommand.CreateCommand(
-            _mockLogger, 
-            _mockConfigService, 
-            _mockExecutor, 
-            _mockDeploymentService, 
-            _mockBotConfigurator, 
-            _mockAzureValidator, 
-            _mockWebAppCreator, 
-            _mockPlatformDetector,
-            _mockGraphApiService);
-        var parser = new CommandLineBuilder(command).Build();
-        var testConsole = new TestConsole();
-
-        // Act
-        var result = await parser.InvokeAsync("endpoint --dry-run", testConsole);
 
         // Assert
         Assert.Equal(0, result);

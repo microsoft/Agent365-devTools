@@ -152,11 +152,6 @@ internal static class SetupHelpers
             {
                 logger.LogInformation("  - Bot API Permissions: Run 'a365 setup permissions bot' to retry");
             }
-            
-            if (!results.MessagingEndpointRegistered)
-            {
-                logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup endpoint' to retry");
-            }
         }
         else if (results.HasWarnings)
         {

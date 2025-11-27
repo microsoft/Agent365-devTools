@@ -5,6 +5,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
@@ -34,7 +35,8 @@ internal static class BlueprintSubcommand
         CommandExecutor executor,
         IAzureValidator azureValidator,
         AzureWebAppCreator webAppCreator,
-        PlatformDetector platformDetector)
+        PlatformDetector platformDetector,
+        IBotConfigurator botConfigurator)
     {
         var command = new Command("blueprint", 
             "Create agent blueprint (Entra ID application registration)\n" +
@@ -78,7 +80,11 @@ internal static class BlueprintSubcommand
                 azureValidator,
                 logger,
                 false,
-                false);
+                false,
+                configService,
+                botConfigurator,
+                platformDetector
+                );
 
         }, configOption, verboseOption, dryRunOption);
 
@@ -93,6 +99,9 @@ internal static class BlueprintSubcommand
         ILogger logger,
         bool skipInfrastructure,
         bool isSetupAll,
+        IConfigService configService,
+        IBotConfigurator botConfigurator,
+        PlatformDetector platformDetector,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -247,17 +256,26 @@ internal static class BlueprintSubcommand
             setupConfig,
             logger);
 
-        // Final summary
         logger.LogInformation("");
         logger.LogInformation("Agent blueprint created successfully");
         logger.LogInformation("Generated config saved: {Path}", generatedConfigPath);
         logger.LogInformation("");
+
+        await RegisterEndpointAndSyncAsync(
+            configPath: config.FullName,
+            logger: logger,
+            configService: configService,
+            botConfigurator: botConfigurator,
+            platformDetector: platformDetector);
+
+        // Display verification info and summary
+        await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
+
         if (!isSetupAll)
         {
             logger.LogInformation("Next steps:");
             logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
             logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
-            logger.LogInformation("  3. Run 'a365 setup endpoint' to register messaging endpoint");
         }
 
         return true;
@@ -825,6 +843,73 @@ internal static class BlueprintSubcommand
             logger.LogInformation("  3. Navigate to Certificates & secrets > Client secrets");
             logger.LogInformation("  4. Click 'New client secret' and save the value");
             logger.LogInformation("  5. Add it to {Path} as 'agentBlueprintClientSecret'", generatedConfigPath);
+        }
+    }
+
+    /// <summary>
+    /// Registers blueprint messaging endpoint and syncs project settings.
+    /// Public method that can be called by AllSubcommand.
+    /// </summary>
+    public static async Task RegisterEndpointAndSyncAsync(
+        string configPath,
+        ILogger logger,
+        IConfigService configService,
+        IBotConfigurator botConfigurator,
+        PlatformDetector platformDetector,
+        CancellationToken cancellationToken = default)
+    {
+        var setupConfig = await configService.LoadAsync(configPath);
+
+        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+        {
+            logger.LogError("Blueprint ID not found. Please confirm agent blueprint id is in config file.");
+            Environment.Exit(1);
+        }
+
+        if (string.IsNullOrWhiteSpace(setupConfig.WebAppName))
+        {
+            logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
+            Environment.Exit(1);
+        }
+
+        logger.LogInformation("Registering blueprint messaging endpoint...");
+        logger.LogInformation("");
+
+        await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+            setupConfig, logger, botConfigurator);
+
+
+        setupConfig.Completed = true;
+        setupConfig.CompletedAt = DateTime.UtcNow;
+
+        await configService.SaveStateAsync(setupConfig);
+
+        logger.LogInformation("");
+        logger.LogInformation("Blueprint messaging endpoint registered successfully");
+
+        // Sync generated config to project settings (appsettings.json or .env)
+        logger.LogInformation("");
+        logger.LogInformation("Syncing configuration to project settings...");
+
+        var configFileInfo = new FileInfo(configPath);
+        var generatedConfigPath = Path.Combine(
+            configFileInfo.DirectoryName ?? Environment.CurrentDirectory,
+            "a365.generated.config.json");
+
+        try
+        {
+            await ProjectSettingsSyncHelper.ExecuteAsync(
+                a365ConfigPath: configPath,
+                a365GeneratedPath: generatedConfigPath,
+                configService: configService,
+                platformDetector: platformDetector,
+                logger: logger);
+
+            logger.LogInformation("Configuration synced to project settings successfully");
+        }
+        catch (Exception syncEx)
+        {
+            logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually if needed.");
         }
     }
 

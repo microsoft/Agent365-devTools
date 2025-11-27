@@ -32,7 +32,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "  2. a365 setup blueprint\n" +
                 "  3. a365 setup permissions mcp\n" +
                 "  4. a365 setup permissions bot\n" +
-                "  5. a365 setup endpoint\n\n" +
                 "Or run all steps at once:\n" +
                 "  a365 setup all                      # Full setup (includes infrastructure)\n" +
                 "  a365 setup all --skip-infrastructure # Skip infrastructure if it already exists");
@@ -42,13 +41,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, azureValidator, webAppCreator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, azureValidator, webAppCreator, platformDetector));
+                logger, configService, executor, azureValidator, webAppCreator, platformDetector, botConfigurator));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, configService, executor, graphApiService));
-
-            command.AddCommand(EndpointSubcommand.CreateCommand(
-                logger, configService, botConfigurator, platformDetector));
 
             command.AddCommand(AllSubcommand.CreateCommand(
                 logger, configService, executor, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService));
