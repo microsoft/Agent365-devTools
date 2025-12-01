@@ -272,15 +272,44 @@ internal static class PermissionsSubcommand
             }
 
             // Set inheritable permissions
-            var (ok, already, err) = await graphService.SetInheritablePermissionsAsync(
+            var (botApiOk, botApiAlready, botApiErr) = await graphService.SetInheritablePermissionsAsync(
                 setupConfig.TenantId,
                 setupConfig.AgentBlueprintId,
                 ConfigConstants.MessagingBotApiAppId,
                 new[] { "Authorization.ReadWrite", "user_impersonation" });
 
-            if (!ok && !already)
+            if (!botApiOk && !botApiAlready)
             {
-                throw new InvalidOperationException($"Failed to set inheritable permissions for Messaging Bot API: {err}");
+                throw new InvalidOperationException($"Failed to set inheritable permissions for Messaging Bot API: {botApiErr}");
+            }
+
+            // Ensure Messaging Bot API SP exists
+            var observabilityApiResourceSpObjectId = await graphService.EnsureServicePrincipalForAppIdAsync(
+                setupConfig.TenantId,
+                ConfigConstants.ObservabilityApiAppId);
+
+            // Grant OAuth2 permissions
+            var observabilityApiGrantOk = await graphService.CreateOrUpdateOauth2PermissionGrantAsync(
+                setupConfig.TenantId,
+                blueprintSpObjectId,
+                observabilityApiResourceSpObjectId,
+                new[] { "user_impersonation" });
+
+            if (!observabilityApiGrantOk)
+            {
+                throw new InvalidOperationException("Failed to create/update oauth2PermissionGrant for Observability API");
+            }
+
+            // Set inheritable permissions
+            var (observabilityApiOk, observabilityApiAlready, observabilityApiErr) = await graphService.SetInheritablePermissionsAsync(
+                setupConfig.TenantId,
+                setupConfig.AgentBlueprintId,
+                ConfigConstants.ObservabilityApiAppId,
+                new[] { "user_impersonation" });
+
+            if (!observabilityApiOk && !observabilityApiAlready)
+            {
+                throw new InvalidOperationException($"Failed to set inheritable permissions for Observability API: {observabilityApiErr}");
             }
 
             // write changes to generated config

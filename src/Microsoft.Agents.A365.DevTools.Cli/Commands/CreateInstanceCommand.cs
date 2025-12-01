@@ -162,6 +162,20 @@ public class CreateInstanceCommand
                 if (!botApiGrantOk)
                     logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Messaging Bot API.");
 
+                var observabilityApiResourceSpObjectId = await graphApiService.EnsureServicePrincipalForAppIdAsync(
+                    instanceConfig.TenantId,
+                    ConfigConstants.ObservabilityApiAppId);
+
+                // Grant oauth2PermissionGrants: *agent identity SP* -> Observability API SP
+                var observabilityApiGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+                    instanceConfig.TenantId,
+                    agenticAppSpObjectId,
+                    observabilityApiResourceSpObjectId,
+                    new[] { "user_impersonation" });
+
+                if (!observabilityApiGrantOk)
+                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Observability API.");
+
                 logger.LogInformation("Admin consent granted for Agent Identity completed successfully");
 
                 // Register agent with Microsoft Graph API
