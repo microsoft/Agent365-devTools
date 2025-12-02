@@ -10,7 +10,7 @@ using System.Text.Json.Nodes;
 using System.Reflection;
 using System.Net.Http.Headers;
 using System.IO.Compression;
-using Polly;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -396,14 +396,25 @@ public class PublishCommand
                         }
                     });
 
-                    // Define the retry policy (can be reused across multiple calls)
-                    var retryPolicy = Policy
-                        .HandleResult<(HttpResponseMessage resp, string body)>(result =>
+                    // Use custom retry helper
+                    var retryHelper = new RetryHelper(logger);
+
+                    var allowResult = await retryHelper.ExecuteWithRetryAsync(
+                        async ct =>
+                        {
+                            using var content = new StringContent(allowedPayload, System.Text.Encoding.UTF8, "application/json");
+                            var resp = await http.PostAsync(allowUrl, content, ct);
+                            var body = await resp.Content.ReadAsStringAsync(ct);
+                            return (resp, body);
+                        },
+                        result =>
                         {
                             var (resp, body) = result;
 
                             if (resp.IsSuccessStatusCode)
+                            {
                                 return false;
+                            }
 
                             if ((int)resp.StatusCode == 404 && body.Contains("Title Not Found", StringComparison.OrdinalIgnoreCase))
                             {
@@ -412,32 +423,10 @@ public class PublishCommand
                             }
 
                             return false;
-                        })
-                        .Or<HttpRequestException>()
-                        .Or<TaskCanceledException>()
-                        .WaitAndRetryAsync(
-                            retryCount: 5,
-                            sleepDurationProvider: retryAttempt =>
-                                TimeSpan.FromSeconds(Math.Min(10 * Math.Pow(2, retryAttempt - 1), 60)),
-                            onRetry: (outcome, timespan, retryCount, context) =>
-                            {
-                                logger.LogInformation(
-                                    "Retry attempt {RetryCount} of 5. Waiting {Delay} seconds...",
-                                    retryCount, (int)timespan.TotalSeconds);
-
-                                if (outcome.Exception != null)
-                                {
-                                    logger.LogWarning("Exception: {Message}", outcome.Exception.Message);
-                                }
-                            });
-
-                    var allowResult = await retryPolicy.ExecuteAsync(async () =>
-                    {
-                        using var content = new StringContent(allowedPayload, System.Text.Encoding.UTF8, "application/json");
-                        var resp = await http.PostAsync(allowUrl, content);
-                        var body = await resp.Content.ReadAsStringAsync();
-                        return (resp, body);
-                    });
+                        },
+                        maxRetries: 5,
+                        baseDelaySeconds: 10,
+                        CancellationToken.None);
 
                     var (allowResp, allowBody) = allowResult;
                     if (!allowResp.IsSuccessStatusCode)

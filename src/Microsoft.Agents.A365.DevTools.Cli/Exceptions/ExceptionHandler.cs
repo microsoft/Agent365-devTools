@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Serilog;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
@@ -14,10 +14,11 @@ public static class ExceptionHandler
 {
     /// <summary>
     /// Handles Agent365Exception with user-friendly output (no stack traces for user errors).
-    /// Displays formatted error messages to console and logs to Serilog for diagnostics.
+    /// Displays formatted error messages to console and logs for diagnostics.
     /// </summary>
     /// <param name="ex">The Agent365Exception to handle</param>
-    public static void HandleAgent365Exception(Agent365Exception ex)
+    /// <param name="logger">Optional logger for diagnostics</param>
+    public static void HandleAgent365Exception(Agent365Exception ex, ILogger? logger = null)
     {
         // Display formatted error message
         Console.Error.Write(ex.GetFormattedMessage());
@@ -31,7 +32,7 @@ public static class ExceptionHandler
         }
 
         // Log for diagnostics (but don't show stack trace to user)
-        Log.Error("Operation failed. ErrorCode={ErrorCode}, IssueDescription={IssueDescription}",
+        logger?.LogError("Operation failed. ErrorCode={ErrorCode}, IssueDescription={IssueDescription}",
             ex.ErrorCode, ex.IssueDescription);
     }
 }

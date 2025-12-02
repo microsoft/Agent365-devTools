@@ -282,7 +282,7 @@ internal static class BlueprintSubcommand
     }
 
     /// <summary>
-    /// Ensures AgentApplication.Create permission with retry logic (3 attempts, 5-second delays)
+    /// Ensures AgentApplication.Create permission with retry logic
     /// Used by: BlueprintSubcommand and A365SetupRunner Phase 2.1
     /// </summary>
     public static async Task<bool> EnsureDelegatedConsentWithRetriesAsync(
@@ -291,50 +291,42 @@ internal static class BlueprintSubcommand
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
-        const int maxRetries = 3;
-        const int retryDelaySeconds = 5;
+        var retryHelper = new RetryHelper(logger);
 
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        try
         {
-            try
+            var success = await retryHelper.ExecuteWithRetryAsync(
+                async ct =>
+                {
+                    return await delegatedConsentService.EnsureAgentApplicationCreateConsentAsync(
+                        MicrosoftGraphCommandLineToolsAppId,
+                        tenantId,
+                        ct);
+                },
+                result => !result,
+                maxRetries: 3,
+                baseDelaySeconds: 5,
+                cancellationToken);
+
+            if (success)
             {
-                if (attempt > 1)
-                {
-                    logger.LogInformation("Retry attempt {Attempt} of {MaxRetries} for delegated consent", attempt, maxRetries);
-                    await Task.Delay(TimeSpan.FromSeconds(retryDelaySeconds), cancellationToken);
-                }
-
-                var success = await delegatedConsentService.EnsureAgentApplicationCreateConsentAsync(
-                    MicrosoftGraphCommandLineToolsAppId,
-                    tenantId,
-                    cancellationToken);
-
-                if (success)
-                {
-                    logger.LogInformation("Successfully ensured delegated application consent on attempt {Attempt}", attempt);
-                    return true;
-                }
-
-                logger.LogWarning("Consent attempt {Attempt} returned false", attempt);
+                logger.LogInformation("Successfully ensured delegated application consent");
+                return true;
             }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Consent attempt {Attempt} failed: {Message}", attempt, ex.Message);
 
-                if (attempt == maxRetries)
-                {
-                    logger.LogError("All retry attempts exhausted for delegated consent");
-                    logger.LogError("Common causes:");
-                    logger.LogError("  1. Insufficient permissions - You need Application.ReadWrite.All and DelegatedPermissionGrant.ReadWrite.All");
-                    logger.LogError("  2. Not a Global Administrator or similar privileged role");
-                    logger.LogError("  3. Azure CLI authentication expired - Run 'az login' and retry");
-                    logger.LogError("  4. Network connectivity issues");
-                    return false;
-                }
-            }
+            logger.LogWarning("Consent failed after retries");
+            return false;
         }
-
-        return false;
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error during delegated consent: {Message}", ex.Message);
+            logger.LogError("Common causes:");
+            logger.LogError("  1. Insufficient permissions - You need Application.ReadWrite.All and DelegatedPermissionGrant.ReadWrite.All");
+            logger.LogError("  2. Not a Global Administrator or similar privileged role");
+            logger.LogError("  3. Azure CLI authentication expired - Run 'az login' and retry");
+            logger.LogError("  4. Network connectivity issues");
+            return false;
+        }
     }
 
     /// <summary>

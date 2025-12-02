@@ -6,7 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- CLI Framework -->
-    <PackageVersion Include="Polly" Version="8.6.4" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <!-- Configuration & JSON -->
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.1" />
@@ -20,10 +19,6 @@
     <!-- Logging -->
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.1" />
-    <PackageVersion Include="Serilog" Version="3.1.1" />
-    <PackageVersion Include="Serilog.Extensions.Logging" Version="8.0.0" />
-    <PackageVersion Include="Serilog.Sinks.Console" Version="5.0.1" />
-    <PackageVersion Include="Serilog.Sinks.File" Version="5.0.0" />
     <!-- Azure SDKs -->
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.ResourceManager" Version="1.13.2" />
