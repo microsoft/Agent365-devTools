@@ -24,11 +24,16 @@ class Program
         // Check if verbose flag is present to adjust logging level
         var isVerbose = args.Contains("--verbose") || args.Contains("-v");
         
-        // Configure Microsoft.Extensions.Logging with console output
+        // Configure Microsoft.Extensions.Logging with console output - simplified format
         var loggerFactory = LoggerFactory.Create(builder =>
         {
             builder.SetMinimumLevel(isVerbose ? LogLevel.Debug : LogLevel.Information);
-            builder.AddConsole();
+            builder.AddSimpleConsole(options =>
+            {
+                options.SingleLine = true;
+                options.IncludeScopes = false;
+                options.TimestampFormat = string.Empty; // No timestamps for user-facing CLI
+            });
         });
         var startupLogger = loggerFactory.CreateLogger("Program");
 
@@ -132,7 +137,12 @@ class Program
         services.AddLogging(builder =>
         {
             builder.ClearProviders();
-            builder.AddConsole();
+            builder.AddSimpleConsole(options =>
+            {
+                options.SingleLine = true;
+                options.IncludeScopes = false;
+                options.TimestampFormat = string.Empty; // No timestamps for user-facing CLI
+            });
         });
 
         // Add core services
