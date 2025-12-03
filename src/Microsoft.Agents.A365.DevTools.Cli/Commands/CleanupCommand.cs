@@ -447,8 +447,20 @@ public class CleanupCommand
             if (!string.IsNullOrEmpty(config.AgenticAppId))
             {
                 logger.LogInformation("Deleting agent identity application...");
-                await executor.ExecuteAsync("az", $"ad app delete --id {config.AgenticAppId}", null, true, false, CancellationToken.None);
-                logger.LogInformation("Agent identity application deleted");
+
+                var deleted = await graphApiService.DeleteAgentIdentityAsync(
+                    config.TenantId,
+                    config.AgenticAppId);
+
+                if (deleted)
+                {
+                    logger.LogInformation("Agent identity application deleted successfully");
+                }
+                else
+                {
+                    logger.LogWarning("Failed to delete agent identity application (will continue with other resources)");
+                    logger.LogWarning("Local configuration will still be cleared at the end");
+                }
             }
 
             // 3. Delete agent user
