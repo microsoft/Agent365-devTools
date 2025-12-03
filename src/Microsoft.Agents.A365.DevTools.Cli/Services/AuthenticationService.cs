@@ -5,6 +5,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using System.Text.Json;
 
@@ -185,10 +186,20 @@ public class AuthenticationService
                 TenantId = effectiveTenantId
             };
         }
+        catch (AuthenticationFailedException ex) when (ex.Message.Contains("code_expired") || ex.InnerException?.Message.Contains("code_expired") == true)
+        {
+            _logger.LogError("Device code expired - authentication not completed in time");
+            throw new AzureAuthenticationException("Device code authentication timed out - please complete authentication promptly when retrying");
+        }
+        catch (AuthenticationFailedException ex)
+        {
+            _logger.LogError("Interactive authentication failed: {Message}", ex.Message);
+            throw new AzureAuthenticationException($"Authentication failed: {ex.Message}");
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Interactive authentication failed");
-            throw new InvalidOperationException("Failed to authenticate. Please ensure you're logged in with your Microsoft account.", ex);
+            _logger.LogError("Unexpected authentication error: {Message}", ex.Message);
+            throw new AzureAuthenticationException($"Unexpected authentication error: {ex.Message}");
         }
     }
 

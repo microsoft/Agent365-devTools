@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Headers;
@@ -287,9 +288,14 @@ public class BotConfigurator : IBotConfigurator
                 _logger.LogInformation("Successfully received response from delete endpoint");
                 return true;
             }
+            catch (AzureAuthenticationException ex)
+            {
+                _logger.LogError("Authentication failed: {Message}", ex.IssueDescription);
+                return false;
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to call delete endpoint directly");
+                _logger.LogError("Failed to call delete endpoint: {Message}", ex.Message);
                 return false;
             }
         }
