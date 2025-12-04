@@ -62,7 +62,7 @@ public class BotConfigurator : IBotConfigurator
                 return false;
             }
 
-            var cleanedOutput = CleanJsonOutput(subscriptionResult.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
             var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
 
@@ -181,7 +181,7 @@ public class BotConfigurator : IBotConfigurator
                 return false;
             }
 
-            var cleanedOutput = CleanJsonOutput(subscriptionResult.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
             var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
 
@@ -270,37 +270,5 @@ public class BotConfigurator : IBotConfigurator
             _logger.LogError(ex, "Unexpected error deleting endpoint with agent blueprint: {Message}", ex.Message);
             return false;
         }
-    }
-
-    /// <summary>
-    /// Cleans JSON output from Azure CLI by removing control characters and non-JSON content
-    /// </summary>
-    private string CleanJsonOutput(string output)
-    {
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            return string.Empty;
-        }
-
-        // Remove control characters (0x00-0x1F except \r, \n, \t)
-        var cleaned = new System.Text.StringBuilder(output.Length);
-        foreach (char c in output)
-        {
-            if (c >= 32 || c == '\n' || c == '\r' || c == '\t')
-            {
-                cleaned.Append(c);
-            }
-        }
-
-        var result = cleaned.ToString().Trim();
-        
-        // Find the first { or [ to locate JSON start
-        int jsonStart = result.IndexOfAny(new[] { '{', '[' });
-        if (jsonStart > 0)
-        {
-            result = result.Substring(jsonStart);
-        }
-
-        return result;
     }
 }
