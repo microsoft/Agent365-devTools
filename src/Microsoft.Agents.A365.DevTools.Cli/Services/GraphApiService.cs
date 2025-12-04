@@ -910,15 +910,12 @@ public class GraphApiService
                 if (existingEntry.Value.TryGetProperty("inheritableScopes", out var inheritable) &&
                     inheritable.TryGetProperty("scopes", out var scopesEl) && scopesEl.ValueKind == JsonValueKind.Array)
                 {
-                    foreach (var s in scopesEl.EnumerateArray())
+                    foreach (var s in scopesEl.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String))
                     {
-                        if (s.ValueKind == JsonValueKind.String)
-                        {
-                            var raw = s.GetString() ?? string.Empty;
-                            // Some entries may contain space-separated tokens; split defensively
-                            foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                                currentScopes.Add(tok);
-                        }
+                        var raw = s.GetString() ?? string.Empty;
+                        // Some entries may contain space-separated tokens; split defensively
+                        foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                            currentScopes.Add(tok);
                     }
                 }
 
@@ -1032,14 +1029,11 @@ public class GraphApiService
                         if (item.TryGetProperty("inheritableScopes", out var inheritable) &&
                             inheritable.TryGetProperty("scopes", out var scopesEl) && scopesEl.ValueKind == JsonValueKind.Array)
                         {
-                            foreach (var s in scopesEl.EnumerateArray())
+                            foreach (var s in scopesEl.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String))
                             {
-                                if (s.ValueKind == JsonValueKind.String)
-                                {
-                                    var raw = s.GetString() ?? string.Empty;
-                                    foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                                        scopesList.Add(tok);
-                                }
+                                var raw = s.GetString() ?? string.Empty;
+                                foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                                    scopesList.Add(tok);
                             }
                         }
                         return (exists: true, scopes: scopesList.ToArray(), error: null);
@@ -1163,7 +1157,12 @@ public class GraphApiService
             }
 
             var app = appsArray[0];
-            var objectId = app.GetProperty("id").GetString();
+            if (!app.TryGetProperty("id", out var idProp) || string.IsNullOrEmpty(idProp.GetString()))
+            {
+                _logger.LogError("Application object missing 'id' property or 'id' is null for appId {AppId}", appId);
+                return false;
+            }
+            var objectId = idProp.GetString()!;
 
             // Get the resource service principal to look up permission IDs
             var resourceSp = await LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct);
@@ -1194,11 +1193,13 @@ public class GraphApiService
                     foreach (var permission in permissions.EnumerateArray())
                     {
                         if (permission.TryGetProperty("value", out var valueElement) && 
-                            valueElement.GetString()?.Equals(scope, StringComparison.OrdinalIgnoreCase) == true)
+                            valueElement.GetString()?.Equals(scope, StringComparison.OrdinalIgnoreCase) == true &&
+                            permission.TryGetProperty("id", out var idElement))
                         {
-                            if (permission.TryGetProperty("id", out var idElement))
+                            var idValue = idElement.GetString();
+                            if (!string.IsNullOrEmpty(idValue))
                             {
-                                permissionIds.Add(idElement.GetString()!);
+                                permissionIds.Add(idValue);
                                 found = true;
                                 break;
                             }

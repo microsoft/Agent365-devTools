@@ -257,8 +257,6 @@ internal static class SetupHelpers
 
             if (!ok && !alreadyExists)
             {
-                inheritanceConfigured = false;
-                inheritanceError = err;
                 throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
                     "Ensure you have Application.ReadWrite.All permissions and the blueprint supports inheritable permissions.");
             }
@@ -376,7 +374,7 @@ internal static class SetupHelpers
         {
             logger.LogError("Agent Blueprint ID not found. Blueprint creation may have failed.");
             throw new SetupValidationException(
-                issueDescription: "Agent blueprint was not found � messaging endpoint cannot be registered.",
+                issueDescription: "Agent blueprint was not found - messaging endpoint cannot be registered.",
                 errorDetails: new List<string>
                 {
                     "AgentBlueprintId is missing from configuration. This usually means the blueprint creation step failed or a365.generated.config.json is out of sync."
@@ -427,7 +425,7 @@ internal static class SetupHelpers
         }
         else // Non-Azure hosting
         {
-            // No deployment � use the provided MessagingEndpoint
+            // No deployment - use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogError("MessagingEndpoint must be provided in a365.config.json for non-Azure hosting.");

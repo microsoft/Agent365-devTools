@@ -260,9 +260,9 @@ public static class ConfigCommand
                     
                     Console.WriteLine(displayJson);
 
-                    // Display resource consents table only when showing full config (not with -g flag)
-                    // When -g is used, resourceConsents are already in the JSON output
-                    if (!showGenerated && config.ResourceConsents != null && config.ResourceConsents.Count > 0)
+                    // Display resource consents table when showing generated config (default or -a)
+                    // Skip table when using -g flag since resourceConsents are already in JSON output
+                    if (displayGenerated && !showGenerated && config.ResourceConsents != null && config.ResourceConsents.Count > 0)
                     {
                         Console.WriteLine();
                         Console.WriteLine("Resource Consents:");
