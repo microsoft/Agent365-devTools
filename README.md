@@ -13,11 +13,17 @@ The **Microsoft Agent 365 DevTools CLI** is a command-line interface tool design
 
 ## Features
 
-The Microsoft Agent 365 DevTools CLI focuses on these core areas:
+The Microsoft Agent 365 DevTools CLI can be used through the developer journey of an Agent 365 developer. The CLI provides the following commands:
 
-- **Agent 365 configuration management**: Initialize and manage Agent 365 project configurations with interactive wizards
-- **Azure resource provisioning**: Setup of important Agent 365 resources in Azure
-- **MCP Server support**: Package, deploy, and manage Model Context Protocol servers in your Agent 365 agent
+- **develop**: Manage MCP tool servers for agent development
+- **develop-mcp**: Manage MCP servers in Dataverse environments
+- **setup**: Set up your Agent 365 environment by creating Azure resources, configuring permissions, and registering your agent blueprint for deployment
+- **create-instance**: Create and configure agent user identities with appropriate licenses and notification settings for your deployed agent
+- **deploy**: Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions
+- **config**: Configure Azure subscription, resource settings, and deployment options for Agent 365 CLI commands
+- **query-entra**: Query Microsoft Entra ID for agent information (scopes, permissions, consent status)
+- **cleanup**: Clean up ALL resources (blueprint, instance, other Azure resources)
+- **publish**: Update agent manifest and publish package; configure federated identity and app role assignments
 
 ## Current Project State
 
@@ -36,7 +42,7 @@ dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli --prerelease
 ## Documentation
 
 To know more about CLI and prerequisites:
-- [Microsoft Agent 365 CLI Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli?tabs=windows)
+- [Microsoft Agent 365 CLI Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli)
 
 For usage and command reference:
 - [CLI Command Reference](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/reference/cli)
@@ -46,7 +52,7 @@ For usage and command reference:
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-devTools/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer documentation](https://aka.ms/agents365/docs)
+- **Documentation**: See the [Microsoft Agent 365 CLI Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing
@@ -61,7 +67,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ### How CLI is Used with Microsoft Agent 365 SDK
 
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/?tabs=python)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer)
 
 ### Additional Resources
 
