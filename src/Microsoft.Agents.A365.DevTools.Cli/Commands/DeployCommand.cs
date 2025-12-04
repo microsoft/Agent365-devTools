@@ -405,14 +405,8 @@ public class DeployCommand
 
         if (!ok && !alreadyExists)
         {
-            config.InheritanceConfigured = false;
-            config.InheritanceConfigError = err;
             throw new InvalidOperationException("Failed to set inheritable permissions: " + err);
         }
-
-        config.InheritanceConfigured = true;
-        config.InheritablePermissionsAlreadyExist = alreadyExists;
-        config.InheritanceConfigError = null;
 
         logger.LogInformation("   - Inheritable permissions completed: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
             config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));

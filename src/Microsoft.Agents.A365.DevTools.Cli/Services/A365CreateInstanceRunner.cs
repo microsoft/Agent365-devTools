@@ -118,9 +118,8 @@ public sealed class A365CreateInstanceRunner
             ? protectedNode?.GetValue<bool>() ?? false
             : false;
 
-        var inheritanceConfigured = instance.TryGetPropertyValue("inheritanceConfigured", out var inheritanceNode)
-            ? inheritanceNode?.GetValue<bool>() ?? false
-            : false;
+        // Check inheritance status from ResourceConsents
+        var inheritanceConfigured = IsInheritanceConfigured(instance);
 
         // Decrypt the secret if it was encrypted
         if (!string.IsNullOrWhiteSpace(agentBlueprintClientSecret) && isProtected)
@@ -346,13 +345,11 @@ public sealed class A365CreateInstanceRunner
 
                     var scopesJoined = string.Join(' ', agentIdentityScopes);
                     var consentGraph = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={agenticAppId}&scope={Uri.EscapeDataString(scopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
-                    var consentConnectivity = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={agenticAppId}&scope=0ddb742a-e7dc-4899-a31e-80e797ec7144/Connectivity.Connections.Read&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
 
                     SetInstanceField(instance, "agentIdentityConsentUrlGraph", consentGraph);
-                    SetInstanceField(instance, "agentIdentityConsentUrlConnectivity", consentConnectivity);
 
-                    // Request admin consent
-                    var consent1Success = await RequestAdminConsentAsync(
+                    // Request admin consent for Graph API
+                    var consentGraphSuccess = await RequestAdminConsentAsync(
                         consentGraph,
                         agenticAppId,
                         tenantId,
@@ -360,27 +357,18 @@ public sealed class A365CreateInstanceRunner
                         180,
                         cancellationToken);
 
-                    var consent2Success = await RequestAdminConsentAsync(
-                        consentConnectivity,
-                        agenticAppId,
-                        tenantId,
-                        "Agent Instance Connectivity scopes",
-                        180,
-                        cancellationToken);
-
                     // Consent for MCP servers from ToolingManifest.json
-                    var consent3Success = await ProcessMcpConsentAsync(
+                    var consentMcpSuccess = await ProcessMcpConsentAsync(
                         instance,
                         agenticAppId,
                         tenantId,
                         configDirectory,
                         cancellationToken);
 
-                    instance["consent1Granted"] = consent1Success;
-                    instance["consent2Granted"] = consent2Success;
-                    instance["consent3Granted"] = consent3Success;
+                    instance["consent1Granted"] = consentGraphSuccess;
+                    instance["consent3Granted"] = consentMcpSuccess;
 
-                    if (!consent1Success || !consent2Success || !consent3Success)
+                    if (!consentGraphSuccess || !consentMcpSuccess)
                     {
                         _logger.LogWarning("One or more consents may not have been detected");
                         _logger.LogInformation("The setup will continue, but you may need to grant consent manually if needed.");
@@ -1230,5 +1218,28 @@ public sealed class A365CreateInstanceRunner
             _logger.LogWarning(ex, "Exception verifying service principal: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Checks if inheritable permissions are configured by examining ResourceConsents.
+    /// Returns true if all resources with inheritable permissions have them configured.
+    /// </summary>
+    private static bool IsInheritanceConfigured(JsonNode instance)
+    {
+        if (!instance.AsObject().TryGetPropertyValue("resourceConsents", out var resourceConsentsNode))
+            return false;
+
+        if (resourceConsentsNode?.AsArray() is not { } resourceConsents || resourceConsents.Count == 0)
+            return false;
+
+        var resourcesWithInheritance = resourceConsents
+            .Where(rc => rc?["inheritablePermissionsConfigured"] != null)
+            .ToList();
+
+        if (resourcesWithInheritance.Count == 0)
+            return false;
+
+        return resourcesWithInheritance.All(rc => 
+            rc?["inheritablePermissionsConfigured"]?.GetValue<bool>() == true);
     }
 }

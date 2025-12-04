@@ -106,10 +106,7 @@ public class CleanupCommand
                 
                 config.AgentBlueprintId = string.Empty;
                 config.AgentBlueprintClientSecret = string.Empty;
-                config.ConsentUrlGraph = string.Empty;
-                config.ConsentUrlConnectivity = string.Empty;
-                config.Consent1Granted = false;
-                config.Consent2Granted = false;
+                config.ResourceConsents.Clear();
                 
                 await configService.SaveStateAsync(config);
                 logger.LogInformation("Local configuration cleared");
@@ -341,10 +338,8 @@ public class CleanupCommand
                     updatedConfig["AgenticUserId"] = null;
                     updatedConfig["agentUserPrincipalName"] = null;
                     updatedConfig["agentIdentityConsentUrlGraph"] = null;
-                    updatedConfig["agentIdentityConsentUrlConnectivity"] = null;
                     updatedConfig["agentIdentityConsentUrlBlueprint"] = null;
                     updatedConfig["consent1Granted"] = false;
-                    updatedConfig["consent2Granted"] = false;
                     updatedConfig["consent3Granted"] = false;
                     updatedConfig["lastUpdated"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                     

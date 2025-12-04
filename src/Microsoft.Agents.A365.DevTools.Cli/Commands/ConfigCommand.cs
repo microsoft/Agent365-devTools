@@ -13,6 +13,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
 public static class ConfigCommand
 {
+    private const int ConsentsTableWidth = 120;
     public static Command CreateCommand(ILogger logger, string? configDir = null, IConfigurationWizardService? wizardService = null)
     {
         var directory = configDir ?? Services.ConfigService.GetGlobalConfigDirectory();
@@ -254,20 +255,35 @@ public static class ConfigCommand
                     var generatedConfig = config.GetGeneratedConfig();
                     var displayJson = JsonSerializer.Serialize(generatedConfig, displayOptions);
                     
-                    // Post-process: Replace escaped backslashes with single backslashes for better readability
+                    // Post-process: Replace escaped backslashes
                     displayJson = System.Text.RegularExpressions.Regex.Replace(displayJson, @"\\\\", @"\");
                     
                     Console.WriteLine(displayJson);
+
+                    // Display resource consents table only when showing full config (not with -g flag)
+                    // When -g is used, resourceConsents are already in the JSON output
+                    if (!showGenerated && config.ResourceConsents != null && config.ResourceConsents.Count > 0)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine("Resource Consents:");
+                        Console.WriteLine(new string('-', ConsentsTableWidth));
+                        Console.WriteLine($"{"Resource Name",-30} {"App ID",-40} {"Consented",-12} {"Timestamp",-25}");
+                        Console.WriteLine(new string('-', ConsentsTableWidth));
+                        
+                        foreach (var consent in config.ResourceConsents.OrderBy(c => c.ResourceName))
+                        {
+                            var timestamp = consent.ConsentTimestamp?.ToString("yyyy-MM-dd HH:mm:ss UTC") ?? "N/A";
+                            var consented = consent.ConsentGranted ? "Yes" : "No";
+                            Console.WriteLine($"{consent.ResourceName,-30} {consent.ResourceAppId,-40} {consented,-12} {timestamp,-25}");
+                            
+                            if (consent.Scopes != null && consent.Scopes.Count > 0)
+                            {
+                                Console.WriteLine($"  Scopes: {string.Join(", ", consent.Scopes)}");
+                            }
+                        }
+                        Console.WriteLine(new string('-', ConsentsTableWidth));
+                    }
                 }
-            }
-            catch (FileNotFoundException ex)
-            {
-                logger.LogError("Configuration file not found: {Message}", ex.Message);
-                logger.LogError("Run 'a365 config init' to create a configuration.");
-            }
-            catch (JsonException ex)
-            {
-                logger.LogError("Failed to parse configuration: {Message}", ex.Message);
             }
             catch (Exception ex)
             {

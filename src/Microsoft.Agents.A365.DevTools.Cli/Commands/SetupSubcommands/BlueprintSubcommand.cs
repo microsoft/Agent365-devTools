@@ -231,11 +231,7 @@ internal static class BlueprintSubcommand
             ["servicePrincipalId"] = blueprintResult.servicePrincipalId,
             ["identifierUri"] = $"api://{blueprintAppId}",
             ["tenantId"] = setupConfig.TenantId,
-            ["consentUrlGraph"] = generatedConfig["consentUrlGraph"]?.DeepClone(),
-            ["consentUrlConnectivity"] = generatedConfig["consentUrlConnectivity"]?.DeepClone(),
-            ["consent1Granted"] = generatedConfig["consent1Granted"]?.DeepClone(),
-            ["consent2Granted"] = generatedConfig["consent2Granted"]?.DeepClone(),
-
+            ["resourceConsents"] = generatedConfig["resourceConsents"]?.DeepClone() ?? new JsonArray(),
         };
 
         await File.WriteAllTextAsync(generatedConfigPath, camelCaseConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
@@ -594,17 +590,16 @@ internal static class BlueprintSubcommand
 
             logger.LogInformation("  - Application scopes: {Scopes}", string.Join(", ", applicationScopes));
 
-            // Generate consent URLs for Graph and Connectivity
+            // Generate consent URL for Graph API
             var applicationScopesJoined = string.Join(' ', applicationScopes);
             var consentUrlGraph = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={appId}&scope={Uri.EscapeDataString(applicationScopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
-            var consentUrlConnectivity = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={appId}&scope=0ddb742a-e7dc-4899-a31e-80e797ec7144/Connectivity.Connections.Read&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
 
             logger.LogInformation("Opening browser for Graph API admin consent...");
             TryOpenBrowser(consentUrlGraph);
 
-            var consent1Success = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
+            var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
 
-            if (consent1Success)
+            if (consentSuccess)
             {
                 logger.LogInformation("Graph API admin consent granted successfully!");
             }
@@ -613,34 +608,26 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Graph API admin consent may not have completed");
             }
 
-            logger.LogInformation("");
-            logger.LogInformation("Opening browser for Connectivity admin consent...");
-            TryOpenBrowser(consentUrlConnectivity);
-
-            var consent2Success = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Connectivity Scope", 180, 5, ct);
-
-            if (consent2Success)
+            // Add Graph API consent to the resource consents collection
+            var resourceConsents = new JsonArray();
+            resourceConsents.Add(new JsonObject
             {
-                logger.LogInformation("Connectivity admin consent granted successfully!");
-            }
-            else
-            {
-                logger.LogWarning("Connectivity admin consent may not have completed");
-            }
+                ["resourceName"] = "Microsoft Graph",
+                ["resourceAppId"] = "00000003-0000-0000-c000-000000000000",
+                ["consentUrl"] = consentUrlGraph,
+                ["consentGranted"] = consentSuccess,
+                ["consentTimestamp"] = consentSuccess ? DateTime.UtcNow.ToString("O") : null,
+                ["scopes"] = new JsonArray(applicationScopes.Select(s => JsonValue.Create(s)).ToArray())
+            });
 
-            // Save consent URLs and status to generated config
-            generatedConfig["consentUrlGraph"] = consentUrlGraph;
-            generatedConfig["consentUrlConnectivity"] = consentUrlConnectivity;
-            generatedConfig["consent1Granted"] = consent1Success;
-            generatedConfig["consent2Granted"] = consent2Success;
+            generatedConfig["resourceConsents"] = resourceConsents;
 
-            if (!consent1Success || !consent2Success)
+            if (!consentSuccess)
             {
                 logger.LogWarning("");
-                logger.LogWarning("One or more consents may not have been detected");
+                logger.LogWarning("Admin consent may not have been detected");
                 logger.LogWarning("The setup will continue, but you may need to grant consent manually.");
-                logger.LogWarning("Consent URL (Graph): {Url}", consentUrlGraph);
-                logger.LogWarning("Consent URL (Connectivity): {Url}", consentUrlConnectivity);
+                logger.LogWarning("Consent URL: {Url}", consentUrlGraph);
             }
 
             return (true, appId, objectId, servicePrincipalId);

@@ -179,6 +179,7 @@ internal static class PermissionsSubcommand
         GraphApiService graphApiService,
         Models.Agent365Config setupConfig,
         bool iSetupAll,
+        SetupResults? setupResults = null,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -191,13 +192,20 @@ internal static class PermissionsSubcommand
             var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
             var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
-            // OAuth2 permission grants
-            await SetupHelpers.EnsureMcpOauth2PermissionGrantsAsync(
-                graphApiService, setupConfig, toolingScopes, logger);
-
-            // Inheritable permissions
-            await SetupHelpers.EnsureMcpInheritablePermissionsAsync(
-                graphApiService, setupConfig, toolingScopes, logger);
+            var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+            
+            // Configure all permissions using unified method
+            await SetupHelpers.EnsureResourcePermissionsAsync(
+                graphApiService,
+                setupConfig,
+                resourceAppId,
+                "Agent 365 Tools",
+                toolingScopes,
+                logger,
+                addToRequiredResourceAccess: false,
+                setInheritablePermissions: true,
+                setupResults,
+                cancellationToken);
 
             logger.LogInformation("");
             logger.LogInformation("MCP server permissions configured successfully");
@@ -238,6 +246,7 @@ internal static class PermissionsSubcommand
         Models.Agent365Config setupConfig,
         GraphApiService graphService,
         bool iSetupAll,
+        SetupResults? setupResults = null,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -246,71 +255,36 @@ internal static class PermissionsSubcommand
 
         try
         {
-            if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
-            {
-                throw new SetupValidationException("AgentBlueprintId is required.");
-            }
-
-            var blueprintSpObjectId = await graphService.LookupServicePrincipalByAppIdAsync(setupConfig.TenantId, setupConfig.AgentBlueprintId)
-                ?? throw new SetupValidationException($"Blueprint Service Principal not found for appId {setupConfig.AgentBlueprintId}");
-
-            // Ensure Messaging Bot API SP exists
-            var botApiResourceSpObjectId = await graphService.EnsureServicePrincipalForAppIdAsync(
-                setupConfig.TenantId,
-                ConfigConstants.MessagingBotApiAppId);
-
-            // Grant OAuth2 permissions
-            var botApiGrantOk = await graphService.CreateOrUpdateOauth2PermissionGrantAsync(
-                setupConfig.TenantId,
-                blueprintSpObjectId,
-                botApiResourceSpObjectId,
-                new[] { "Authorization.ReadWrite", "user_impersonation" });
-
-            if (!botApiGrantOk)
-            {
-                throw new InvalidOperationException("Failed to create/update oauth2PermissionGrant for Messaging Bot API");
-            }
-
-            // Set inheritable permissions
-            var (botApiOk, botApiAlready, botApiErr) = await graphService.SetInheritablePermissionsAsync(
-                setupConfig.TenantId,
-                setupConfig.AgentBlueprintId,
+            // Configure Messaging Bot API permissions using unified method
+            // Note: Messaging Bot API is a first-party Microsoft service with custom OAuth2 scopes
+            // that are not published in the standard service principal permissions.
+            // We skip addToRequiredResourceAccess because the scopes won't be found there.
+            // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
+            await SetupHelpers.EnsureResourcePermissionsAsync(
+                graphService,
+                setupConfig,
                 ConfigConstants.MessagingBotApiAppId,
-                new[] { "Authorization.ReadWrite", "user_impersonation" });
+                "Messaging Bot API",
+                new[] { "Authorization.ReadWrite", "user_impersonation" },
+                logger,
+                addToRequiredResourceAccess: false,
+                setInheritablePermissions: true,
+                setupResults,
+                cancellationToken);
 
-            if (!botApiOk && !botApiAlready)
-            {
-                throw new InvalidOperationException($"Failed to set inheritable permissions for Messaging Bot API: {botApiErr}");
-            }
-
-            // Ensure Observability API SP exists
-            var observabilityApiResourceSpObjectId = await graphService.EnsureServicePrincipalForAppIdAsync(
-                setupConfig.TenantId,
-                ConfigConstants.ObservabilityApiAppId);
-
-            // Grant OAuth2 permissions
-            var observabilityApiGrantOk = await graphService.CreateOrUpdateOauth2PermissionGrantAsync(
-                setupConfig.TenantId,
-                blueprintSpObjectId,
-                observabilityApiResourceSpObjectId,
-                new[] { "user_impersonation" });
-
-            if (!observabilityApiGrantOk)
-            {
-                throw new InvalidOperationException("Failed to create/update oauth2PermissionGrant for Observability API");
-            }
-
-            // Set inheritable permissions
-            var (observabilityApiOk, observabilityApiAlready, observabilityApiErr) = await graphService.SetInheritablePermissionsAsync(
-                setupConfig.TenantId,
-                setupConfig.AgentBlueprintId,
+            // Configure Observability API permissions using unified method
+            // Note: Observability API is also a first-party Microsoft service
+            await SetupHelpers.EnsureResourcePermissionsAsync(
+                graphService,
+                setupConfig,
                 ConfigConstants.ObservabilityApiAppId,
-                new[] { "user_impersonation" });
-
-            if (!observabilityApiOk && !observabilityApiAlready)
-            {
-                throw new InvalidOperationException($"Failed to set inheritable permissions for Observability API: {observabilityApiErr}");
-            }
+                "Observability API",
+                new[] { "user_impersonation" },
+                logger,
+                addToRequiredResourceAccess: false,
+                setInheritablePermissions: true,
+                setupResults,
+                cancellationToken);
 
             // write changes to generated config
             await configService.SaveStateAsync(setupConfig);

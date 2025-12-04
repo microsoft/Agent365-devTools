@@ -339,58 +339,26 @@ public class Agent365Config
     #region Consent State
 
     /// <summary>
-    /// Status of admin consent for the agent identity.
+    /// Collection of resource consent information for all APIs requiring admin consent.
     /// </summary>
-    [JsonPropertyName("consentStatus")]
-    public string? ConsentStatus { get; set; }
+    [JsonPropertyName("resourceConsents")]
+    public List<ResourceConsent> ResourceConsents { get; set; } = new();
 
     /// <summary>
-    /// Timestamp when consent was granted.
+    /// Checks if inheritable permissions are configured for all resources that require them.
+    /// Returns true only if all resources with inheritance have it successfully configured.
     /// </summary>
-    [JsonPropertyName("consentTimestamp")]
-    public DateTime? ConsentTimestamp { get; set; }
+    public bool IsInheritanceConfigured()
+    {
+        var resourcesWithInheritance = ResourceConsents
+            .Where(rc => rc.InheritablePermissionsConfigured.HasValue)
+            .ToList();
 
-    /// <summary>
-    /// Graph API consent URL for admin consent flow.
-    /// </summary>
-    [JsonPropertyName("consentUrlGraph")]
-    public string? ConsentUrlGraph { get; set; }
+        if (resourcesWithInheritance.Count == 0)
+            return false;
 
-    /// <summary>
-    /// Connectivity consent URL for admin consent flow.
-    /// </summary>
-    [JsonPropertyName("consentUrlConnectivity")]
-    public string? ConsentUrlConnectivity { get; set; }
-
-    /// <summary>
-    /// Whether the first consent (Graph API) has been granted.
-    /// </summary>
-    [JsonPropertyName("consent1Granted")]
-    public bool Consent1Granted { get; set; }
-
-    /// <summary>
-    /// Whether the second consent (connectivity) has been granted.
-    /// </summary>
-    [JsonPropertyName("consent2Granted")]
-    public bool Consent2Granted { get; set; }
-
-    /// <summary>
-    /// Whether inheritable permissions already exist in the tenant.
-    /// </summary>
-    [JsonPropertyName("inheritablePermissionsAlreadyExist")]
-    public bool InheritablePermissionsAlreadyExist { get; set; }
-
-    /// <summary>
-    /// Whether inheritance mode setup was successful.
-    /// </summary>
-    [JsonPropertyName("inheritanceConfigured")]
-    public bool InheritanceConfigured { get; set; }
-
-    /// <summary>
-    /// Error message if inheritance mode setup failed.
-    /// </summary>
-    [JsonPropertyName("inheritanceConfigError")]
-    public string? InheritanceConfigError { get; set; }
+        return resourcesWithInheritance.All(rc => rc.InheritablePermissionsConfigured == true);
+    }
 
     #endregion
 

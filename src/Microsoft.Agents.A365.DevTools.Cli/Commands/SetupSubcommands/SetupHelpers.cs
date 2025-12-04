@@ -114,7 +114,7 @@ internal static class SetupHelpers
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
             {
-                logger.LogInformation("  [FAILED] {Error}", error);
+                logger.LogError("  [FAILED] {Error}", error);
             }
         }
         
@@ -168,13 +168,28 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Ensure MCP OAuth2 permission grants (admin consent)
+    /// Unified method to configure all permissions (OAuth2 grants, required resource access, inheritable permissions) for a resource
     /// </summary>
-    public static async Task EnsureMcpOauth2PermissionGrantsAsync(
+    /// <param name="graph">Graph API service</param>
+    /// <param name="config">Agent365 configuration</param>
+    /// <param name="resourceAppId">The resource application ID to grant permissions for</param>
+    /// <param name="resourceName">Display name of the resource for logging</param>
+    /// <param name="scopes">Permission scopes to grant</param>
+    /// <param name="logger">Logger instance</param>
+    /// <param name="addToRequiredResourceAccess">Whether to add permissions to app manifest (visible in portal)</param>
+    /// <param name="setInheritablePermissions">Whether to set inheritable permissions for agent blueprints</param>
+    /// <param name="setupResults">Optional setup results for tracking warnings</param>
+    /// <param name="ct">Cancellation token</param>
+    public static async Task EnsureResourcePermissionsAsync(
         GraphApiService graph,
         Agent365Config config,
+        string resourceAppId,
+        string resourceName,
         string[] scopes,
         ILogger logger,
+        bool addToRequiredResourceAccess = true,
+        bool setInheritablePermissions = true,
+        SetupResults? setupResults = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
@@ -187,60 +202,165 @@ internal static class SetupHelpers
                 "The service principal may not have propagated yet. Wait a few minutes and retry.");
         }
 
-        var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
-        var Agent365ToolsSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct);
-        if (string.IsNullOrWhiteSpace(Agent365ToolsSpObjectId))
+        // Ensure resource service principal exists
+        var resourceSpObjectId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, resourceAppId, ct);
+        if (string.IsNullOrWhiteSpace(resourceSpObjectId))
         {
-            throw new SetupValidationException($"Agent 365 Tools Service Principal not found for appId {resourceAppId}. " +
-                $"Ensure the Agent 365 Tools application is available in your tenant for environment: {config.Environment}");
+            throw new SetupValidationException($"{resourceName} Service Principal not found for appId {resourceAppId}. " +
+                $"Ensure the {resourceName} application is available in your tenant.");
         }
 
+        // 1. Add to required resource access (makes permissions visible in portal)
+        if (addToRequiredResourceAccess)
+        {
+            logger.LogInformation("   - Adding {ResourceName} to blueprint's required resource access", resourceName);
+            var addedResourceAccess = await graph.AddRequiredResourceAccessAsync(
+                config.TenantId,
+                config.AgentBlueprintId,
+                resourceAppId,
+                scopes,
+                isDelegated: true,
+                ct);
+
+            if (!addedResourceAccess)
+            {
+                logger.LogWarning("Failed to add {ResourceName} to required resource access. Permissions may not be visible in portal.", resourceName);
+            }
+        }
+
+        // 2. Grant OAuth2 permissions (admin consent)
         logger.LogInformation("   - OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
-            blueprintSpObjectId, Agent365ToolsSpObjectId, string.Join(' ', scopes));
+            blueprintSpObjectId, resourceSpObjectId, string.Join(' ', scopes));
 
         var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
-            config.TenantId, blueprintSpObjectId, Agent365ToolsSpObjectId, scopes, ct);
+            config.TenantId, blueprintSpObjectId, resourceSpObjectId, scopes, ct);
 
         if (!response)
         {
             throw new SetupValidationException(
-                $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to Agent 365 Tools {resourceAppId}. " +
+                $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to {resourceName} {resourceAppId}. " +
                 "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All permissions.");
         }
-    }
 
-    /// <summary>
-    /// Ensure MCP inheritable permissions on blueprint
-    /// </summary>
-    public static async Task EnsureMcpInheritablePermissionsAsync(
-        GraphApiService graph,
-        Agent365Config config,
-        string[] scopes,
-        ILogger logger,
-        CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
-            throw new SetupValidationException("AgentBlueprintId (appId) is required.");
+        // 3. Set inheritable permissions (for agent blueprints)
+        bool inheritanceConfigured = false;
+        bool inheritanceAlreadyExisted = false;
+        string? inheritanceError = null;
 
-        var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
-
-        logger.LogInformation("   - Inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
-            config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
-
-        var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(
-            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
-
-        if (!ok && !alreadyExists)
+        if (setInheritablePermissions)
         {
-            config.InheritanceConfigured = false;
-            config.InheritanceConfigError = err;
-            throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
-                "Ensure you have Application.ReadWrite.All permissions and the blueprint supports inheritable permissions.");
+            logger.LogInformation("   - Inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+                config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
+
+            var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(
+                config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
+
+            if (!ok && !alreadyExists)
+            {
+                inheritanceConfigured = false;
+                inheritanceError = err;
+                throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
+                    "Ensure you have Application.ReadWrite.All permissions and the blueprint supports inheritable permissions.");
+            }
+
+            inheritanceConfigured = true;
+            inheritanceAlreadyExisted = alreadyExists;
+
+            // Verify inheritable permissions were actually set (non-blocking verification with retry)
+            try
+            {
+                logger.LogInformation("   - Verifying inheritable permissions for {ResourceName}", resourceName);
+                
+                var retryHelper = new RetryHelper(logger);
+                var verificationResult = await retryHelper.ExecuteWithRetryAsync(
+                    operation: async (ct) =>
+                    {
+                        var (exists, verifiedScopes, verifyError) = await graph.VerifyInheritablePermissionsAsync(
+                            config.TenantId, config.AgentBlueprintId, resourceAppId, ct);
+                        return (exists, verifiedScopes, verifyError);
+                    },
+                    shouldRetry: (result) =>
+                    {
+                        // Retry if permissions don't exist yet (Graph API propagation delay)
+                        // Don't retry on actual errors (verifyError != null) - fail fast
+                        return !result.exists && string.IsNullOrEmpty(result.verifyError);
+                    },
+                    maxRetries: 5,
+                    baseDelaySeconds: 2,
+                    cancellationToken: ct);
+
+                var (exists, verifiedScopes, verifyError) = verificationResult;
+
+                if (!string.IsNullOrEmpty(verifyError))
+                {
+                    logger.LogWarning("Could not verify {ResourceName} inheritable permissions: {Error}", resourceName, verifyError);
+                    setupResults?.Warnings.Add($"Could not verify {resourceName} inheritable permissions: {verifyError}");
+                }
+                else if (!exists)
+                {
+                    var warning = $"{resourceName} inheritable permissions not found after configuration. " +
+                        $"Agent instances may not inherit these permissions. " +
+                        $"Verify manually: GET /beta/applications/microsoft.graph.agentIdentityBlueprint/{config.AgentBlueprintId}/inheritablePermissions";
+                    logger.LogWarning(warning);
+                    setupResults?.Warnings.Add(warning);
+                }
+                else
+                {
+                    // Check if all required scopes are present
+                    var missingScopes = scopes.Except(verifiedScopes ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase).ToArray();
+                    if (missingScopes.Length > 0)
+                    {
+                        var warning = $"{resourceName} inheritable permissions incomplete. " +
+                            $"Missing scopes: [{string.Join(", ", missingScopes)}]. " +
+                            $"Expected: [{string.Join(", ", scopes)}]. " +
+                            $"Found: [{string.Join(", ", verifiedScopes ?? Array.Empty<string>())}]. " +
+                            $"Run 'a365 setup permissions bot' to retry.";
+                        logger.LogWarning(warning);
+                        setupResults?.Warnings.Add(warning);
+                    }
+                    else
+                    {
+                        logger.LogInformation("   - Verified: {ResourceName} inheritable permissions correctly configured", resourceName);
+                    }
+                }
+            }
+            catch (Exception verifyEx)
+            {
+                // Verification is non-critical - log warning but don't fail setup
+                logger.LogWarning("Failed to verify {ResourceName} inheritable permissions: {Message}. Setup will continue.", resourceName, verifyEx.Message);
+                setupResults?.Warnings.Add($"Could not verify {resourceName} inheritable permissions: {verifyEx.Message}");
+            }
         }
 
-        config.InheritanceConfigured = true;
-        config.InheritablePermissionsAlreadyExist = alreadyExists;
-        config.InheritanceConfigError = null;
+        // 4. Update resource consents collection
+        var existingConsent = config.ResourceConsents.FirstOrDefault(rc => 
+            rc.ResourceAppId.Equals(resourceAppId, StringComparison.OrdinalIgnoreCase));
+
+        if (existingConsent != null)
+        {
+            // Update existing consent record
+            existingConsent.ConsentGranted = true;
+            existingConsent.ConsentTimestamp = DateTime.UtcNow;
+            existingConsent.Scopes = scopes.ToList();
+            existingConsent.InheritablePermissionsConfigured = inheritanceConfigured;
+            existingConsent.InheritablePermissionsAlreadyExist = inheritanceAlreadyExisted;
+            existingConsent.InheritablePermissionsError = inheritanceError;
+        }
+        else
+        {
+            // Add new consent record
+            config.ResourceConsents.Add(new ResourceConsent
+            {
+                ResourceName = resourceName,
+                ResourceAppId = resourceAppId,
+                ConsentGranted = true,
+                ConsentTimestamp = DateTime.UtcNow,
+                Scopes = scopes.ToList(),
+                InheritablePermissionsConfigured = inheritanceConfigured,
+                InheritablePermissionsAlreadyExist = inheritanceAlreadyExisted,
+                InheritablePermissionsError = inheritanceError
+            });
+        }
     }
 
     /// <summary>
@@ -256,7 +376,7 @@ internal static class SetupHelpers
         {
             logger.LogError("Agent Blueprint ID not found. Blueprint creation may have failed.");
             throw new SetupValidationException(
-                issueDescription: "Agent blueprint was not found – messaging endpoint cannot be registered.",
+                issueDescription: "Agent blueprint was not found ï¿½ messaging endpoint cannot be registered.",
                 errorDetails: new List<string>
                 {
                     "AgentBlueprintId is missing from configuration. This usually means the blueprint creation step failed or a365.generated.config.json is out of sync."
@@ -307,7 +427,7 @@ internal static class SetupHelpers
         }
         else // Non-Azure hosting
         {
-            // No deployment – use the provided MessagingEndpoint
+            // No deployment ï¿½ use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogError("MessagingEndpoint must be provided in a365.config.json for non-Azure hosting.");

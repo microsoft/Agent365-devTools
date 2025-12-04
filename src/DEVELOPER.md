@@ -289,18 +289,19 @@ For detailed MOS upload instructions, see the [MOS Titles Documentation](https:/
 - **Invalid Manifest**: JSON validation errors with specific field information
 - **Network Errors**: Detailed HTTP status codes and response bodies for troubleshooting
 
-## Inheritable Permissions: Best Practice
+## Permissions Architecture
 
-Agent 365 CLI and the Agent 365 platform are designed to use inheritable permissions on agent blueprints. This means:
+The CLI configures three layers of permissions for agent blueprints:
 
-- **Agent identities automatically inherit OAuth2 scopes from the blueprint.**
-- **No additional admin consent is required for agent identities** (as long as the blueprint’s service principal has been granted the required permissions).
-- This is the default and recommended approach for all agent developers.
+1. **OAuth2 Grants** - Admin consent via Graph API `/oauth2PermissionGrants`
+2. **Required Resource Access** - Portal-visible permissions (Entra ID "API permissions")
+3. **Inheritable Permissions** - Blueprint-level permissions that instances inherit automatically
 
-**If inheritable permissions are disabled:**
-- Agent identities will NOT inherit permissions from the blueprint.
-- You must manually assign permissions and request admin consent for each identity.
-- This is NOT recommended and will create significant friction.
+**Unified Configuration:** `SetupHelpers.EnsureResourcePermissionsAsync` handles all three layers plus verification with retry logic (exponential backoff: 2s → 4s → 8s).
+
+**Per-Resource Tracking:** `ResourceConsent` model tracks inheritance state per resource (Agent 365 Tools, Messaging Bot API, Observability API). Check global status with `config.IsInheritanceConfigured()`.
+
+**Best Practice:** Agent instances automatically inherit permissions from blueprint - no additional admin consent required.
 
 Validation is enforced for required fields in both interactive and import flows. The config model is strongly typed (`Agent365Config`).
 

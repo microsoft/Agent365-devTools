@@ -223,12 +223,13 @@ internal static class AllSubcommand
                         executor,
                         graphApiService,
                         setupConfig,
-                        true);
+                        true,
+                        setupResults);
 
                     setupResults.McpPermissionsConfigured = mcpPermissionSetup;
                     if (mcpPermissionSetup)
                     {
-                        setupResults.InheritablePermissionsConfigured = setupConfig.InheritanceConfigured;
+                        setupResults.InheritablePermissionsConfigured = setupConfig.IsInheritanceConfigured();
                     }
                 }
                 catch (Exception mcpPermEx)
@@ -253,7 +254,8 @@ internal static class AllSubcommand
                         executor,
                         setupConfig,
                         graphApiService,
-                        true);
+                        true,
+                        setupResults);
 
                     setupResults.BotApiPermissionsConfigured = botPermissionSetup;
                 }

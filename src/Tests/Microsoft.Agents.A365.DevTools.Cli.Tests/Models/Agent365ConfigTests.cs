@@ -104,8 +104,13 @@ public class Agent365ConfigTests
         config.BotId = "bot-def";
         config.BotMsaAppId = "msa-ghi";
         config.BotMessagingEndpoint = "https://bot.example.com/messages";
-        config.ConsentStatus = "granted";
-        config.ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z");
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ConsentGranted = true,
+            ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z")
+        });
         config.DeploymentLastTimestamp = DateTime.Parse("2025-10-14T13:00:00Z");
         config.DeploymentLastStatus = "success";
         config.DeploymentLastCommitHash = "abc123";
@@ -118,11 +123,12 @@ public class Agent365ConfigTests
         Assert.Equal("blueprint-456", config.AgentBlueprintId);
         Assert.Equal("identity-789", config.AgenticAppId);
         Assert.Equal("user-abc", config.AgenticUserId);
-        config.BotId = "bot-def";
-        config.BotMsaAppId = "msa-ghi";
-        config.BotMessagingEndpoint = "https://bot.example.com/messages";
-        config.ConsentStatus = "granted";
-        config.ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z");
+        Assert.Equal("bot-def", config.BotId);
+        Assert.Equal("msa-ghi", config.BotMsaAppId);
+        Assert.Equal("https://bot.example.com/messages", config.BotMessagingEndpoint);
+        Assert.NotEmpty(config.ResourceConsents);
+        Assert.Equal("Microsoft Graph", config.ResourceConsents[0].ResourceName);
+        Assert.True(config.ResourceConsents[0].ConsentGranted);
         Assert.Equal(DateTime.Parse("2025-10-14T13:00:00Z"), config.DeploymentLastTimestamp);
         Assert.Equal("success", config.DeploymentLastStatus);
         Assert.Equal("abc123", config.DeploymentLastCommitHash);
@@ -167,8 +173,7 @@ public class Agent365ConfigTests
         Assert.Null(config.BotId);
         Assert.Null(config.BotMsaAppId);
         Assert.Null(config.BotMessagingEndpoint);
-        Assert.Null(config.ConsentStatus);
-        Assert.Null(config.ConsentTimestamp);
+        Assert.Empty(config.ResourceConsents);
         Assert.Null(config.DeploymentLastTimestamp);
         Assert.Null(config.DeploymentLastStatus);
         Assert.Null(config.DeploymentLastCommitHash);
@@ -283,9 +288,16 @@ public class Agent365ConfigTests
         // Arrange
         var json = @"{
             ""tenantId"": ""tenant-123"",
-            ""consentTimestamp"": ""2025-10-14T12:34:56Z"",
             ""deploymentLastTimestamp"": ""2025-10-14T13:45:30Z"",
-            ""lastUpdated"": ""2025-10-14T14:56:40Z""
+            ""lastUpdated"": ""2025-10-14T14:56:40Z"",
+            ""resourceConsents"": [
+                {
+                    ""resourceName"": ""Microsoft Graph"",
+                    ""resourceAppId"": ""00000003-0000-0000-c000-000000000000"",
+                    ""consentGranted"": true,
+                    ""consentTimestamp"": ""2025-10-14T12:34:56Z""
+                }
+            ]
         }";
 
         // Act
@@ -293,10 +305,12 @@ public class Agent365ConfigTests
 
         // Assert
         Assert.NotNull(config);
-        Assert.NotNull(config.ConsentTimestamp);
-        Assert.Equal(2025, config.ConsentTimestamp.Value.Year);
-        Assert.Equal(10, config.ConsentTimestamp.Value.Month);
-        Assert.Equal(14, config.ConsentTimestamp.Value.Day);
+        Assert.NotEmpty(config.ResourceConsents);
+        Assert.NotNull(config.ResourceConsents[0].ConsentTimestamp);
+        var timestamp = config.ResourceConsents[0].ConsentTimestamp!.Value;
+        Assert.Equal(2025, timestamp.Year);
+        Assert.Equal(10, timestamp.Month);
+        Assert.Equal(14, timestamp.Day);
     }
 
     #endregion
