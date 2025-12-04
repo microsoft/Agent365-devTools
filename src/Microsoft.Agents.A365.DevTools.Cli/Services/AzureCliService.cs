@@ -51,7 +51,16 @@ public class AzureCliService : IAzureCliService
                 return null;
             }
 
-            var accountJson = JsonSerializer.Deserialize<JsonElement>(result.StandardOutput);
+            // Clean the output to remove any control characters or non-JSON content
+            var cleanedOutput = CleanJsonOutput(result.StandardOutput);
+            
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                _logger.LogError("Azure CLI returned empty output");
+                return null;
+            }
+
+            var accountJson = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             
             return new AzureAccountInfo
             {
@@ -89,7 +98,13 @@ public class AzureCliService : IAzureCliService
                 return new List<AzureResourceGroup>();
             }
 
-            var resourceGroupsJson = JsonSerializer.Deserialize<JsonElement[]>(result.StandardOutput);
+            var cleanedOutput = CleanJsonOutput(result.StandardOutput);
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                return new List<AzureResourceGroup>();
+            }
+
+            var resourceGroupsJson = JsonSerializer.Deserialize<JsonElement[]>(cleanedOutput);
             
             return resourceGroupsJson?.Select(rg => new AzureResourceGroup
             {
@@ -120,7 +135,13 @@ public class AzureCliService : IAzureCliService
                 return new List<AzureAppServicePlan>();
             }
 
-            var plansJson = JsonSerializer.Deserialize<JsonElement[]>(result.StandardOutput);
+            var cleanedOutput = CleanJsonOutput(result.StandardOutput);
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                return new List<AzureAppServicePlan>();
+            }
+
+            var plansJson = JsonSerializer.Deserialize<JsonElement[]>(cleanedOutput);
             
             return plansJson?.Select(plan => new AzureAppServicePlan
             {
@@ -153,7 +174,13 @@ public class AzureCliService : IAzureCliService
                 return new List<AzureLocation>();
             }
 
-            var locationsJson = JsonSerializer.Deserialize<JsonElement[]>(result.StandardOutput);
+            var cleanedOutput = CleanJsonOutput(result.StandardOutput);
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                return new List<AzureLocation>();
+            }
+
+            var locationsJson = JsonSerializer.Deserialize<JsonElement[]>(cleanedOutput);
             
             return locationsJson?.Select(loc => new AzureLocation
             {
@@ -169,5 +196,37 @@ public class AzureCliService : IAzureCliService
             _logger.LogError(ex, "Error listing Azure locations");
             return new List<AzureLocation>();
         }
+    }
+
+    /// <summary>
+    /// Cleans JSON output from Azure CLI by removing control characters and non-JSON content
+    /// </summary>
+    private string CleanJsonOutput(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return string.Empty;
+        }
+
+        // Remove control characters (0x00-0x1F except \r, \n, \t)
+        var cleaned = new System.Text.StringBuilder(output.Length);
+        foreach (char c in output)
+        {
+            if (c >= 32 || c == '\n' || c == '\r' || c == '\t')
+            {
+                cleaned.Append(c);
+            }
+        }
+
+        var result = cleaned.ToString().Trim();
+        
+        // Find the first { or [ to locate JSON start
+        int jsonStart = result.IndexOfAny(new[] { '{', '[' });
+        if (jsonStart > 0)
+        {
+            result = result.Substring(jsonStart);
+        }
+
+        return result;
     }
 }
