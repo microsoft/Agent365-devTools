@@ -1,0 +1,631 @@
+[
+  {
+    "name": "mcp_MailTools_graph_mail_createMessage",
+    "description": "Create a draft email. Supports HTML by setting body.body.contentType = \u0022HTML\u0022.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "subject": {
+          "type": "string",
+          "description": "Message subject"
+        },
+        "toRecipients": {
+          "type": "array",
+          "description": "Recipients to send to",
+          "items": {
+            "type": "object",
+            "properties": {
+              "emailAddress": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "description": "Email address"
+                  }
+                },
+                "required": [
+                  "address"
+                ]
+              }
+            },
+            "required": [
+              "emailAddress"
+            ]
+          }
+        },
+        "body": {
+          "type": "object",
+          "description": "Message body (set contentType = \u0022HTML\u0022 for rich text)",
+          "properties": {
+            "contentType": {
+              "type": "string",
+              "enum": [
+                "Text",
+                "HTML"
+              ],
+              "description": "Format of the message body"
+            },
+            "content": {
+              "type": "string",
+              "description": "Message body content"
+            }
+          },
+          "required": [
+            "contentType",
+            "content"
+          ]
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, sets Prefer: outlook.body-content-type=\u0022html\u0022",
+          "x-ms-location": "header",
+          "x-ms-path": "Prefer"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Optional additional headers as a name/value or name/values array bag",
+          "x-ms-location": "header",
+          "x-ms-path": "headers"
+        }
+      },
+      "required": [
+        "subject",
+        "toRecipients",
+        "body"
+      ]
+    },
+    "responseTemplate": "Email to {{toRecipients}} with subject '{{subject}}' was created (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_deleteMessage",
+    "description": "Delete a message from the signed-in user\u0027s mailbox.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID.",
+          "x-ms-location": "path",
+          "x-ms-path": "id"
+        },
+        "If-Match": {
+          "type": "string",
+          "description": "Optional ETag for concurrency control.",
+          "x-ms-location": "header",
+          "x-ms-path": "If-Match"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Message with ID '{{id}}' was deleted (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_getMessage",
+    "description": "Get a message by ID from the signed-in user\u0027s mailbox. Use preferHtml to request HTML body.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID.",
+          "x-ms-location": "path",
+          "x-ms-path": "id"
+        },
+        "select": {
+          "type": "string",
+          "description": "Optional OData select clause.",
+          "x-ms-location": "query",
+          "x-ms-path": "$select"
+        },
+        "expand": {
+          "type": "string",
+          "description": "Optional OData expand clause.",
+          "x-ms-location": "query",
+          "x-ms-path": "$expand"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, send header Prefer: outlook.body-content-type=\u0022html\u0022",
+          "x-ms-location": "header",
+          "x-ms-path": "Prefer"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Optional HTTP headers to include (e.g., { \u0022Prefer\u0022: \u0022outlook.body-content-type=\\\u0022html\\\u0022\u0022 }).",
+          "x-ms-location": "header",
+          "x-ms-path": "headers",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Retrieved message with ID '{{id}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_listSent",
+    "description": "List messages in Sent Items.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filter": {
+          "type": "string",
+          "x-ms-location": "query",
+          "x-ms-path": "$filter"
+        },
+        "search": {
+          "type": "string",
+          "x-ms-location": "query",
+          "x-ms-path": "$search"
+        },
+        "orderby": {
+          "type": "string",
+          "x-ms-location": "query",
+          "x-ms-path": "$orderby"
+        },
+        "top": {
+          "type": "integer",
+          "x-ms-location": "query",
+          "x-ms-path": "$top"
+        },
+        "select": {
+          "type": "string",
+          "x-ms-location": "query",
+          "x-ms-path": "$select"
+        }
+      }
+    },
+    "responseTemplate": "Retrieved sent messages (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_reply",
+    "description": "Send a reply to an existing message. Supports HTML via preferHtml or headers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID to reply to.",
+          "x-ms-location": "path",
+          "x-ms-path": "id"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, send HTTP header: Prefer: outlook.body-content-type=\u0022html\u0022",
+          "x-ms-location": "header",
+          "x-ms-path": "Prefer"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Optional HTTP headers to include (e.g., { \u0022Prefer\u0022: \u0022outlook.body-content-type=\\\u0022html\\\u0022\u0022 }).",
+          "x-ms-location": "header",
+          "x-ms-path": "headers",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional reply text. If HTML, also set preferHtml or use headers.",
+          "x-ms-location": "body"
+        },
+        "message": {
+          "type": "object",
+          "description": "Optional message object overrides (recipients, attachments, etc.).",
+          "x-ms-location": "body",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "responseTemplate": "Reply sent to message ID '{{id}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_replyAll",
+    "description": "Send a reply-all to an existing message. Supports HTML via preferHtml or headers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID to reply-all to.",
+          "x-ms-location": "path",
+          "x-ms-path": "id"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional reply text. If HTML, set preferHtml or use headers.",
+          "x-ms-location": "body",
+          "x-ms-path": "comment"
+        },
+        "message": {
+          "type": "object",
+          "description": "Optional message overrides (add recipients, attachments, etc.).",
+          "x-ms-location": "body",
+          "x-ms-path": "message",
+          "additionalProperties": true
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, send header: Prefer: outlook.body-content-type=\u0022html\u0022",
+          "x-ms-location": "header",
+          "x-ms-path": "Prefer"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Optional HTTP headers (e.g., { \u0022Prefer\u0022: \u0022outlook.body-content-type=\\\u0022html\\\u0022\u0022 }).",
+          "x-ms-location": "header",
+          "x-ms-path": "headers",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "responseTemplate": "Reply-all sent to message ID '{{id}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_searchMessages",
+    "description": "Search Outlook messages using Microsoft Graph Search API (/v1.0/search/query) with entityTypes=[\u0022message\u0022].",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "array",
+          "description": "Array of searchRequest objects; typically send one.",
+          "x-ms-location": "body",
+          "x-ms-path": "requests",
+          "items": {
+            "type": "object",
+            "properties": {
+              "entityTypes": {
+                "type": "array",
+                "description": "Search entity types. For messages use [\u0022message\u0022].",
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "message"
+                ]
+              },
+              "query": {
+                "type": "object",
+                "description": "KQL-style search string for messages (subject, body, attachments).",
+                "properties": {
+                  "queryString": {
+                    "type": "string",
+                    "description": "The search text, e.g., \u0022contoso OR from:deepthi\u0022"
+                  }
+                },
+                "required": [
+                  "queryString"
+                ]
+              },
+              "from": {
+                "type": "integer",
+                "description": "Zero-based offset of the first result to return.",
+                "minimum": 0,
+                "default": 0
+              },
+              "size": {
+                "type": "integer",
+                "description": "Page size (results to return).",
+                "minimum": 1,
+                "maximum": 50,
+                "default": 25
+              },
+              "enableTopResults": {
+                "type": "boolean",
+                "description": "If true, returns Top results (relevance booster).",
+                "default": false
+              }
+            },
+            "required": [
+              "entityTypes",
+              "query"
+            ]
+          }
+        }
+      },
+      "required": [
+        "requests"
+      ]
+    },
+    "responseTemplate": "Search completed for messages (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_sendDraft",
+    "description": "Send an existing draft message by ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Draft message ID to send.",
+          "x-ms-location": "path",
+          "x-ms-path": "id"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Draft message with ID '{{id}}' was sent (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_sendMail",
+    "description": "Send an email as the signed-in user or a specified user.",
+    "inputSchema": {
+      "type": "object",
+      "description": "Wrapper for sendMail inputs.",
+      "properties": {
+        "message": {
+          "type": "object",
+          "description": "Microsoft Graph Message object (subset) representing the email to send.",
+          "x-ms-location": "body",
+          "properties": {
+            "subject": {
+              "type": "string",
+              "description": "Email subject line."
+            },
+            "toRecipients": {
+              "type": "array",
+              "description": "Primary recipients (To).",
+              "items": {
+                "type": "object",
+                "description": "Recipient entry.",
+                "properties": {
+                  "emailAddress": {
+                    "type": "object",
+                    "description": "Recipient email address container.",
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "description": "Recipient email address (e.g., user@contoso.com)."
+                      }
+                    },
+                    "required": [
+                      "address"
+                    ]
+                  }
+                },
+                "required": [
+                  "emailAddress"
+                ]
+              }
+            },
+            "ccRecipients": {
+              "type": "array",
+              "description": "Carbon-copy recipients (CC).",
+              "items": {
+                "type": "object",
+                "description": "Recipient entry.",
+                "properties": {
+                  "emailAddress": {
+                    "type": "object",
+                    "description": "Recipient email address container.",
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "description": "Recipient email address (e.g., user@contoso.com)."
+                      }
+                    },
+                    "required": [
+                      "address"
+                    ]
+                  }
+                },
+                "required": [
+                  "emailAddress"
+                ]
+              }
+            },
+            "bccRecipients": {
+              "type": "array",
+              "description": "Blind carbon-copy recipients (BCC).",
+              "items": {
+                "type": "object",
+                "description": "Recipient entry.",
+                "properties": {
+                  "emailAddress": {
+                    "type": "object",
+                    "description": "Recipient email address container.",
+                    "properties": {
+                      "address": {
+                        "type": "string",
+                        "description": "Recipient email address (e.g., user@contoso.com)."
+                      }
+                    },
+                    "required": [
+                      "address"
+                    ]
+                  }
+                },
+                "required": [
+                  "emailAddress"
+                ]
+              }
+            },
+            "body": {
+              "type": "object",
+              "description": "Email body content and format.",
+              "properties": {
+                "contentType": {
+                  "type": "string",
+                  "enum": [
+                    "Text",
+                    "HTML"
+                  ],
+                  "description": "Body format: \u0027Text\u0027 for plain text or \u0027HTML\u0027 for rich content."
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Body content. Use valid HTML when contentType is \u0027HTML\u0027."
+                }
+              },
+              "required": [
+                "contentType",
+                "content"
+              ]
+            }
+          },
+          "required": [
+            "subject",
+            "toRecipients",
+            "body"
+          ]
+        },
+        "saveToSentItems": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to save the sent message in the sender\u0027s Sent Items folder.",
+          "x-ms-location": "body"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, adds header: Prefer: outlook.body-content-type=\\\u0022html\\\u0022 to force HTML rendering.",
+          "x-ms-location": "header",
+          "x-ms-path": "Prefer"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Optional additional HTTP headers to include in the request (name/value pairs). Example: { \u0022Prefer\u0022: \u0022outlook.body-content-type=\\\u0022html\\\u0022\u0022 }",
+          "x-ms-location": "header",
+          "x-ms-path": "headers",
+          "additionalProperties": {
+            "type": "string",
+            "description": "Header value."
+          }
+        }
+      },
+      "required": [
+        "message"
+      ]
+    },
+    "responseTemplate": "Email with subject '{{message.subject}}' was sent (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "mcp_MailTools_graph_mail_updateMessage",
+    "description": "Update a message\u0027s mutable properties (e.g., subject, body, categories).",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID.",
+          "x-ms-location": "path",
+          "x-ms-path": "id"
+        },
+        "subject": {
+          "type": "string",
+          "description": "New subject",
+          "x-ms-location": "body"
+        },
+        "body": {
+          "type": "object",
+          "description": "New message body",
+          "x-ms-location": "body",
+          "properties": {
+            "contentType": {
+              "type": "string",
+              "enum": [
+                "Text",
+                "HTML"
+              ],
+              "description": "Body format"
+            },
+            "content": {
+              "type": "string",
+              "description": "Body content"
+            }
+          },
+          "required": [
+            "contentType",
+            "content"
+          ]
+        },
+        "categories": {
+          "type": "array",
+          "description": "Message categories",
+          "x-ms-location": "body",
+          "items": {
+            "type": "string"
+          }
+        },
+        "importance": {
+          "type": "string",
+          "enum": [
+            "Low",
+            "Normal",
+            "High"
+          ],
+          "x-ms-location": "body"
+        },
+        "If-Match": {
+          "type": "string",
+          "description": "Optional ETag for concurrency control (e.g., \u0022*\u0022 to force).",
+          "x-ms-location": "header",
+          "x-ms-path": "If-Match"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Message with ID '{{id}}' was updated (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  }
+]
