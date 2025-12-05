@@ -26,6 +26,14 @@ public class Agent365Config
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
+        if (string.IsNullOrWhiteSpace(ClientAppId))
+        {
+            errors.Add("clientAppId is required. This must be a client app you create in your tenant with specific permissions. See docs/guides/custom-client-app-registration.md for setup instructions.");
+        }
+        else
+        {
+            ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
+        }
 
         if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
         if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
@@ -47,6 +55,18 @@ public class Agent365Config
 
         return errors;
     }
+
+    /// <summary>
+    /// Helper method to validate GUID format
+    /// </summary>
+    private static void ValidateGuid(string value, string fieldName, List<string> errors)
+    {
+        if (!Guid.TryParse(value, out _))
+        {
+            errors.Add($"{fieldName} must be a valid GUID format.");
+        }
+    }
+
     // ========================================================================
     // STATIC PROPERTIES (init-only) - from a365.config.json
     // Developer-managed, immutable after construction
@@ -101,6 +121,23 @@ public class Agent365Config
     /// </summary>
     [JsonPropertyName("needDeployment")]
     public bool NeedDeployment { get; init; } = true;
+
+    #endregion
+
+    #region Authentication Configuration
+
+    /// <summary>
+    /// Client Application ID for interactive authentication with Microsoft Graph.
+    /// This must be a client app registration you create in your Entra ID tenant with the following delegated permissions:
+    /// - Application.ReadWrite.All
+    /// - AgentIdentityBlueprint.ReadWrite.All
+    /// - DelegatedPermissionGrant.ReadWrite.All
+    /// - Directory.Read.All
+    /// All permissions require admin consent.
+    /// See docs/guides/custom-client-app-registration.md for setup instructions.
+    /// </summary>
+    [JsonPropertyName("clientAppId")]
+    public string ClientAppId { get; init; } = string.Empty;
 
     #endregion
 

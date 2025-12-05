@@ -16,6 +16,11 @@ $outputDir = Join-Path $PSScriptRoot 'nupkg'
 if (-not (Test-Path $outputDir)) {
     New-Item -ItemType Directory -Path $outputDir | Out-Null
 }
+
+# Clean old packages to ensure fresh build
+Write-Host "Cleaning old packages from $outputDir..."
+Get-ChildItem -Path $outputDir -Filter '*.nupkg' | Remove-Item -Force
+
 # Build the project first to ensure NuGet restore and build outputs exist
 Write-Host "Building CLI tool (Release configuration)..."
 dotnet build $projectPath -c Release
@@ -39,14 +44,19 @@ if (-not $nupkg) {
 
 Write-Host "Installing Agent 365 CLI from local package: $($nupkg.Name)"
 
-# Uninstall any existing global CLI tool
+# Uninstall any existing global CLI tool (force to handle version conflicts)
+Write-Host "Uninstalling existing CLI tool..."
 try {
-    dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli
+    dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli 2>$null
+    Write-Host "Existing CLI uninstalled successfully." -ForegroundColor Green
 } catch {
-    Write-Host "No existing CLI found or uninstall failed. Proceeding with install." -ForegroundColor Yellow
+    Write-Host "No existing CLI found. Proceeding with fresh install." -ForegroundColor Yellow
 }
 
-dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli --add-source $outputDir --prerelease
+# Install with specific version from local source
+Write-Host "Installing CLI tool..."
+$version = $nupkg.Name -replace 'Microsoft\.Agents\.A365\.DevTools\.Cli\.(.*)\.nupkg','$1'
+dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli --add-source $outputDir --version $version
 if ($LASTEXITCODE -ne 0) {
     Write-Error "ERROR: CLI installation failed. Check output above for details."
     exit 1

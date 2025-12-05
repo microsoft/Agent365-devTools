@@ -400,12 +400,16 @@ public class DeployCommand
 
         var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
 
+        // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation
+        var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
+
         var (ok, alreadyExists, err) = await graphService.SetInheritablePermissionsAsync(
-            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
+            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
 
         if (!ok && !alreadyExists)
         {
-            throw new InvalidOperationException("Failed to set inheritable permissions: " + err);
+            throw new InvalidOperationException("Failed to set inheritable permissions: " + err + 
+                ". Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All and Application.ReadWrite.All permissions in your custom client app.");
         }
 
         logger.LogInformation("   - Inheritable permissions completed: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",

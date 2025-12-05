@@ -5,6 +5,7 @@ using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -81,7 +82,15 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine("NOTE: Defaulted from current Azure account. To use a different Azure subscription, run 'az login' and then 'az account set --subscription <subscription-id>' before running this command.");
             Console.WriteLine();
 
-            // Step 3: Get unique agent name
+            // Step 3: Get and validate Client App ID (required for authentication)
+            var clientAppId = await PromptForClientAppIdAsync(existingConfig, accountInfo.TenantId);
+            if (string.IsNullOrWhiteSpace(clientAppId))
+            {
+                _logger.LogError("Client App ID is required. Configuration cancelled");
+                return null;
+            }
+
+            // Step 4: Get unique agent name
             var agentName = PromptForAgentName(existingConfig);
             if (string.IsNullOrWhiteSpace(agentName))
             {
@@ -148,6 +157,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine("=================================================================");
             Console.WriteLine(" Configuration Summary");
             Console.WriteLine("=================================================================");
+            Console.WriteLine($"Client App ID          : {clientAppId}");
             Console.WriteLine($"Agent Name             : {agentName}");
             
             if (string.IsNullOrWhiteSpace(messagingEndpoint))
@@ -190,6 +200,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var config = new Agent365Config
             {
                 TenantId = accountInfo.TenantId,
+                ClientAppId = clientAppId,
                 SubscriptionId = accountInfo.Id,
                 ResourceGroup = resourceGroup,
                 Location = location,
@@ -620,5 +631,113 @@ public class ConfigurationWizardService : IConfigurationWizardService
     {
         // Default to US for now - could be enhanced to detect from account location
         return "US";
+    }
+
+    private async Task<string?> PromptForClientAppIdAsync(Agent365Config? existingConfig, string tenantId)
+    {
+        Console.WriteLine();
+        Console.WriteLine("=================================================================");
+        Console.WriteLine(" Client App Configuration (REQUIRED)");
+        Console.WriteLine("=================================================================");
+        Console.WriteLine("The a365 CLI requires a custom client app registration in your");
+        Console.WriteLine("Entra ID tenant with specific permissions for authentication.");
+        Console.WriteLine();
+        Console.WriteLine("CRITICAL: Add these as DELEGATED permissions (NOT Application):");
+        foreach (var permission in AuthenticationConstants.RequiredClientAppPermissions)
+        {
+            Console.WriteLine($"  - {permission}");
+        }
+        Console.WriteLine();
+        Console.WriteLine("Why Delegated? You sign in interactively, CLI acts on your behalf.");
+        Console.WriteLine("Application permissions are for background services only.");
+        Console.WriteLine();
+        Console.WriteLine("See: https://github.com/microsoft/Agent365-devTools/blob/main/docs/guides/custom-client-app-registration.md");
+        Console.WriteLine("=================================================================");
+        Console.WriteLine();
+
+        string? clientAppId = null;
+        int attemptCount = 0;
+        const int maxAttempts = 3;
+
+        while (attemptCount < maxAttempts)
+        {
+            attemptCount++;
+
+            // Prompt for Client App ID
+            var defaultValue = existingConfig?.ClientAppId ?? string.Empty;
+            clientAppId = PromptWithDefault(
+                "Client App ID (GUID format)",
+                defaultValue,
+                input =>
+                {
+                    if (string.IsNullOrWhiteSpace(input))
+                        return (false, "Client App ID is required");
+
+                    if (!Guid.TryParse(input, out _))
+                        return (false, "Must be a valid GUID format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)");
+
+                    return (true, "");
+                });
+
+            if (string.IsNullOrWhiteSpace(clientAppId))
+            {
+                Console.WriteLine("Client App ID is required. Setup cannot continue without it.");
+                continue;
+            }
+
+            // Validate the client app
+            Console.WriteLine();
+            Console.WriteLine("Validating client app configuration...");
+            Console.WriteLine("This may take a few seconds...");
+
+            using var validationLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+            var executor = new CommandExecutor(validationLoggerFactory.CreateLogger<CommandExecutor>());
+            var validator = new ClientAppValidator(validationLoggerFactory.CreateLogger<ClientAppValidator>(), executor);
+
+            var validationResult = await validator.ValidateClientAppAsync(clientAppId, tenantId, CancellationToken.None);
+
+            if (validationResult.IsValid)
+            {
+                Console.WriteLine("Client app validation successful!");
+                Console.WriteLine();
+                return clientAppId;
+            }
+
+            // Validation failed - show errors
+            Console.WriteLine();
+            Console.WriteLine("Client app validation FAILED:");
+            foreach (var error in validationResult.Errors)
+            {
+                Console.WriteLine($"  - {error}");
+            }
+            Console.WriteLine();
+
+            if (attemptCount < maxAttempts)
+            {
+                Console.WriteLine($"Please fix the issues and try again. (Attempt {attemptCount}/{maxAttempts})");
+                Console.WriteLine("Press Enter to retry, or type 'cancel' to abort setup.");
+                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+                if (response == "cancel")
+                {
+                    return null;
+                }
+            }
+            else
+            {
+                Console.WriteLine($"Validation failed after {maxAttempts} attempts.");
+                Console.WriteLine("Please fix the client app configuration and run 'a365 config init' again.");
+                Console.WriteLine();
+                Console.WriteLine("Common issues:");
+                Console.WriteLine("  1. App not created in Azure Portal > Entra ID > App registrations");
+                Console.WriteLine("  2. Permissions added as 'Application' instead of 'Delegated' type");
+                Console.WriteLine("  3. Required API permissions not added");
+                Console.WriteLine("  4. Admin consent not granted");
+                Console.WriteLine();
+                Console.WriteLine("See: https://github.com/microsoft/Agent365-devTools/blob/main/docs/guides/custom-client-app-registration.md");
+                return null;
+            }
+        }
+
+        return clientAppId;
     }
 }

@@ -3,6 +3,7 @@
 
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
@@ -19,7 +20,6 @@ public sealed class DelegatedConsentService
     private readonly GraphApiService _graphService;
 
     // Constants from PowerShell script
-    private const string GraphAppId = "00000003-0000-0000-c000-000000000000"; // Microsoft Graph
     private const string TargetScope = "AgentApplication.Create Application.ReadWrite.All";
     private const string AllPrincipalsConsentType = "AllPrincipals";
 
@@ -32,10 +32,10 @@ public sealed class DelegatedConsentService
     }
 
     /// <summary>
-    /// Ensures AgentApplication.Create permission is granted to Microsoft Graph Command Line Tools
+    /// Ensures AgentApplication.Create permission is granted to the custom client application
     /// This is required before creating Agent Blueprints
     /// </summary>
-    /// <param name="callingAppId">Application ID of Microsoft Graph Command Line Tools (14d82eec-204b-4c2f-b7e8-296a70dab67e)</param>
+    /// <param name="callingAppId">Application ID of the custom client app from configuration</param>
     /// <param name="tenantId">Tenant ID where the permission grant will be created</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if grant was created or updated successfully</returns>
@@ -90,7 +90,7 @@ public sealed class DelegatedConsentService
 
             // Step 2: Get Microsoft Graph service principal
             _logger.LogInformation("    Looking up Microsoft Graph service principal");
-            var graphSp = await GetServicePrincipalAsync(httpClient, GraphAppId, cancellationToken);
+            var graphSp = await GetServicePrincipalAsync(httpClient, AuthenticationConstants.MicrosoftGraphResourceAppId, cancellationToken);
             if (graphSp == null)
             {
                 _logger.LogError("Failed to get Microsoft Graph service principal");

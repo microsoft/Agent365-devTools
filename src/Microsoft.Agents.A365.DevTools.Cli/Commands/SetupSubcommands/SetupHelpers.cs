@@ -252,13 +252,16 @@ internal static class SetupHelpers
             logger.LogInformation("   - Inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
                 config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
+            // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation
+            var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
+            
             var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(
-                config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
+                config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
 
             if (!ok && !alreadyExists)
             {
                 throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
-                    "Ensure you have Application.ReadWrite.All permissions and the blueprint supports inheritable permissions.");
+                    "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All and Application.ReadWrite.All permissions in your custom client app.");
             }
 
             inheritanceConfigured = true;

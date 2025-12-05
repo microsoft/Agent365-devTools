@@ -61,7 +61,68 @@ Agent name [agent1114]: myagent
 
 **Smart Defaults**: If no existing config, defaults to `agent` + current date (e.g., `agent1114`)
 
-### Step 3: Deployment Project Path
+### Step 3: Client App ID
+
+Provide the Application (client) ID of your custom Entra ID app registration:
+
+```
+=================================================================
+IMPORTANT: Custom Client App Required
+=================================================================
+The Agent365 CLI requires a custom client app registration in your
+Entra ID tenant with specific Microsoft Graph API permissions.
+
+Required Delegated Permissions:
+  • Application.ReadWrite.All
+  • AgentIdentityBlueprint.ReadWrite.All
+  • DelegatedPermissionGrant.ReadWrite.All
+  • Directory.Read.All
+
+If you haven't created this app yet, see:
+  docs/guides/custom-client-app-registration.md
+
+=================================================================
+
+Client App ID (Application ID from Entra ID): a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6
+
+Validating client app...
+✓ Client app found in tenant
+✓ Required permissions configured
+✓ Admin consent granted
+```
+
+**Validation**: The CLI performs comprehensive validation:
+- ✅ GUID format check
+- ✅ App exists in your tenant
+- ✅ All four required permissions are configured
+- ✅ Admin consent has been granted
+
+**If Validation Fails**: You'll see specific error messages and have up to 3 attempts:
+```
+✗ Validation failed:
+  - Missing permission: Application.ReadWrite.All
+  - Admin consent not granted for: DelegatedPermissionGrant.ReadWrite.All
+
+Common issues:
+  • Not all required permissions have been added to the app
+  • Admin consent has not been granted (click "Grant admin consent" in Azure Portal)
+  • Using the wrong GUID (use Application ID, not Object ID)
+
+See troubleshooting guide:
+  docs/guides/custom-client-app-registration.md#troubleshooting
+
+Retry (2 attempts remaining)? (Y/n):
+```
+
+**Prerequisites**: Before running config init, create your custom client app:
+1. Follow the guide: [Custom Client App Registration](../guides/custom-client-app-registration.md)
+2. Copy the **Application (client) ID** from Azure Portal
+3. Ensure admin consent is granted for all permissions
+4. Enter the ID when prompted during config init
+
+**Security Note**: This app stays within your tenant's security boundaries and you control which permissions are granted.
+
+### Step 4: Deployment Project Path
 
 Specify the path to your agent project:
 
@@ -76,7 +137,7 @@ Detected DotNet project
 - Detects project platform (.NET, Node.js, Python)
 - Warns if no supported project type detected
 
-### Step 4: Resource Group Selection
+### Step 5: Resource Group Selection
 
 Choose from existing resource groups or create a new one:
 
@@ -94,7 +155,7 @@ Select resource group (1-3) [1]: 1
 - Option to create new resource group
 - Defaults to existing config value if available
 
-### Step 5: App Service Plan Selection
+### Step 6: App Service Plan Selection
 
 Choose from existing app service plans in the selected resource group:
 
@@ -111,7 +172,7 @@ Select app service plan (1-2) [1]: 1
 - Option to create new plan
 - Defaults to existing config value
 
-### Step 6: Manager Email
+### Step 7: Manager Email
 
 Provide the email address of the agent's manager:
 
@@ -121,7 +182,7 @@ Manager email [agent365demo.manager1@a365preview001.onmicrosoft.com]:
 
 **Validation**: Ensures valid email format
 
-### Step 7: Azure Location
+### Step 8: Azure Location
 
 Choose the Azure region for deployment:
 
@@ -131,7 +192,7 @@ Azure location [westus]:
 
 **Smart Defaults**: Uses location from existing config or Azure account
 
-### Step 8: Configuration Summary
+### Step 9: Configuration Summary
 
 Review all settings before saving:
 
@@ -140,6 +201,7 @@ Review all settings before saving:
  Configuration Summary
 =================================================================
 Agent Name             : myagent
+Client App ID          : a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6
 Web App Name           : myagent-webapp-11140916
 Agent Identity Name    : myagent Identity
 Agent Blueprint Name   : myagent Blueprint
@@ -156,7 +218,7 @@ Tenant                 : adfa4542-3e1e-46f5-9c70-3df0b15b3f6c
 Do you want to customize any derived names? (y/N):
 ```
 
-### Step 9: Name Customization (Optional)
+### Step 10: Name Customization (Optional)
 
 Optionally customize generated names:
 
@@ -170,7 +232,7 @@ Agent User Principal Name [agent.myagent.11140916@yourdomain.onmicrosoft.com]:
 Agent User Display Name [myagent Agent User]:
 ```
 
-### Step 10: Confirmation
+### Step 11: Confirmation
 
 Final confirmation to save:
 
@@ -187,6 +249,14 @@ You can now run:
 ## Configuration Fields
 
 The wizard automatically populates these fields:
+
+### Authentication (Required for Microsoft Graph API)
+
+| Field | Description | Source | Example |
+|-------|-------------|--------|---------|
+| **clientAppId** | Custom Entra ID app registration Application (client) ID | User provides after creating app | `a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6` |
+
+**Important**: This must be configured before setup. See [Custom Client App Registration Guide](../guides/custom-client-app-registration.md) for detailed setup instructions.
 
 ### Azure Infrastructure (Auto-detected from Azure CLI)
 
@@ -240,6 +310,7 @@ After completing the wizard, `a365.config.json` is created:
 ```json
 {
   "tenantId": "adfa4542-3e1e-46f5-9c70-3df0b15b3f6c",
+  "clientAppId": "a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6",
   "subscriptionId": "e09e22f2-9193-4f54-a335-01f59575eefd",
   "resourceGroup": "a365demorg",
   "location": "westus",

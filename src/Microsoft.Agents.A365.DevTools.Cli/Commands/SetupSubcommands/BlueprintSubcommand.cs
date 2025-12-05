@@ -27,7 +27,25 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class BlueprintSubcommand
 {
-    private const string MicrosoftGraphCommandLineToolsAppId = "14d82eec-204b-4c2f-b7e8-296a70dab67e";
+    /// <summary>
+    /// Validates blueprint prerequisites without performing any actions.
+    /// </summary>
+    public static Task<List<string>> ValidateAsync(
+        Models.Agent365Config config,
+        IAzureValidator azureValidator,
+        CancellationToken cancellationToken = default)
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(config.ClientAppId))
+        {
+            errors.Add("clientAppId is required in configuration");
+            errors.Add("Please configure a custom client app in your tenant with required permissions");
+            errors.Add("See docs/guides/custom-client-app-registration.md for setup instructions");
+        }
+
+        return Task.FromResult(errors);
+    }
 
     public static Command CreateCommand(
         ILogger logger,
@@ -170,6 +188,7 @@ internal static class BlueprintSubcommand
 
         var consentResult = await EnsureDelegatedConsentWithRetriesAsync(
             delegatedConsentService,
+            setupConfig.ClientAppId,
             setupConfig.TenantId,
             logger);
 
@@ -284,6 +303,7 @@ internal static class BlueprintSubcommand
     /// </summary>
     public static async Task<bool> EnsureDelegatedConsentWithRetriesAsync(
         DelegatedConsentService delegatedConsentService,
+        string clientAppId,
         string tenantId,
         ILogger logger,
         CancellationToken cancellationToken = default)
@@ -296,7 +316,7 @@ internal static class BlueprintSubcommand
                 async ct =>
                 {
                     return await delegatedConsentService.EnsureAgentApplicationCreateConsentAsync(
-                        MicrosoftGraphCommandLineToolsAppId,
+                        clientAppId,
                         tenantId,
                         ct);
                 },
@@ -347,7 +367,7 @@ internal static class BlueprintSubcommand
         {
             logger.LogInformation("Creating Agent Blueprint using Microsoft Graph SDK...");
 
-            using GraphServiceClient graphClient = await GetAuthenticatedGraphClientAsync(logger, tenantId, ct);
+            using GraphServiceClient graphClient = await GetAuthenticatedGraphClientAsync(logger, setupConfig, tenantId, ct);
 
             // Get current user for sponsors field (mimics PowerShell script behavior)
             string? sponsorUserId = null;
@@ -385,7 +405,7 @@ internal static class BlueprintSubcommand
 
             // Create the application using Microsoft Graph SDK
             using var httpClient = new HttpClient();
-            var graphToken = await GetTokenFromGraphClient(logger, graphClient, tenantId);
+            var graphToken = await GetTokenFromGraphClient(logger, graphClient, tenantId, setupConfig.ClientAppId);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
@@ -643,7 +663,7 @@ internal static class BlueprintSubcommand
     /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
     /// This uses InteractiveBrowserCredential directly which is simpler and more reliable.
     /// </summary>
-    private static async Task<string?> GetTokenFromGraphClient(ILogger logger, GraphServiceClient graphClient, string tenantId)
+    private static async Task<string?> GetTokenFromGraphClient(ILogger logger, GraphServiceClient graphClient, string tenantId, string clientAppId)
     {
         try
         {
@@ -652,7 +672,7 @@ internal static class BlueprintSubcommand
             var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
             {
                 TenantId = tenantId,
-                ClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e" // Microsoft Graph PowerShell app ID
+                ClientId = clientAppId
             });
 
             var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
@@ -671,7 +691,7 @@ internal static class BlueprintSubcommand
     /// Creates and authenticates a GraphServiceClient using InteractiveGraphAuthService.
     /// This common method consolidates the authentication logic used across multiple methods.
     /// </summary>
-    private async static Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(ILogger logger,string tenantId, CancellationToken ct)
+    private async static Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(ILogger logger, Models.Agent365Config setupConfig, string tenantId, CancellationToken ct)
     {
         logger.LogInformation("Authenticating to Microsoft Graph using interactive browser authentication...");
         logger.LogInformation("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
@@ -682,7 +702,8 @@ internal static class BlueprintSubcommand
         // Use InteractiveGraphAuthService to get proper authentication
         using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
         var interactiveAuth = new InteractiveGraphAuthService(
-            cleanLoggerFactory.CreateLogger<InteractiveGraphAuthService>());
+            cleanLoggerFactory.CreateLogger<InteractiveGraphAuthService>(),
+            setupConfig.ClientAppId);
 
         try
         {

@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Linq;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -423,7 +424,7 @@ public class GraphApiService
     {
         try
         {
-            const string msGraphAppId = "00000003-0000-0000-c000-000000000000";
+            string msGraphAppId = AuthenticationConstants.MicrosoftGraphResourceAppId;
             var url = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{msGraphAppId}'&$select=id,appId,displayName";
             var response = await _httpClient.GetAsync(url, cancellationToken);
 
