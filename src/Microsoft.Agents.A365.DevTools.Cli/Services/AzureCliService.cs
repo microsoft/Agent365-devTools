@@ -4,6 +4,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -51,7 +52,15 @@ public class AzureCliService : IAzureCliService
                 return null;
             }
 
-            var accountJson = JsonSerializer.Deserialize<JsonElement>(result.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+            
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                _logger.LogError("Azure CLI returned empty output");
+                return null;
+            }
+
+            var accountJson = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             
             return new AzureAccountInfo
             {
@@ -89,7 +98,13 @@ public class AzureCliService : IAzureCliService
                 return new List<AzureResourceGroup>();
             }
 
-            var resourceGroupsJson = JsonSerializer.Deserialize<JsonElement[]>(result.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                return new List<AzureResourceGroup>();
+            }
+
+            var resourceGroupsJson = JsonSerializer.Deserialize<JsonElement[]>(cleanedOutput);
             
             return resourceGroupsJson?.Select(rg => new AzureResourceGroup
             {
@@ -120,7 +135,13 @@ public class AzureCliService : IAzureCliService
                 return new List<AzureAppServicePlan>();
             }
 
-            var plansJson = JsonSerializer.Deserialize<JsonElement[]>(result.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                return new List<AzureAppServicePlan>();
+            }
+
+            var plansJson = JsonSerializer.Deserialize<JsonElement[]>(cleanedOutput);
             
             return plansJson?.Select(plan => new AzureAppServicePlan
             {
@@ -153,7 +174,13 @@ public class AzureCliService : IAzureCliService
                 return new List<AzureLocation>();
             }
 
-            var locationsJson = JsonSerializer.Deserialize<JsonElement[]>(result.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+            if (string.IsNullOrWhiteSpace(cleanedOutput))
+            {
+                return new List<AzureLocation>();
+            }
+
+            var locationsJson = JsonSerializer.Deserialize<JsonElement[]>(cleanedOutput);
             
             return locationsJson?.Select(loc => new AzureLocation
             {

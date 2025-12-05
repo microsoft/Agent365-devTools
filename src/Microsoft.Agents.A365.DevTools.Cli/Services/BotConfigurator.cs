@@ -63,7 +63,8 @@ public class BotConfigurator : IBotConfigurator
                 return false;
             }
 
-            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(subscriptionResult.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
+            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
 
             if (string.IsNullOrEmpty(tenantId))
@@ -181,7 +182,8 @@ public class BotConfigurator : IBotConfigurator
                 return false;
             }
 
-            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(subscriptionResult.StandardOutput);
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
+            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
 
             if (string.IsNullOrEmpty(tenantId))
