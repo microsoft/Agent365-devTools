@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
@@ -77,7 +78,7 @@ public class NodeBuilder : IPlatformBuilder
         var packageJsonPath = Path.Combine(projectDir, "package.json");
         if (!File.Exists(packageJsonPath))
         {
-            throw new FileNotFoundException("package.json not found in project directory");
+            throw new NodeProjectNotFoundException(projectDir);
         }
 
         // Install dependencies
@@ -89,7 +90,7 @@ public class NodeBuilder : IPlatformBuilder
             installResult = await _helper.ExecuteWithOutputAsync("npm", "install", projectDir, verbose);
             if (!installResult.Success)
             {
-                throw new Exception($"npm install failed: {installResult.StandardError}");
+                throw new NodeDependencyInstallException(projectDir, installResult.StandardError);
             }
         }
 
@@ -103,7 +104,7 @@ public class NodeBuilder : IPlatformBuilder
             var buildResult = await _helper.ExecuteWithOutputAsync("npm", "run build", projectDir, verbose);
             if (!buildResult.Success)
             {
-                throw new Exception($"npm run build failed: {buildResult.StandardError}");
+                throw new NodeBuildFailedException(projectDir, buildResult.StandardError);
             }
         }
         else
@@ -145,7 +146,7 @@ public class NodeBuilder : IPlatformBuilder
             CopyDirectory(srcDir, Path.Combine(publishPath, "src"));
         }
 
-        // Copy server files (.js files in root)
+        // Copy server/entry files (.js/.ts files in root)
         foreach (var jsFile in Directory.GetFiles(projectDir, "*.js"))
         {
             File.Copy(jsFile, Path.Combine(publishPath, Path.GetFileName(jsFile)));
@@ -153,6 +154,17 @@ public class NodeBuilder : IPlatformBuilder
         foreach (var tsFile in Directory.GetFiles(projectDir, "*.ts"))
         {
             File.Copy(tsFile, Path.Combine(publishPath, Path.GetFileName(tsFile)));
+        }
+
+        var distDir = Path.Combine(projectDir, "dist");
+        if (Directory.Exists(distDir))
+        {
+            _logger.LogInformation("Found dist folder, copying to publish output...");
+            CopyDirectory(distDir, Path.Combine(publishPath, "dist"));
+        }
+        else
+        {
+            _logger.LogInformation("No dist folder found in project; relying on Oryx build (if configured) to produce runtime output.");
         }
 
         // Create .deployment file to force Oryx build during Azure deployment
@@ -166,6 +178,11 @@ public class NodeBuilder : IPlatformBuilder
         _logger.LogInformation("Creating Oryx manifest for Node.js...");
         
         var packageJsonPath = Path.Combine(projectDir, "package.json");
+        if (!File.Exists(packageJsonPath))
+        {
+            throw new NodeProjectNotFoundException(projectDir);
+        }
+
         var packageJson = await File.ReadAllTextAsync(packageJsonPath);
         
         // Parse package.json to detect start command and version
@@ -177,8 +194,7 @@ public class NodeBuilder : IPlatformBuilder
         if (root.TryGetProperty("engines", out var engines) && 
             engines.TryGetProperty("node", out var nodeVersionProp))
         {
-            var versionString = nodeVersionProp.GetString() ?? "18";
-            // Extract major version (e.g., "18.x" -> "18")
+            var versionString = nodeVersionProp.GetString() ?? "20";
             var match = System.Text.RegularExpressions.Regex.Match(versionString, @"(\d+)");
             if (match.Success)
             {
@@ -192,7 +208,13 @@ public class NodeBuilder : IPlatformBuilder
         if (root.TryGetProperty("scripts", out var scripts) && 
             scripts.TryGetProperty("start", out var startScript))
         {
-            startCommand = startScript.GetString() ?? startCommand;
+            var scriptValue = startScript.GetString();
+            if (!string.IsNullOrWhiteSpace(scriptValue))
+            {
+                // Use the script literally, same as package.json
+                startCommand = scriptValue;
+            }
+
             _logger.LogInformation("Detected start command from package.json: {Command}", startCommand);
         }
         else if (root.TryGetProperty("main", out var mainProp))
@@ -203,25 +225,38 @@ public class NodeBuilder : IPlatformBuilder
         }
         else
         {
-            // Look for common entry point files
+            // Look for common entry point files under publish path
             var commonEntryPoints = new[] { "server.js", "app.js", "index.js", "main.js" };
             foreach (var entryPoint in commonEntryPoints)
             {
                 if (File.Exists(Path.Combine(publishPath, entryPoint)))
                 {
                     startCommand = $"node {entryPoint}";
-                    _logger.LogInformation("Detected entry point: {Command}", startCommand);
+                    _logger.LogInformation("Detected entry point in publish folder: {Command}", startCommand);
                     break;
                 }
             }
         }
 
-        var buildCommand = "npm run build";
-        var hasBuildScript = scripts.TryGetProperty("build", out var buildScript);
-        if (hasBuildScript)
+        // Detect build command – strictly Node
+        string buildCommand = "";
+        bool buildRequired = false;
+
+        if (root.TryGetProperty("scripts", out var scriptsForBuild) &&
+            scriptsForBuild.TryGetProperty("build", out var buildScript))
         {
-            buildCommand = buildScript.GetString() ?? buildCommand;
-            _logger.LogInformation("Detected build command from package.json: {Command}", buildCommand);
+            var buildValue = buildScript.GetString();
+            if (!string.IsNullOrWhiteSpace(buildValue))
+            {
+                // We always call through npm so it picks up the script from package.json
+                buildCommand = "npm run build";
+                buildRequired = true;
+                _logger.LogInformation("Detected build script; using Oryx build command: {Command}", buildCommand);
+            }
+        }
+        else
+        {
+            _logger.LogInformation("No build script found; Oryx will only run npm install.");
         }
         
         return new OryxManifest
@@ -229,8 +264,8 @@ public class NodeBuilder : IPlatformBuilder
             Platform = "nodejs",
             Version = nodeVersion,
             Command = startCommand,
-            BuildCommand = hasBuildScript ? buildCommand : "",
-            BuildRequired = hasBuildScript
+            BuildCommand = buildCommand,
+            BuildRequired = buildRequired
         };
     }
     

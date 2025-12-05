@@ -16,7 +16,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants
         public const string DeploymentScopesFailed = "DEPLOYMENT_SCOPES_FAILED";
         public const string DeploymentMcpFailed = "DEPLOYMENT_MCP_FAILED";
         public const string HighPrivilegeScopeDetected = "HIGH_PRIVILEGE_SCOPE_DETECTED";
-        public const string SetupValidationFailed = "SETUP_VALIDATION_FAILED";
+        public const string NodeBuildFailed = "NODE_BUILD_FAILED";
+        public const string NodeDependencyInstallFailed = "NODE_DEPENDENCY_INSTALL_FAILED";
+        public const string NodeProjectNotFound = "NODE_PROJECT_NOT_FOUND";
         public const string RetryExhausted = "RETRY_EXHAUSTED";
+        public const string SetupValidationFailed = "SETUP_VALIDATION_FAILED";
     }
 }
