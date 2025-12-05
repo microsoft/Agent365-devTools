@@ -488,7 +488,7 @@ public class Agent365ConfigTests
 
         // Assert
         errors.Should().Contain(e => e.Contains("clientAppId is required"));
-        errors.Should().Contain(e => e.Contains("custom-client-app-registration.md"));
+        errors.Should().Contain(e => e.Contains("learn.microsoft.com"));
     }
 
     [Fact]

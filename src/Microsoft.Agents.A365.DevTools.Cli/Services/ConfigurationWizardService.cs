@@ -733,7 +733,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 Console.WriteLine("  3. Required API permissions not added");
                 Console.WriteLine("  4. Admin consent not granted");
                 Console.WriteLine();
-                Console.WriteLine("See: https://github.com/microsoft/Agent365-devTools/blob/main/docs/guides/custom-client-app-registration.md");
+                Console.WriteLine($"See: {ConfigConstants.Agent365CliDocumentationUrl}");
                 return null;
             }
         }

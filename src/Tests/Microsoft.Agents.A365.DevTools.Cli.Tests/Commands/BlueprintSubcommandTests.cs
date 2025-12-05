@@ -251,7 +251,8 @@ public class BlueprintSubcommandTests
                 isSetupAll: false,
                 _mockConfigService,
                 _mockBotConfigurator,
-                _mockPlatformDetector);
+                _mockPlatformDetector,
+                _mockGraphApiService);
 
         // Assert - Should return false when consent service fails
         result.Should().BeFalse();
@@ -285,7 +286,8 @@ public class BlueprintSubcommandTests
             isSetupAll: false,
             _mockConfigService,
             _mockBotConfigurator,
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         // Assert
         result.Should().BeFalse();
@@ -480,7 +482,8 @@ public class BlueprintSubcommandTests
             isSetupAll: false,
             _mockConfigService,
             _mockBotConfigurator,
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         // Assert
         result.Should().BeFalse();

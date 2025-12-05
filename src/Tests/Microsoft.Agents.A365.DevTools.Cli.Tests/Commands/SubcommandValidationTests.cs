@@ -170,7 +170,7 @@ public class SubcommandValidationTests
         // Assert
         errors.Should().HaveCountGreaterThan(0);
         errors.Should().Contain(e => e.Contains("clientAppId"));
-        errors.Should().Contain(e => e.Contains("custom-client-app-registration.md"));
+        errors.Should().Contain(e => e.Contains("learn.microsoft.com"));
     }
 
     #endregion

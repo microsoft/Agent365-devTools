@@ -47,7 +47,7 @@ public class ClientAppValidationExceptionTests
 
         // Assert
         exception.MitigationSteps.Should().Contain(s => 
-            s.Contains("docs/guides/custom-client-app-registration.md"));
+            s.Contains(ConfigConstants.Agent365CliDocumentationUrl));
     }
 
     #endregion
@@ -112,7 +112,7 @@ public class ClientAppValidationExceptionTests
         exception.MitigationSteps.Should().Contain(s => s.Contains("API permissions"));
         exception.MitigationSteps.Should().Contain(s => s.Contains("admin consent"));
         exception.MitigationSteps.Should().Contain(s => 
-            s.Contains("docs/guides/custom-client-app-registration.md"));
+            s.Contains(ConfigConstants.Agent365CliDocumentationUrl));
     }
 
     #endregion
@@ -147,7 +147,7 @@ public class ClientAppValidationExceptionTests
         exception.MitigationSteps.Should().Contain(s => s.Contains("Grant admin consent"));
         exception.MitigationSteps.Should().Contain(s => s.Contains("Confirm the consent dialog"));
         exception.MitigationSteps.Should().Contain(s => 
-            s.Contains("docs/guides/custom-client-app-registration.md#step-4-grant-admin-consent"));
+            s.Contains(ConfigConstants.Agent365CliDocumentationUrl));
     }
 
     #endregion
@@ -216,7 +216,7 @@ public class ClientAppValidationExceptionTests
         exception.MitigationSteps.Should().Contain(s => s.Contains("az login"));
         exception.MitigationSteps.Should().Contain(s => s.Contains("Azure Portal"));
         exception.MitigationSteps.Should().Contain(s => 
-            s.Contains("docs/guides/custom-client-app-registration.md"));
+            s.Contains(ConfigConstants.Agent365CliDocumentationUrl));
     }
 
     #endregion

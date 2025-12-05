@@ -46,7 +46,7 @@ public sealed class InteractiveGraphAuthService
         {
             throw new ArgumentNullException(
                 nameof(clientAppId),
-                "Client App ID is required. Configure clientAppId in a365.config.json. See docs/guides/custom-client-app-registration.md for setup instructions.");
+                $"Client App ID is required. Configure clientAppId in a365.config.json. See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions.");
         }
 
         if (!Guid.TryParse(clientAppId, out _))
@@ -75,7 +75,7 @@ public sealed class InteractiveGraphAuthService
         }
 
         _logger.LogInformation("Attempting to authenticate to Microsoft Graph interactively...");
-        _logger.LogInformation("This requires Application.ReadWrite.All and AgentIdentityBlueprint.ReadWrite.All permissions for Agent Blueprint operations.");
+        _logger.LogInformation("This requires permissions defined in AuthenticationConstants.RequiredClientAppPermissions for Agent Blueprint operations.");
         _logger.LogInformation("");
         _logger.LogInformation("IMPORTANT: A browser window will open for authentication.");
         _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
@@ -100,9 +100,9 @@ public sealed class InteractiveGraphAuthService
             });
             
             _logger.LogInformation("Opening browser for authentication...");
-            _logger.LogInformation("IMPORTANT: You must grant consent for the following permissions:");
-            _logger.LogInformation("  - Application.ReadWrite.All (for creating applications and blueprints)");
-            _logger.LogInformation("  - AgentIdentityBlueprint.ReadWrite.All (for configuring inheritable permissions)");
+            _logger.LogInformation("IMPORTANT: You must grant consent for all required permissions.");
+            _logger.LogInformation("Required permissions are defined in AuthenticationConstants.RequiredClientAppPermissions.");
+            _logger.LogInformation($"See {ConfigConstants.Agent365CliDocumentationUrl} for the complete list.");
             _logger.LogInformation("");
             
             // Create GraphServiceClient with the credential
@@ -220,7 +220,7 @@ public sealed class InteractiveGraphAuthService
         _logger.LogError("Authentication failed - insufficient permissions");
         throw new GraphApiException(
             "Graph authentication",
-            "Insufficient permissions - you must be a Global Administrator or have Application.ReadWrite.All permission",
+            "Insufficient permissions - you must be a Global Administrator or have all required permissions defined in AuthenticationConstants.RequiredClientAppPermissions",
             isPermissionIssue: true);
     }
 }

@@ -115,7 +115,7 @@ public sealed class ClientAppValidator
                 return ValidationResult.Failure(
                     ValidationFailureType.MissingPermissions,
                     $"Client app is missing required delegated permissions: {string.Join(", ", missingPermissions)}",
-                    "Please add these permissions as DELEGATED (not Application) in Azure Portal > App Registrations > API permissions\nSee: https://github.com/microsoft/Agent365-devTools/blob/main/docs/guides/custom-client-app-registration.md");
+                    $"Please add these permissions as DELEGATED (not Application) in Azure Portal > App Registrations > API permissions\nSee: {ConfigConstants.Agent365CliDocumentationUrl}");
             }
 
             // Step 5: Verify admin consent
@@ -245,17 +245,9 @@ public sealed class ClientAppValidator
         }
 
         // Find Microsoft Graph resource in required permissions
-        JsonObject? graphResource = null;
-        foreach (var resource in appInfo.RequiredResourceAccess)
-        {
-            var resourceObj = resource?.AsObject();
-            var resourceAppId = resourceObj?["resourceAppId"]?.GetValue<string>();
-            if (resourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId)
-            {
-                graphResource = resourceObj;
-                break;
-            }
-        }
+        var graphResource = appInfo.RequiredResourceAccess
+            .Select(r => r?.AsObject())
+            .FirstOrDefault(obj => obj?["resourceAppId"]?.GetValue<string>() == AuthenticationConstants.MicrosoftGraphResourceAppId);
 
         if (graphResource == null)
         {
@@ -269,18 +261,16 @@ public sealed class ClientAppValidator
         }
 
         // Build set of configured permission IDs
-        var configuredPermissionIds = new HashSet<string>();
-        foreach (var access in resourceAccess)
-        {
-            var accessObj = access?.AsObject();
-            var permissionId = accessObj?["id"]?.GetValue<string>();
-            var permissionType = accessObj?["type"]?.GetValue<string>();
-
-            if (permissionType == "Scope" && !string.IsNullOrWhiteSpace(permissionId))
+        var configuredPermissionIds = resourceAccess
+            .Select(access => access?.AsObject())
+            .Select(accessObj => new
             {
-                configuredPermissionIds.Add(permissionId);
-            }
-        }
+                PermissionId = accessObj?["id"]?.GetValue<string>(),
+                PermissionType = accessObj?["type"]?.GetValue<string>()
+            })
+            .Where(x => x.PermissionType == "Scope" && !string.IsNullOrWhiteSpace(x.PermissionId))
+            .Select(x => x.PermissionId!)
+            .ToHashSet();
 
         // Resolve ALL permission IDs dynamically from Microsoft Graph
         // This ensures compatibility across different tenants and API versions
@@ -348,17 +338,15 @@ public sealed class ClientAppValidator
             }
 
             // Build map of all available permissions (name -> GUID)
-            foreach (var scopeNode in oauth2PermissionScopes)
-            {
-                var scopeObj = scopeNode?.AsObject();
-                var scopeValue = scopeObj?["value"]?.GetValue<string>();
-                var scopeId = scopeObj?["id"]?.GetValue<string>();
-
-                if (!string.IsNullOrWhiteSpace(scopeValue) && !string.IsNullOrWhiteSpace(scopeId))
+            permissionNameToIdMap = oauth2PermissionScopes
+                .Select(scopeNode => scopeNode?.AsObject())
+                .Select(scopeObj => new
                 {
-                    permissionNameToIdMap[scopeValue] = scopeId;
-                }
-            }
+                    Value = scopeObj?["value"]?.GetValue<string>(),
+                    Id = scopeObj?["id"]?.GetValue<string>()
+                })
+                .Where(x => !string.IsNullOrWhiteSpace(x.Value) && !string.IsNullOrWhiteSpace(x.Id))
+                .ToDictionary(x => x.Value!, x => x.Id!);
 
             _logger.LogDebug("Retrieved {Count} permission definitions from Microsoft Graph", permissionNameToIdMap.Count);
         }
@@ -425,27 +413,24 @@ public sealed class ClientAppValidator
         }
 
         // Check if there's a grant for Microsoft Graph with required scopes
-        bool hasGraphGrant = false;
-        foreach (var grant in grants)
-        {
-            var grantObj = grant?.AsObject();
-            var scope = grantObj?["scope"]?.GetValue<string>();
-
-            if (!string.IsNullOrWhiteSpace(scope))
+        var hasGraphGrant = grants
+            .Select(grant => grant?.AsObject())
+            .Select(grantObj => grantObj?["scope"]?.GetValue<string>())
+            .Where(scope => !string.IsNullOrWhiteSpace(scope))
+            .Any(scope =>
             {
-                var grantedScopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var grantedScopes = scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var foundPermissions = AuthenticationConstants.RequiredClientAppPermissions
                     .Intersect(grantedScopes, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
                 if (foundPermissions.Count > 0)
                 {
-                    hasGraphGrant = true;
                     _logger.LogInformation("Admin consent verified for {Count} permissions", foundPermissions.Count);
-                    break;
+                    return true;
                 }
-            }
-        }
+                return false;
+            });
 
         if (!hasGraphGrant)
         {

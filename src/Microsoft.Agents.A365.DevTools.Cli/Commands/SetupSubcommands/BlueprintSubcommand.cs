@@ -41,7 +41,7 @@ internal static class BlueprintSubcommand
         {
             errors.Add("clientAppId is required in configuration");
             errors.Add("Please configure a custom client app in your tenant with required permissions");
-            errors.Add("See docs/guides/custom-client-app-registration.md for setup instructions");
+            errors.Add($"See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions");
         }
 
         return Task.FromResult(errors);

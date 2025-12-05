@@ -42,7 +42,7 @@ public sealed class ClientAppValidationException : Agent365Exception
                 "Verify the clientAppId in your a365.config.json is correct",
                 "Check you're using the Application (client) ID, not the Object ID",
                 "Ensure the app is registered in the correct tenant",
-                "Follow the setup guide: docs/guides/custom-client-app-registration.md"
+                $"Follow the setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
@@ -70,7 +70,7 @@ public sealed class ClientAppValidationException : Agent365Exception
                 "Navigate to API permissions",
                 "Add the missing Microsoft Graph delegated permissions",
                 "Grant admin consent after adding permissions",
-                "See detailed guide: docs/guides/custom-client-app-registration.md#step-3-add-api-permissions"
+                $"See detailed guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
@@ -98,7 +98,7 @@ public sealed class ClientAppValidationException : Agent365Exception
                 "Click 'Grant admin consent for [Your Tenant]'",
                 "Confirm the consent dialog",
                 "Wait a few seconds for consent to propagate",
-                "See detailed guide: docs/guides/custom-client-app-registration.md#step-4-grant-admin-consent"
+                $"See detailed guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
@@ -128,7 +128,7 @@ public sealed class ClientAppValidationException : Agent365Exception
                 "Check the error details above",
                 "Ensure you are logged in with 'az login'",
                 "Verify your client app configuration in Azure Portal",
-                "See setup guide: docs/guides/custom-client-app-registration.md"
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: context);
     }

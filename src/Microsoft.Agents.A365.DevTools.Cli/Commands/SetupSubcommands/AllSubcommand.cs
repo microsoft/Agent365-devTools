@@ -245,26 +245,23 @@ internal static class AllSubcommand
                             isPermissionIssue: true);
                     }
 
-                    if (blueprintCreated)
+                    // CRITICAL: Wait for file system to ensure config file is fully written
+                    // Blueprint creation writes directly to disk and may not be immediately readable
+                    logger.LogInformation("Ensuring configuration file is synchronized...");
+                    await Task.Delay(2000); // 2 second delay to ensure file write is complete
+
+                    // Reload config to get blueprint ID
+                    // Use full path to ensure we're reading from the correct location
+                    var fullConfigPath = Path.GetFullPath(config.FullName);
+                    setupConfig = await configService.LoadAsync(fullConfigPath);
+                    setupResults.BlueprintId = setupConfig.AgentBlueprintId;
+
+                    // Validate blueprint ID was properly saved
+                    if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
                     {
-                        // CRITICAL: Wait for file system to ensure config file is fully written
-                        // Blueprint creation writes directly to disk and may not be immediately readable
-                        logger.LogInformation("Ensuring configuration file is synchronized...");
-                        await Task.Delay(2000); // 2 second delay to ensure file write is complete
-
-                        // Reload config to get blueprint ID
-                        // Use full path to ensure we're reading from the correct location
-                        var fullConfigPath = Path.GetFullPath(config.FullName);
-                        setupConfig = await configService.LoadAsync(fullConfigPath);
-                        setupResults.BlueprintId = setupConfig.AgentBlueprintId;
-
-                        // Validate blueprint ID was properly saved
-                        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
-                        {
-                            throw new SetupValidationException(
-                                "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
-                                "This is required for the next steps (MCP permissions and Bot permissions).");
-                        }
+                        throw new SetupValidationException(
+                            "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
+                            "This is required for the next steps (MCP permissions and Bot permissions).");
                     }
                 }
                 catch (Agent365Exception blueprintEx)

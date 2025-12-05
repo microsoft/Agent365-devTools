@@ -73,13 +73,11 @@ The Agent365 CLI requires a custom client app registration in your
 Entra ID tenant with specific Microsoft Graph API permissions.
 
 Required Delegated Permissions:
-  • Application.ReadWrite.All
-  • AgentIdentityBlueprint.ReadWrite.All
-  • DelegatedPermissionGrant.ReadWrite.All
-  • Directory.Read.All
+  See AuthenticationConstants.RequiredClientAppPermissions in the codebase
+  for the complete list of required permissions.
 
 If you haven't created this app yet, see:
-  docs/guides/custom-client-app-registration.md
+  https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli
 
 =================================================================
 
@@ -94,7 +92,7 @@ Validating client app...
 **Validation**: The CLI performs comprehensive validation:
 - ✅ GUID format check
 - ✅ App exists in your tenant
-- ✅ All four required permissions are configured
+- ✅ All required permissions are configured (see AuthenticationConstants.RequiredClientAppPermissions)
 - ✅ Admin consent has been granted
 
 **If Validation Fails**: You'll see specific error messages and have up to 3 attempts:
@@ -109,7 +107,7 @@ Common issues:
   • Using the wrong GUID (use Application ID, not Object ID)
 
 See troubleshooting guide:
-  docs/guides/custom-client-app-registration.md#troubleshooting
+  https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli
 
 Retry (2 attempts remaining)? (Y/n):
 ```

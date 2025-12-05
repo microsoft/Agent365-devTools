@@ -28,7 +28,7 @@ public class Agent365Config
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
         if (string.IsNullOrWhiteSpace(ClientAppId))
         {
-            errors.Add("clientAppId is required. This must be a client app you create in your tenant with specific permissions. See docs/guides/custom-client-app-registration.md for setup instructions.");
+            errors.Add($"clientAppId is required. This must be a client app you create in your tenant with specific permissions. See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions.");
         }
         else
         {
@@ -128,13 +128,12 @@ public class Agent365Config
 
     /// <summary>
     /// Client Application ID for interactive authentication with Microsoft Graph.
-    /// This must be a client app registration you create in your Entra ID tenant with the following delegated permissions:
-    /// - Application.ReadWrite.All
-    /// - AgentIdentityBlueprint.ReadWrite.All
-    /// - DelegatedPermissionGrant.ReadWrite.All
-    /// - Directory.Read.All
+    /// This must be a client app registration you create in your Entra ID tenant.
+    /// 
+    /// Required delegated permissions are defined in <see cref="Constants.AuthenticationConstants.RequiredClientAppPermissions"/>.
     /// All permissions require admin consent.
-    /// See docs/guides/custom-client-app-registration.md for setup instructions.
+    /// 
+    /// For setup instructions, see the Agent 365 CLI documentation at <see cref="Constants.ConfigConstants.Agent365CliDocumentationUrl"/>.
     /// </summary>
     [JsonPropertyName("clientAppId")]
     public string ClientAppId { get; init; } = string.Empty;

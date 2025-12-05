@@ -36,11 +36,7 @@ This project is currently in active development. The CLI is being actively devel
 Before using the Agent365 CLI, you must create a custom Entra ID app registration with specific Microsoft Graph API permissions:
 
 1. **Custom Client App Registration**: Create an app in your Entra ID tenant
-2. **Required Permissions**: Configure **delegated** permissions (NOT Application):
-   - `Application.ReadWrite.All`
-   - `AgentIdentityBlueprint.ReadWrite.All`
-   - `DelegatedPermissionGrant.ReadWrite.All`
-   - `Directory.Read.All`
+2. **Required Permissions**: Configure **delegated** permissions (NOT Application) as defined in `AuthenticationConstants.RequiredClientAppPermissions` in the codebase
 3. **Admin Consent**: Grant admin consent for all permissions
 
 ⚠️ **Important**: Use **Delegated** permissions (you sign in, CLI acts on your behalf), NOT Application permissions (for background services).
