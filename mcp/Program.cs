@@ -192,50 +192,6 @@ app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, Http
     }
 });
 
-// Admin endpoints for managing mock tools - now need mcpServer parameter
-app.MapGet("/admin/{mcpServer}/tools", async (string mcpServer, IEnumerable<IMockToolStore> stores) =>
-{
-    var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
-    return store == null ? Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" }) : Results.Ok(await store.ListAsync());
-});
-
-app.MapGet("/admin/{mcpServer}/tools/{name}", async (string mcpServer, string name, IEnumerable<IMockToolStore> stores) =>
-{
-    var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
-    if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-
-    var tool = await store.GetAsync(name);
-    return tool is null ? Results.NotFound(new { message = $"Mock tool '{name}' not found" }) : Results.Ok(tool);
-});
-
-app.MapPost("/admin/{mcpServer}/tools", async (string mcpServer, MockToolDefinition def, IEnumerable<IMockToolStore> stores) =>
-{
-    var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
-    if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-
-    await store.UpsertAsync(def);
-    return Results.Ok(def);
-});
-
-app.MapPut("/admin/{mcpServer}/tools/{name}", async (string mcpServer, string name, MockToolDefinition def, IEnumerable<IMockToolStore> stores) =>
-{
-    var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
-    if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-
-    def.Name = name; // enforce path name
-    await store.UpsertAsync(def);
-    return Results.Ok(def);
-});
-
-app.MapDelete("/admin/{mcpServer}/tools/{name}", async (string mcpServer, string name, IEnumerable<IMockToolStore> stores) =>
-{
-    var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
-    if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-
-    var deleted = await store.DeleteAsync(name);
-    return deleted ? Results.Ok(new { deleted = name }) : Results.NotFound(new { message = $"Mock tool '{name}' not found" });
-});
-
 logger.LogInformation("[Program.cs] Starting MCP server... Watch for tool calls in the logs!");
 
 await app.RunAsync();
