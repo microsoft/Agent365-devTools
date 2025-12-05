@@ -128,10 +128,10 @@ Add this to your VS Code MCP configuration (as provided):
 ```
 
 ## Available tools (high level)
-This server exposes a generic mock tool system. There are no fixed domain‑specific tools baked in; instead you define any number of mock tools persisted in `mocks/tools.json` (managed through the admin endpoints). They are surfaced over a JSON‑RPC interface that mimics an MCP tool catalog.
+This server exposes a generic mock tool system. There are no fixed domain-specific tools baked in; instead you define any number of mock tools persisted in `mocks/tools.json` (managed through the admin endpoints). They are surfaced over a JSON-RPC interface that mimics an MCP tool catalog.
 
 ### 1. JSON-RPC tool methods (endpoint: POST /mcp-mock)
-- tools/list  
+- tools/list
   Returns all enabled mock tools. Shape:
 ```json
 {
@@ -157,7 +157,7 @@ This server exposes a generic mock tool system. There are no fixed domain‑spec
 	]
 }
 
-- tools/call  
+- tools/call
   Executes a mock tool and returns a rendered response:
 
 ```json
@@ -177,30 +177,30 @@ This server exposes a generic mock tool system. There are no fixed domain‑spec
 }
 ```
 ### 2. Admin REST endpoints (manage definitions)
-Base path: /mcp-mock/admin/tools  
-- GET /mcp-mock/admin/tools : list raw definitions (including disabled).  
-- GET /mcp-mock/admin/tools/{name} : fetch one.  
-- POST /mcp-mock/admin/tools : create or overwrite (body = MockToolDefinition).  
-- PUT /mcp-mock/admin/tools/{name} : update (path name wins).  
-- DELETE /mcp-mock/admin/tools/{name} : remove.  
+Base path: /mcp-mock/admin/tools
+- GET /mcp-mock/admin/tools : list raw definitions (including disabled).
+- GET /mcp-mock/admin/tools/{name} : fetch one.
+- POST /mcp-mock/admin/tools : create or overwrite (body = MockToolDefinition).
+- PUT /mcp-mock/admin/tools/{name} : update (path name wins).
+- DELETE /mcp-mock/admin/tools/{name} : remove.
 
-File changes (including manual edits to `mocks/tools.json`) are auto‑reloaded via a filesystem watcher.
+File changes (including manual edits to `mocks/tools.json`) are auto-reloaded via a filesystem watcher.
 
 ### 3. Mock tool definition schema
 Fields:
 - name (string, required) : Unique identifier.
 - description (string) : Human readable summary.
 - parameters (array) : Each has name, type (string), isOptional (bool).
-- responseTemplate (string) : Text with Handlebars‑style placeholders `{{placeholder}}`.
+- responseTemplate (string) : Text with Handlebars-style placeholders `{{placeholder}}`.
 - delayMs (int) : Artificial latency before responding.
-- errorRate (double 0–1) : Probability of returning a simulated 500 error.
+- errorRate (double 0-1) : Probability of returning a simulated 500 error.
 - statusCode (int) : Informational only (not currently enforcing an HTTP status on JSON-RPC).
 - enabled (bool) : If false, tool is hidden from tools/list and cannot be called.
 
 ### 4. Template rendering & dynamic override
-- Placeholders: Any `{{key}}` is replaced with the argument value (case-insensitive).  
-- Unresolved placeholders are left intact and also reported in `missingPlaceholders`.  
-- If the stored template equals the default literal `Mock response from {{name}}`, you can override it ad‑hoc per call by supplying one of these argument keys: `responseTemplate`, `response`, `mockResponse`, `text`, `value`, or `output`.  
+- Placeholders: Any `{{key}}` is replaced with the argument value (case-insensitive).
+- Unresolved placeholders are left intact and also reported in `missingPlaceholders`.
+- If the stored template equals the default literal `Mock response from {{name}}`, you can override it ad-hoc per call by supplying one of these argument keys: `responseTemplate`, `response`, `mockResponse`, `text`, `value`, or `output`.
 - Example override call:
 ```json
 {
@@ -226,17 +226,17 @@ Fields:
 	}
 }
 ```
-- `delayMs` awaits before forming the result, letting you test client‑side spinners/timeouts.
+- `delayMs` awaits before forming the result, letting you test client-side spinners/timeouts.
 
 ### 6. Example definitions
 Email style tool:
 ```json
 {
 	"name": "Send_Email",
-	"description": "Send an email (mock).", 
+	"description": "Send an email (mock).",
 	"parameters":
 	[
-		{ "name": "to", "type": "string", "isOptional": false }, 
+		{ "name": "to", "type": "string", "isOptional": false },
 		{ "name": "subject", "type": "string", "isOptional": false },
 		{ "name": "body", "type": "string", "isOptional": true }
 	],

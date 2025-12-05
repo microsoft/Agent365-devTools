@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Send logs to stderr so stdout stays clean for the protocol
 builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
-Console.WriteLine($"🚀 [Program.cs] MCP Server starting at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff} UTC");
+Console.WriteLine($"[Program.cs] MCP Server starting at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff} UTC");
 
 // MCP services with tools; add both HTTP and SSE transport
 builder.Services
@@ -19,7 +19,7 @@ builder.Services
 var mocksDirectory = Path.Combine(AppContext.BaseDirectory, "mocks");
 Directory.CreateDirectory(mocksDirectory); // Ensure directory exists
 
-var mcpServerNames = Directory.Exists(mocksDirectory) 
+var mcpServerNames = Directory.Exists(mocksDirectory)
     ? Directory.GetFiles(mocksDirectory, "*.json")
         .Select(Path.GetFileNameWithoutExtension)
         .Where(name => !string.IsNullOrWhiteSpace(name))
@@ -29,7 +29,7 @@ var mcpServerNames = Directory.Exists(mocksDirectory)
 // If no existing files, fall back to configuration or default
 if (mcpServerNames.Length == 0)
 {
-    mcpServerNames = builder.Configuration.GetSection("Mcp:ServerNames").Get<string[]>() 
+    mcpServerNames = builder.Configuration.GetSection("Mcp:ServerNames").Get<string[]>()
         ?? new[] { builder.Configuration["Mcp:ServerName"] ?? "MockNotificationMCP" };
 }
 
@@ -39,28 +39,28 @@ foreach (var serverName in mcpServerNames)
     builder.Services.AddSingleton<IMockToolStore>(provider => new FileMockToolStore(serverName, new MockToolStoreOptions()));
 }
 
-builder.Services.AddSingleton<IMockToolExecutor>(provider => 
+builder.Services.AddSingleton<IMockToolExecutor>(provider =>
     new MockToolExecutor(provider.GetServices<IMockToolStore>()));
 
 var app = builder.Build();
 
 // Log startup information
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
-logger.LogInformation("🚀 ===== MCP SERVER STARTING =====");
-logger.LogInformation("⏰ Startup Time: {StartupTime} UTC", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-logger.LogInformation("🌐 Server will be available on: http://localhost:5309");
+logger.LogInformation("===== MCP SERVER STARTING =====");
+logger.LogInformation("Startup Time: {StartupTime} UTC", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+logger.LogInformation("Server will be available on: http://localhost:5309");
 foreach (var serverName in mcpServerNames)
 {
-    logger.LogInformation("🗂 Mock tools file for '{ServerName}': {File}", serverName, Path.Combine(AppContext.BaseDirectory, "mocks", serverName + ".json"));
+    logger.LogInformation("Mock tools file for '{ServerName}': {File}", serverName, Path.Combine(AppContext.BaseDirectory, "mocks", serverName + ".json"));
 }
-logger.LogInformation("🚀 ===== END STARTUP INFO =====");
+logger.LogInformation("===== END STARTUP INFO =====");
 
 // Map MCP SSE endpoints at the default route ("/mcp")
 // Available routes include: /mcp/sse (server-sent events) and /mcp/schema.json
 app.MapMcp();
 
 // Log that MCP is mapped
-logger.LogInformation("✅ MCP endpoints mapped: /mcp/sse, /mcp/schema.json");
+logger.LogInformation("MCP endpoints mapped: /mcp/sse, /mcp/schema.json");
 
 // Optional minimal health endpoint for quick check
 // app.MapGet("/", () => Results.Ok(new { status = "ok", mcp = "/mcp" }));
@@ -193,7 +193,7 @@ app.MapPost("/mcp-mock/agents/servers/{mcpServerName}", async (string mcpServerN
 });
 
 // Admin endpoints for managing mock tools - now need mcpServer parameter
-app.MapGet("/mcp-mock/admin/{mcpServer}/tools", async (string mcpServer, IEnumerable<IMockToolStore> stores) => 
+app.MapGet("/mcp-mock/admin/{mcpServer}/tools", async (string mcpServer, IEnumerable<IMockToolStore> stores) =>
 {
     var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
     return store == null ? Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" }) : Results.Ok(await store.ListAsync());
@@ -203,7 +203,7 @@ app.MapGet("/mcp-mock/admin/{mcpServer}/tools/{name}", async (string mcpServer, 
 {
     var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
     if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-    
+
     var tool = await store.GetAsync(name);
     return tool is null ? Results.NotFound(new { message = $"Mock tool '{name}' not found" }) : Results.Ok(tool);
 });
@@ -212,7 +212,7 @@ app.MapPost("/mcp-mock/admin/{mcpServer}/tools", async (string mcpServer, MockTo
 {
     var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
     if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-    
+
     await store.UpsertAsync(def);
     return Results.Ok(def);
 });
@@ -221,7 +221,7 @@ app.MapPut("/mcp-mock/admin/{mcpServer}/tools/{name}", async (string mcpServer, 
 {
     var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
     if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-    
+
     def.Name = name; // enforce path name
     await store.UpsertAsync(def);
     return Results.Ok(def);
@@ -231,11 +231,11 @@ app.MapDelete("/mcp-mock/admin/{mcpServer}/tools/{name}", async (string mcpServe
 {
     var store = stores.FirstOrDefault(s => string.Equals(s.McpServerName, mcpServer, StringComparison.OrdinalIgnoreCase));
     if (store == null) return Results.NotFound(new { message = $"MCP server '{mcpServer}' not found" });
-    
+
     var deleted = await store.DeleteAsync(name);
     return deleted ? Results.Ok(new { deleted = name }) : Results.NotFound(new { message = $"Mock tool '{name}' not found" });
 });
 
-logger.LogInformation("🏁 [Program.cs] Starting MCP server... Watch for tool calls in the logs!");
+logger.LogInformation("[Program.cs] Starting MCP server... Watch for tool calls in the logs!");
 
 await app.RunAsync();
