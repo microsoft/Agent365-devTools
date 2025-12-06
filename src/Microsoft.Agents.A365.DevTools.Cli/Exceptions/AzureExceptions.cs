@@ -44,25 +44,53 @@ public class AzureResourceException : Agent365Exception
         string reason,
         bool isPermissionIssue = false)
         : base(
-            errorCode: isPermissionIssue ? "AZURE_PERMISSION_DENIED" : "AZURE_RESOURCE_FAILED",
+            errorCode: isPermissionIssue ? ErrorCodes.AzurePermissionDenied : ErrorCodes.AzureResourceFailed,
             issueDescription: $"Failed to create/update {resourceType}: {resourceName}",
             errorDetails: new List<string> { reason },
-            mitigationSteps: BuildMitigation(resourceType, isPermissionIssue))
+            mitigationSteps: BuildMitigation(resourceType, isPermissionIssue, reason))
     {
         ResourceType = resourceType;
         ResourceName = resourceName;
     }
 
-    private static List<string> BuildMitigation(string resourceType, bool isPermissionIssue)
+    public AzureResourceException(
+        string errorCode,
+        string resourceType,
+        string resourceName,
+        string reason,
+        List<string> mitigationSteps)
+        : base(
+            errorCode: errorCode,
+            issueDescription: $"Failed to create/update {resourceType}: {resourceName}",
+            errorDetails: new List<string> { reason },
+            mitigationSteps: mitigationSteps)
+    {
+        ResourceType = resourceType;
+        ResourceName = resourceName;
+    }
+
+    private static List<string> BuildMitigation(string resourceType, bool isPermissionIssue, string reason)
     {
         if (isPermissionIssue)
         {
             return new List<string>
             {
                 "Check your Azure subscription permissions",
-                $"Ensure you have Contributor or Owner role on the subscription",
+                $"Ensure you have Contributor or Owner role on the subscription or at least the Resource Group",
                 "Contact your Azure administrator if needed",
                 "Run 'az account show' to verify your account"
+            };
+        }
+
+        // Check for web app name collision
+        if (reason.Contains("already taken", StringComparison.OrdinalIgnoreCase) ||
+            reason.Contains("globally unique", StringComparison.OrdinalIgnoreCase))
+        {
+            return new List<string>
+            {
+                "Web app names must be globally unique across all Azure subscriptions",
+                "Update the 'webAppName' in your a365.config.json to a different value",
+                "Consider adding a unique suffix like your organization name or random characters"
             };
         }
 

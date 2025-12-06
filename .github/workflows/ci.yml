@@ -56,7 +56,6 @@ jobs:
 
       - name: Pack NuGet packages
         id: pack
-        continue-on-error: true
         run: dotnet pack dirs.proj --configuration Release --output ../NuGetPackages
 
       - name: Verify package was created

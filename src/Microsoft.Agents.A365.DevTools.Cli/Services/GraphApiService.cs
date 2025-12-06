@@ -5,8 +5,10 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -18,12 +20,39 @@ public class GraphApiService
     private readonly ILogger<GraphApiService> _logger;
     private readonly CommandExecutor _executor;
     private readonly HttpClient _httpClient;
+    private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
 
-    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor)
+    // Lightweight wrapper to surface HTTP status, reason and body to callers
+    public record GraphResponse
+    {
+        public bool IsSuccess { get; init; }
+        public int StatusCode { get; init; }
+        public string ReasonPhrase { get; init; } = string.Empty;
+        public string Body { get; init; } = string.Empty;
+        public JsonDocument? Json { get; init; }
+    }
+
+    // Allow injecting a custom HttpMessageHandler for unit testing
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null)
     {
         _logger = logger;
         _executor = executor;
-        _httpClient = new HttpClient();
+        _httpClient = handler != null ? new HttpClient(handler) : new HttpClient();
+        _tokenProvider = tokenProvider;
+    }
+
+    // Parameterless constructor to ease test mocking/substitution frameworks which may
+    // require creating proxy instances without providing constructor arguments.
+    public GraphApiService()
+        : this(NullLogger<GraphApiService>.Instance, new CommandExecutor(NullLogger<CommandExecutor>.Instance), null)
+    {
+    }
+
+    // Two-argument convenience constructor used by tests and callers that supply
+    // a logger and an existing CommandExecutor (no custom handler).
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor)
+        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null, null)
+    {
     }
 
     /// <summary>
@@ -558,9 +587,80 @@ public class GraphApiService
 
     #endregion
     
-    private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default)
+    /// <summary>
+    /// Delete an Agent Blueprint application using the special agentIdentityBlueprint endpoint.
+    /// 
+    /// SPECIAL AUTHENTICATION REQUIREMENTS:
+    /// Agent Blueprint deletion requires the AgentIdentityBlueprint.ReadWrite.All delegated permission scope.
+    /// This scope is not available through Azure CLI tokens, so we use interactive authentication via
+    /// the token provider (same authentication method used during blueprint creation in the setup command).
+    /// 
+    /// This method uses the GraphDeleteAsync helper but with special scopes - the duplication is intentional
+    /// because blueprint operations require elevated permissions that standard Graph operations don't need.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID for authentication</param>
+    /// <param name="blueprintId">The blueprint application ID (object ID or app ID)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if deletion succeeded or resource not found; false otherwise</returns>
+    public async Task<bool> DeleteAgentBlueprintAsync(
+        string tenantId,
+        string blueprintId,
+        CancellationToken cancellationToken = default)
     {
-        var token = await GetGraphAccessTokenAsync(tenantId, ct);
+        try
+        {
+            _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
+            
+            // Agent Blueprint deletion requires special delegated permission scope
+            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            
+            if (_tokenProvider == null)
+            {
+                _logger.LogError("Token provider is not configured. Agent Blueprint deletion requires interactive authentication.");
+                _logger.LogError("Please ensure the GraphApiService is initialized with a token provider.");
+                return false;
+            }
+            
+            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
+            _logger.LogInformation("A browser window will open for authentication.");
+            
+            // Use the special agentIdentityBlueprint endpoint for deletion
+            var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";
+            
+            // Use GraphDeleteAsync with the special scopes required for blueprint operations
+            var success = await GraphDeleteAsync(
+                tenantId,
+                deletePath,
+                cancellationToken,
+                treatNotFoundAsSuccess: true,
+                scopes: requiredScopes);
+            
+            if (success)
+            {
+                _logger.LogInformation("Agent blueprint application deleted successfully");
+            }
+            else
+            {
+                _logger.LogError("Failed to delete agent blueprint application");
+            }
+            
+            return success;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception deleting agent blueprint application");
+            return false;
+        }
+        finally
+        {
+            // Clear authorization header to avoid issues with other requests
+            _httpClient.DefaultRequestHeaders.Authorization = null;
+        }
+    }
+    
+    private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        var token = (scopes != null && _tokenProvider != null) ? await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, ct) : await GetGraphAccessTokenAsync(tenantId, ct);
         if (string.IsNullOrWhiteSpace(token)) return false;
 
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -583,9 +683,9 @@ public class GraphApiService
         return JsonDocument.Parse(json);
     }
 
-    public async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default)
+    public async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct)) return null;
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
@@ -597,7 +697,41 @@ public class GraphApiService
         return string.IsNullOrWhiteSpace(body) ? null : JsonDocument.Parse(body);
     }
 
-    public async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default)
+    /// <summary>
+    /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
+    /// </summary>
+    public async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+        {
+            return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
+        }
+
+        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? relativePath
+            : $"https://graph.microsoft.com{relativePath}";
+
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        var resp = await _httpClient.PostAsync(url, content, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        JsonDocument? json = null;
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
+        }
+
+        return new GraphResponse
+        {
+            IsSuccess = resp.IsSuccessStatusCode,
+            StatusCode = (int)resp.StatusCode,
+            ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
+            Body = body ?? string.Empty,
+            Json = json
+        };
+    }
+
+    public async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct)) return false;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
@@ -615,9 +749,10 @@ public class GraphApiService
         string tenantId,
         string relativePath,
         CancellationToken ct = default,
-        bool treatNotFoundAsSuccess = true)
+        bool treatNotFoundAsSuccess = true,
+        IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct)) return false;
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
 
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
@@ -711,50 +846,207 @@ public class GraphApiService
         return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct);
     }
 
+    /// <summary>
+    /// Sets inheritable permissions for an agent blueprint with proper scope merging.
+    /// Checks if permissions already exist and merges scopes if needed via PATCH.
+    /// </summary>
     public async Task<(bool ok, bool alreadyExists, string? error)> SetInheritablePermissionsAsync(
         string tenantId,
         string blueprintAppId,
         string resourceAppId,
         IEnumerable<string> scopes,
+        IEnumerable<string>? requiredScopes = null,
         CancellationToken ct = default)
     {
-        var scopesString = string.Join(' ', scopes);
+        var desiredSet = new HashSet<string>(scopes ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
-        var payload = new
-        {
-            resourceAppId = resourceAppId,
-            inheritableScopes = new EnumeratedScopes
-            {
-                Scopes = new[] { scopesString }
-            }
-        };
+        // Normalize into array form expected by Graph (each element is a single scope string)
+        var desiredArray = desiredSet.ToArray();
 
         try
         {
-            var doc = await GraphPostAsync(
-                tenantId,
-                $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintAppId}/inheritablePermissions",
-                payload,
-                ct);
+            // First, try to resolve blueprintAppId to an application object id if needed
+            string blueprintObjectId = blueprintAppId;
 
-            // Success => created or updated
-            _logger.LogInformation("Inheritable permissions set: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
-                blueprintAppId, resourceAppId, scopesString);
+            // Try GET for inheritablePermissions - if it fails, attempt to lookup application by appId
+            var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
+            var existingDoc = await GraphGetAsync(tenantId, getPath, ct);
+
+            if (existingDoc == null)
+            {
+                // Attempt to resolve as appId -> application object id
+                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct);
+                if (apps != null && apps.RootElement.TryGetProperty("value", out var arr) && arr.GetArrayLength() > 0)
+                {
+                    var appObj = arr[0];
+                    if (appObj.TryGetProperty("id", out var idEl))
+                    {
+                        blueprintObjectId = idEl.GetString() ?? blueprintAppId;
+                        getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
+                        existingDoc = await GraphGetAsync(tenantId, getPath, ct);
+                    }
+                }
+            }
+
+            // Inspect existing entries
+            JsonElement? existingEntry = null;
+            if (existingDoc != null && existingDoc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in value.EnumerateArray())
+                {
+                    var rId = item.TryGetProperty("resourceAppId", out var r) ? r.GetString() : null;
+                    if (string.Equals(rId, resourceAppId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        existingEntry = item;
+                        break;
+                    }
+                }
+            }
+
+            if (existingEntry is not null)
+            {
+                // Merge scopes if necessary
+                var currentScopes = new List<string>();
+                if (existingEntry.Value.TryGetProperty("inheritableScopes", out var inheritable) &&
+                    inheritable.TryGetProperty("scopes", out var scopesEl) && scopesEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var s in scopesEl.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String))
+                    {
+                        var raw = s.GetString() ?? string.Empty;
+                        // Some entries may contain space-separated tokens; split defensively
+                        foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                            currentScopes.Add(tok);
+                    }
+                }
+
+                var currentSet = new HashSet<string>(currentScopes, StringComparer.OrdinalIgnoreCase);
+                if (desiredSet.IsSubsetOf(currentSet))
+                {
+                    _logger.LogInformation("Inheritable permissions already exist for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                    return (ok: true, alreadyExists: true, error: null);
+                }
+
+                // Union and PATCH
+                currentSet.UnionWith(desiredSet);
+                var mergedArray = currentSet.OrderBy(s => s).ToArray();
+
+                var patchPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions/{resourceAppId}";
+                var patchPayload = new
+                {
+                    inheritableScopes = new EnumeratedScopes
+                    {
+                        Scopes = mergedArray
+                    }
+                };
+
+                var patched = await GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
+                if (!patched)
+                {
+                    return (ok: false, alreadyExists: false, error: "PATCH failed");
+                }
+
+                _logger.LogInformation("Patched inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                return (ok: true, alreadyExists: false, error: null);
+            }
+
+            // No existing entry -> create
+            var postPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
+            var postPayload = new
+            {
+                resourceAppId = resourceAppId,
+                inheritableScopes = new EnumeratedScopes
+                {
+                    Scopes = desiredArray
+                }
+            };
+
+            var createdResp = await GraphPostWithResponseAsync(tenantId, postPath, postPayload, ct, requiredScopes);
+            if (!createdResp.IsSuccess)
+            {
+                var err = string.IsNullOrWhiteSpace(createdResp.Body)
+                    ? $"HTTP {createdResp.StatusCode} {createdResp.ReasonPhrase}"
+                    : createdResp.Body;
+                _logger.LogError("Failed to create inheritable permissions: {Status} {Reason} Body: {Body}", createdResp.StatusCode, createdResp.ReasonPhrase, createdResp.Body);
+                return (ok: false, alreadyExists: false, error: err);
+            }
+
+            _logger.LogInformation("Created inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
             return (ok: true, alreadyExists: false, error: null);
         }
         catch (Exception ex)
         {
-            var msg = ex.Message ?? string.Empty;
-            if (msg.Contains("already", StringComparison.OrdinalIgnoreCase) ||
-                msg.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
-                msg.Contains("409"))
+            _logger.LogError("Failed to set inheritable permissions: {Error}", ex.Message);
+            return (ok: false, alreadyExists: false, error: ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that inheritable permissions are correctly configured for a resource
+    /// </summary>
+    public async Task<(bool exists, string[] scopes, string? error)> VerifyInheritablePermissionsAsync(
+        string tenantId,
+        string blueprintAppId,
+        string resourceAppId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            string blueprintObjectId = blueprintAppId;
+            var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
+            var existingDoc = await GraphGetAsync(tenantId, getPath, ct);
+
+            if (existingDoc == null)
             {
-                _logger.LogWarning("Inheritable permissions already exist: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
-                    blueprintAppId, resourceAppId, scopesString);
-                return (ok: true, alreadyExists: true, error: null);
+                // Try to resolve as appId -> application object id
+                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct);
+                if (apps != null && apps.RootElement.TryGetProperty("value", out var arr) && arr.GetArrayLength() > 0)
+                {
+                    var appObj = arr[0];
+                    if (appObj.TryGetProperty("id", out var idEl))
+                    {
+                        blueprintObjectId = idEl.GetString() ?? blueprintAppId;
+                        getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
+                        existingDoc = await GraphGetAsync(tenantId, getPath, ct);
+                    }
+                }
             }
-            _logger.LogError("Failed to set inheritable permissions: {Error}", msg);
-            return (ok: false, alreadyExists: false, error: msg);
+
+            if (existingDoc == null)
+            {
+                return (exists: false, scopes: Array.Empty<string>(), error: "Failed to retrieve inheritable permissions");
+            }
+
+            // Find the entry for this resource
+            if (existingDoc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in value.EnumerateArray())
+                {
+                    var rId = item.TryGetProperty("resourceAppId", out var r) ? r.GetString() : null;
+                    if (string.Equals(rId, resourceAppId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Found the resource, extract scopes
+                        var scopesList = new List<string>();
+                        if (item.TryGetProperty("inheritableScopes", out var inheritable) &&
+                            inheritable.TryGetProperty("scopes", out var scopesEl) && scopesEl.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var s in scopesEl.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String))
+                            {
+                                var raw = s.GetString() ?? string.Empty;
+                                foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                                    scopesList.Add(tok);
+                            }
+                        }
+                        return (exists: true, scopes: scopesList.ToArray(), error: null);
+                    }
+                }
+            }
+
+            return (exists: false, scopes: Array.Empty<string>(), error: null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("Failed to verify inheritable permissions: {Error}", ex.Message);
+            return (exists: false, scopes: Array.Empty<string>(), error: ex.Message);
         }
     }
 
@@ -827,5 +1119,184 @@ public class GraphApiService
 
         var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
         return created != null;
+    }
+
+    /// <summary>
+    /// Adds required resource access (API permissions) to an application's manifest.
+    /// This makes the permissions visible in the Entra portal's "API permissions" blade.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID</param>
+    /// <param name="appId">The application (client) ID to update</param>
+    /// <param name="resourceAppId">The resource application ID to add permissions for</param>
+    /// <param name="scopes">The permission scope names to add</param>
+    /// <param name="isDelegated">True for delegated permissions (Scope), false for application permissions (Role)</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>True if successful, false otherwise</returns>
+    public async Task<bool> AddRequiredResourceAccessAsync(
+        string tenantId,
+        string appId,
+        string resourceAppId,
+        IEnumerable<string> scopes,
+        bool isDelegated = true,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // Get the application object by appId
+            var appsDoc = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{appId}'&$select=id,requiredResourceAccess", ct);
+            if (appsDoc == null)
+            {
+                _logger.LogError("Failed to retrieve application with appId {AppId}", appId);
+                return false;
+            }
+
+            if (!appsDoc.RootElement.TryGetProperty("value", out var appsArray) || appsArray.GetArrayLength() == 0)
+            {
+                _logger.LogError("Application not found with appId {AppId}", appId);
+                return false;
+            }
+
+            var app = appsArray[0];
+            if (!app.TryGetProperty("id", out var idProp) || string.IsNullOrEmpty(idProp.GetString()))
+            {
+                _logger.LogError("Application object missing 'id' property or 'id' is null for appId {AppId}", appId);
+                return false;
+            }
+            var objectId = idProp.GetString()!;
+
+            // Get the resource service principal to look up permission IDs
+            var resourceSp = await LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct);
+            if (string.IsNullOrEmpty(resourceSp))
+            {
+                _logger.LogError("Resource service principal not found for appId {ResourceAppId}", resourceAppId);
+                return false;
+            }
+
+            // Get the resource SP's published permissions
+            var resourceSpDoc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{resourceSp}?$select=oauth2PermissionScopes,appRoles", ct);
+            if (resourceSpDoc == null)
+            {
+                _logger.LogError("Failed to retrieve resource service principal {ResourceSp}", resourceSp);
+                return false;
+            }
+
+            // Map scope names to permission IDs
+            var permissionIds = new List<string>();
+            var permissionType = isDelegated ? "Scope" : "Role";
+            var permissionsProperty = isDelegated ? "oauth2PermissionScopes" : "appRoles";
+
+            if (resourceSpDoc.RootElement.TryGetProperty(permissionsProperty, out var permissions))
+            {
+                foreach (var scope in scopes)
+                {
+                    var found = false;
+                    foreach (var permission in permissions.EnumerateArray())
+                    {
+                        if (permission.TryGetProperty("value", out var valueElement) && 
+                            valueElement.GetString()?.Equals(scope, StringComparison.OrdinalIgnoreCase) == true &&
+                            permission.TryGetProperty("id", out var idElement))
+                        {
+                            var idValue = idElement.GetString();
+                            if (!string.IsNullOrEmpty(idValue))
+                            {
+                                permissionIds.Add(idValue);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        _logger.LogWarning("Permission scope '{Scope}' not found on resource {ResourceAppId}", scope, resourceAppId);
+                    }
+                }
+            }
+
+            if (permissionIds.Count == 0)
+            {
+                _logger.LogWarning("No valid permission IDs found for scopes: {Scopes}", string.Join(", ", scopes));
+                return false;
+            }
+
+            // Get existing requiredResourceAccess
+            var existingResourceAccess = new List<object>();
+            if (app.TryGetProperty("requiredResourceAccess", out var existingArray))
+            {
+                existingResourceAccess = JsonSerializer.Deserialize<List<object>>(existingArray.GetRawText()) ?? new List<object>();
+            }
+
+            // Check if resource already exists in requiredResourceAccess
+            var resourceAccessList = existingResourceAccess
+                .Select(x => JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(x)))
+                .ToList();
+
+            var existingResource = resourceAccessList.FirstOrDefault(x => 
+                x != null && 
+                x.TryGetValue("resourceAppId", out var resId) && 
+                resId.GetString() == resourceAppId);
+
+            if (existingResource != null)
+            {
+                // Add to existing resource access
+                var existingAccess = existingResource.TryGetValue("resourceAccess", out var accessElement)
+                    ? JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(accessElement.GetRawText()) ?? new List<Dictionary<string, JsonElement>>()
+                    : new List<Dictionary<string, JsonElement>>();
+
+                var existingIds = new HashSet<string>(
+                    existingAccess
+                        .Where(x => x.TryGetValue("id", out var idEl))
+                        .Select(x => x["id"].GetString()!)
+                );
+
+                foreach (var permId in permissionIds)
+                {
+                    if (!existingIds.Contains(permId))
+                    {
+                        existingAccess.Add(new Dictionary<string, JsonElement>
+                        {
+                            ["id"] = JsonDocument.Parse($"\"{permId}\"").RootElement,
+                            ["type"] = JsonDocument.Parse($"\"{permissionType}\"").RootElement
+                        });
+                    }
+                }
+
+                existingResource["resourceAccess"] = JsonDocument.Parse(JsonSerializer.Serialize(existingAccess)).RootElement;
+            }
+            else
+            {
+                // Add new resource access entry
+                var newResourceAccess = new Dictionary<string, object>
+                {
+                    ["resourceAppId"] = resourceAppId,
+                    ["resourceAccess"] = permissionIds.Select(id => new Dictionary<string, string>
+                    {
+                        ["id"] = id,
+                        ["type"] = permissionType
+                    }).ToList()
+                };
+
+                resourceAccessList.Add(JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(newResourceAccess))!);
+            }
+
+            // Update the application with PATCH
+            var patchPayload = new
+            {
+                requiredResourceAccess = resourceAccessList
+            };
+
+            var updated = await GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}", patchPayload, ct);
+            if (updated)
+            {
+                _logger.LogInformation("Successfully added required resource access for {ResourceAppId} to application {AppId}", resourceAppId, appId);
+            }
+
+            return updated;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to add required resource access: {Message}", ex.Message);
+            return false;
+        }
     }
 }

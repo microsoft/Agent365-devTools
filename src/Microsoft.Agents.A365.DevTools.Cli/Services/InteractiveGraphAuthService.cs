@@ -3,6 +3,7 @@
 
 using Azure.Core;
 using Azure.Identity;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 
@@ -53,17 +54,19 @@ public sealed class InteractiveGraphAuthService
         _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
         _logger.LogInformation("");
 
+        // Try browser authentication first
+        GraphServiceClient? graphClient = null;
+        bool shouldTryDeviceCode = false;
+        
         try
         {
-            // Use Azure.Identity InteractiveBrowserCredential which integrates with GraphServiceClient
-            // This provides the same authentication flow as Connect-MgGraph but without PowerShell
-            var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
+            var browserCredential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
             {
                 TenantId = tenantId,
                 ClientId = PowerShellAppId,
                 AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                // Redirect URI for interactive browser auth (standard for public clients)
-                RedirectUri = new Uri("http://localhost")
+                // MSAL will start local server on http://localhost:{random_port}
+                // This matches Microsoft Graph PowerShell app registration
             });
             
             _logger.LogInformation("Opening browser for authentication...");
@@ -73,8 +76,7 @@ public sealed class InteractiveGraphAuthService
             _logger.LogInformation("");
             
             // Create GraphServiceClient with the credential
-            // The SDK will automatically handle token acquisition and refresh
-            var graphClient = new GraphServiceClient(credential, RequiredScopes);
+            graphClient = new GraphServiceClient(browserCredential, RequiredScopes);
 
             _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
             _logger.LogInformation("");
@@ -83,32 +85,100 @@ public sealed class InteractiveGraphAuthService
         }
         catch (Azure.Identity.AuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
         {
-            _logger.LogError("Authentication failed: The user account doesn't have the required permissions.");
-            _logger.LogError("Please ensure you are a Global Administrator or have Application.ReadWrite.All permission.");
-            throw new InvalidOperationException(
-                "Authentication failed: Insufficient permissions. " +
-                "You must be a Global Administrator or have Application.ReadWrite.All permission.", ex);
+            // Most specific: permissions issue - don't try fallback
+            ThrowInsufficientPermissionsException(ex);
+            throw; // Unreachable but required for compiler
         }
-        catch (Azure.Identity.CredentialUnavailableException ex)
+        catch (Azure.Identity.AuthenticationFailedException ex) when (
+            ex.Message.Contains("localhost") || 
+            ex.Message.Contains("connection") ||
+            ex.Message.Contains("redirect_uri"))
         {
-            _logger.LogError("Interactive browser authentication is not available.");
-            _logger.LogError("This may happen in non-interactive environments or when a browser is not available.");
-            throw new InvalidOperationException(
-                "Interactive authentication is not available. " +
-                "Please ensure you're running this in an interactive environment with a browser.", ex);
+            // Infrastructure issue - try device code fallback
+            _logger.LogWarning("Browser authentication failed due to connectivity issue, falling back to device code flow...");
+            _logger.LogInformation("");
+            shouldTryDeviceCode = true;
+        }
+        catch (Azure.Identity.CredentialUnavailableException)
+        {
+            _logger.LogError("Interactive browser authentication is not available");
+            throw new GraphApiException(
+                "Interactive browser authentication",
+                "Not available in non-interactive environments or when browser is unavailable",
+                isPermissionIssue: false);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
-            _logger.LogError("");
-            _logger.LogError("TROUBLESHOOTING:");
-            _logger.LogError("  1. Ensure you are a Global Administrator or have Application.ReadWrite.All permission");
-            _logger.LogError("  2. Make sure you're running in an interactive environment with a browser");
-            _logger.LogError("  3. Check that the Microsoft Graph PowerShell app (14d82eec-204b-4c2f-b7e8-296a70dab67e) is available in your tenant");
-            _logger.LogError("");
-            throw new InvalidOperationException(
-                $"Failed to authenticate to Microsoft Graph: {ex.Message}. " +
-                "Please ensure you have the required permissions and are using a Global Administrator account.", ex);
+            _logger.LogError("Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
+            throw new GraphApiException(
+                "Browser authentication",
+                $"Authentication failed: {ex.Message}",
+                isPermissionIssue: false);
         }
+        
+        // Fallback to Device Code Flow if browser authentication had infrastructure issues
+        if (shouldTryDeviceCode)
+        {
+            try
+            {
+                var deviceCodeCredential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
+                {
+                    TenantId = tenantId,
+                    ClientId = PowerShellAppId,
+                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+                    DeviceCodeCallback = (code, cancellation) =>
+                    {
+                        _logger.LogInformation("");
+                        _logger.LogInformation("=============================================================");
+                        _logger.LogInformation("DEVICE CODE AUTHENTICATION");
+                        _logger.LogInformation("=============================================================");
+                        _logger.LogInformation("");
+                        _logger.LogInformation("To sign in, use a web browser to open the page:");
+                        _logger.LogInformation("    {0}", code.VerificationUri);
+                        _logger.LogInformation("");
+                        _logger.LogInformation("And enter the code:");
+                        _logger.LogInformation("    {0}", code.UserCode);
+                        _logger.LogInformation("");
+                        _logger.LogInformation("=============================================================");
+                        _logger.LogInformation("");
+                        return Task.CompletedTask;
+                    }
+                });
+                
+                graphClient = new GraphServiceClient(deviceCodeCredential, RequiredScopes);
+                
+                _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
+                _logger.LogInformation("");
+                
+                return Task.FromResult(graphClient);
+            }
+            catch (Azure.Identity.AuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
+            {
+                // Permissions issue in device code flow
+                ThrowInsufficientPermissionsException(ex);
+                throw; // Unreachable but required for compiler
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Device code authentication failed: {Message}", ex.Message);
+                throw new GraphApiException(
+                    "Device code authentication", 
+                    $"Authentication failed: {ex.Message}. Ensure you have required permissions and completed authentication flow.");
+            }
+        }
+        
+        // If browser auth succeeded, we already returned at line 83
+        // If device code was attempted and succeeded, we already returned above
+        // This line is truly unreachable in normal flow
+        throw new InvalidOperationException("Authentication failed unexpectedly.");
+    }
+
+    private void ThrowInsufficientPermissionsException(Exception innerException)
+    {
+        _logger.LogError("Authentication failed - insufficient permissions");
+        throw new GraphApiException(
+            "Graph authentication",
+            "Insufficient permissions - you must be a Global Administrator or have Application.ReadWrite.All permission",
+            isPermissionIssue: true);
     }
 }

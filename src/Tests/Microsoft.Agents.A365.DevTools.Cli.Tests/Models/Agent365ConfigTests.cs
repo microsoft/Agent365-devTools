@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Text.Json;
+using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using System.Text.Json;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Models;
@@ -59,7 +60,6 @@ public class Agent365ConfigTests
         };
 
         // Assert - check default values
-        Assert.Equal("B1", config.AppServicePlanSku); // Has default
         Assert.NotNull(config.AgentIdentityScopes); // Hardcoded defaults
         Assert.NotEmpty(config.AgentIdentityScopes); // Should contain default scopes
     }
@@ -104,8 +104,13 @@ public class Agent365ConfigTests
         config.BotId = "bot-def";
         config.BotMsaAppId = "msa-ghi";
         config.BotMessagingEndpoint = "https://bot.example.com/messages";
-        config.ConsentStatus = "granted";
-        config.ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z");
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ConsentGranted = true,
+            ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z")
+        });
         config.DeploymentLastTimestamp = DateTime.Parse("2025-10-14T13:00:00Z");
         config.DeploymentLastStatus = "success";
         config.DeploymentLastCommitHash = "abc123";
@@ -118,11 +123,12 @@ public class Agent365ConfigTests
         Assert.Equal("blueprint-456", config.AgentBlueprintId);
         Assert.Equal("identity-789", config.AgenticAppId);
         Assert.Equal("user-abc", config.AgenticUserId);
-        config.BotId = "bot-def";
-        config.BotMsaAppId = "msa-ghi";
-        config.BotMessagingEndpoint = "https://bot.example.com/messages";
-        config.ConsentStatus = "granted";
-        config.ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z");
+        Assert.Equal("bot-def", config.BotId);
+        Assert.Equal("msa-ghi", config.BotMsaAppId);
+        Assert.Equal("https://bot.example.com/messages", config.BotMessagingEndpoint);
+        Assert.NotEmpty(config.ResourceConsents);
+        Assert.Equal("Microsoft Graph", config.ResourceConsents[0].ResourceName);
+        Assert.True(config.ResourceConsents[0].ConsentGranted);
         Assert.Equal(DateTime.Parse("2025-10-14T13:00:00Z"), config.DeploymentLastTimestamp);
         Assert.Equal("success", config.DeploymentLastStatus);
         Assert.Equal("abc123", config.DeploymentLastCommitHash);
@@ -167,8 +173,7 @@ public class Agent365ConfigTests
         Assert.Null(config.BotId);
         Assert.Null(config.BotMsaAppId);
         Assert.Null(config.BotMessagingEndpoint);
-        Assert.Null(config.ConsentStatus);
-        Assert.Null(config.ConsentTimestamp);
+        Assert.Empty(config.ResourceConsents);
         Assert.Null(config.DeploymentLastTimestamp);
         Assert.Null(config.DeploymentLastStatus);
         Assert.Null(config.DeploymentLastCommitHash);
@@ -283,9 +288,16 @@ public class Agent365ConfigTests
         // Arrange
         var json = @"{
             ""tenantId"": ""tenant-123"",
-            ""consentTimestamp"": ""2025-10-14T12:34:56Z"",
             ""deploymentLastTimestamp"": ""2025-10-14T13:45:30Z"",
-            ""lastUpdated"": ""2025-10-14T14:56:40Z""
+            ""lastUpdated"": ""2025-10-14T14:56:40Z"",
+            ""resourceConsents"": [
+                {
+                    ""resourceName"": ""Microsoft Graph"",
+                    ""resourceAppId"": ""00000003-0000-0000-c000-000000000000"",
+                    ""consentGranted"": true,
+                    ""consentTimestamp"": ""2025-10-14T12:34:56Z""
+                }
+            ]
         }";
 
         // Act
@@ -293,10 +305,12 @@ public class Agent365ConfigTests
 
         // Assert
         Assert.NotNull(config);
-        Assert.NotNull(config.ConsentTimestamp);
-        Assert.Equal(2025, config.ConsentTimestamp.Value.Year);
-        Assert.Equal(10, config.ConsentTimestamp.Value.Month);
-        Assert.Equal(14, config.ConsentTimestamp.Value.Day);
+        Assert.NotEmpty(config.ResourceConsents);
+        Assert.NotNull(config.ResourceConsents[0].ConsentTimestamp);
+        var timestamp = config.ResourceConsents[0].ConsentTimestamp!.Value;
+        Assert.Equal(2025, timestamp.Year);
+        Assert.Equal(10, timestamp.Month);
+        Assert.Equal(14, timestamp.Day);
     }
 
     #endregion
@@ -347,6 +361,102 @@ public class Agent365ConfigTests
         Assert.True(config.McpDefaultServers[0].IsValid());
         Assert.Equal("Server 2", config.McpDefaultServers[1].McpServerName);
         Assert.True(config.McpDefaultServers[1].IsValid());
+    }
+
+    #endregion
+
+    #region MessagingEndpoint Tests
+
+    [Fact]
+    public void Validate_WithMessagingEndpoint_DoesNotRequireAppServiceFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            MessagingEndpoint = "https://external-agent.example.com/api/messages",
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = ".",
+            NeedDeployment = false
+            // AppServicePlanName and WebAppName not provided
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().BeEmpty("messaging endpoint makes App Service fields optional");
+    }
+
+    [Fact]
+    public void Validate_WithoutMessagingEndpoint_RequiresAppServiceFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = "."
+            // AppServicePlanName, WebAppName, and MessagingEndpoint not provided
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain("appServicePlanName is required.");
+        errors.Should().Contain("webAppName is required.");
+    }
+
+    [Fact]
+    public void Validate_WithEmptyMessagingEndpoint_RequiresAppServiceFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            MessagingEndpoint = "", // Empty string should be treated as not provided
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = "."
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain("appServicePlanName is required.");
+        errors.Should().Contain("webAppName is required.");
+    }
+
+    [Fact]
+    public void Validate_WithMessagingEndpoint_StillRequiresBaseFields()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            MessagingEndpoint = "https://external-agent.example.com/api/messages"
+            // Missing all required base fields
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain("tenantId is required.");
+        errors.Should().Contain("subscriptionId is required.");
+        errors.Should().Contain("resourceGroup is required.");
+        errors.Should().Contain("location is required.");
+        errors.Should().Contain("agentIdentityDisplayName is required.");
+        errors.Should().Contain("deploymentProjectPath is required.");
     }
 
     #endregion

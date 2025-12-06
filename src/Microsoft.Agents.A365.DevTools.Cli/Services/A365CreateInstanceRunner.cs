@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -117,9 +118,8 @@ public sealed class A365CreateInstanceRunner
             ? protectedNode?.GetValue<bool>() ?? false
             : false;
 
-        var inheritanceConfigured = instance.TryGetPropertyValue("inheritanceConfigured", out var inheritanceNode)
-            ? inheritanceNode?.GetValue<bool>() ?? false
-            : false;
+        // Check inheritance status from ResourceConsents
+        var inheritanceConfigured = IsInheritanceConfigured(instance);
 
         // Decrypt the secret if it was encrypted
         if (!string.IsNullOrWhiteSpace(agentBlueprintClientSecret) && isProtected)
@@ -193,6 +193,9 @@ public sealed class A365CreateInstanceRunner
         {
             _logger.LogInformation("Phase 1: Creating Agent Identity and Agent User");
 
+            // Create RetryHelper for this phase
+            var retryHelper = new RetryHelper(_logger);
+
             var agentIdentityDisplayName = GetConfig("agentIdentityDisplayName");
             var agentUserDisplayName = GetConfig("agentUserDisplayName");
             var agentUserPrincipalName = GetConfig("agentUserPrincipalName");
@@ -232,46 +235,45 @@ public sealed class A365CreateInstanceRunner
                 _logger.LogInformation("Waiting for Agent Identity to propagate in Azure AD...");
                 _logger.LogInformation("This may take 30-60 seconds for full propagation.");
                 
-                // Wait with retry and verify the service principal exists
-                var maxRetries = 12; // 12 attempts
-                var retryDelay = 5000; // Start with 5 seconds
-                var servicePrincipalExists = false;
-                
-                for (int i = 0; i < maxRetries; i++)
+                // Use RetryHelper to verify service principal exists
+                try
                 {
-                    await Task.Delay(retryDelay, cancellationToken);
+                    var servicePrincipalExists = await retryHelper.ExecuteWithRetryAsync(
+                        async ct =>
+                        {
+                            _logger.LogInformation("Verifying Agent Identity propagation...");
+                            var spExists = await VerifyServicePrincipalExistsAsync(tenantId, agenticAppId, ct);
+                            if (spExists)
+                            {
+                                _logger.LogInformation("Agent Identity service principal verified in directory!");
+                            }
+                            return spExists;
+                        },
+                        result => !result,
+                        maxRetries: 12,
+                        baseDelaySeconds: 5,
+                        cancellationToken);
                     
-                    _logger.LogInformation("Verifying Agent Identity propagation (attempt {Attempt}/{Max})...", i + 1, maxRetries);
-                    
-                    // Check if service principal exists via Graph API
-                    var spExists = await VerifyServicePrincipalExistsAsync(tenantId, agenticAppId, cancellationToken);
-                    if (spExists)
+                    if (!servicePrincipalExists)
                     {
-                        servicePrincipalExists = true;
-                        _logger.LogInformation("✓ Agent Identity service principal verified in directory!");
-                        // Wait a bit more to ensure full propagation
-                        _logger.LogInformation("Waiting 10 more seconds for complete propagation...");
-                        await Task.Delay(10000, cancellationToken);
-                        break;
+                        _logger.LogError("Agent Identity service principal not found in directory after 60+ seconds");
+                        _logger.LogError("The identity was created but has not fully propagated yet.");
+                        _logger.LogError("");
+                        _logger.LogError("RECOMMENDED ACTIONS:");
+                        _logger.LogError("  1. Wait 5-10 more minutes for Azure AD propagation");
+                        _logger.LogError("  2. Verify the identity exists in Azure Portal > Enterprise Applications");
+                        _logger.LogError("  3. Re-run 'a365 create-instance identity' to retry user creation");
+                        _logger.LogError("");
+                        return false;
                     }
                     
-                    // Exponential backoff for later attempts
-                    if (i >= 3)
-                    {
-                        retryDelay = Math.Min(retryDelay + 2000, 10000); // Increase delay, max 10s
-                    }
+                    // Service principal exists, wait a bit more for complete propagation
+                    _logger.LogInformation("Waiting 10 more seconds for complete propagation...");
+                    await Task.Delay(10000, cancellationToken);
                 }
-                
-                if (!servicePrincipalExists)
+                catch (Exception ex)
                 {
-                    _logger.LogError("Agent Identity service principal not found in directory after 60+ seconds");
-                    _logger.LogError("The identity was created but has not fully propagated yet.");
-                    _logger.LogError("");
-                    _logger.LogError("RECOMMENDED ACTIONS:");
-                    _logger.LogError("  1. Wait 5-10 more minutes for Azure AD propagation");
-                    _logger.LogError("  2. Verify the identity exists in Azure Portal > Enterprise Applications");
-                    _logger.LogError("  3. Re-run 'a365 create-instance identity' to retry user creation");
-                    _logger.LogError("");
+                    _logger.LogError(ex, "Error verifying service principal: {Message}", ex.Message);
                     return false;
                 }
             }
@@ -287,60 +289,40 @@ public sealed class A365CreateInstanceRunner
 
             if (string.IsNullOrWhiteSpace(agenticUserId))
             {
-                // Create agent user with retry logic
-                var maxUserCreationRetries = 3;
-                var userCreationSuccess = false;
-                string? createdUserId = null;
+                // Create agent user with retry logic using RetryHelper
+                _logger.LogInformation("Creating Agent User...");
                 
-                for (int attempt = 1; attempt <= maxUserCreationRetries; attempt++)
-                {
-                    _logger.LogInformation("Creating Agent User (attempt {Attempt}/{Max})...", attempt, maxUserCreationRetries);
-                    
-                    var userResult = await CreateAgentUserAsync(
+                var userResult = await retryHelper.ExecuteWithRetryAsync(
+                    async ct => await CreateAgentUserAsync(
                         tenantId,
                         agenticAppId!,
                         agentUserDisplayName,
                         agentUserPrincipalName,
                         usageLocation,
                         managerEmail,
-                        cancellationToken);
+                        ct),
+                    result => !result.success,
+                    maxRetries: 3,
+                    baseDelaySeconds: 10,
+                    cancellationToken);
 
-                    if (userResult.success)
-                    {
-                        userCreationSuccess = true;
-                        createdUserId = userResult.userId;
-                        break;
-                    }
-                    
-                    // If not the last attempt, wait before retrying
-                    if (attempt < maxUserCreationRetries)
-                    {
-                        var waitSeconds = attempt * 10; // 10s, 20s progression
-                        _logger.LogWarning("Agent User creation failed, waiting {Seconds} seconds before retry...", waitSeconds);
-                        await Task.Delay(waitSeconds * 1000, cancellationToken);
-                    }
-                }
-
-                if (!userCreationSuccess)
+                if (!userResult.success)
                 {
-                    _logger.LogError("Failed to create agent user after {Attempts} attempts - this is a critical error", maxUserCreationRetries);
+                    _logger.LogError("Failed to create agent user after 3 attempts - this is a critical error");
                     _logger.LogError("");
                     _logger.LogError("POSSIBLE CAUSES:");
                     _logger.LogError("  1. Agent Identity service principal has not fully propagated in Azure AD");
                     _logger.LogError("  2. User Principal Name '{UPN}' is already in use", agentUserPrincipalName);
-                    _logger.LogError("  3. Missing permissions in Azure AD");
-                    _logger.LogError("  4. Tenant replication delays (can take 5-15 minutes)");
+                    _logger.LogError("  3. Insufficient permissions to create users");
                     _logger.LogError("");
                     _logger.LogError("RECOMMENDED ACTIONS:");
-                    _logger.LogError("  1. Wait 10-15 minutes for complete Azure AD propagation");
-                    _logger.LogError("  2. Verify the Agent Identity exists in Azure Portal > Enterprise Applications");
-                    _logger.LogError("  3. Check if user '{UPN}' already exists in Azure AD", agentUserPrincipalName);
-                    _logger.LogError("  4. Re-run 'a365 create-instance identity' to retry");
-                    _logger.LogError("");
+                    _logger.LogError("  1. Wait 5-10 minutes and run: a365 setup createinstance --step user");
+                    _logger.LogError("  2. Verify User.ReadWrite.All permission is granted");
+                    _logger.LogError("  3. Check Azure AD audit logs for detailed error information");
                     return false;
                 }
 
-                agenticUserId = createdUserId;
+                agenticUserId = userResult.userId;
                 SetInstanceField(instance, "AgenticUserId", agenticUserId);
                 SetInstanceField(instance, "agentUserPrincipalName", agentUserPrincipalName);
                 await SaveInstanceAsync(generatedConfigPath, instance, cancellationToken);
@@ -363,13 +345,11 @@ public sealed class A365CreateInstanceRunner
 
                     var scopesJoined = string.Join(' ', agentIdentityScopes);
                     var consentGraph = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={agenticAppId}&scope={Uri.EscapeDataString(scopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
-                    var consentConnectivity = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={agenticAppId}&scope=0ddb742a-e7dc-4899-a31e-80e797ec7144/Connectivity.Connections.Read&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
 
                     SetInstanceField(instance, "agentIdentityConsentUrlGraph", consentGraph);
-                    SetInstanceField(instance, "agentIdentityConsentUrlConnectivity", consentConnectivity);
 
-                    // Request admin consent
-                    var consent1Success = await RequestAdminConsentAsync(
+                    // Request admin consent for Graph API
+                    var consentGraphSuccess = await RequestAdminConsentAsync(
                         consentGraph,
                         agenticAppId,
                         tenantId,
@@ -377,27 +357,18 @@ public sealed class A365CreateInstanceRunner
                         180,
                         cancellationToken);
 
-                    var consent2Success = await RequestAdminConsentAsync(
-                        consentConnectivity,
-                        agenticAppId,
-                        tenantId,
-                        "Agent Instance Connectivity scopes",
-                        180,
-                        cancellationToken);
-
                     // Consent for MCP servers from ToolingManifest.json
-                    var consent3Success = await ProcessMcpConsentAsync(
+                    var consentMcpSuccess = await ProcessMcpConsentAsync(
                         instance,
                         agenticAppId,
                         tenantId,
                         configDirectory,
                         cancellationToken);
 
-                    instance["consent1Granted"] = consent1Success;
-                    instance["consent2Granted"] = consent2Success;
-                    instance["consent3Granted"] = consent3Success;
+                    instance["consent1Granted"] = consentGraphSuccess;
+                    instance["consent3Granted"] = consentMcpSuccess;
 
-                    if (!consent1Success || !consent2Success || !consent3Success)
+                    if (!consentGraphSuccess || !consentMcpSuccess)
                     {
                         _logger.LogWarning("One or more consents may not have been detected");
                         _logger.LogInformation("The setup will continue, but you may need to grant consent manually if needed.");
@@ -1247,5 +1218,28 @@ public sealed class A365CreateInstanceRunner
             _logger.LogWarning(ex, "Exception verifying service principal: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Checks if inheritable permissions are configured by examining ResourceConsents.
+    /// Returns true if all resources with inheritable permissions have them configured.
+    /// </summary>
+    private static bool IsInheritanceConfigured(JsonNode instance)
+    {
+        if (!instance.AsObject().TryGetPropertyValue("resourceConsents", out var resourceConsentsNode))
+            return false;
+
+        if (resourceConsentsNode?.AsArray() is not { } resourceConsents || resourceConsents.Count == 0)
+            return false;
+
+        var resourcesWithInheritance = resourceConsents
+            .Where(rc => rc?["inheritablePermissionsConfigured"] != null)
+            .ToList();
+
+        if (resourcesWithInheritance.Count == 0)
+            return false;
+
+        return resourcesWithInheritance.All(rc => 
+            rc?["inheritablePermissionsConfigured"]?.GetValue<bool>() == true);
     }
 }

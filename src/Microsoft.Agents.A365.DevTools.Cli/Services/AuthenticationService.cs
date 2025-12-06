@@ -5,6 +5,7 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using System.Text.Json;
 
@@ -31,8 +32,9 @@ public class AuthenticationService
     /// Gets an access token for Agent 365, using cached token if valid or prompting for authentication
     /// </summary>
     /// <param name="resourceUrl">The resource URL to request a token for (e.g., https://agent365.svc.cloud.microsoft or environment-specific URL)</param>
+    /// <param name="tenantId">Optional tenant ID for single-tenant authentication. If provided and cached token is for different tenant, forces re-authentication</param>
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
-    public async Task<string> GetAccessTokenAsync(string resourceUrl, bool forceRefresh = false)
+    public async Task<string> GetAccessTokenAsync(string resourceUrl, string? tenantId = null, bool forceRefresh = false)
     {
         // Try to load cached token for this resourceUrl
         if (!forceRefresh && File.Exists(_tokenCachePath))
@@ -42,8 +44,32 @@ public class AuthenticationService
                 var cachedToken = await LoadCachedTokenAsync(resourceUrl);
                 if (cachedToken != null && !IsTokenExpired(cachedToken))
                 {
-                    _logger.LogInformation("Using cached authentication token for {ResourceUrl}", resourceUrl);
-                    return cachedToken.AccessToken;
+                    // If tenant ID is specified, validate that cached token is for the correct tenant
+                    if (!string.IsNullOrWhiteSpace(tenantId))
+                    {
+                        if (string.IsNullOrWhiteSpace(cachedToken.TenantId))
+                        {
+                            _logger.LogWarning("Cached token does not have tenant information. Re-authenticating with tenant {TenantId}...", tenantId);
+                            // Fall through to re-authenticate
+                        }
+                        else if (!string.Equals(cachedToken.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogWarning("Cached token is for tenant {CachedTenant} but requested tenant is {RequestedTenant}. Re-authenticating...",
+                                cachedToken.TenantId, tenantId);
+                            // Fall through to re-authenticate
+                        }
+                        else
+                        {
+                            _logger.LogInformation("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                                resourceUrl, tenantId);
+                            return cachedToken.AccessToken;
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Using cached authentication token for {ResourceUrl}", resourceUrl);
+                        return cachedToken.AccessToken;
+                    }
                 }
             }
             catch (Exception ex)
@@ -52,9 +78,9 @@ public class AuthenticationService
             }
         }
 
-        // Authenticate interactively
+        // Authenticate interactively with specific tenant
         _logger.LogInformation("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl);
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId);
 
         // Cache the token for this resourceUrl
         await CacheTokenAsync(resourceUrl, token);
@@ -66,10 +92,16 @@ public class AuthenticationService
     /// Authenticates user interactively using device code flow or browser
     /// </summary>
     /// <param name="resourceUrl">The resource URL to request a token for</param>
-    private async Task<TokenInfo> AuthenticateInteractivelyAsync(string resourceUrl)
+    /// <param name="tenantId">Optional tenant ID for single-tenant authentication. If null, uses common tenant</param>
+    private async Task<TokenInfo> AuthenticateInteractivelyAsync(string resourceUrl, string? tenantId = null)
     {
         try
         {
+            // Use specific tenant ID if provided, otherwise use common tenant for multi-tenant apps
+            var effectiveTenantId = string.IsNullOrWhiteSpace(tenantId)
+                ? AuthenticationConstants.CommonTenantId
+                : tenantId;
+
             // Determine which scope to use based on the resource URL or App ID
             string scope;
             string environmentName;
@@ -114,6 +146,7 @@ public class AuthenticationService
             }
 
             _logger.LogInformation("Token scope: {Scope}", scope);
+            _logger.LogInformation("Authenticating for tenant: {TenantId}", effectiveTenantId);
 
             // For Power Platform API authentication, use device code flow to avoid URL length issues
             // InteractiveBrowserCredential with Power Platform scopes can create URLs that exceed browser limits
@@ -122,7 +155,7 @@ public class AuthenticationService
 
             TokenCredential credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
             {
-                TenantId = AuthenticationConstants.CommonTenantId,
+                TenantId = effectiveTenantId,
                 ClientId = AuthenticationConstants.PowershellClientId,
                 DeviceCodeCallback = (code, cancellation) =>
                 {
@@ -149,13 +182,24 @@ public class AuthenticationService
             return new TokenInfo
             {
                 AccessToken = tokenResult.Token,
-                ExpiresOn = tokenResult.ExpiresOn.UtcDateTime
+                ExpiresOn = tokenResult.ExpiresOn.UtcDateTime,
+                TenantId = effectiveTenantId
             };
+        }
+        catch (AuthenticationFailedException ex) when (ex.Message.Contains("code_expired") || ex.InnerException?.Message.Contains("code_expired") == true)
+        {
+            _logger.LogError("Device code expired - authentication not completed in time");
+            throw new AzureAuthenticationException("Device code authentication timed out - please complete authentication promptly when retrying");
+        }
+        catch (AuthenticationFailedException ex)
+        {
+            _logger.LogError("Interactive authentication failed: {Message}", ex.Message);
+            throw new AzureAuthenticationException($"Authentication failed: {ex.Message}");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Interactive authentication failed");
-            throw new InvalidOperationException("Failed to authenticate. Please ensure you're logged in with your Microsoft account.", ex);
+            _logger.LogError("Unexpected authentication error: {Message}", ex.Message);
+            throw new AzureAuthenticationException($"Unexpected authentication error: {ex.Message}");
         }
     }
 
@@ -208,8 +252,9 @@ public class AuthenticationService
     /// </summary>
     /// <param name="resourceUrl">The resource URL to request a token for</param>
     /// <param name="manifestPath">Optional path to ToolingManifest.json for MCP scope resolution</param>
+    /// <param name="tenantId">Optional tenant ID for single-tenant authentication</param>
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
-    public async Task<string> GetAccessTokenForMcpAsync(string resourceUrl, string? manifestPath = null, bool forceRefresh = false)
+    public async Task<string> GetAccessTokenForMcpAsync(string resourceUrl, string? manifestPath = null, string? tenantId = null, bool forceRefresh = false)
     {
         var scopes = ResolveScopesForResource(resourceUrl, manifestPath);
 
@@ -218,7 +263,7 @@ public class AuthenticationService
 
         // Use the existing method for backward compatibility
         // In the future, this could use the specific scopes for targeted authentication
-        return await GetAccessTokenAsync(resourceUrl, forceRefresh);
+        return await GetAccessTokenAsync(resourceUrl, tenantId, forceRefresh);
     }
 
     /// <summary>
@@ -359,6 +404,7 @@ public class AuthenticationService
     {
         public string AccessToken { get; set; } = string.Empty;
         public DateTime ExpiresOn { get; set; }
+        public string? TenantId { get; set; }
     }
 
     private class TokenCache

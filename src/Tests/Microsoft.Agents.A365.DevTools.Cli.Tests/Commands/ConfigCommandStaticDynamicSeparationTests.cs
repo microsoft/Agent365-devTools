@@ -75,7 +75,12 @@ public class ConfigCommandStaticDynamicSeparationTests
         wizardResult.AgenticAppId = "dynamic-identity-789";
         wizardResult.AgenticUserId = "dynamic-user-abc";
         wizardResult.BotId = "dynamic-bot-def";
-        wizardResult.ConsentStatus = "granted";
+        wizardResult.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ConsentGranted = true
+        });
         wizardResult.Completed = true;
         wizardResult.CliVersion = "1.0.0";
 
@@ -125,14 +130,8 @@ public class ConfigCommandStaticDynamicSeparationTests
                 "REGRESSION: dynamic property botMsaAppId should NOT be in a365.config.json");
             rootElement.TryGetProperty("botMessagingEndpoint", out _).Should().BeFalse(
                 "REGRESSION: dynamic property botMessagingEndpoint should NOT be in a365.config.json");
-            rootElement.TryGetProperty("consentStatus", out _).Should().BeFalse(
-                "REGRESSION: dynamic property consentStatus should NOT be in a365.config.json");
-            rootElement.TryGetProperty("consentTimestamp", out _).Should().BeFalse(
-                "REGRESSION: dynamic property consentTimestamp should NOT be in a365.config.json");
-            rootElement.TryGetProperty("consent1Granted", out _).Should().BeFalse(
-                "REGRESSION: dynamic property consent1Granted should NOT be in a365.config.json");
-            rootElement.TryGetProperty("consent2Granted", out _).Should().BeFalse(
-                "REGRESSION: dynamic property consent2Granted should NOT be in a365.config.json");
+            rootElement.TryGetProperty("resourceConsents", out _).Should().BeFalse(
+                "REGRESSION: dynamic property resourceConsents should NOT be in a365.config.json");
             rootElement.TryGetProperty("inheritanceConfigured", out _).Should().BeFalse(
                 "REGRESSION: dynamic property inheritanceConfigured should NOT be in a365.config.json");
             rootElement.TryGetProperty("inheritanceConfigError", out _).Should().BeFalse(
@@ -209,7 +208,12 @@ public class ConfigCommandStaticDynamicSeparationTests
         // Add dynamic properties that should NOT be saved
         importConfig.AgentBlueprintId = "should-not-be-saved-123";
         importConfig.BotId = "should-not-be-saved-456";
-        importConfig.ConsentStatus = "should-not-be-saved";
+        importConfig.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Should Not Be Saved",
+            ResourceAppId = "00000000-0000-0000-0000-000000000000",
+            ConsentGranted = true
+        });
         importConfig.Completed = true;
 
         // Write the full config (including dynamic properties) to import file
@@ -244,8 +248,8 @@ public class ConfigCommandStaticDynamicSeparationTests
                 "REGRESSION: imported dynamic property agentBlueprintId should NOT be saved to a365.config.json");
             rootElement.TryGetProperty("botId", out _).Should().BeFalse(
                 "REGRESSION: imported dynamic property botId should NOT be saved to a365.config.json");
-            rootElement.TryGetProperty("consentStatus", out _).Should().BeFalse(
-                "REGRESSION: imported dynamic property consentStatus should NOT be saved to a365.config.json");
+            rootElement.TryGetProperty("resourceConsents", out _).Should().BeFalse(
+                "REGRESSION: imported dynamic property resourceConsents should NOT be saved to a365.config.json");
             rootElement.TryGetProperty("completed", out _).Should().BeFalse(
                 "REGRESSION: imported dynamic property completed should NOT be saved to a365.config.json");
         }
@@ -283,7 +287,12 @@ public class ConfigCommandStaticDynamicSeparationTests
         // Set dynamic properties (get/set)
         config.AgentBlueprintId = "blueprint-789";
         config.BotId = "bot-abc";
-        config.ConsentStatus = "granted";
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ConsentGranted = true
+        });
         config.Completed = true;
 
         // Act
@@ -302,7 +311,7 @@ public class ConfigCommandStaticDynamicSeparationTests
             "dynamic property should NOT be included in GetStaticConfig()");
         root.TryGetProperty("botId", out _).Should().BeFalse(
             "dynamic property should NOT be included in GetStaticConfig()");
-        root.TryGetProperty("consentStatus", out _).Should().BeFalse(
+        root.TryGetProperty("resourceConsents", out _).Should().BeFalse(
             "dynamic property should NOT be included in GetStaticConfig()");
         root.TryGetProperty("completed", out _).Should().BeFalse(
             "dynamic property should NOT be included in GetStaticConfig()");
@@ -328,7 +337,12 @@ public class ConfigCommandStaticDynamicSeparationTests
         // Set dynamic properties (get/set)
         config.AgentBlueprintId = "blueprint-789";
         config.BotId = "bot-abc";
-        config.ConsentStatus = "granted";
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ConsentGranted = true
+        });
         config.Completed = true;
 
         // Act
@@ -340,7 +354,7 @@ public class ConfigCommandStaticDynamicSeparationTests
         // Assert - Dynamic properties present
         root.TryGetProperty("agentBlueprintId", out _).Should().BeTrue("dynamic property should be included");
         root.TryGetProperty("botId", out _).Should().BeTrue("dynamic property should be included");
-        root.TryGetProperty("consentStatus", out _).Should().BeTrue("dynamic property should be included");
+        root.TryGetProperty("resourceConsents", out _).Should().BeTrue("dynamic property should be included");
         root.TryGetProperty("completed", out _).Should().BeTrue("dynamic property should be included");
 
         // Assert - Static properties NOT present
@@ -352,6 +366,76 @@ public class ConfigCommandStaticDynamicSeparationTests
             "static property should NOT be included in GetGeneratedConfig()");
         root.TryGetProperty("location", out _).Should().BeFalse(
             "static property should NOT be included in GetGeneratedConfig()");
+    }
+
+    [Fact]
+    public async Task ConfigInit_WithWizard_MessagingEndpoint()
+    {
+        // Arrange
+        var logger = _loggerFactory.CreateLogger("Test");
+        var configDir = GetTestConfigDir();
+        var localConfigPath = Path.Combine(configDir, "a365.config.json");
+
+        // Create a mock wizard that returns a complete config object
+        var mockWizard = Substitute.For<IConfigurationWizardService>();
+        var wizardResult = new Agent365Config
+        {
+            // Static properties (should be saved)
+            TenantId = "12345678-1234-1234-1234-123456789012",
+            SubscriptionId = "87654321-4321-4321-4321-210987654321",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            MessagingEndpoint = "https://custom-endpoint.contoso.com/api/messages",
+            AgentIdentityDisplayName = "Test Agent",
+            AgentBlueprintDisplayName = "Test Blueprint",
+            AgentUserPrincipalName = "agent.test@contoso.com",
+            AgentUserDisplayName = "Test Agent User",
+            ManagerEmail = "manager@contoso.com",
+            AgentUserUsageLocation = "US",
+            DeploymentProjectPath = configDir,
+            AgentDescription = "Test Agent Description"
+        };
+
+        mockWizard.RunWizardAsync(Arg.Any<Agent365Config?>()).Returns(wizardResult);
+
+        var originalDir = Environment.CurrentDirectory;
+        try
+        {
+            Environment.CurrentDirectory = configDir;
+
+            // Act - Run config init
+            var root = new RootCommand();
+            root.AddCommand(ConfigCommand.CreateCommand(logger, configDir, mockWizard));
+            var result = await root.InvokeAsync("config init");
+
+            // Assert
+            result.Should().Be(0, "command should succeed");
+            File.Exists(localConfigPath).Should().BeTrue("config file should be created");
+
+            // Read the saved config file
+            var savedJson = await File.ReadAllTextAsync(localConfigPath);
+            var savedDoc = JsonDocument.Parse(savedJson);
+            var rootElement = savedDoc.RootElement;
+
+            // Verify STATIC properties ARE present
+            rootElement.TryGetProperty("tenantId", out _).Should().BeTrue("static property tenantId should be saved");
+            rootElement.TryGetProperty("subscriptionId", out _).Should().BeTrue("static property subscriptionId should be saved");
+            rootElement.TryGetProperty("resourceGroup", out _).Should().BeTrue("static property resourceGroup should be saved");
+            rootElement.TryGetProperty("location", out _).Should().BeTrue("static property location should be saved");
+            rootElement.TryGetProperty("appServicePlanName", out _).Should().BeFalse("static property appServicePlanName should not be saved");
+            rootElement.TryGetProperty("webAppName", out _).Should().BeFalse("static property webAppName should not be saved");
+            rootElement.TryGetProperty("messagingEndpoint", out _).Should().BeTrue("static property messagingEndpoint should be saved");
+            rootElement.TryGetProperty("agentIdentityDisplayName", out _).Should().BeTrue("static property agentIdentityDisplayName should be saved");
+            rootElement.TryGetProperty("deploymentProjectPath", out _).Should().BeTrue("static property deploymentProjectPath should be saved");
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDir;
+            if (Directory.Exists(configDir))
+            {
+                await CleanupTestDirectoryAsync(configDir);
+            }
+        }
     }
 
     /// <summary>

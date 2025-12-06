@@ -29,4 +29,9 @@ public interface IPlatformBuilder
     /// Create Oryx manifest for the platform
     /// </summary>
     Task<OryxManifest> CreateManifestAsync(string projectDir, string publishPath);
+
+    /// <summary>
+    /// Convert .env file to Azure App Settings for the deployed application
+    /// </summary>
+    Task<bool> ConvertEnvToAzureAppSettingsAsync(string projectDir, string resourceGroup, string webAppName, bool verbose);
 }

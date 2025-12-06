@@ -80,15 +80,16 @@ public class CreateInstanceCommand
                 logger.LogInformation("");
 
                 // Use C# runner with AuthenticationService and GraphApiService
+                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                 var authService = new AuthenticationService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<AuthenticationService>());
+                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
 
                 var graphService = new GraphApiService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
+                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
                     executor);
 
                 var instanceRunner = new A365CreateInstanceRunner(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<A365CreateInstanceRunner>(),
+                    cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
                     graphService);
 
@@ -162,6 +163,20 @@ public class CreateInstanceCommand
                 if (!botApiGrantOk)
                     logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Messaging Bot API.");
 
+                var observabilityApiResourceSpObjectId = await graphApiService.EnsureServicePrincipalForAppIdAsync(
+                    instanceConfig.TenantId,
+                    ConfigConstants.ObservabilityApiAppId);
+
+                // Grant oauth2PermissionGrants: *agent identity SP* -> Observability API SP
+                var observabilityApiGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+                    instanceConfig.TenantId,
+                    agenticAppSpObjectId,
+                    observabilityApiResourceSpObjectId,
+                    new[] { "user_impersonation" });
+
+                if (!observabilityApiGrantOk)
+                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Observability API.");
+
                 logger.LogInformation("Admin consent granted for Agent Identity completed successfully");
 
                 // Register agent with Microsoft Graph API
@@ -219,11 +234,6 @@ public class CreateInstanceCommand
                 // Update configuration with the populated values
                 logger.LogInformation("Updating configuration with generated values...");
                 
-                // Update Agent365Config state properties
-                instanceConfig.BotId = instanceConfig.AgentBlueprintId ?? endpointName;
-                instanceConfig.BotMsaAppId = instanceConfig.AgentBlueprintId;
-                instanceConfig.BotMessagingEndpoint = $"https://{instanceConfig.WebAppName}.azurewebsites.net/api/messages";
-                
                 logger.LogInformation("     Agent Blueprint ID: {AgentBlueprintId}", instanceConfig.AgentBlueprintId);
                 logger.LogInformation("     Agent Instance ID: {AgenticAppId}", instanceConfig.AgenticAppId);
                 logger.LogInformation("     Agent User ID: {AgenticUserId}", instanceConfig.AgenticUserId);
@@ -241,7 +251,8 @@ public class CreateInstanceCommand
                     generatedConfigPath = Path.Combine(
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
-                    var platformDetector = new PlatformDetector(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<PlatformDetector>());
+                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
                         a365ConfigPath: config.FullName,
@@ -314,15 +325,16 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with AuthenticationService and GraphApiService
+                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                 var authService = new AuthenticationService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<AuthenticationService>());
+                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
 
                 var graphService = new GraphApiService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
+                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
                     executor);
 
                 var instanceRunner = new A365CreateInstanceRunner(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<A365CreateInstanceRunner>(),
+                    cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
                     graphService);
 
@@ -346,7 +358,9 @@ public class CreateInstanceCommand
                     generatedConfigPath = Path.Combine(
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
-                    var platformDetector = new PlatformDetector(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<PlatformDetector>());
+                    
+                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
                         a365ConfigPath: config.FullName,
@@ -418,15 +432,16 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with AuthenticationService and GraphApiService
+                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                 var authService = new AuthenticationService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<AuthenticationService>());
+                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
 
                 var graphService = new GraphApiService(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
+                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
                     executor);
 
                 var instanceRunner = new A365CreateInstanceRunner(
-                    LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<A365CreateInstanceRunner>(),
+                    cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
                     graphService);
 

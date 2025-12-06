@@ -103,7 +103,6 @@ public class Agent365ConfigServiceTests : IDisposable
             managedIdentityPrincipalId = "11111111-2222-3333-4444-555555555555",
             agentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             botId = "99999999-8888-7777-6666-555555555555",
-            consentStatus = "granted",
             lastUpdated = "2025-10-14T12:00:00Z",
             cliVersion = "1.0.0"
         };
@@ -124,7 +123,6 @@ public class Agent365ConfigServiceTests : IDisposable
         Assert.Equal("11111111-2222-3333-4444-555555555555", config.ManagedIdentityPrincipalId);
         Assert.Equal("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", config.AgentBlueprintId);
         Assert.Equal("99999999-8888-7777-6666-555555555555", config.BotId);
-        Assert.Equal("granted", config.ConsentStatus);
         Assert.Equal("1.0.0", config.CliVersion);
     }
 
@@ -154,7 +152,12 @@ public class Agent365ConfigServiceTests : IDisposable
         // Set dynamic properties
         config.AgentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
         config.BotId = "99999999-8888-7777-6666-555555555555";
-        config.ConsentStatus = "granted";
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ConsentGranted = true
+        });
 
         // Act
         await _service.SaveStateAsync(config, statePath);
@@ -169,7 +172,7 @@ public class Agent365ConfigServiceTests : IDisposable
         // Should have dynamic properties
         Assert.True(savedData.ContainsKey("agentBlueprintId"));
         Assert.True(savedData.ContainsKey("botId"));
-        Assert.True(savedData.ContainsKey("consentStatus"));
+        Assert.True(savedData.ContainsKey("resourceConsents"));
         Assert.True(savedData.ContainsKey("lastUpdated")); // Added by SaveStateAsync
         Assert.True(savedData.ContainsKey("cliVersion")); // Added by SaveStateAsync
 

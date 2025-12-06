@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -31,8 +32,11 @@ public class ProjectSettingsSyncHelperTests : IDisposable
     private static ILogger CreateLogger() =>
         LoggerFactory.Create(b => b.AddConsole()).CreateLogger("tests");
 
-    private static PlatformDetector CreatePlatformDetector() =>
-        new PlatformDetector(LoggerFactory.Create(b => b.AddConsole()).CreateLogger<PlatformDetector>());
+    private static PlatformDetector CreatePlatformDetector()
+    {
+        var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+        return new PlatformDetector(cleanLoggerFactory.CreateLogger<PlatformDetector>());
+    }
 
     private static Mock<IConfigService> MockConfigService(Agent365Config cfg)
     {

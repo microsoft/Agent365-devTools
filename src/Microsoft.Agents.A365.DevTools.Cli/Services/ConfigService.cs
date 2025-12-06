@@ -243,7 +243,7 @@ public class ConfigService : IConfigService
             _logger?.LogError("Static configuration file not found: {ConfigPath}", resolvedConfigPath);
             throw new FileNotFoundException(
                 $"Static configuration file not found: {resolvedConfigPath}. " +
-                $"Run 'a365 init' to create a new configuration or specify a different path.");
+                $"Run 'a365 config init' to create a new configuration or specify a different path.");
         }
 
         // Load static configuration (required)
@@ -312,7 +312,7 @@ public class ConfigService : IConfigService
             _logger?.LogError("Configuration validation failed:");
             foreach (var error in validationResult.Errors)
             {
-                _logger?.LogError("  � {Error}", error);
+                _logger?.LogError("  * {Error}", error);
             }
             
             // Convert validation errors to structured exception
@@ -325,10 +325,11 @@ public class ConfigService : IConfigService
 
         // Log warnings if any
         if (validationResult.Warnings.Count > 0)
+        if (validationResult.Warnings.Count > 0)
         {
             foreach (var warning in validationResult.Warnings)
             {
-                _logger?.LogWarning("  � {Warning}", warning);
+                _logger?.LogWarning("  * {Warning}", warning);
             }
         }
 
@@ -377,20 +378,32 @@ public class ConfigService : IConfigService
         var errors = new List<string>();
         var warnings = new List<string>();
 
-        // Validate required static properties
         ValidateRequired(config.TenantId, nameof(config.TenantId), errors);
-        ValidateRequired(config.SubscriptionId, nameof(config.SubscriptionId), errors);
-        ValidateRequired(config.ResourceGroup, nameof(config.ResourceGroup), errors);
-        ValidateRequired(config.Location, nameof(config.Location), errors);
-
-        // Validate GUID formats
         ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
-        ValidateGuid(config.SubscriptionId, nameof(config.SubscriptionId), errors);
 
-        // Validate Azure naming conventions
-        ValidateResourceGroupName(config.ResourceGroup, errors);
-        ValidateAppServicePlanName(config.AppServicePlanName, errors);
-        ValidateWebAppName(config.WebAppName, errors);
+        if (config.NeedDeployment)
+        {
+            // Validate required static properties
+            ValidateRequired(config.SubscriptionId, nameof(config.SubscriptionId), errors);
+            ValidateRequired(config.ResourceGroup, nameof(config.ResourceGroup), errors);
+            ValidateRequired(config.Location, nameof(config.Location), errors);
+            ValidateRequired(config.AppServicePlanName, nameof(config.AppServicePlanName), errors);
+            ValidateRequired(config.WebAppName, nameof(config.WebAppName), errors);
+
+            // Validate GUID formats
+            ValidateGuid(config.SubscriptionId, nameof(config.SubscriptionId), errors);
+
+            // Validate Azure naming conventions
+            ValidateResourceGroupName(config.ResourceGroup, errors);
+            ValidateAppServicePlanName(config.AppServicePlanName, errors);
+            ValidateWebAppName(config.WebAppName, errors);
+        }
+        else
+        {
+            // Only validate bot messaging endpoint
+            ValidateRequired(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
+            ValidateUrl(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
+        }
 
         // Validate dynamic properties if they exist
         if (config.ManagedIdentityPrincipalId != null)
@@ -666,13 +679,23 @@ public class ConfigService : IConfigService
         var underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
 
         if (underlyingType == typeof(string))
-            return element.GetString();
+            return element.ValueKind == JsonValueKind.String
+                ? element.GetString()
+                : element.GetRawText(); // fallback: convert any other JSON type to string
 
         if (underlyingType == typeof(int))
             return element.GetInt32();
 
         if (underlyingType == typeof(bool))
+        {
+            if (element.ValueKind == JsonValueKind.True) return true;
+            if (element.ValueKind == JsonValueKind.False) return false;
+            if (element.ValueKind == JsonValueKind.String &&
+                bool.TryParse(element.GetString(), out var result))
+                return result;
+
             return element.GetBoolean();
+        }
 
         if (underlyingType == typeof(DateTime))
             return element.GetDateTime();

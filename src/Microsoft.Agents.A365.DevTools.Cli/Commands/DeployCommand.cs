@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -18,9 +19,9 @@ public class DeployCommand
         IConfigService configService, 
         CommandExecutor executor,
         DeploymentService deploymentService,
-        IAzureValidator azureValidator)
+        IAzureValidator azureValidator,
+        GraphApiService graphApiService)
     {
-        // Top-level command name set to 'deploy' so it appears in CLI help as 'deploy'
         var command = new Command("deploy", "Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions");
 
         var configOption = new Option<FileInfo>(
@@ -52,9 +53,9 @@ public class DeployCommand
 
         // Add subcommands
         command.AddCommand(CreateAppSubcommand(logger, configService, executor, deploymentService, azureValidator));
-        command.AddCommand(CreateMcpSubcommand(logger, configService, executor));
+        command.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService));
 
-        // Single handler for the deploy command 
+        // Single handler for the deploy command - runs only the application deployment flow
         command.SetHandler(async (config, verbose, dryRun, inspect, restart) =>
         {
             try
@@ -65,31 +66,25 @@ public class DeployCommand
 
                 if (dryRun)
                 {
-                    logger.LogInformation("DRY RUN: Step 1 - Deploy application binaries");
+                    logger.LogInformation("DRY RUN: Deploy application binaries");
                     logger.LogInformation("Target resource group: {ResourceGroup}", configData.ResourceGroup);
                     logger.LogInformation("Target web app: {WebAppName}", configData.WebAppName);
                     logger.LogInformation("Configuration file validated: {ConfigFile}", config.FullName);
-                    logger.LogInformation("");
-                    logger.LogInformation("DRY RUN: Step 2 - Deploy/update Agent 365 Tool permissions");
-                    logger.LogInformation("Update MCP OAuth2 permission grants and inheritable permissions");
-                    logger.LogInformation("Consent to required scopes for the agent identity");
                     return;
                 }
 
-                // Step 1: Deploy application binaries
-                logger.LogInformation("Step 1: Start deploying application binaries...");
-                
+                // Check if web app deployment should be skipped (external messaging endpoint)
+                if (!configData.NeedDeployment)
+                {
+                    logger.LogInformation("Web App deployment is skipped as per configuration.");
+                    return;
+                }
+
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
                     config.FullName, configService, azureValidator, executor, logger);
                 if (validatedConfig == null) return;
 
-                var appDeploySuccess = await DeployApplicationAsync(
-                    validatedConfig, deploymentService, verbose, inspect, restart, logger);
-                if (!appDeploySuccess) return;
-
-                // Step 2: Deploy MCP Tool Permissions
-                logger.LogInformation("Step 2: Start deploying Agent 365 Tool Permissions...");
-                await DeployMcpToolPermissionsAsync(validatedConfig, executor, logger);
+                await DeployApplicationAsync(validatedConfig, deploymentService, verbose, inspect, restart, logger);
             }
             catch (Exception ex)
             {
@@ -153,6 +148,13 @@ public class DeployCommand
                     return;
                 }
 
+                // Check if web app deployment should be skipped (external messaging endpoint)
+                if (!configData.NeedDeployment)
+                {
+                    logger.LogInformation("Web App deployment is skipped as per configuration.");
+                    return;
+                }
+
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
                     config.FullName, configService, azureValidator, executor, logger);
                 if (validatedConfig == null) return;
@@ -171,7 +173,8 @@ public class DeployCommand
     private static Command CreateMcpSubcommand(
         ILogger<DeployCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var command = new Command("mcp", "Update mcp servers scopes and permissions on existing agent blueprint");
 
@@ -194,31 +197,35 @@ public class DeployCommand
 
         command.SetHandler(async (config, verbose, dryRun) =>
         {
-            if (dryRun)
-            {
-                logger.LogInformation("DRY RUN: Deploy/update Agent 365 Tool Permissions");
-                logger.LogInformation("This would execute the following operations:");
-                logger.LogInformation("  1. Update MCP OAuth2 permission grants and inheritable permissions");
-                logger.LogInformation("  2. Consent to required scopes for the agent identity");
-                logger.LogInformation("No actual changes will be made.");
-                return;
-            }
-
-            logger.LogInformation("Starting deploy Microsoft Agent 365 Tool Permissions...");
-            logger.LogInformation(""); // Empty line for readability
-
             try
             {
+                if (dryRun)
+                {
+                    logger.LogInformation("DRY RUN: Deploy/update Agent 365 Tool Permissions");
+                    logger.LogInformation("This would execute the following operations:");
+                    logger.LogInformation("  1. Update MCP OAuth2 permission grants and inheritable permissions");
+                    logger.LogInformation("  2. Consent to required scopes for the agent identity");
+                    logger.LogInformation("No actual changes will be made.");
+                    return;
+                }
+
+                logger.LogInformation("Starting deploy Microsoft Agent 365 Tool Permissions...");
+                logger.LogInformation(""); // Empty line for readability
+
                 // Load configuration from specified file
                 var updateConfig = await configService.LoadAsync(config.FullName);
                 if (updateConfig == null) Environment.Exit(1);
 
-                await DeployMcpToolPermissionsAsync(updateConfig, executor, logger);
+                await DeployMcpToolPermissionsAsync(updateConfig, executor, logger, graphApiService);
+            }
+            catch (DeployMcpException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Microsoft Agent 365 Tool Permissions deploy/update failed: {Message}", ex.Message);
-                throw;
+                throw new DeployMcpException(ex.Message, ex);
             }
         }, configOption, verboseOption, dryRunOption);
 
@@ -318,38 +325,35 @@ public class DeployCommand
     private static async Task DeployMcpToolPermissionsAsync(
         Agent365Config config,
         CommandExecutor executor,
-        ILogger logger)
+        ILogger logger,
+        GraphApiService graphApiService)
     {
         // Read scopes from toolingManifest.json (at deploymentProjectPath)
         var manifestPath = Path.Combine(config.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
         var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
-        var graphService = new GraphApiService(
-            LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GraphApiService>(),
-            executor);
-
         // 1. Apply MCP OAuth2 permission grants
         logger.LogInformation("1. Applying MCP OAuth2 permission grants...");
         await EnsureMcpOauth2PermissionGrantsAsync(
-            graphService,
+            graphApiService,
             config,
             toolingScopes,
             logger
         );
 
-        // 2. Apply inheritable permissions on the agent identity blueprint
-        logger.LogInformation("2. Applying MCP inheritable permissions...");
+        // 2. Consent to required scopes for the agent identity
+        logger.LogInformation("2. Consenting to required MCP scopes for the agent identity...");
+        await EnsureMcpAdminConsentForAgenticAppAsync(
+            graphApiService,
+            config,
+            toolingScopes,
+            logger
+        );
+
+        // 3. Apply inheritable permissions on the agent identity blueprint
+        logger.LogInformation("3. Applying MCP inheritable permissions...");
         await EnsureMcpInheritablePermissionsAsync(
-            graphService,
-            config,
-            toolingScopes,
-            logger
-        );
-
-        // 3. Consent to required scopes for the agent identity
-        logger.LogInformation("3. Consenting to required MCP scopes for the agent identity...");
-        await EnsureAdminConsentForAgenticAppAsync(
-            graphService,
+            graphApiService,
             config,
             toolingScopes,
             logger
@@ -397,24 +401,18 @@ public class DeployCommand
         var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
 
         var (ok, alreadyExists, err) = await graphService.SetInheritablePermissionsAsync(
-            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, ct);
+            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, new List<string>() { "AgentIdentityBlueprint.ReadWrite.All" }, ct);
 
         if (!ok && !alreadyExists)
         {
-            config.InheritanceConfigured = false;
-            config.InheritanceConfigError = err;
             throw new InvalidOperationException("Failed to set inheritable permissions: " + err);
         }
-
-        config.InheritanceConfigured = true;
-        config.InheritablePermissionsAlreadyExist = alreadyExists;
-        config.InheritanceConfigError = null;
 
         logger.LogInformation("   - Inheritable permissions completed: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
             config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
     }
 
-    private static async Task EnsureAdminConsentForAgenticAppAsync(
+    private static async Task EnsureMcpAdminConsentForAgenticAppAsync(
         GraphApiService graphService,
         Agent365Config config,
         string[] scopes,

@@ -44,6 +44,11 @@ public static class ConfigConstants
     public const string MessagingBotApiAppId = "5a807f24-c9de-44ee-a3a7-329e88a00ffc";
 
     /// <summary>
+    /// Observability API App ID
+    /// </summary>
+    public const string ObservabilityApiAppId = "9b975845-388f-4429-889e-eab1ef63949c";
+
+    /// <summary>
     /// Production deployment environment
     /// </summary>
     public const string ProductionDeploymentEnvironment = "prd";
@@ -68,6 +73,8 @@ public static class ConfigConstants
         "Files.Read.All",
         "Sites.Read.All"
     };
+
+    public const string DefaultAppServicePlanSku = "B1";
 
     /// <summary>
     /// Default Microsoft Graph API scopes for agent application

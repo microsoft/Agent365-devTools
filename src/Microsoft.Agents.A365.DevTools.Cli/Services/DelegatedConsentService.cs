@@ -3,6 +3,7 @@
 
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -251,8 +252,9 @@ public sealed class DelegatedConsentService
             _logger.LogInformation("    Logging out of Azure CLI...");
             
             // Logout using CommandExecutor
+            var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
             var executor = new CommandExecutor(
-                LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<CommandExecutor>());
+                cleanLoggerFactory.CreateLogger<CommandExecutor>());
             
             await executor.ExecuteAsync("az", "logout", suppressErrorLogging: true, cancellationToken: cancellationToken);
             

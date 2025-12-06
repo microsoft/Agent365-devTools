@@ -2,7 +2,9 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -14,11 +16,13 @@ public class NodeBuilder : IPlatformBuilder
 {
     private readonly ILogger<NodeBuilder> _logger;
     private readonly CommandExecutor _executor;
+    private readonly BuilderHelper _helper;
 
     public NodeBuilder(ILogger<NodeBuilder> logger, CommandExecutor executor)
     {
         _logger = logger;
         _executor = executor;
+        _helper = new BuilderHelper(logger, executor);
     }
 
     public async Task<bool> ValidateEnvironmentAsync()
@@ -47,7 +51,7 @@ public class NodeBuilder : IPlatformBuilder
     public async Task CleanAsync(string projectDir)
     {
         _logger.LogInformation("Cleaning Node.js project...");
-        
+
         // Remove node_modules if it exists
         var nodeModulesPath = Path.Combine(projectDir, "node_modules");
         if (Directory.Exists(nodeModulesPath))
@@ -56,44 +60,37 @@ public class NodeBuilder : IPlatformBuilder
             Directory.Delete(nodeModulesPath, recursive: true);
         }
 
-        // Remove build output directories
-        var distPath = Path.Combine(projectDir, "dist");
-        if (Directory.Exists(distPath))
-        {
-            _logger.LogInformation("Removing dist directory...");
-            Directory.Delete(distPath, recursive: true);
-        }
-
-        var buildPath = Path.Combine(projectDir, "build");
-        if (Directory.Exists(buildPath))
-        {
-            _logger.LogInformation("Removing build directory...");
-            Directory.Delete(buildPath, recursive: true);
-        }
-
         await Task.CompletedTask;
     }
 
     public async Task<string> BuildAsync(string projectDir, string outputPath, bool verbose)
     {
         _logger.LogInformation("Building Node.js project...");
-        
+
+        // Clean up old publish directory for fresh start
+        var publishPath = Path.Combine(projectDir, outputPath);
+        if (Directory.Exists(publishPath))
+        {
+            _logger.LogInformation("Removing old publish directory...");
+            Directory.Delete(publishPath, recursive: true);
+        }
+
         var packageJsonPath = Path.Combine(projectDir, "package.json");
         if (!File.Exists(packageJsonPath))
         {
-            throw new FileNotFoundException("package.json not found in project directory");
+            throw new NodeProjectNotFoundException(projectDir);
         }
 
         // Install dependencies
         _logger.LogInformation("Installing dependencies...");
-        var installResult = await ExecuteWithOutputAsync("npm", "ci", projectDir, verbose);
+        var installResult = await _helper.ExecuteWithOutputAsync("npm", "ci", projectDir, verbose);
         if (!installResult.Success)
         {
             _logger.LogWarning("npm ci failed, trying npm install...");
-            installResult = await ExecuteWithOutputAsync("npm", "install", projectDir, verbose);
+            installResult = await _helper.ExecuteWithOutputAsync("npm", "install", projectDir, verbose);
             if (!installResult.Success)
             {
-                throw new Exception($"npm install failed: {installResult.StandardError}");
+                throw new NodeDependencyInstallException(projectDir, installResult.StandardError);
             }
         }
 
@@ -104,10 +101,10 @@ public class NodeBuilder : IPlatformBuilder
         if (hasBuildScript)
         {
             _logger.LogInformation("Running build script...");
-            var buildResult = await ExecuteWithOutputAsync("npm", "run build", projectDir, verbose);
+            var buildResult = await _helper.ExecuteWithOutputAsync("npm", "run build", projectDir, verbose);
             if (!buildResult.Success)
             {
-                throw new Exception($"npm run build failed: {buildResult.StandardError}");
+                throw new NodeBuildFailedException(projectDir, buildResult.StandardError);
             }
         }
         else
@@ -115,17 +112,11 @@ public class NodeBuilder : IPlatformBuilder
             _logger.LogInformation("No build script found, skipping build step");
         }
 
-        // Prepare publish directory
-        var publishPath = Path.Combine(projectDir, outputPath);
-        if (Directory.Exists(publishPath))
-        {
-            Directory.Delete(publishPath, recursive: true);
-        }
         Directory.CreateDirectory(publishPath);
 
         // Copy necessary files to publish directory
         _logger.LogInformation("Preparing deployment package...");
-        
+
         // Copy package.json and package-lock.json
         File.Copy(packageJsonPath, Path.Combine(publishPath, "package.json"));
         var packageLockPath = Path.Combine(projectDir, "package-lock.json");
@@ -134,42 +125,50 @@ public class NodeBuilder : IPlatformBuilder
             File.Copy(packageLockPath, Path.Combine(publishPath, "package-lock.json"));
         }
 
-        // Copy built files (dist, build) or source files
-        if (Directory.Exists(Path.Combine(projectDir, "dist")))
+        // Copy ts build config
+        var tsConfigPath = Path.Combine(projectDir, "tsconfig.json");
+        if (File.Exists(tsConfigPath))
         {
-            CopyDirectory(Path.Combine(projectDir, "dist"), Path.Combine(publishPath, "dist"));
+            File.Copy(tsConfigPath, Path.Combine(publishPath, "tsconfig.json"));
         }
-        else if (Directory.Exists(Path.Combine(projectDir, "build")))
+
+        // Copy ToolingManifest if exists
+        var toolingManifestPath = Path.Combine(projectDir, "ToolingManifest.json");
+        if (File.Exists(toolingManifestPath))
         {
-            CopyDirectory(Path.Combine(projectDir, "build"), Path.Combine(publishPath, "build"));
+            File.Copy(toolingManifestPath, Path.Combine(publishPath, "ToolingManifest.json"));
+        }
+
+        // Copy source files (src, lib, etc.)
+        var srcDir = Path.Combine(projectDir, "src");
+        if (Directory.Exists(srcDir))
+        {
+            CopyDirectory(srcDir, Path.Combine(publishPath, "src"));
+        }
+
+        // Copy server/entry files (.js/.ts files in root)
+        foreach (var jsFile in Directory.GetFiles(projectDir, "*.js"))
+        {
+            File.Copy(jsFile, Path.Combine(publishPath, Path.GetFileName(jsFile)));
+        }
+        foreach (var tsFile in Directory.GetFiles(projectDir, "*.ts"))
+        {
+            File.Copy(tsFile, Path.Combine(publishPath, Path.GetFileName(tsFile)));
+        }
+
+        var distDir = Path.Combine(projectDir, "dist");
+        if (Directory.Exists(distDir))
+        {
+            _logger.LogInformation("Found dist folder, copying to publish output...");
+            CopyDirectory(distDir, Path.Combine(publishPath, "dist"));
         }
         else
         {
-            // Copy source files (src, lib, etc.)
-            var srcDir = Path.Combine(projectDir, "src");
-            if (Directory.Exists(srcDir))
-            {
-                CopyDirectory(srcDir, Path.Combine(publishPath, "src"));
-            }
-
-            // Copy server files (.js files in root)
-            foreach (var jsFile in Directory.GetFiles(projectDir, "*.js"))
-            {
-                File.Copy(jsFile, Path.Combine(publishPath, Path.GetFileName(jsFile)));
-            }
-            foreach (var tsFile in Directory.GetFiles(projectDir, "*.ts"))
-            {
-                File.Copy(tsFile, Path.Combine(publishPath, Path.GetFileName(tsFile)));
-            }
+            _logger.LogInformation("No dist folder found in project; relying on Oryx build (if configured) to produce runtime output.");
         }
 
-        // Copy node_modules (required for Azure deployment)
-        var nodeModulesSource = Path.Combine(projectDir, "node_modules");
-        if (Directory.Exists(nodeModulesSource))
-        {
-            _logger.LogInformation("Copying node_modules...");
-            CopyDirectory(nodeModulesSource, Path.Combine(publishPath, "node_modules"));
-        }
+        // Create .deployment file to force Oryx build during Azure deployment
+        await CreateDeploymentFile(publishPath);
 
         return publishPath;
     }
@@ -179,6 +178,11 @@ public class NodeBuilder : IPlatformBuilder
         _logger.LogInformation("Creating Oryx manifest for Node.js...");
         
         var packageJsonPath = Path.Combine(projectDir, "package.json");
+        if (!File.Exists(packageJsonPath))
+        {
+            throw new NodeProjectNotFoundException(projectDir);
+        }
+
         var packageJson = await File.ReadAllTextAsync(packageJsonPath);
         
         // Parse package.json to detect start command and version
@@ -186,12 +190,11 @@ public class NodeBuilder : IPlatformBuilder
         var root = doc.RootElement;
 
         // Detect Node version
-        var nodeVersion = "18"; // Default
+        var nodeVersion = "20"; // Default
         if (root.TryGetProperty("engines", out var engines) && 
             engines.TryGetProperty("node", out var nodeVersionProp))
         {
-            var versionString = nodeVersionProp.GetString() ?? "18";
-            // Extract major version (e.g., "18.x" -> "18")
+            var versionString = nodeVersionProp.GetString() ?? "20";
             var match = System.Text.RegularExpressions.Regex.Match(versionString, @"(\d+)");
             if (match.Success)
             {
@@ -205,7 +208,13 @@ public class NodeBuilder : IPlatformBuilder
         if (root.TryGetProperty("scripts", out var scripts) && 
             scripts.TryGetProperty("start", out var startScript))
         {
-            startCommand = startScript.GetString() ?? startCommand;
+            var scriptValue = startScript.GetString();
+            if (!string.IsNullOrWhiteSpace(scriptValue))
+            {
+                // Use the script literally, same as package.json
+                startCommand = scriptValue;
+            }
+
             _logger.LogInformation("Detected start command from package.json: {Command}", startCommand);
         }
         else if (root.TryGetProperty("main", out var mainProp))
@@ -216,25 +225,62 @@ public class NodeBuilder : IPlatformBuilder
         }
         else
         {
-            // Look for common entry point files
+            // Look for common entry point files under publish path
             var commonEntryPoints = new[] { "server.js", "app.js", "index.js", "main.js" };
             foreach (var entryPoint in commonEntryPoints)
             {
                 if (File.Exists(Path.Combine(publishPath, entryPoint)))
                 {
                     startCommand = $"node {entryPoint}";
-                    _logger.LogInformation("Detected entry point: {Command}", startCommand);
+                    _logger.LogInformation("Detected entry point in publish folder: {Command}", startCommand);
                     break;
                 }
             }
         }
 
+        // Detect build command – strictly Node
+        string buildCommand = "";
+        bool buildRequired = false;
+
+        if (root.TryGetProperty("scripts", out var scriptsForBuild) &&
+            scriptsForBuild.TryGetProperty("build", out var buildScript))
+        {
+            var buildValue = buildScript.GetString();
+            if (!string.IsNullOrWhiteSpace(buildValue))
+            {
+                // We always call through npm so it picks up the script from package.json
+                buildCommand = "npm run build";
+                buildRequired = true;
+                _logger.LogInformation("Detected build script; using Oryx build command: {Command}", buildCommand);
+            }
+        }
+        else
+        {
+            _logger.LogInformation("No build script found; Oryx will only run npm install.");
+        }
+        
         return new OryxManifest
         {
             Platform = "nodejs",
             Version = nodeVersion,
-            Command = startCommand
+            Command = startCommand,
+            BuildCommand = buildCommand,
+            BuildRequired = buildRequired
         };
+    }
+    
+    public async Task<bool> ConvertEnvToAzureAppSettingsAsync(string projectDir, string resourceGroup, string webAppName, bool verbose)
+    {
+        return await _helper.ConvertEnvToAzureAppSettingsIfExistsAsync(projectDir, resourceGroup, webAppName, verbose);
+    }
+
+    private async Task CreateDeploymentFile(string publishPath)
+    {
+        var deploymentPath = Path.Combine(publishPath, ".deployment");
+        var content = "[config]\nSCM_DO_BUILD_DURING_DEPLOYMENT=true\n";
+
+        await File.WriteAllTextAsync(deploymentPath, content);
+        _logger.LogInformation("Created .deployment file to force Oryx build");
     }
 
     private void CopyDirectory(string sourceDir, string destDir)
@@ -252,24 +298,5 @@ public class NodeBuilder : IPlatformBuilder
             var destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
             CopyDirectory(dir, destSubDir);
         }
-    }
-
-    private async Task<CommandResult> ExecuteWithOutputAsync(string command, string arguments, string workingDirectory, bool verbose)
-    {
-        var result = await _executor.ExecuteAsync(command, arguments, workingDirectory);
-        
-        if (verbose || !result.Success)
-        {
-            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
-            {
-                _logger.LogInformation("Output:\n{Output}", result.StandardOutput);
-            }
-            if (!string.IsNullOrWhiteSpace(result.StandardError))
-            {
-                _logger.LogWarning("Warnings/Errors:\n{Error}", result.StandardError);
-            }
-        }
-        
-        return result;
     }
 }

@@ -4,9 +4,9 @@
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Serilog;
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
@@ -24,36 +24,28 @@ class Program
 
         // Check if verbose flag is present to adjust logging level
         var isVerbose = args.Contains("--verbose") || args.Contains("-v");
+        var logLevel = isVerbose ? LogLevel.Debug : LogLevel.Information;
         
-        // Configure Serilog with both console and file output
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Is(isVerbose ? Serilog.Events.LogEventLevel.Debug : Serilog.Events.LogEventLevel.Information)
-            .WriteTo.Console()  // Console output (user-facing)
-            .WriteTo.File(      // File output (for debugging)
-                path: logFilePath,
-                rollingInterval: RollingInterval.Infinite,
-                rollOnFileSizeLimit: false,
-                fileSizeLimitBytes: 10_485_760,  // 10 MB max
-                retainedFileCountLimit: 1,       // Only keep latest run
-                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u3}] {Message:lj}{NewLine}")
-            .CreateLogger();
+        // Configure Microsoft.Extensions.Logging with clean console formatter
+        var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
+        var startupLogger = loggerFactory.CreateLogger("Program");
 
         try
         {
-            // Log startup info to file only (debug level - not shown to users by default)
-            Log.Debug("==========================================================");
-            Log.Debug("Agent 365 CLI - Command: {Command}", commandName);
-            Log.Debug("Version: {Version}", GetDisplayVersion());
-            Log.Debug("Log file: {LogFile}", logFilePath);
-            Log.Debug("Started at: {Time}", DateTime.Now);
-            Log.Debug("==========================================================");
+            // Log startup info (debug level - not shown to users by default)
+            startupLogger.LogDebug("==========================================================");
+            startupLogger.LogDebug("Agent 365 CLI - Command: {Command}", commandName);
+            startupLogger.LogDebug("Version: {Version}", GetDisplayVersion());
+            startupLogger.LogDebug("Log file: {LogFile}", logFilePath);
+            startupLogger.LogDebug("Started at: {Time}", DateTime.Now);
+            startupLogger.LogDebug("==========================================================");
             
             // Log version information
             var version = GetDisplayVersion();
 
             // Set up dependency injection
             var services = new ServiceCollection();
-            ConfigureServices(services);
+            ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
 
             // Create root command
@@ -74,6 +66,7 @@ class Program
             var toolingService = serviceProvider.GetRequiredService<IAgent365ToolingService>();
 
             // Get services needed by commands
+            services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
@@ -84,11 +77,11 @@ class Program
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor, 
-                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector));
+                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService, azureValidator));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, azureValidator));
+                deploymentService, azureValidator, graphApiService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
@@ -97,7 +90,7 @@ class Program
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, graphApiService));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
@@ -108,14 +101,13 @@ class Program
                 {
                     if (exception is Agent365Exception myEx)
                     {
-                        HandleAgent365Exception(myEx);
+                        ExceptionHandler.HandleAgent365Exception(myEx);
                         context.ExitCode = myEx.ExitCode;
                     }
                     else
                     {
                         // Unexpected error - this is a BUG
-                        Log.Fatal(exception, "Application terminated unexpectedly");
-                        Console.Error.WriteLine();
+                        startupLogger.LogCritical(exception, "Application terminated unexpectedly");
                         Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
                         Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
                         Console.Error.WriteLine();
@@ -128,39 +120,32 @@ class Program
         }
         finally
         {
-            Log.CloseAndFlush();
+            Console.ResetColor();
+            loggerFactory.Dispose();
         }
     }
 
-
-    /// <summary>
-    /// Handles Agent365Exception with user-friendly output (no stack traces for user errors).
-    /// Follows Microsoft CLI best practices (Azure CLI, dotnet CLI patterns).
-    /// </summary>
-    private static void HandleAgent365Exception(Agent365Exception ex)
+    private static void ConfigureServices(IServiceCollection services, LogLevel minimumLevel = LogLevel.Information, string? logFilePath = null)
     {
-        // Display formatted error message
-        Console.Error.WriteLine(ex.GetFormattedMessage());
-
-        // For system errors (not user errors), suggest reporting as bug
-        if (!ex.IsUserError)
-        {
-            Console.Error.WriteLine("If this error persists, please report it at:");
-            Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
-        }
-
-        // Log for diagnostics (but don't show stack trace to user)
-        Log.Error("Operation failed. ErrorCode={ErrorCode}, IssueDescription={IssueDescription}",
-            ex.ErrorCode, ex.IssueDescription);
-    }
-
-    private static void ConfigureServices(IServiceCollection services)
-    {
-        // Add logging
+        // Add logging with clean console formatter and optional file logging
         services.AddLogging(builder =>
         {
             builder.ClearProviders();
-            builder.AddSerilog(dispose: false); // Prevent Serilog from disposing the console
+            builder.SetMinimumLevel(minimumLevel);
+            
+            // Console logging with clean formatter
+            builder.AddConsoleFormatter<CleanConsoleFormatter, Microsoft.Extensions.Logging.Console.SimpleConsoleFormatterOptions>();
+            builder.AddConsole(options =>
+            {
+                options.FormatterName = "clean";
+            });
+            
+            // File logging if path provided
+            if (!string.IsNullOrEmpty(logFilePath))
+            {
+                builder.Services.AddSingleton<ILoggerProvider>(provider => 
+                    new FileLoggerProvider(logFilePath, minimumLevel));
+            }
         });
 
         // Add core services
@@ -209,9 +194,13 @@ class Program
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
         services.AddSingleton<DeploymentService>();
-        
+
         // Add other services
         services.AddSingleton<IBotConfigurator, BotConfigurator>();
+
+        // Register process executor adapter and Microsoft Graph token provider before GraphApiService
+        services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
+
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
