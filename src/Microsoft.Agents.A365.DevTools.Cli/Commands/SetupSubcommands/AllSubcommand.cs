@@ -104,12 +104,77 @@ internal static class AllSubcommand
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
 
-                // Validate Azure authentication
+                // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
+                logger.LogInformation("Validating all prerequisites...");
+                logger.LogInformation("");
+
+                var allErrors = new List<string>();
+
+                // Validate Azure CLI authentication first
+                logger.LogInformation("Validating Azure CLI authentication...");
                 if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
                 {
-                    ExceptionHandler.ExitWithCleanup(1);
+                    allErrors.Add("Azure CLI authentication failed or subscription not set correctly");
+                    logger.LogError("Azure CLI authentication validation failed");
+                }
+                else
+                {
+                    logger.LogInformation("Azure CLI authentication: OK");
                 }
 
+                // Validate Infrastructure prerequisites
+                if (!skipInfrastructure && setupConfig.NeedDeployment)
+                {
+                    logger.LogInformation("Validating Infrastructure prerequisites...");
+                    var infraErrors = await InfrastructureSubcommand.ValidateAsync(setupConfig, azureValidator, CancellationToken.None);
+                    if (infraErrors.Count > 0)
+                    {
+                        allErrors.AddRange(infraErrors.Select(e => $"Infrastructure: {e}"));
+                        foreach (var error in infraErrors)
+                        {
+                            logger.LogError("  - {Error}", error);
+                        }
+                    }
+                    else
+                    {
+                        logger.LogInformation("Infrastructure prerequisites: OK");
+                    }
+                }
+
+                // Validate Blueprint prerequisites
+                logger.LogInformation("Validating Blueprint prerequisites...");
+                var blueprintErrors = await BlueprintSubcommand.ValidateAsync(setupConfig, azureValidator, CancellationToken.None);
+                if (blueprintErrors.Count > 0)
+                {
+                    allErrors.AddRange(blueprintErrors.Select(e => $"Blueprint: {e}"));
+                    foreach (var error in blueprintErrors)
+                    {
+                        logger.LogError("  - {Error}", error);
+                    }
+                }
+                else
+                {
+                    logger.LogInformation("Blueprint prerequisites: OK");
+                }
+
+                // Stop if any validation failed
+                if (allErrors.Count > 0)
+                {
+                    logger.LogError("");
+                    logger.LogError("Setup cannot proceed due to validation failures:");
+                    foreach (var error in allErrors)
+                    {
+                        logger.LogError("  - {Error}", error);
+                    }
+                    logger.LogError("");
+                    logger.LogError("Please fix the errors above and try again");
+                    setupResults.Errors.AddRange(allErrors);
+                    ExceptionHandler.ExitWithCleanup(1);
+                    return;
+                }
+
+                logger.LogInformation("");
+                logger.LogInformation("All validations passed. Starting setup execution...");
                 logger.LogInformation("");
 
                 var generatedConfigPath = Path.Combine(
@@ -165,32 +230,38 @@ internal static class AllSubcommand
                         true,
                         configService,
                         botConfigurator,
-                        platformDetector
+                        platformDetector,
+                        graphApiService
                         );
 
                     setupResults.BlueprintCreated = blueprintCreated;
                     setupResults.MessagingEndpointRegistered = blueprintCreated;
 
-                    if (blueprintCreated)
+                    if (!blueprintCreated)
                     {
-                        // CRITICAL: Wait for file system to ensure config file is fully written
-                        // Blueprint creation writes directly to disk and may not be immediately readable
-                        logger.LogInformation("Ensuring configuration file is synchronized...");
-                        await Task.Delay(2000); // 2 second delay to ensure file write is complete
+                        throw new GraphApiException(
+                            operation: "Create Agent Blueprint",
+                            reason: "Blueprint creation failed. This typically indicates missing permissions or insufficient privileges.",
+                            isPermissionIssue: true);
+                    }
 
-                        // Reload config to get blueprint ID
-                        // Use full path to ensure we're reading from the correct location
-                        var fullConfigPath = Path.GetFullPath(config.FullName);
-                        setupConfig = await configService.LoadAsync(fullConfigPath);
-                        setupResults.BlueprintId = setupConfig.AgentBlueprintId;
+                    // CRITICAL: Wait for file system to ensure config file is fully written
+                    // Blueprint creation writes directly to disk and may not be immediately readable
+                    logger.LogInformation("Ensuring configuration file is synchronized...");
+                    await Task.Delay(2000); // 2 second delay to ensure file write is complete
 
-                        // Validate blueprint ID was properly saved
-                        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
-                        {
-                            throw new SetupValidationException(
-                                "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
-                                "This is required for the next steps (MCP permissions and Bot permissions).");
-                        }
+                    // Reload config to get blueprint ID
+                    // Use full path to ensure we're reading from the correct location
+                    var fullConfigPath = Path.GetFullPath(config.FullName);
+                    setupConfig = await configService.LoadAsync(fullConfigPath);
+                    setupResults.BlueprintId = setupConfig.AgentBlueprintId;
+
+                    // Validate blueprint ID was properly saved
+                    if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+                    {
+                        throw new SetupValidationException(
+                            "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
+                            "This is required for the next steps (MCP permissions and Bot permissions).");
                     }
                 }
                 catch (Agent365Exception blueprintEx)
@@ -266,9 +337,8 @@ internal static class AllSubcommand
                     logger.LogWarning("Bot permissions failed: {Message}. Setup will continue, but Bot API permissions must be configured manually", botPermEx.Message);
                 }
 
-                // Display verification info and summary
+                // Display setup summary
                 logger.LogInformation("");
-                await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
                 SetupHelpers.DisplaySetupSummary(setupResults, logger);
             }
             catch (Agent365Exception ex)

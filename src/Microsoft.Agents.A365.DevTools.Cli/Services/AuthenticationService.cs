@@ -104,14 +104,12 @@ public class AuthenticationService
 
             // Determine which scope to use based on the resource URL or App ID
             string scope;
-            string environmentName;
 
             // Check if this is the production App ID
             if (resourceUrl == McpConstants.Agent365ToolsProdAppId)
             {
                 scope = $"{resourceUrl}/.default";
-                environmentName = "PRODUCTION";
-                _logger.LogInformation("Using Agent 365 Tools (PRODUCTION) for authentication");
+                _logger.LogInformation("Authenticating to Agent 365 Tools");
             }
             // Check for Agent 365 endpoint URLs (legacy support)
             else if (resourceUrl.Contains("agent365", StringComparison.OrdinalIgnoreCase))
@@ -123,13 +121,11 @@ public class AuthenticationService
                 
                 if (appId != McpConstants.Agent365ToolsProdAppId)
                 {
-                    environmentName = "CUSTOM";
                     _logger.LogInformation("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
                 }
                 else
                 {
-                    environmentName = "PRODUCTION";
-                    _logger.LogInformation("Using Agent 365 Tools (PRODUCTION) App ID for endpoint URL");
+                    _logger.LogInformation("Authenticating to Agent 365 Tools");
                 }
 
                 scope = $"{appId}/.default";
@@ -141,7 +137,6 @@ public class AuthenticationService
                 scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                     ? resourceUrl
                     : $"{resourceUrl}/.default";
-                environmentName = "CUSTOM";
                 _logger.LogInformation("Using custom resource for authentication: {Resource}", resourceUrl);
             }
 
@@ -150,13 +145,17 @@ public class AuthenticationService
 
             // For Power Platform API authentication, use device code flow to avoid URL length issues
             // InteractiveBrowserCredential with Power Platform scopes can create URLs that exceed browser limits
-            _logger.LogInformation("Opening browser for authentication ({Environment} environment)...", environmentName);
+            _logger.LogInformation("Using device code authentication...");
             _logger.LogInformation("Please sign in with your Microsoft account");
 
             TokenCredential credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
             {
                 TenantId = effectiveTenantId,
                 ClientId = AuthenticationConstants.PowershellClientId,
+                TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+                {
+                    Name = "Microsoft.Agents.A365.DevTools.Cli"
+                },
                 DeviceCodeCallback = (code, cancellation) =>
                 {
                     Console.WriteLine();

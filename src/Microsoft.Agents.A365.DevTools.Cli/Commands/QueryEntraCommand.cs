@@ -402,7 +402,7 @@ public class QueryEntraCommand
     {
         return resourceAppId switch
         {
-            "00000003-0000-0000-c000-000000000000" => "Microsoft Graph",
+            AuthenticationConstants.MicrosoftGraphResourceAppId => "Microsoft Graph",
             "00000002-0000-0000-c000-000000000000" => "Azure Active Directory Graph",
             "797f4846-ba00-4fd7-ba43-dac1f8f63013" => "Azure Service Management",
             "00000001-0000-0000-c000-000000000000" => "Azure ESTS Service",

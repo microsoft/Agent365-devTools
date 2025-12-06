@@ -297,7 +297,7 @@ The CLI configures three layers of permissions for agent blueprints:
 2. **Required Resource Access** - Portal-visible permissions (Entra ID "API permissions")
 3. **Inheritable Permissions** - Blueprint-level permissions that instances inherit automatically
 
-**Unified Configuration:** `SetupHelpers.EnsureResourcePermissionsAsync` handles all three layers plus verification with retry logic (exponential backoff: 2s → 4s → 8s).
+**Unified Configuration:** `SetupHelpers.EnsureResourcePermissionsAsync` handles all three layers plus verification with retry logic (exponential backoff: 2s → 4s → 8s → 16s → 32s, max 5 retries).
 
 **Per-Resource Tracking:** `ResourceConsent` model tracks inheritance state per resource (Agent 365 Tools, Messaging Bot API, Observability API). Check global status with `config.IsInheritanceConfigured()`.
 

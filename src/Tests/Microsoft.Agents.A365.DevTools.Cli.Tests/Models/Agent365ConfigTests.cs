@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using System.Text.Json;
 using Xunit;
@@ -23,6 +24,7 @@ public class Agent365ConfigTests
         var config = new Agent365Config
         {
             TenantId = "12345678-1234-1234-1234-123456789012",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             SubscriptionId = "87654321-4321-4321-4321-210987654321",
             ResourceGroup = "rg-test",
             Location = "eastus",
@@ -37,6 +39,7 @@ public class Agent365ConfigTests
 
         // Assert
         Assert.Equal("12345678-1234-1234-1234-123456789012", config.TenantId);
+        Assert.Equal("a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", config.ClientAppId);
         Assert.Equal("87654321-4321-4321-4321-210987654321", config.SubscriptionId);
         Assert.Equal("rg-test", config.ResourceGroup);
         Assert.Equal("eastus", config.Location);
@@ -107,7 +110,7 @@ public class Agent365ConfigTests
         config.ResourceConsents.Add(new ResourceConsent
         {
             ResourceName = "Microsoft Graph",
-            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
             ConsentGranted = true,
             ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z")
         });
@@ -293,7 +296,7 @@ public class Agent365ConfigTests
             ""resourceConsents"": [
                 {
                     ""resourceName"": ""Microsoft Graph"",
-                    ""resourceAppId"": ""00000003-0000-0000-c000-000000000000"",
+                    ""resourceAppId"": ""{AuthenticationConstants.MicrosoftGraphResourceAppId}"",
                     ""consentGranted"": true,
                     ""consentTimestamp"": ""2025-10-14T12:34:56Z""
                 }
@@ -374,6 +377,7 @@ public class Agent365ConfigTests
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Added required clientAppId
             SubscriptionId = "11111111-1111-1111-1111-111111111111",
             ResourceGroup = "test-rg",
             Location = "eastus",
@@ -457,6 +461,152 @@ public class Agent365ConfigTests
         errors.Should().Contain("location is required.");
         errors.Should().Contain("agentIdentityDisplayName is required.");
         errors.Should().Contain("deploymentProjectPath is required.");
+    }
+
+    #endregion
+
+    #region ClientAppId Validation Tests
+
+    [Fact]
+    public void Validate_WithMissingClientAppId_ReturnsError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            // ClientAppId is missing
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages"
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain(e => e.Contains("clientAppId is required"));
+        errors.Should().Contain(e => e.Contains("learn.microsoft.com"));
+    }
+
+    [Fact]
+    public void Validate_WithEmptyClientAppId_ReturnsError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "", // Empty string
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages"
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain(e => e.Contains("clientAppId is required"));
+    }
+
+    [Fact]
+    public void Validate_WithWhitespaceClientAppId_ReturnsError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "   ", // Whitespace only
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages"
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain(e => e.Contains("clientAppId is required"));
+    }
+
+    [Fact]
+    public void Validate_WithInvalidClientAppIdFormat_ReturnsError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "not-a-valid-guid", // Invalid GUID format
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages"
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain(e => e.Contains("ClientAppId") && e.Contains("valid GUID"));
+    }
+
+    [Fact]
+    public void Validate_WithValidClientAppId_NoClientAppIdErrors()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Valid GUID
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages"
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().NotContain(e => e.Contains("clientAppId"));
+    }
+
+    [Theory]
+    [InlineData("A1B2C3D4-E5F6-A7B8-C9D0-E1F2A3B4C5D6")] // Uppercase
+    [InlineData("a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6")] // Lowercase
+    [InlineData("A1b2C3d4-e5F6-a7B8-C9d0-E1f2A3b4C5d6")] // Mixed case
+    public void Validate_WithValidClientAppIdFormats_NoErrors(string clientAppId)
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = clientAppId,
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages"
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().NotContain(e => e.Contains("clientAppId"));
     }
 
     #endregion

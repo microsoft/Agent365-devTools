@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Xunit;
@@ -155,7 +156,7 @@ public class Agent365ConfigServiceTests : IDisposable
         config.ResourceConsents.Add(new ResourceConsent
         {
             ResourceName = "Microsoft Graph",
-            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
             ConsentGranted = true
         });
 

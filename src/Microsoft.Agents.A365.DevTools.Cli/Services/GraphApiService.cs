@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Linq;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -423,7 +424,7 @@ public class GraphApiService
     {
         try
         {
-            const string msGraphAppId = "00000003-0000-0000-c000-000000000000";
+            string msGraphAppId = AuthenticationConstants.MicrosoftGraphResourceAppId;
             var url = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{msGraphAppId}'&$select=id,appId,displayName";
             var response = await _httpClient.GetAsync(url, cancellationToken);
 
@@ -670,9 +671,9 @@ public class GraphApiService
         return true;
     }
 
-    public async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default)
+    public async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct)) return null;
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
@@ -870,12 +871,12 @@ public class GraphApiService
 
             // Try GET for inheritablePermissions - if it fails, attempt to lookup application by appId
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-            var existingDoc = await GraphGetAsync(tenantId, getPath, ct);
+            var existingDoc = await GraphGetAsync(tenantId, getPath, ct, requiredScopes);
 
             if (existingDoc == null)
             {
                 // Attempt to resolve as appId -> application object id
-                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct);
+                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct, requiredScopes);
                 if (apps != null && apps.RootElement.TryGetProperty("value", out var arr) && arr.GetArrayLength() > 0)
                 {
                     var appObj = arr[0];
@@ -987,18 +988,19 @@ public class GraphApiService
         string tenantId,
         string blueprintAppId,
         string resourceAppId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IEnumerable<string>? requiredScopes = null)
     {
         try
         {
             string blueprintObjectId = blueprintAppId;
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-            var existingDoc = await GraphGetAsync(tenantId, getPath, ct);
+            var existingDoc = await GraphGetAsync(tenantId, getPath, ct, requiredScopes);
 
             if (existingDoc == null)
             {
                 // Try to resolve as appId -> application object id
-                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct);
+                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct, requiredScopes);
                 if (apps != null && apps.RootElement.TryGetProperty("value", out var arr) && arr.GetArrayLength() > 0)
                 {
                     var appObj = arr[0];
@@ -1006,7 +1008,7 @@ public class GraphApiService
                     {
                         blueprintObjectId = idEl.GetString() ?? blueprintAppId;
                         getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-                        existingDoc = await GraphGetAsync(tenantId, getPath, ct);
+                        existingDoc = await GraphGetAsync(tenantId, getPath, ct, requiredScopes);
                     }
                 }
             }

@@ -11,7 +11,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 /// <summary>
 /// Custom console formatter that outputs clean messages without timestamps or category names.
 /// Follows Azure CLI output patterns for user-friendly CLI experience.
-/// Errors are displayed in red, warnings in yellow, info is plain text.
+/// Errors are displayed in red, warnings in yellow, info is plain text, debug/trace in dark gray.
 /// </summary>
 public sealed class CleanConsoleFormatter : ConsoleFormatter
 {
@@ -41,7 +41,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
         // Check if we're writing to actual console (supports colors)
         bool isConsole = !Console.IsOutputRedirected;
 
-        // Azure CLI pattern: red for errors, yellow for warnings, no color for info
+        // Azure CLI pattern: red for errors, yellow for warnings, dark gray for debug/trace, no color for info
         switch (logEntry.LogLevel)
         {
             case LogLevel.Error:
@@ -75,7 +75,37 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                     textWriter.WriteLine(message);
                 }
                 break;
-            default:
+            case LogLevel.Debug:
+                if (isConsole)
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write("[DEBUG] ");
+                    Console.Write(message);
+                    Console.ResetColor();
+                    Console.WriteLine();
+                }
+                else
+                {
+                    textWriter.Write("[DEBUG] ");
+                    textWriter.WriteLine(message);
+                }
+                break;
+            case LogLevel.Trace:
+                if (isConsole)
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write("[TRACE] ");
+                    Console.Write(message);
+                    Console.ResetColor();
+                    Console.WriteLine();
+                }
+                else
+                {
+                    textWriter.Write("[TRACE] ");
+                    textWriter.WriteLine(message);
+                }
+                break;
+            default: // Information
                 textWriter.WriteLine(message);
                 break;
         }
@@ -89,6 +119,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 {
                     LogLevel.Error or LogLevel.Critical => ConsoleColor.Red,
                     LogLevel.Warning => ConsoleColor.Yellow,
+                    LogLevel.Debug or LogLevel.Trace => ConsoleColor.DarkGray,
                     _ => Console.ForegroundColor
                 };
                 Console.WriteLine(logEntry.Exception);

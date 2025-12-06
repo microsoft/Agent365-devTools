@@ -29,13 +29,18 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
+        var verboseOption = new Option<bool>(
+            new[] { "--verbose", "-v" },
+            description: "Enable verbose logging");
+
         cleanupCommand.AddOption(configOption);
+        cleanupCommand.AddOption(verboseOption);
 
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
-        cleanupCommand.SetHandler(async (configFile) =>
+        cleanupCommand.SetHandler(async (configFile, verbose) =>
         {
             await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, graphApiService, configFile);
-        }, configOption);
+        }, configOption, verboseOption);
 
         // Add subcommands for granular control
         cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, executor, graphApiService));
@@ -60,9 +65,14 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
-        command.AddOption(configOption);
+        var verboseOption = new Option<bool>(
+            new[] { "--verbose", "-v" },
+            description: "Enable verbose logging");
 
-        command.SetHandler(async (configFile) =>
+        command.AddOption(configOption);
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (configFile, verbose) =>
         {
             try
             {
@@ -127,7 +137,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Blueprint cleanup failed");
             }
-        }, configOption);
+        }, configOption, verboseOption);
 
         return command;
     }
@@ -147,9 +157,14 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
-        command.AddOption(configOption);
+        var verboseOption = new Option<bool>(
+            new[] { "--verbose", "-v" },
+            description: "Enable verbose logging");
 
-        command.SetHandler(async (configFile) =>
+        command.AddOption(configOption);
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (configFile, verbose) =>
         {
             try
             {
@@ -248,7 +263,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Azure cleanup failed with exception");
             }
-        }, configOption);
+        }, configOption, verboseOption);
 
         return command;
     }
@@ -267,9 +282,14 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
-        command.AddOption(configOption);
+        var verboseOption = new Option<bool>(
+            new[] { "--verbose", "-v" },
+            description: "Enable verbose logging");
 
-        command.SetHandler(async (configFile) =>
+        command.AddOption(configOption);
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (configFile, verbose) =>
         {
             try
             {
@@ -361,7 +381,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Instance cleanup failed: {Message}", ex.Message);
             }
-        }, configOption);
+        }, configOption, verboseOption);
 
         return command;
     }

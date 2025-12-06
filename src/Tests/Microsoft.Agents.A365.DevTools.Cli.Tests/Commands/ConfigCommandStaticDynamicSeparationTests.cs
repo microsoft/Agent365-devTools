@@ -6,6 +6,7 @@ using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -78,7 +79,7 @@ public class ConfigCommandStaticDynamicSeparationTests
         wizardResult.ResourceConsents.Add(new ResourceConsent
         {
             ResourceName = "Microsoft Graph",
-            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
             ConsentGranted = true
         });
         wizardResult.Completed = true;
@@ -189,6 +190,7 @@ public class ConfigCommandStaticDynamicSeparationTests
         {
             // Static properties (ALL required fields for validation to pass)
             TenantId = "import-tenant-123",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required clientAppId
             SubscriptionId = "import-sub-456",
             ResourceGroup = "import-rg",
             Location = "westus",
@@ -290,7 +292,7 @@ public class ConfigCommandStaticDynamicSeparationTests
         config.ResourceConsents.Add(new ResourceConsent
         {
             ResourceName = "Microsoft Graph",
-            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
             ConsentGranted = true
         });
         config.Completed = true;
@@ -340,7 +342,7 @@ public class ConfigCommandStaticDynamicSeparationTests
         config.ResourceConsents.Add(new ResourceConsent
         {
             ResourceName = "Microsoft Graph",
-            ResourceAppId = "00000003-0000-0000-c000-000000000000",
+            ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
             ConsentGranted = true
         });
         config.Completed = true;

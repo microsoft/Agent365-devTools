@@ -3,24 +3,23 @@
 
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// C# implementation of DelegatedAgentApplicationCreateConsent.ps1
-/// Ensures oauth2PermissionGrant exists for Microsoft Graph Command Line Tools
-/// to enable AgentApplication.Create permission
+/// Ensures oauth2PermissionGrant exists for the custom client application.
+/// Validates that AgentIdentityBlueprint.ReadWrite.All permission is granted, which is required for creating and managing Agent Blueprints.
 /// </summary>
 public sealed class DelegatedConsentService
 {
     private readonly ILogger<DelegatedConsentService> _logger;
     private readonly GraphApiService _graphService;
 
-    // Constants from PowerShell script
-    private const string GraphAppId = "00000003-0000-0000-c000-000000000000"; // Microsoft Graph
-    private const string TargetScope = "AgentApplication.Create Application.ReadWrite.All";
+    // Constants
+    private const string TargetScope = "AgentIdentityBlueprint.ReadWrite.All";
     private const string AllPrincipalsConsentType = "AllPrincipals";
 
     public DelegatedConsentService(
@@ -32,22 +31,22 @@ public sealed class DelegatedConsentService
     }
 
     /// <summary>
-    /// Ensures AgentApplication.Create permission is granted to Microsoft Graph Command Line Tools
-    /// This is required before creating Agent Blueprints
+    /// Ensures AgentIdentityBlueprint.ReadWrite.All permission is granted to the custom client application.
+    /// Required for creating and managing Agent Blueprints.
     /// </summary>
-    /// <param name="callingAppId">Application ID of Microsoft Graph Command Line Tools (14d82eec-204b-4c2f-b7e8-296a70dab67e)</param>
+    /// <param name="callingAppId">Application ID of the custom client app from configuration</param>
     /// <param name="tenantId">Tenant ID where the permission grant will be created</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if grant was created or updated successfully</returns>
-    public async Task<bool> EnsureAgentApplicationCreateConsentAsync(
+    public async Task<bool> EnsureBlueprintPermissionGrantAsync(
         string callingAppId,
         string tenantId,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            _logger.LogInformation("==> Ensuring AgentApplication.Create permission for Microsoft Graph Command Line Tools");
-            _logger.LogInformation("    Calling App ID: {AppId}", callingAppId);
+            _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app");
+            _logger.LogInformation("    Client App ID: {AppId}", callingAppId);
             _logger.LogInformation("    Tenant ID: {TenantId}", tenantId);
             _logger.LogInformation("    Required Scope: {Scope}", TargetScope);
 
@@ -76,8 +75,8 @@ public sealed class DelegatedConsentService
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
 
-            // Step 1: Get or create service principal for calling app (Microsoft Graph Command Line Tools)
-            _logger.LogInformation("    Looking up service principal for calling app");
+            // Step 1: Get or create service principal for custom client app
+            _logger.LogInformation("    Looking up service principal for client app (ID: {AppId})", callingAppId);
             var clientSp = await GetOrCreateServicePrincipalAsync(httpClient, callingAppId, tenantId, cancellationToken);
             if (clientSp == null)
             {
@@ -90,7 +89,7 @@ public sealed class DelegatedConsentService
 
             // Step 2: Get Microsoft Graph service principal
             _logger.LogInformation("    Looking up Microsoft Graph service principal");
-            var graphSp = await GetServicePrincipalAsync(httpClient, GraphAppId, cancellationToken);
+            var graphSp = await GetServicePrincipalAsync(httpClient, AuthenticationConstants.MicrosoftGraphResourceAppId, cancellationToken);
             if (graphSp == null)
             {
                 _logger.LogError("Failed to get Microsoft Graph service principal");
@@ -134,7 +133,7 @@ public sealed class DelegatedConsentService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to ensure AgentApplication.Create consent: {Message}", ex.Message);
+            _logger.LogError(ex, "Failed to ensure AgentIdentityBlueprint.ReadWrite.All consent: {Message}", ex.Message);
             
             // Check if this looks like a CAE error
             if (ex.Message.Contains("TokenIssuedBeforeRevocationTimestamp", StringComparison.OrdinalIgnoreCase) ||

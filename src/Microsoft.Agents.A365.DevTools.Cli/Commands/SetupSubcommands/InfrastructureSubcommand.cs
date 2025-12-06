@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -18,6 +19,38 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 public static class InfrastructureSubcommand
 {
+    /// <summary>
+    /// Validates infrastructure prerequisites without performing any actions.
+    /// </summary>
+    public static Task<List<string>> ValidateAsync(
+        Agent365Config config,
+        IAzureValidator azureValidator,
+        CancellationToken cancellationToken = default)
+    {
+        var errors = new List<string>();
+
+        if (!config.NeedDeployment)
+        {
+            return Task.FromResult(errors);
+        }
+
+        if (string.IsNullOrWhiteSpace(config.SubscriptionId))
+            errors.Add("subscriptionId is required for Azure hosting");
+
+        if (string.IsNullOrWhiteSpace(config.ResourceGroup))
+            errors.Add("resourceGroup is required for Azure hosting");
+
+        if (string.IsNullOrWhiteSpace(config.AppServicePlanName))
+            errors.Add("appServicePlanName is required for Azure hosting");
+
+        if (string.IsNullOrWhiteSpace(config.WebAppName))
+            errors.Add("webAppName is required for Azure hosting");
+
+        if (string.IsNullOrWhiteSpace(config.Location))
+            errors.Add("location is required for Azure hosting");
+
+        return Task.FromResult(errors);
+    }
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
