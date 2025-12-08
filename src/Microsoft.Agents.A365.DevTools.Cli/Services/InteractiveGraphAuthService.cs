@@ -31,7 +31,8 @@ public sealed class InteractiveGraphAuthService
     private static readonly string[] RequiredScopes = new[]
     {
         "https://graph.microsoft.com/Application.ReadWrite.All",
-        "https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All"
+        "https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All",
+        "User.Read"
     };
 
     public InteractiveGraphAuthService(ILogger<InteractiveGraphAuthService> logger)
