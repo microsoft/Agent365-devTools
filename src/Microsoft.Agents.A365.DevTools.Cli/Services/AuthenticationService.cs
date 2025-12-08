@@ -248,7 +248,163 @@ public class AuthenticationService
     }
 
     /// <summary>
+    /// Gets an access token with explicit scopes for MCP servers or other resources
+    /// This method allows fine-grained scope control as documented in MCP Platform authentication
+    /// </summary>
+    /// <param name="resourceAppId">The resource application ID (e.g., Agent 365 Tools App ID)</param>
+    /// <param name="scopes">Explicit list of scopes to request (e.g., ["McpServers.Mail.All", "McpServers.Calendar.All"])</param>
+    /// <param name="tenantId">Optional tenant ID for single-tenant authentication</param>
+    /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
+    /// <returns>Access token with the requested scopes</returns>
+    public async Task<string> GetAccessTokenWithScopesAsync(
+        string resourceAppId, 
+        IEnumerable<string> scopes, 
+        string? tenantId = null, 
+        bool forceRefresh = false)
+    {
+        if (string.IsNullOrWhiteSpace(resourceAppId))
+            throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));
+        
+        if (scopes == null || !scopes.Any())
+            throw new ArgumentException("At least one scope must be specified", nameof(scopes));
+
+        // For Agent 365 Tools and similar APIs, scopes are specified directly without api:// prefix
+        // The scopes are in the format: "McpServers.Mail.All", "McpServers.Calendar.All", etc.
+        // These get appended to the resourceAppId in the format: {resourceAppId}/{scope}
+        var formattedScopes = scopes
+            .Select(scope => $"{resourceAppId}/{scope}")
+            .ToArray();
+
+        var scopeString = string.Join(" ", formattedScopes);
+        
+        _logger.LogInformation("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}", 
+            resourceAppId, string.Join(", ", scopes));
+
+        // Create a cache key that includes the scopes to avoid cache conflicts
+        var cacheKey = $"{resourceAppId}:{scopeString}";
+
+        // Try to load cached token for this resource + scopes combination
+        if (!forceRefresh && File.Exists(_tokenCachePath))
+        {
+            try
+            {
+                var cachedToken = await LoadCachedTokenAsync(cacheKey);
+                if (cachedToken != null && !IsTokenExpired(cachedToken))
+                {
+                    // If tenant ID is specified, validate that cached token is for the correct tenant
+                    if (!string.IsNullOrWhiteSpace(tenantId))
+                    {
+                        if (string.IsNullOrWhiteSpace(cachedToken.TenantId))
+                        {
+                            _logger.LogWarning("Cached token does not have tenant information. Re-authenticating with tenant {TenantId}...", tenantId);
+                            // Fall through to re-authenticate
+                        }
+                        else if (!string.Equals(cachedToken.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogWarning("Cached token is for tenant {CachedTenant} but requested tenant is {RequestedTenant}. Re-authenticating...",
+                                cachedToken.TenantId, tenantId);
+                            // Fall through to re-authenticate
+                        }
+                        else
+                        {
+                            _logger.LogInformation("Using cached authentication token for {ResourceAppId} with scopes (tenant: {TenantId})",
+                                resourceAppId, tenantId);
+                            return cachedToken.AccessToken;
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Using cached authentication token for {ResourceAppId} with scopes", resourceAppId);
+                        return cachedToken.AccessToken;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load cached token, will re-authenticate");
+            }
+        }
+
+        // Authenticate with explicit scopes
+        var token = await AuthenticateWithExplicitScopesAsync(formattedScopes, tenantId);
+
+        // Cache the token for this resource + scopes combination
+        await CacheTokenAsync(cacheKey, token);
+
+        return token.AccessToken;
+    }
+
+    /// <summary>
+    /// Authenticates user with explicit scopes using device code flow
+    /// </summary>
+    /// <param name="scopes">Fully formatted scopes (e.g., ["api://{appId}/scope1", "api://{appId}/scope2"])</param>
+    /// <param name="tenantId">Optional tenant ID for single-tenant authentication</param>
+    private async Task<TokenInfo> AuthenticateWithExplicitScopesAsync(string[] scopes, string? tenantId = null)
+    {
+        try
+        {
+            // Use specific tenant ID if provided, otherwise use common tenant for multi-tenant apps
+            var effectiveTenantId = string.IsNullOrWhiteSpace(tenantId)
+                ? AuthenticationConstants.CommonTenantId
+                : tenantId;
+
+            _logger.LogInformation("Requesting token with explicit scopes: {Scopes}", string.Join(", ", scopes));
+            _logger.LogInformation("Authenticating for tenant: {TenantId}", effectiveTenantId);
+
+            _logger.LogInformation("Opening browser for authentication...");
+            _logger.LogInformation("Please sign in with your Microsoft account");
+
+            TokenCredential credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
+            {
+                TenantId = effectiveTenantId,
+                ClientId = AuthenticationConstants.PowershellClientId,
+                DeviceCodeCallback = (code, cancellation) =>
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("==========================================================================");
+                    Console.WriteLine($"To sign in, use a web browser to open the page:");
+                    Console.WriteLine($"    {code.VerificationUri}");
+                    Console.WriteLine();
+                    Console.WriteLine($"And enter the code: {code.UserCode}");
+                    Console.WriteLine("==========================================================================");
+                    Console.WriteLine();
+                    return Task.CompletedTask;
+                }
+            });
+
+            var tokenRequestContext = new TokenRequestContext(scopes);
+            var tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
+
+            _logger.LogInformation("Authentication successful with explicit scopes!");
+
+            return new TokenInfo
+            {
+                AccessToken = tokenResult.Token,
+                ExpiresOn = tokenResult.ExpiresOn.UtcDateTime,
+                TenantId = effectiveTenantId
+            };
+        }
+        catch (AuthenticationFailedException ex) when (ex.Message.Contains("code_expired") || ex.InnerException?.Message.Contains("code_expired") == true)
+        {
+            _logger.LogError("Device code expired - authentication not completed in time");
+            throw new AzureAuthenticationException("Device code authentication timed out - please complete authentication promptly when retrying");
+        }
+        catch (AuthenticationFailedException ex)
+        {
+            _logger.LogError("Interactive authentication failed: {Message}", ex.Message);
+            throw new AzureAuthenticationException($"Authentication failed: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("Unexpected authentication error: {Message}", ex.Message);
+            throw new AzureAuthenticationException($"Unexpected authentication error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Gets an access token with scope resolution for MCP servers
+    /// This method uses the .default scope pattern for backward compatibility
+    /// For explicit scope control, use GetAccessTokenWithScopesAsync instead
     /// </summary>
     /// <param name="resourceUrl">The resource URL to request a token for</param>
     /// <param name="manifestPath">Optional path to ToolingManifest.json for MCP scope resolution</param>
@@ -262,7 +418,7 @@ public class AuthenticationService
         _logger.LogInformation("Resolved scopes for resource {ResourceUrl}: {Scopes}", resourceUrl, string.Join(", ", scopes));
 
         // Use the existing method for backward compatibility
-        // In the future, this could use the specific scopes for targeted authentication
+        // For explicit scope control, callers should use GetAccessTokenWithScopesAsync
         return await GetAccessTokenAsync(resourceUrl, tenantId, forceRefresh);
     }
 
