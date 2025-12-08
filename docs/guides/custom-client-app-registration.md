@@ -21,9 +21,6 @@ The Agent365 CLI requires a custom client app registration in your Entra ID tena
 > - Your **Application (client) ID** from Step 2
 > - A link to this guide: [Custom Client App Registration](#3-configure-api-permissions)
 
-**Optional**:
-- Azure CLI (only needed if you prefer command-line automation instead of Graph Explorer)
-
 ### 1. Register Application
 
 Follow [Microsoft's quickstart guide](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app) to create an app registration:
@@ -57,7 +54,7 @@ From the app's **Overview** page, copy the **Application (client) ID** (GUID for
 
 1. In your app registration, go to **API permissions**
 2. Click **Add a permission** → **Microsoft Graph** → **Delegated permissions**
-3. Search for and add these 5 permissions:
+3. Add these 5 permissions one by one:
 
 > **Important**: You MUST use **Delegated permissions** (NOT Application permissions). The CLI authenticates interactively - you sign in, and it acts on your behalf. See [Troubleshooting](#wrong-permission-type-delegated-vs-application) if you accidentally add Application permissions.
 
@@ -68,6 +65,12 @@ From the app's **Overview** page, copy the **Application (client) ID** (GUID for
 | `Application.ReadWrite.All` | Create and manage applications and Agent Blueprints |
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant permissions for agent blueprints |
 | `Directory.Read.All` | Read directory data for validation |
+
+   **For each permission above**:
+   - In the search box, type the permission name (e.g., `AgentIdentityBlueprint.ReadWrite.All`)
+   - Check the checkbox next to the permission
+   - Click **Add permissions** button
+   - Repeat for all 5 permissions
 
 4. Click **Grant admin consent for [Your Tenant]**
    - **Why is this required?** Agent Identity Blueprints are tenant-wide resources that multiple users and applications can reference. Without tenant-wide consent, the CLI will fail during authentication.
@@ -88,12 +91,32 @@ If the beta permissions (`AgentIdentityBlueprint.*`) are **not visible**, procee
 
    **Step 1**: Get your service principal ID and Graph resource ID:
    
-   Set method to **GET** and use this URL:
+   > **What's a service principal?** It's your app's identity in your tenant, required before granting permissions via API.
+   
+   Set method to **GET** and use this URL (replace YOUR_CLIENT_APP_ID with your actual Application client ID from Step 2):
    ```
    https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq 'YOUR_CLIENT_APP_ID'&$select=id
    ```
    
-   Click **Run query**. If the query fails with a permissions error, click the **Modify permissions** tab, consent to the required permissions, then click **Run query** again. Copy the `id` value (this is your `SP_OBJECT_ID`)
+   Click **Run query**. If the query fails with a permissions error, click the **Modify permissions** tab, consent to the required permissions, then click **Run query** again.
+   
+   **If the query returns empty results** (`"value": []`), create the service principal:
+   
+   Set method to **POST** and use this URL:
+   ```
+   https://graph.microsoft.com/v1.0/servicePrincipals
+   ```
+   
+   **Request Body** (replace YOUR_CLIENT_APP_ID with your actual Application client ID):
+   ```json
+   {
+     "appId": "YOUR_CLIENT_APP_ID"
+   }
+   ```
+   
+   Click **Run query**. You should get a `201 Created` response.
+   
+   **Copy the `id` value from whichever query succeeded** (GET or POST) - this is your `SP_OBJECT_ID`.
    
    Set method to **GET** and use this URL:
    ```
@@ -102,7 +125,9 @@ If the beta permissions (`AgentIdentityBlueprint.*`) are **not visible**, procee
    
    Click **Run query**. If the query fails with a permissions error, click the **Modify permissions** tab, consent to the required permissions, then click **Run query** again. Copy the `id` value (this is your `GRAPH_RESOURCE_ID`)
 
-   **Step 2**: Grant admin consent with all 5 permissions:
+   **Step 2**: Grant admin consent with all 5 permissions (including beta):
+   
+   This API call grants tenant-wide admin consent for all 5 permissions, including the 2 beta permissions that aren't visible in Portal.
    
    Set method to **POST** and use this URL:
    ```
@@ -120,16 +145,32 @@ If the beta permissions (`AgentIdentityBlueprint.*`) are **not visible**, procee
    }
    ```
 
-   Click **Run query**. If the query fails with a permissions error (likely DelegatedPermissionGrant.ReadWrite.All), click the **Modify permissions** tab, consent to DelegatedPermissionGrant.ReadWrite.All, then click **Run query** again. You should get a `201 Created` response.
-
-   **Verification**: Query the grant to confirm:
+   Click **Run query**. If the query fails with a permissions error (likely DelegatedPermissionGrant.ReadWrite.All), click the **Modify permissions** tab, consent to DelegatedPermissionGrant.ReadWrite.All, then click **Run query** again.
+   
+   **If you get `201 Created` response** - Success! The `scope` field in the response shows all 5 permission names. You're done.
+   
+   **If you get error `Request_MultipleObjectsWithSameKeyValue`** - A grant already exists (you may have added permissions in Portal earlier). Update it instead:
    
    Set method to **GET** and use this URL:
    ```
    https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq 'SP_OBJECT_ID_FROM_STEP1'
    ```
    
-   Click **Run query**. If the query fails with a permissions error, click the **Modify permissions** tab, consent to the required permissions, then click **Run query** again. The `scope` field should contain all 5 permission names.
+   Click **Run query**. Copy the `id` value from the response.
+   
+   Set method to **PATCH** and use this URL (replace YOUR_GRANT_ID with the ID you just copied):
+   ```
+   https://graph.microsoft.com/v1.0/oauth2PermissionGrants/YOUR_GRANT_ID
+   ```
+   
+   **Request Body**:
+   ```json
+   {
+     "scope": "Application.ReadWrite.All Directory.Read.All DelegatedPermissionGrant.ReadWrite.All AgentIdentityBlueprint.ReadWrite.All AgentIdentityBlueprint.UpdateAuthProperties.All"
+   }
+   ```
+   
+   Click **Run query**. You should get a `200 OK` response with all 5 permissions in the `scope` field.
 
 > **⚠️ CRITICAL WARNING**: The `consentType: "AllPrincipals"` in the POST request above **already grants tenant-wide admin consent**. **DO NOT click "Grant admin consent" in Azure Portal** after using this API method - doing so will **delete your beta permissions** because the Portal UI cannot see beta permissions and will overwrite your API-granted consent with only the visible permissions.
 
@@ -189,8 +230,9 @@ The CLI automatically validates:
 
 **Solution**: 
 - **Never use Portal admin consent after API method** - the API method already grants admin consent
-- If you accidentally deleted beta permissions, re-run the Option B API steps to restore them
-- You can verify admin consent was granted by checking the API verification step - if the query returns your permissions, consent is already granted
+- If you accidentally deleted beta permissions, re-run the Option B Step 2 to restore them
+  - You'll get a `Request_MultipleObjectsWithSameKeyValue` error - follow the PATCH instructions in Step 2
+- Check the `scope` field in the POST or PATCH response to verify all 5 permissions are listed
 
 ### Validation Errors
 
@@ -199,7 +241,9 @@ The CLI automatically validates your client app when running `a365 setup all` or
 Common issues:
 - **App not found**: Verify you copied the **Application (client) ID** (not Object ID)
 - **Missing permissions**: Add all five required permissions
-- **Admin consent not granted**: Click "Grant admin consent" in Azure Portal
+- **Admin consent not granted**: 
+  - If you used **Option A** (Portal only): Click "Grant admin consent" in Azure Portal
+  - If you used **Option B** (Graph API): Re-run the POST or PATCH request - do NOT use Portal's consent button
 - **Wrong permission type**: Use Delegated permissions, not Application permissions
 
 For detailed troubleshooting, see [Microsoft's app registration documentation](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app).

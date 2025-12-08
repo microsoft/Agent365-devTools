@@ -110,6 +110,20 @@ public sealed class ClientAppValidator
 
             // Step 4: Validate permissions in manifest
             var missingPermissions = await ValidatePermissionsConfiguredAsync(appInfo, graphToken, ct);
+            
+            // Step 4.5: For any unresolvable permissions (beta APIs), check oauth2PermissionGrants as fallback
+            if (missingPermissions.Count > 0)
+            {
+                var consentedPermissions = await GetConsentedPermissionsAsync(clientAppId, graphToken, ct);
+                // Remove permissions that have been consented even if not in app registration
+                missingPermissions.RemoveAll(p => consentedPermissions.Contains(p, StringComparer.OrdinalIgnoreCase));
+                
+                if (consentedPermissions.Count > 0)
+                {
+                    _logger.LogInformation("Found {Count} consented permissions via oauth2PermissionGrants (including beta APIs)", consentedPermissions.Count);
+                }
+            }
+            
             if (missingPermissions.Count > 0)
             {
                 return ValidationResult.Failure(
@@ -356,6 +370,91 @@ public sealed class ClientAppValidator
         }
 
         return permissionNameToIdMap;
+    }
+
+    /// <summary>
+    /// Gets the list of permissions that have been consented for the app via oauth2PermissionGrants.
+    /// This is used as a fallback for beta permissions that may not be visible in the app registration's requiredResourceAccess.
+    /// </summary>
+    private async Task<HashSet<string>> GetConsentedPermissionsAsync(string clientAppId, string graphToken, CancellationToken ct)
+    {
+        var consentedPermissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            // Get service principal for the app
+            var spCheckResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id\" --headers \"Authorization=Bearer {graphToken}\"",
+                cancellationToken: ct);
+
+            if (!spCheckResult.Success)
+            {
+                _logger.LogDebug("Could not query service principal for consent check");
+                return consentedPermissions;
+            }
+
+            var spResponse = JsonNode.Parse(spCheckResult.StandardOutput);
+            var servicePrincipals = spResponse?["value"]?.AsArray();
+
+            if (servicePrincipals == null || servicePrincipals.Count == 0)
+            {
+                _logger.LogDebug("Service principal not found for consent check");
+                return consentedPermissions;
+            }
+
+            var sp = servicePrincipals[0]!.AsObject();
+            var spObjectId = sp["id"]?.GetValue<string>();
+
+            if (string.IsNullOrWhiteSpace(spObjectId))
+            {
+                return consentedPermissions;
+            }
+
+            // Get oauth2PermissionGrants
+            var grantsResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'\" --headers \"Authorization=Bearer {graphToken}\"",
+                cancellationToken: ct);
+
+            if (!grantsResult.Success)
+            {
+                _logger.LogDebug("Could not query oauth2PermissionGrants");
+                return consentedPermissions;
+            }
+
+            var grantsResponse = JsonNode.Parse(grantsResult.StandardOutput);
+            var grants = grantsResponse?["value"]?.AsArray();
+
+            if (grants == null || grants.Count == 0)
+            {
+                return consentedPermissions;
+            }
+
+            // Extract all scopes from grants
+            foreach (var grant in grants)
+            {
+                var grantObj = grant?.AsObject();
+                var scope = grantObj?["scope"]?.GetValue<string>();
+                
+                if (!string.IsNullOrWhiteSpace(scope))
+                {
+                    var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var s in scopes)
+                    {
+                        consentedPermissions.Add(s);
+                    }
+                }
+            }
+
+            _logger.LogDebug("Found {Count} consented permissions from oauth2PermissionGrants", consentedPermissions.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("Error retrieving consented permissions: {Message}", ex.Message);
+        }
+
+        return consentedPermissions;
     }
 
     private async Task<ValidationResult> ValidateAdminConsentAsync(string clientAppId, string graphToken, CancellationToken ct)

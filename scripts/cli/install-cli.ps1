@@ -21,6 +21,15 @@ if (-not (Test-Path $outputDir)) {
 Write-Host "Cleaning old packages from $outputDir..."
 Get-ChildItem -Path $outputDir -Filter '*.nupkg' | Remove-Item -Force
 
+# Clear NuGet package cache to avoid version conflicts
+Write-Host "Clearing NuGet package cache..."
+Remove-Item ~/.nuget/packages/microsoft.agents.a365.devtools.cli -Recurse -Force -ErrorAction SilentlyContinue
+Write-Host "Package cache cleared"
+
+# Clean the project to ensure fresh build
+Write-Host "Cleaning project..."
+dotnet clean $projectPath -c Release
+
 # Build the project first to ensure NuGet restore and build outputs exist
 Write-Host "Building CLI tool (Release configuration)..."
 dotnet build $projectPath -c Release
