@@ -3,6 +3,7 @@
 
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -47,8 +48,9 @@ public class AzureAuthValidator
                 return false;
             }
 
-            // Parse the account information
-            var accountJson = JsonDocument.Parse(result.StandardOutput);
+            // Clean and parse the account information
+            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+            var accountJson = JsonDocument.Parse(cleanedOutput);
             var root = accountJson.RootElement;
 
             var subscriptionId = root.GetProperty("id").GetString() ?? string.Empty;
