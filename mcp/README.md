@@ -24,7 +24,7 @@ POST http://localhost:5309/agents/servers/mcp_MailTools
 }
 ```
 
-Output-
+Output:
 ```json
 {
 	"jsonrpc": "2.0",
@@ -130,7 +130,7 @@ File changes (including manual edits to `mocks/{serverName}.json`) are auto-relo
 Fields:
 - name (string, required) : Unique identifier.
 - description (string) : Human readable summary.
-- parameters (array) : Each has name, type (string), isOptional (bool).
+- inputSchema (array) : Describes the input schema for the tool call.
 - responseTemplate (string) : Text with Handlebars-style placeholders `{{placeholder}}`.
 - delayMs (int) : Artificial latency before responding.
 - errorRate (double 0-1) : Probability of returning a simulated 500 error.
@@ -172,18 +172,80 @@ Fields:
 Email style tool:
 ```json
 {
-	"name": "Send_Email",
-	"description": "Send an email (mock).",
-	"parameters":
-	[
-		{ "name": "to", "type": "string", "isOptional": false },
-		{ "name": "subject", "type": "string", "isOptional": false },
-		{ "name": "body", "type": "string", "isOptional": true }
-	],
-	"responseTemplate": "Email to {{to}} with subject '{{subject}}' sent (mock).",
-	"delayMs": 250,
-	"errorRate": 0,
-	"statusCode": 200,
-	"enabled": true
+"name": "SendEmailWithAttachmentsAsync",
+"description": "Create and send an email with optional attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
+"inputSchema": {
+	"type": "object",
+	"properties": {
+	"to": {
+		"type": "array",
+		"description": "List of To recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
+		"items": {
+		"type": "string"
+		}
+	},
+	"cc": {
+		"type": "array",
+		"description": "List of Cc recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
+		"items": {
+		"type": "string"
+		}
+	},
+	"bcc": {
+		"type": "array",
+		"description": "List of Bcc recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
+		"items": {
+		"type": "string"
+		}
+	},
+	"subject": {
+		"type": "string",
+		"description": "Subject of the email"
+	},
+	"body": {
+		"type": "string",
+		"description": "Body of the email"
+	},
+	"attachmentUris": {
+		"type": "array",
+		"description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
+		"items": {
+		"type": "string"
+		}
+	},
+	"directAttachments": {
+		"type": "array",
+		"description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
+		"items": {
+		"type": "object",
+		"properties": {
+			"FileName": {
+			"type": "string"
+			},
+			"ContentBase64": {
+			"type": "string"
+			},
+			"ContentType": {
+			"type": "string"
+			}
+		},
+		"required": []
+		}
+	},
+	"directAttachmentFilePaths": {
+		"type": "array",
+		"description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
+		"items": {
+		"type": "string"
+		}
+	}
+	},
+	"required": []
+},
+"responseTemplate": "Email with subject '{{subject}}' sent successfully (mock).",
+"delayMs": 250,
+"errorRate": 0,
+"statusCode": 200,
+"enabled": true
 }
 ```
