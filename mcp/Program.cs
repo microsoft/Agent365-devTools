@@ -79,14 +79,7 @@ app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, Http
         {
             if (idProp.ValueKind == JsonValueKind.Number)
             {
-                if (idProp.TryGetInt64(out var longVal))
-                {
-                    idValue = longVal;
-                }
-                else
-                {
-                    idValue = idProp.GetDouble();
-                }
+                idValue = idProp.TryGetInt64(out var longVal) ? (object?)longVal : idProp.GetDouble();
             }
             else if (idProp.ValueKind == JsonValueKind.String)
             {
