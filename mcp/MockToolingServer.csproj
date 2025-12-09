@@ -15,13 +15,11 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Add packages with `dotnet add package` as instructed in the repo README below -->
-    <PackageReference Include="DocumentFormat.OpenXml" Version="3.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.8" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.8" />
     <PackageReference Include="ModelContextProtocol" Version="0.3.0-preview.3" />
-  <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.3.0-preview.3" />
-  <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.8" />
-  <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.8" />
-  <PackageReference Include="Newtonsoft.Json" Version="13.0.4-beta1" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.3.0-preview.3" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.8" />
   </ItemGroup>
 </Project>

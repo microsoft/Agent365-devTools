@@ -51,14 +51,22 @@ public class FileMockToolStore : IMockToolStore, IDisposable
             _watcher.Created += async (_, __) => await SafeReload();
             _watcher.Renamed += async (_, __) => await SafeReload();
         }
-        catch
+        catch (Exception ex)
         {
+            Console.WriteLine($"Failed to initialize FileSystemWatcher: {ex.Message}");
         }
     }
 
     private async Task SafeReload()
     {
-        try { await ReloadAsync(); } catch { }
+        try
+        {
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to reload mock tools: {ex.Message}");
+        }
     }
 
     private void LoadInternal()

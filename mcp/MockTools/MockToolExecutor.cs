@@ -12,7 +12,7 @@ public interface IMockToolExecutor
 public class MockToolExecutor : IMockToolExecutor
 {
     private readonly IReadOnlyList<IMockToolStore> _stores;
-    private readonly Random _rng = new();
+    private readonly Random _rng = Random.Shared;
     private static readonly Regex PlaceholderRegex = new("{{(.*?)}}", RegexOptions.Compiled);
 
     // Default template constant so we can detect when user has not supplied one
