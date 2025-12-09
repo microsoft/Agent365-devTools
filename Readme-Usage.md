@@ -398,7 +398,7 @@ a365 setup  # Creates agent blueprint and registers messaging endpoint
 Choose based on your application type:
 
 - **.NET Projects:** .NET 8.0 SDK or later
-- **Node.js Projects:** Node.js (18+ recommended) and npm
+- **Node.js Projects:** Node.js (20+ recommended) and npm
 - **Python Projects:** Python 3.11+ and pip
 
 The CLI will validate that required tools are installed before deployment.

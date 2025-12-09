@@ -652,7 +652,7 @@ public static class InfrastructureSubcommand
         return platform switch
         {
             Models.ProjectPlatform.Python => "PYTHON:3.11",
-            Models.ProjectPlatform.NodeJs => "NODE:18-lts", 
+            Models.ProjectPlatform.NodeJs => "NODE:20-lts", 
             Models.ProjectPlatform.DotNet => "DOTNETCORE:8.0",
             _ => "DOTNETCORE:8.0" // Default fallback
         };
