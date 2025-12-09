@@ -4,7 +4,15 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Microsoft.Agents.A365.DevTools.MockToolingServer</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Using Include="System.Collections.Concurrent" />
+    <Using Include="System.Text.Json" />
+    <Using Include="System.Text.Json.Serialization" />
+    <Using Include="System.Text.RegularExpressions" />
+    <Using Include="Microsoft.Agents.A365.DevTools.MockToolingServer.MockTools" />
+  </ItemGroup>
   <ItemGroup>
     <!-- Add packages with `dotnet add package` as instructed in the repo README below -->
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.0.0" />

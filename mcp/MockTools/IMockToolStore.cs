@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-namespace MockNotificationMCP.MockTools;
+namespace Microsoft.Agents.A365.DevTools.MockToolingServer.MockTools;
 
 public interface IMockToolStore
 {

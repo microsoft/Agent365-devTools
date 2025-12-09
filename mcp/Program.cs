@@ -30,13 +30,13 @@ var mcpServerNames = Directory.Exists(mocksDirectory)
 if (mcpServerNames.Length == 0)
 {
     mcpServerNames = builder.Configuration.GetSection("Mcp:ServerNames").Get<string[]>()
-        ?? new[] { builder.Configuration["Mcp:ServerName"] ?? "MockNotificationMCP" };
+        ?? new[] { builder.Configuration["Mcp:ServerName"] ?? "MockToolingServer" };
 }
 
 // Mock tool stores + executor. Each server gets its own store with file name <mcpServerName>.json under /mocks
 foreach (var serverName in mcpServerNames)
 {
-    builder.Services.AddSingleton<IMockToolStore>(provider => new FileMockToolStore(serverName, new MockToolStoreOptions()));
+    builder.Services.AddSingleton<IMockToolStore>(provider => new FileMockToolStore(serverName!, new MockToolStoreOptions()));
 }
 
 builder.Services.AddSingleton<IMockToolExecutor>(provider =>
