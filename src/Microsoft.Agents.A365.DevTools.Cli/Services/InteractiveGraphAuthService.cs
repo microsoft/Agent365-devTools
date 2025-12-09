@@ -3,6 +3,7 @@
 
 using Azure.Core;
 using Azure.Identity;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
@@ -11,7 +12,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
 /// Provides interactive authentication to Microsoft Graph using browser authentication.
-/// This mimics the behavior of Connect-MgGraph in PowerShell which allows creating Agent Blueprints.
+/// Uses a custom client app registration created by the user in their tenant.
 /// 
 /// The key difference from Azure CLI authentication:
 /// - Azure CLI tokens are delegated (user acting on behalf of themselves)
@@ -23,33 +24,59 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 public sealed class InteractiveGraphAuthService
 {
     private readonly ILogger<InteractiveGraphAuthService> _logger;
-
-    // Microsoft Graph PowerShell app ID (first-party Microsoft app with elevated privileges)
-    private const string PowerShellAppId = "14d82eec-204b-4c2f-b7e8-296a70dab67e";
+    private readonly string _clientAppId;
+    private GraphServiceClient? _cachedClient;
+    private string? _cachedTenantId;
 
     // Scopes required for Agent Blueprint creation and inheritable permissions configuration
     private static readonly string[] RequiredScopes = new[]
     {
         "https://graph.microsoft.com/Application.ReadWrite.All",
         "https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All",
-        "User.Read"
+        "https://graph.microsoft.com/AgentIdentityBlueprint.UpdateAuthProperties.All",
+        "https://graph.microsoft.com/User.Read"
     };
 
-    public InteractiveGraphAuthService(ILogger<InteractiveGraphAuthService> logger)
+    public InteractiveGraphAuthService(
+        ILogger<InteractiveGraphAuthService> logger,
+        string clientAppId)
     {
-        _logger = logger;
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+        if (string.IsNullOrWhiteSpace(clientAppId))
+        {
+            throw new ArgumentNullException(
+                nameof(clientAppId),
+                $"Client App ID is required. Configure clientAppId in a365.config.json. See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions.");
+        }
+
+        if (!Guid.TryParse(clientAppId, out _))
+        {
+            throw new ArgumentException(
+                $"Client App ID must be a valid GUID format (received: {clientAppId})",
+                nameof(clientAppId));
+        }
+
+        _clientAppId = clientAppId;
     }
 
     /// <summary>
     /// Gets an authenticated GraphServiceClient using interactive browser authentication.
-    /// This uses the Microsoft Graph PowerShell app ID to get the same elevated privileges.
+    /// Caches the client instance to avoid repeated authentication prompts.
     /// </summary>
     public Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(
         string tenantId,
         CancellationToken cancellationToken = default)
     {
+        // Return cached client if available for the same tenant
+        if (_cachedClient != null && _cachedTenantId == tenantId)
+        {
+            _logger.LogDebug("Reusing cached Graph client for tenant {TenantId}", tenantId);
+            return Task.FromResult(_cachedClient);
+        }
+
         _logger.LogInformation("Attempting to authenticate to Microsoft Graph interactively...");
-        _logger.LogInformation("This requires Application.ReadWrite.All and AgentIdentityBlueprint.ReadWrite.All permissions for Agent Blueprint operations.");
+        _logger.LogInformation("This requires permissions defined in AuthenticationConstants.RequiredClientAppPermissions for Agent Blueprint operations.");
         _logger.LogInformation("");
         _logger.LogInformation("IMPORTANT: A browser window will open for authentication.");
         _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
@@ -64,16 +91,19 @@ public sealed class InteractiveGraphAuthService
             var browserCredential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
             {
                 TenantId = tenantId,
-                ClientId = PowerShellAppId,
+                ClientId = _clientAppId,
                 AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                // MSAL will start local server on http://localhost:{random_port}
-                // This matches Microsoft Graph PowerShell app registration
+                RedirectUri = new Uri(AuthenticationConstants.LocalhostRedirectUri),
+                TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+                {
+                    Name = AuthenticationConstants.ApplicationName
+                }
             });
             
             _logger.LogInformation("Opening browser for authentication...");
-            _logger.LogInformation("IMPORTANT: You must grant consent for the following permissions:");
-            _logger.LogInformation("  - Application.ReadWrite.All (for creating applications and blueprints)");
-            _logger.LogInformation("  - AgentIdentityBlueprint.ReadWrite.All (for configuring inheritable permissions)");
+            _logger.LogInformation("IMPORTANT: You must grant consent for all required permissions.");
+            _logger.LogInformation("Required permissions are defined in AuthenticationConstants.RequiredClientAppPermissions.");
+            _logger.LogInformation($"See {ConfigConstants.Agent365CliDocumentationUrl} for the complete list.");
             _logger.LogInformation("");
             
             // Create GraphServiceClient with the credential
@@ -81,6 +111,10 @@ public sealed class InteractiveGraphAuthService
 
             _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
             _logger.LogInformation("");
+
+            // Cache the client for reuse
+            _cachedClient = graphClient;
+            _cachedTenantId = tenantId;
             
             return Task.FromResult(graphClient);
         }
@@ -125,8 +159,12 @@ public sealed class InteractiveGraphAuthService
                 var deviceCodeCredential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
                 {
                     TenantId = tenantId,
-                    ClientId = PowerShellAppId,
+                    ClientId = _clientAppId,
                     AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+                    {
+                        Name = AuthenticationConstants.ApplicationName
+                    },
                     DeviceCodeCallback = (code, cancellation) =>
                     {
                         _logger.LogInformation("");
@@ -150,6 +188,10 @@ public sealed class InteractiveGraphAuthService
                 
                 _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
                 _logger.LogInformation("");
+
+                // Cache the client for reuse
+                _cachedClient = graphClient;
+                _cachedTenantId = tenantId;
                 
                 return Task.FromResult(graphClient);
             }
@@ -179,7 +221,7 @@ public sealed class InteractiveGraphAuthService
         _logger.LogError("Authentication failed - insufficient permissions");
         throw new GraphApiException(
             "Graph authentication",
-            "Insufficient permissions - you must be a Global Administrator or have Application.ReadWrite.All permission",
+            "Insufficient permissions - you must be a Global Administrator or have all required permissions defined in AuthenticationConstants.RequiredClientAppPermissions",
             isPermissionIssue: true);
     }
 }

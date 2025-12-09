@@ -24,6 +24,11 @@ public static class ConfigConstants
     public const string ExampleConfigFileName = "a365.config.example.json";
 
     /// <summary>
+    /// Microsoft Learn documentation URL for Agent 365 CLI setup and usage
+    /// </summary>
+    public const string Agent365CliDocumentationUrl = "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli";
+
+    /// <summary>
     /// Production Agent 365 Tools Discover endpoint URL
     /// </summary>
     public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/discoverToolServers";

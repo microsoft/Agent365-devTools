@@ -41,7 +41,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, azureValidator, webAppCreator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, azureValidator, webAppCreator, platformDetector, botConfigurator));
+                logger, configService, executor, azureValidator, webAppCreator, platformDetector, botConfigurator, graphApiService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, configService, executor, graphApiService));

@@ -22,9 +22,12 @@ public static class AuthenticationConstants
     public const string CommonTenantId = "common";
 
     /// <summary>
-    /// Localhost redirect URI for interactive browser authentication
+    /// Localhost redirect URI for interactive browser authentication.
+    /// Uses a fixed port (8400) to ensure consistent OAuth callbacks across multiple
+    /// authentication attempts. Users must configure this exact URI in their custom
+    /// client app registration: http://localhost:8400/
     /// </summary>
-    public const string LocalhostRedirectUri = "http://localhost";
+    public const string LocalhostRedirectUri = "http://localhost:8400/";
 
     /// <summary>
     /// Application name for cache directory
@@ -42,4 +45,27 @@ public static class AuthenticationConstants
     /// to prevent using tokens that expire during a request
     /// </summary>
     public const int TokenExpirationBufferMinutes = 5;
+
+    /// <summary>
+    /// Microsoft Graph resource app ID (well-known constant)
+    /// Used to identify Microsoft Graph API in permission requests
+    /// </summary>
+    public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
+
+    /// <summary>
+    /// Required delegated permissions for the custom client app used by a365 CLI.
+    /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
+    /// All permissions require admin consent.
+    /// 
+    /// Permission GUIDs are resolved dynamically at runtime from Microsoft Graph to ensure
+    /// compatibility across different tenants and API versions.
+    /// </summary>
+    public static readonly string[] RequiredClientAppPermissions = new[]
+    {
+        "Application.ReadWrite.All",
+        "AgentIdentityBlueprint.ReadWrite.All",
+        "AgentIdentityBlueprint.UpdateAuthProperties.All",
+        "DelegatedPermissionGrant.ReadWrite.All",
+        "Directory.Read.All"
+    };
 }

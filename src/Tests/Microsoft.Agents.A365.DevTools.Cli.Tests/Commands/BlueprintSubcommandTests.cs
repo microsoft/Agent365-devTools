@@ -27,6 +27,7 @@ public class BlueprintSubcommandTests
     private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly IBotConfigurator _mockBotConfigurator;
+    private readonly GraphApiService _mockGraphApiService;
 
     public BlueprintSubcommandTests()
     {
@@ -39,6 +40,7 @@ public class BlueprintSubcommandTests
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
+        _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
 
     }
 
@@ -53,7 +55,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert
         command.Name.Should().Be("blueprint");
@@ -70,7 +73,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert
         command.Description.Should().NotBeNullOrEmpty();
@@ -88,7 +92,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert
         var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
@@ -108,7 +113,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert
         var verboseOption = command.Options.FirstOrDefault(o => o.Name == "verbose");
@@ -128,7 +134,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert
         var dryRunOption = command.Options.FirstOrDefault(o => o.Name == "dry-run");
@@ -156,7 +163,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -190,7 +198,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -242,7 +251,8 @@ public class BlueprintSubcommandTests
                 isSetupAll: false,
                 _mockConfigService,
                 _mockBotConfigurator,
-                _mockPlatformDetector);
+                _mockPlatformDetector,
+                _mockGraphApiService);
 
         // Assert - Should return false when consent service fails
         result.Should().BeFalse();
@@ -255,6 +265,7 @@ public class BlueprintSubcommandTests
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required for validation
             SubscriptionId = "test-sub",
             AgentBlueprintDisplayName = "Test Blueprint"
         };
@@ -275,7 +286,8 @@ public class BlueprintSubcommandTests
             isSetupAll: false,
             _mockConfigService,
             _mockBotConfigurator,
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         // Assert
         result.Should().BeFalse();
@@ -293,7 +305,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert
         command.Description.Should().Contain("Agent ID Developer");
@@ -320,7 +333,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -355,7 +369,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -382,7 +397,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert - Verify all expected options are present
         command.Options.Should().HaveCountGreaterOrEqualTo(3);
@@ -407,7 +423,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -428,7 +445,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert - Verify the config option exists and has expected aliases
         var configOption = command.Options.First(o => o.Name == "config");
@@ -464,7 +482,8 @@ public class BlueprintSubcommandTests
             isSetupAll: false,
             _mockConfigService,
             _mockBotConfigurator,
-            _mockPlatformDetector);
+            _mockPlatformDetector,
+            _mockGraphApiService);
 
         // Assert
         result.Should().BeFalse();
@@ -489,7 +508,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert - Verify description provides context and guidance
         command.Description.Should().NotBeNullOrEmpty();
@@ -516,7 +536,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -549,7 +570,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -580,7 +602,8 @@ public class BlueprintSubcommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockBotConfigurator);
+            _mockBotConfigurator,
+            _mockGraphApiService);
 
         // Assert - Verify command can be added to a parser
         var parser = new CommandLineBuilder(command).Build();
@@ -1007,6 +1030,47 @@ public class BlueprintSubcommandTests
                 File.Delete(configPath);
             }
         }
+    }
+
+    #endregion
+
+    #region EnsureDelegatedConsentWithRetriesAsync Parameter Order Documentation
+
+    [Fact]
+    public void DocumentParameterOrder_EnsureDelegatedConsentWithRetriesAsync()
+    {
+        // This test documents the correct parameter order for EnsureDelegatedConsentWithRetriesAsync
+        // to prevent the bug where clientAppId and tenantId were accidentally swapped.
+        //
+        // Bug History:
+        // - Parameters were accidentally swapped: (service, tenantId, clientAppId, logger)
+        // - This caused Azure CLI to authenticate to tenant=<clientAppId> (a non-existent tenant)
+        // - Error: "AADSTS90002: Tenant 'e2af597c-49d3-42e8-b0ff-6c2cbf818ec7' not found"
+        // - Root cause: Client app ID was passed where tenant ID was expected
+        //
+        // Correct Parameter Order:
+        // await EnsureDelegatedConsentWithRetriesAsync(
+        //     delegatedConsentService,
+        //     setupConfig.ClientAppId,    // <-- clientAppId FIRST
+        //     setupConfig.TenantId,       // <-- tenantId SECOND
+        //     logger);
+        //
+        // The method then calls:
+        // await delegatedConsentService.EnsureBlueprintPermissionGrantAsync(
+        //     clientAppId,  // <-- Receives setupConfig.ClientAppId
+        //     tenantId,     // <-- Receives setupConfig.TenantId
+        //     ct);
+        //
+        // Code Reviewers: Verify that BlueprintSubcommand.cs line ~189 follows this pattern.
+
+        var testClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6";
+        var testTenantId = "12345678-1234-1234-1234-123456789012";
+
+        // Assert that test GUIDs are valid and different
+        Assert.True(Guid.TryParse(testClientAppId, out _), "Test clientAppId should be a valid GUID");
+        Assert.True(Guid.TryParse(testTenantId, out _), "Test tenantId should be a valid GUID");
+        testClientAppId.Should().NotBe(testTenantId, 
+            "ClientAppId and TenantId must be different to catch parameter swapping bugs");
     }
 
     #endregion

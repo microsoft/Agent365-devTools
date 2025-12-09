@@ -63,4 +63,42 @@ public static class JsonDeserializationHelper
             return null;
         }
     }
+
+    /// <summary>
+    /// Cleans JSON output from Azure CLI by removing control characters and non-JSON content.
+    /// Azure CLI on Windows can output control characters (like 0x0C - form feed) and warning messages
+    /// that need to be stripped before JSON parsing.
+    /// </summary>
+    /// <param name="output">The raw output from Azure CLI</param>
+    /// <returns>Cleaned JSON string ready for parsing</returns>
+    public static string CleanAzureCliJsonOutput(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return string.Empty;
+        }
+
+        // Remove control characters (0x00-0x1F except \r, \n, \t)
+        // These characters can appear in Azure CLI output on Windows
+        var cleaned = new System.Text.StringBuilder(output.Length);
+        foreach (char c in output)
+        {
+            if (c >= 32 || c == '\n' || c == '\r' || c == '\t')
+            {
+                cleaned.Append(c);
+            }
+        }
+
+        var result = cleaned.ToString().Trim();
+        
+        // Find the first { or [ to locate JSON start
+        // This handles cases where Azure CLI outputs warnings or other text before the JSON
+        int jsonStart = result.IndexOfAny(new[] { '{', '[' });
+        if (jsonStart > 0)
+        {
+            result = result.Substring(jsonStart);
+        }
+
+        return result;
+    }
 }
