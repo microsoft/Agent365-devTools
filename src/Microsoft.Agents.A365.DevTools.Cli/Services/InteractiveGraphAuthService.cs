@@ -33,7 +33,8 @@ public sealed class InteractiveGraphAuthService
     {
         "https://graph.microsoft.com/Application.ReadWrite.All",
         "https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All",
-        "https://graph.microsoft.com/AgentIdentityBlueprint.UpdateAuthProperties.All"
+        "https://graph.microsoft.com/AgentIdentityBlueprint.UpdateAuthProperties.All",
+        "https://graph.microsoft.com/User.Read"
     };
 
     public InteractiveGraphAuthService(
