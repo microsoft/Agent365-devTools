@@ -1,885 +1,877 @@
-
-{
-  "servers": [
-    {
-      "name": "mcp_MailTools",
-      "tools": [
-        {
-          "name": "AddDraftAttachmentsAsync",
-          "description": "Add attachments (URI) to an existing draft message.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Graph message ID (draft) to update."
-              },
-              "attachmentUris": {
-                "type": "array",
-                "description": "List of direct file URIs to attach (must be Microsoft 365 file links: OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id}).",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": [
-              "messageId",
-              "attachmentUris"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
+[
+  {
+    "name": "AddDraftAttachmentsAsync",
+    "description": "Add attachments (URI) to an existing draft message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Graph message ID (draft) to update."
         },
-        {
-          "name": "UpdateDraftAsync",
-          "description": "Update a draft's recipients, subject, body, and attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Graph message ID (draft) to update."
-              },
-              "to": {
-                "type": "array",
-                "description": "List of To recipients (MUST be email addresses - if you only have names, search for users first)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "cc": {
-                "type": "array",
-                "description": "List of Cc recipients (MUST be email addresses - if you only have names, search for users first)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "bcc": {
-                "type": "array",
-                "description": "List of Bcc recipients (MUST be email addresses - if you only have names, search for users first)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "subject": {
-                "type": "string",
-                "description": "Subject of the draft"
-              },
-              "body": {
-                "type": "string",
-                "description": "Body of the draft"
-              },
-              "attachmentUris": {
-                "type": "array",
-                "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "directAttachments": {
-                "type": "array",
-                "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "FileName": {
-                      "type": "string"
-                    },
-                    "ContentBase64": {
-                      "type": "string"
-                    },
-                    "ContentType": {
-                      "type": "string"
-                    }
-                  },
-                  "required": []
-                }
-              },
-              "directAttachmentFilePaths": {
-                "type": "array",
-                "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": [
-              "messageId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "SendEmailWithAttachmentsAsync",
-          "description": "Create and send an email with optional attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "to": {
-                "type": "array",
-                "description": "List of To recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "cc": {
-                "type": "array",
-                "description": "List of Cc recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "bcc": {
-                "type": "array",
-                "description": "List of Bcc recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "subject": {
-                "type": "string",
-                "description": "Subject of the email"
-              },
-              "body": {
-                "type": "string",
-                "description": "Body of the email"
-              },
-              "attachmentUris": {
-                "type": "array",
-                "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "directAttachments": {
-                "type": "array",
-                "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "FileName": {
-                      "type": "string"
-                    },
-                    "ContentBase64": {
-                      "type": "string"
-                    },
-                    "ContentType": {
-                      "type": "string"
-                    }
-                  },
-                  "required": []
-                }
-              },
-              "directAttachmentFilePaths": {
-                "type": "array",
-                "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": []
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "CreateDraftMessageAsync",
-          "description": "Create a draft email in the signed-in user's mailbox without sending it. IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "subject": {
-                "type": "string",
-                "description": "Subject of the email"
-              },
-              "body": {
-                "type": "string",
-                "description": "Body of the email"
-              },
-              "to": {
-                "type": "array",
-                "description": "List of To recipients (MUST be email addresses - if you only have names, search for users first)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "cc": {
-                "type": "array",
-                "description": "List of Cc recipients (MUST be email addresses - if you only have names, search for users first)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "bcc": {
-                "type": "array",
-                "description": "List of Bcc recipients (MUST be email addresses - if you only have names, search for users first)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "contentType": {
-                "type": "string",
-                "description": "Body content type: Text or HTML"
-              }
-            },
-            "required": []
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "GetMessageAsync",
-          "description": "Get a message by ID from the signed-in user's mailbox.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Message ID"
-              },
-              "preferHtml": {
-                "type": "boolean",
-                "description": "If true, request HTML body format"
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "UpdateMessageAsync",
-          "description": "Update a message's mutable properties (subject, body, categories, importance).",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Message ID"
-              },
-              "subject": {
-                "type": "string",
-                "description": "New subject"
-              },
-              "body": {
-                "type": "string",
-                "description": "New body content"
-              },
-              "contentType": {
-                "type": "string",
-                "description": "Body content type: Text or HTML"
-              },
-              "categories": {
-                "type": "array",
-                "description": "Message categories",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "importance": {
-                "type": "string",
-                "description": "Importance level: Low, Normal, or High"
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "DeleteMessageAsync",
-          "description": "Delete a message from the signed-in user's mailbox.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Message ID"
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "ReplyToMessageAsync",
-          "description": "Send a reply to an existing message.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Message ID to reply to"
-              },
-              "comment": {
-                "type": "string",
-                "description": "Reply text content"
-              },
-              "preferHtml": {
-                "type": "boolean",
-                "description": "If true, treat comment as HTML"
-              },
-              "toRecipients": {
-                "type": "array",
-                "description": "Optional override list of To recipients (email addresses). If provided, a reply draft is created and patched before sending.",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "ccRecipients": {
-                "type": "array",
-                "description": "Optional override list of Cc recipients (email addresses). Used only when modifying recipients.",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "bccRecipients": {
-                "type": "array",
-                "description": "Optional override list of Bcc recipients (email addresses). Used only when modifying recipients.",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "ReplyAllToMessageAsync",
-          "description": "Send a reply-all to an existing message.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Message ID to reply-all to"
-              },
-              "comment": {
-                "type": "string",
-                "description": "Reply text content"
-              },
-              "preferHtml": {
-                "type": "boolean",
-                "description": "If true, treat comment as HTML"
-              },
-              "toRecipients": {
-                "type": "array",
-                "description": "Optional override list of To recipients (email addresses). If provided, a reply-all draft is created and patched before sending.",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "ccRecipients": {
-                "type": "array",
-                "description": "Optional override list of Cc recipients (email addresses). Used only when modifying recipients.",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "bccRecipients": {
-                "type": "array",
-                "description": "Optional override list of Bcc recipients (email addresses). Used only when modifying recipients.",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "SendDraftMessageAsync",
-          "description": "Send an existing draft message by ID.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "description": "Draft message ID to send"
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "SearchMessagesAsync",
-          "description": "Search Outlook messages using Microsoft Graph Search API with KQL-style queries.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "queryString": {
-                "type": "string",
-                "description": "KQL-style search string (e.g., 'contoso OR from:user@example.com')"
-              },
-              "from": {
-                "type": "integer",
-                "description": "Zero-based offset of the first result"
-              },
-              "size": {
-                "type": "integer",
-                "description": "Page size (1-50)"
-              },
-              "enableTopResults": {
-                "type": "boolean",
-                "description": "If true, returns top results with relevance boosting"
-              },
-              "includeBody": {
-                "type": "boolean",
-                "description": "If true, include full body HTML content for each message (larger payload). BodyLength and BodyTruncated metadata returned."
-              }
-            },
-            "required": []
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "GetAttachmentsAsync",
-          "description": "Get all attachments from a message, returning attachment metadata (ID, name, size, type).",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Message ID"
-              }
-            },
-            "required": [
-              "messageId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "DownloadAttachmentAsync",
-          "description": "Download attachment content from a message. Returns the content as base64-encoded string.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Message ID"
-              },
-              "attachmentId": {
-                "type": "string",
-                "description": "Attachment ID"
-              }
-            },
-            "required": [
-              "messageId",
-              "attachmentId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "UploadAttachmentAsync",
-          "description": "Upload a small file attachment (less than 3 MB) to a message. File content must be base64-encoded.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Message ID to attach to"
-              },
-              "fileName": {
-                "type": "string",
-                "description": "File name"
-              },
-              "contentBase64": {
-                "type": "string",
-                "description": "Base64-encoded file content"
-              },
-              "contentType": {
-                "type": "string",
-                "description": "MIME type (optional)"
-              }
-            },
-            "required": [
-              "messageId",
-              "fileName",
-              "contentBase64"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "UploadLargeAttachmentAsync",
-          "description": "Upload a large file attachment (3-150 MB) to a message using chunked upload. File content must be base64-encoded.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Message ID to attach to"
-              },
-              "fileName": {
-                "type": "string",
-                "description": "File name"
-              },
-              "contentBase64": {
-                "type": "string",
-                "description": "Base64-encoded file content"
-              },
-              "contentType": {
-                "type": "string",
-                "description": "MIME type (optional)"
-              }
-            },
-            "required": [
-              "messageId",
-              "fileName",
-              "contentBase64"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "DeleteAttachmentAsync",
-          "description": "Delete an attachment from a message.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Message ID"
-              },
-              "attachmentId": {
-                "type": "string",
-                "description": "Attachment ID"
-              }
-            },
-            "required": [
-              "messageId",
-              "attachmentId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "ReplyWithFullThreadAsync",
-          "description": "Reply (or reply-all) adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Original message ID to reply to"
-              },
-              "introComment": {
-                "type": "string",
-                "description": "Introductory comment placed above quoted thread"
-              },
-              "preferHtml": {
-                "type": "boolean",
-                "description": "If true, introComment is treated as HTML"
-              },
-              "additionalTo": {
-                "type": "array",
-                "description": "Additional To recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalCc": {
-                "type": "array",
-                "description": "Additional Cc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalBcc": {
-                "type": "array",
-                "description": "Additional Bcc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "replyAll": {
-                "type": "boolean",
-                "description": "If true, perform reply-all; otherwise a direct reply"
-              },
-              "includeOriginalNonInlineAttachments": {
-                "type": "boolean",
-                "description": "If true, re-attach original non-inline attachments (files)"
-              }
-            },
-            "required": [
-              "messageId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "ReplyAllWithFullThreadAsync",
-          "description": "Reply-all adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Original message ID to reply-all to"
-              },
-              "introComment": {
-                "type": "string",
-                "description": "Introductory comment placed above quoted thread"
-              },
-              "preferHtml": {
-                "type": "boolean",
-                "description": "If true, introComment is treated as HTML"
-              },
-              "additionalTo": {
-                "type": "array",
-                "description": "Additional To recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalCc": {
-                "type": "array",
-                "description": "Additional Cc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalBcc": {
-                "type": "array",
-                "description": "Additional Bcc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "includeOriginalNonInlineAttachments": {
-                "type": "boolean",
-                "description": "If true, re-attach original non-inline attachments (files)"
-              }
-            },
-            "required": [
-              "messageId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "ForwardMessageWithFullThreadAsync",
-          "description": "Forward a message adding new recipients and an optional intro comment while preserving full quoted thread; returns sensitivity label.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Original message ID to forward"
-              },
-              "introComment": {
-                "type": "string",
-                "description": "Introductory comment placed above quoted thread"
-              },
-              "preferHtml": {
-                "type": "boolean",
-                "description": "If true, introComment is treated as HTML"
-              },
-              "additionalTo": {
-                "type": "array",
-                "description": "Additional To recipients (email addresses) - required",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalCc": {
-                "type": "array",
-                "description": "Additional Cc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalBcc": {
-                "type": "array",
-                "description": "Additional Bcc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "includeOriginalNonInlineAttachments": {
-                "type": "boolean",
-                "description": "If true, re-attach original non-inline attachments (files)"
-              }
-            },
-            "required": [
-              "messageId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
-        },
-        {
-          "name": "ForwardMessageAsync",
-          "description": "Forward an existing message, optionally adding a comment, recipients, and new attachments while preserving the quoted thread.",
-          "inputSchema": {
-            "type": "object",
-            "properties": {
-              "messageId": {
-                "type": "string",
-                "description": "Original message ID to forward"
-              },
-              "introComment": {
-                "type": "string",
-                "description": "Introductory comment placed above quoted thread"
-              },
-              "preferHtml": {
-                "type": "boolean",
-                "description": "If true, introComment is treated as HTML"
-              },
-              "additionalTo": {
-                "type": "array",
-                "description": "Additional To recipients (email addresses) - required",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalCc": {
-                "type": "array",
-                "description": "Additional Cc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "additionalBcc": {
-                "type": "array",
-                "description": "Additional Bcc recipients (email addresses)",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "attachmentUris": {
-                "type": "array",
-                "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "directAttachments": {
-                "type": "array",
-                "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "FileName": {
-                      "type": "string"
-                    },
-                    "ContentBase64": {
-                      "type": "string"
-                    },
-                    "ContentType": {
-                      "type": "string"
-                    }
-                  },
-                  "required": []
-                }
-              },
-              "directAttachmentFilePaths": {
-                "type": "array",
-                "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": [
-              "messageId"
-            ]
-          },
-          "responseTemplate": {},
-          "delayMs": 100,
-          "errorRate": 0,
-          "statusCode": 200,
-          "enabled": true
+        "attachmentUris": {
+          "type": "array",
+          "description": "List of direct file URIs to attach (must be Microsoft 365 file links: OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id}).",
+          "items": {
+            "type": "string"
+          }
         }
+      },
+      "required": [
+        "messageId",
+        "attachmentUris"
       ]
-    }
-  ]
-}
+    },
+    "responseTemplate": "Attachments added to draft message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "UpdateDraftAsync",
+    "description": "Update a draft's recipients, subject, body, and attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Graph message ID (draft) to update."
+        },
+        "to": {
+          "type": "array",
+          "description": "List of To recipients (MUST be email addresses - if you only have names, search for users first)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cc": {
+          "type": "array",
+          "description": "List of Cc recipients (MUST be email addresses - if you only have names, search for users first)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bcc": {
+          "type": "array",
+          "description": "List of Bcc recipients (MUST be email addresses - if you only have names, search for users first)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subject": {
+          "type": "string",
+          "description": "Subject of the draft"
+        },
+        "body": {
+          "type": "string",
+          "description": "Body of the draft"
+        },
+        "attachmentUris": {
+          "type": "array",
+          "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
+          "items": {
+            "type": "string"
+          }
+        },
+        "directAttachments": {
+          "type": "array",
+          "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "FileName": {
+                "type": "string"
+              },
+              "ContentBase64": {
+                "type": "string"
+              },
+              "ContentType": {
+                "type": "string"
+              }
+            },
+            "required": []
+          }
+        },
+        "directAttachmentFilePaths": {
+          "type": "array",
+          "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "messageId"
+      ]
+    },
+    "responseTemplate": "Draft message '{{messageId}}' updated (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "SendEmailWithAttachmentsAsync",
+    "description": "Create and send an email with optional attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "array",
+          "description": "List of To recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cc": {
+          "type": "array",
+          "description": "List of Cc recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bcc": {
+          "type": "array",
+          "description": "List of Bcc recipients (MUST be email addresses - if you only have names, search for users first to get their email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subject": {
+          "type": "string",
+          "description": "Subject of the email"
+        },
+        "body": {
+          "type": "string",
+          "description": "Body of the email"
+        },
+        "attachmentUris": {
+          "type": "array",
+          "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
+          "items": {
+            "type": "string"
+          }
+        },
+        "directAttachments": {
+          "type": "array",
+          "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "FileName": {
+                "type": "string"
+              },
+              "ContentBase64": {
+                "type": "string"
+              },
+              "ContentType": {
+                "type": "string"
+              }
+            },
+            "required": []
+          }
+        },
+        "directAttachmentFilePaths": {
+          "type": "array",
+          "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": []
+    },
+    "responseTemplate": "Email with subject '{{subject}}' sent successfully (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "CreateDraftMessageAsync",
+    "description": "Create a draft email in the signed-in user's mailbox without sending it. IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "description": "Subject of the email"
+        },
+        "body": {
+          "type": "string",
+          "description": "Body of the email"
+        },
+        "to": {
+          "type": "array",
+          "description": "List of To recipients (MUST be email addresses - if you only have names, search for users first)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cc": {
+          "type": "array",
+          "description": "List of Cc recipients (MUST be email addresses - if you only have names, search for users first)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bcc": {
+          "type": "array",
+          "description": "List of Bcc recipients (MUST be email addresses - if you only have names, search for users first)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Body content type: Text or HTML"
+        }
+      },
+      "required": []
+    },
+    "responseTemplate": "Draft message with subject '{{subject}}' created (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "GetMessageAsync",
+    "description": "Get a message by ID from the signed-in user's mailbox.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, request HTML body format"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Message '{{id}}' retrieved (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "UpdateMessageAsync",
+    "description": "Update a message's mutable properties (subject, body, categories, importance).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID"
+        },
+        "subject": {
+          "type": "string",
+          "description": "New subject"
+        },
+        "body": {
+          "type": "string",
+          "description": "New body content"
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Body content type: Text or HTML"
+        },
+        "categories": {
+          "type": "array",
+          "description": "Message categories",
+          "items": {
+            "type": "string"
+          }
+        },
+        "importance": {
+          "type": "string",
+          "description": "Importance level: Low, Normal, or High"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Message '{{id}}' updated (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "DeleteMessageAsync",
+    "description": "Delete a message from the signed-in user's mailbox.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Message '{{id}}' deleted (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "ReplyToMessageAsync",
+    "description": "Send a reply to an existing message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID to reply to"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Reply text content"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, treat comment as HTML"
+        },
+        "toRecipients": {
+          "type": "array",
+          "description": "Optional override list of To recipients (email addresses). If provided, a reply draft is created and patched before sending.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ccRecipients": {
+          "type": "array",
+          "description": "Optional override list of Cc recipients (email addresses). Used only when modifying recipients.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bccRecipients": {
+          "type": "array",
+          "description": "Optional override list of Bcc recipients (email addresses). Used only when modifying recipients.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Reply sent to message '{{id}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "ReplyAllToMessageAsync",
+    "description": "Send a reply-all to an existing message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message ID to reply-all to"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Reply text content"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, treat comment as HTML"
+        },
+        "toRecipients": {
+          "type": "array",
+          "description": "Optional override list of To recipients (email addresses). If provided, a reply-all draft is created and patched before sending.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ccRecipients": {
+          "type": "array",
+          "description": "Optional override list of Cc recipients (email addresses). Used only when modifying recipients.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bccRecipients": {
+          "type": "array",
+          "description": "Optional override list of Bcc recipients (email addresses). Used only when modifying recipients.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Reply-all sent to message '{{id}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "SendDraftMessageAsync",
+    "description": "Send an existing draft message by ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Draft message ID to send"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "responseTemplate": "Draft message '{{id}}' sent (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "SearchMessagesAsync",
+    "description": "Search Outlook messages using Microsoft Graph Search API with KQL-style queries.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "queryString": {
+          "type": "string",
+          "description": "KQL-style search string (e.g., 'contoso OR from:user@example.com')"
+        },
+        "from": {
+          "type": "integer",
+          "description": "Zero-based offset of the first result"
+        },
+        "size": {
+          "type": "integer",
+          "description": "Page size (1-50)"
+        },
+        "enableTopResults": {
+          "type": "boolean",
+          "description": "If true, returns top results with relevance boosting"
+        },
+        "includeBody": {
+          "type": "boolean",
+          "description": "If true, include full body HTML content for each message (larger payload). BodyLength and BodyTruncated metadata returned."
+        }
+      },
+      "required": []
+    },
+    "responseTemplate": "Message search completed with query '{{queryString}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "GetAttachmentsAsync",
+    "description": "Get all attachments from a message, returning attachment metadata (ID, name, size, type).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Message ID"
+        }
+      },
+      "required": [
+        "messageId"
+      ]
+    },
+    "responseTemplate": "Attachments retrieved for message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "DownloadAttachmentAsync",
+    "description": "Download attachment content from a message. Returns the content as base64-encoded string.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Message ID"
+        },
+        "attachmentId": {
+          "type": "string",
+          "description": "Attachment ID"
+        }
+      },
+      "required": [
+        "messageId",
+        "attachmentId"
+      ]
+    },
+    "responseTemplate": "Attachment '{{attachmentId}}' downloaded from message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "UploadAttachmentAsync",
+    "description": "Upload a small file attachment (less than 3 MB) to a message. File content must be base64-encoded.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Message ID to attach to"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "File name"
+        },
+        "contentBase64": {
+          "type": "string",
+          "description": "Base64-encoded file content"
+        },
+        "contentType": {
+          "type": "string",
+          "description": "MIME type (optional)"
+        }
+      },
+      "required": [
+        "messageId",
+        "fileName",
+        "contentBase64"
+      ]
+    },
+    "responseTemplate": "Attachment '{{fileName}}' uploaded to message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "UploadLargeAttachmentAsync",
+    "description": "Upload a large file attachment (3-150 MB) to a message using chunked upload. File content must be base64-encoded.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Message ID to attach to"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "File name"
+        },
+        "contentBase64": {
+          "type": "string",
+          "description": "Base64-encoded file content"
+        },
+        "contentType": {
+          "type": "string",
+          "description": "MIME type (optional)"
+        }
+      },
+      "required": [
+        "messageId",
+        "fileName",
+        "contentBase64"
+      ]
+    },
+    "responseTemplate": "Large attachment '{{fileName}}' uploaded to message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "DeleteAttachmentAsync",
+    "description": "Delete an attachment from a message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Message ID"
+        },
+        "attachmentId": {
+          "type": "string",
+          "description": "Attachment ID"
+        }
+      },
+      "required": [
+        "messageId",
+        "attachmentId"
+      ]
+    },
+    "responseTemplate": "Attachment '{{attachmentId}}' deleted from message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "ReplyWithFullThreadAsync",
+    "description": "Reply (or reply-all) adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Original message ID to reply to"
+        },
+        "introComment": {
+          "type": "string",
+          "description": "Introductory comment placed above quoted thread"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, introComment is treated as HTML"
+        },
+        "additionalTo": {
+          "type": "array",
+          "description": "Additional To recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalCc": {
+          "type": "array",
+          "description": "Additional Cc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalBcc": {
+          "type": "array",
+          "description": "Additional Bcc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "replyAll": {
+          "type": "boolean",
+          "description": "If true, perform reply-all; otherwise a direct reply"
+        },
+        "includeOriginalNonInlineAttachments": {
+          "type": "boolean",
+          "description": "If true, re-attach original non-inline attachments (files)"
+        }
+      },
+      "required": [
+        "messageId"
+      ]
+    },
+    "responseTemplate": "Reply with full thread sent to message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "ReplyAllWithFullThreadAsync",
+    "description": "Reply-all adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Original message ID to reply-all to"
+        },
+        "introComment": {
+          "type": "string",
+          "description": "Introductory comment placed above quoted thread"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, introComment is treated as HTML"
+        },
+        "additionalTo": {
+          "type": "array",
+          "description": "Additional To recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalCc": {
+          "type": "array",
+          "description": "Additional Cc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalBcc": {
+          "type": "array",
+          "description": "Additional Bcc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "includeOriginalNonInlineAttachments": {
+          "type": "boolean",
+          "description": "If true, re-attach original non-inline attachments (files)"
+        }
+      },
+      "required": [
+        "messageId"
+      ]
+    },
+    "responseTemplate": "Reply-all with full thread sent to message '{{messageId}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "ForwardMessageWithFullThreadAsync",
+    "description": "Forward a message adding new recipients and an optional intro comment while preserving full quoted thread; returns sensitivity label.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Original message ID to forward"
+        },
+        "introComment": {
+          "type": "string",
+          "description": "Introductory comment placed above quoted thread"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, introComment is treated as HTML"
+        },
+        "additionalTo": {
+          "type": "array",
+          "description": "Additional To recipients (email addresses) - required",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalCc": {
+          "type": "array",
+          "description": "Additional Cc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalBcc": {
+          "type": "array",
+          "description": "Additional Bcc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "includeOriginalNonInlineAttachments": {
+          "type": "boolean",
+          "description": "If true, re-attach original non-inline attachments (files)"
+        }
+      },
+      "required": [
+        "messageId"
+      ]
+    },
+    "responseTemplate": "Message '{{messageId}}' forwarded with full thread (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "ForwardMessageAsync",
+    "description": "Forward an existing message, optionally adding a comment, recipients, and new attachments while preserving the quoted thread.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Original message ID to forward"
+        },
+        "introComment": {
+          "type": "string",
+          "description": "Introductory comment placed above quoted thread"
+        },
+        "preferHtml": {
+          "type": "boolean",
+          "description": "If true, introComment is treated as HTML"
+        },
+        "additionalTo": {
+          "type": "array",
+          "description": "Additional To recipients (email addresses) - required",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalCc": {
+          "type": "array",
+          "description": "Additional Cc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalBcc": {
+          "type": "array",
+          "description": "Additional Bcc recipients (email addresses)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attachmentUris": {
+          "type": "array",
+          "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
+          "items": {
+            "type": "string"
+          }
+        },
+        "directAttachments": {
+          "type": "array",
+          "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "FileName": {
+                "type": "string"
+              },
+              "ContentBase64": {
+                "type": "string"
+              },
+              "ContentType": {
+                "type": "string"
+              }
+            },
+            "required": []
+          }
+        },
+        "directAttachmentFilePaths": {
+          "type": "array",
+          "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "messageId"
+      ]
+    },
+    "responseTemplate": "Message '{{messageId}}' forwarded (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  }
+]

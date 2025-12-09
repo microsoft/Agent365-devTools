@@ -1,1077 +1,1068 @@
-
-{
-  "name": "mcp_CalendarTools",
-  "tools": [
-    {
-      "name": "acceptEvent",
-      "description": "Accept the specified event invitation in a user's calendar.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the user.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "eventId": {
-            "type": "string",
-            "description": "The ID of the event to accept.",
-            "x-ms-location": "path",
-            "x-ms-path": "eventId"
-          },
-          "comment": {
-            "type": "string",
-            "description": "Optional text included in the response.",
-            "x-ms-location": "body",
-            "x-ms-path": "comment"
-          },
-          "sendResponse": {
-            "type": "boolean",
-            "description": "Whether to send a response to the organizer.",
-            "x-ms-location": "body",
-            "x-ms-path": "sendResponse"
-          }
+[
+  {
+    "name": "acceptEvent",
+    "description": "Accept the specified event invitation in a user's calendar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the user.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
         },
-        "required": [
-          "eventId"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "cancelEvent",
-      "description": "Cancel an event in a specified user's calendar and notify attendees.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the user who owns the event.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "eventId": {
-            "type": "string",
-            "description": "The unique identifier of the event to cancel.",
-            "x-ms-location": "path",
-            "x-ms-path": "eventId"
-          },
-          "comment": {
-            "type": "string",
-            "description": "Optional message to include in the cancellation notification to attendees.",
-            "x-ms-location": "body",
-            "x-ms-path": "comment"
-          }
+        "eventId": {
+          "type": "string",
+          "description": "The ID of the event to accept.",
+          "x-ms-location": "path",
+          "x-ms-path": "eventId"
         },
-        "required": [
-          "eventId"
-        ]
+        "comment": {
+          "type": "string",
+          "description": "Optional text included in the response.",
+          "x-ms-location": "body",
+          "x-ms-path": "comment"
+        },
+        "sendResponse": {
+          "type": "boolean",
+          "description": "Whether to send a response to the organizer.",
+          "x-ms-location": "body",
+          "x-ms-path": "sendResponse"
+        }
       },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
+      "required": [
+        "eventId"
+      ]
+    }
+  },
+  {
+    "name": "cancelEvent",
+    "description": "Cancel an event in a specified user's calendar and notify attendees.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the user who owns the event.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "The unique identifier of the event to cancel.",
+          "x-ms-location": "path",
+          "x-ms-path": "eventId"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional message to include in the cancellation notification to attendees.",
+          "x-ms-location": "body",
+          "x-ms-path": "comment"
+        }
+      },
+      "required": [
+        "eventId"
+      ]
     },
-    {
-      "name": "createEvent",
-      "description": "\"Use this to create a new event in current user's calendar. IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses. If time is provided, schedule the event — even if there are conflicts/ even if attendee/organizer is busy in that slot. If only a date is given, use the earliest slot where all or most attendees (> 50% of them) are free. If no date is given, schedule meeting at given time for today. If no time/date is given, use the first slot where all attendees are free. Try to create events during working hours of signed-in user (8 AM - 5 PM) if explicit time is not specified. Specify recurrence using recurrence property. Online meetings can be created by setting isOnlineMeeting to true. Default meeting duration is 30 minutes, if not specified by user.\"",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "Use current user if no organizer is specified. If not, get the organizer's user principal name first, and use that value.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "subject": {
-            "type": "string",
-            "description": "Non-empty event subject/title. Avoid trailing whitespace and control characters.",
-            "x-ms-location": "body",
-            "x-ms-path": "subject",
-            "minLength": 1
-          },
-          "body": {
-            "type": "object",
-            "description": "Event body/description content. Use 'html' for rich formatting or 'text' for plain.",
-            "x-ms-location": "body",
-            "x-ms-path": "body",
-            "properties": {
-              "contentType": {
-                "type": "string",
-                "enum": [
-                  "Text",
-                  "HTML"
-                ],
-                "description": "Body content type. If unsure, use 'Text'.",
-                "x-ms-location": "body",
-                "x-ms-path": "body.contentType"
-              },
-              "content": {
-                "type": "string",
-                "description": "Body content string. For 'html', provide well-formed HTML; for 'text', provide plain UTF-8 text.",
-                "x-ms-location": "body",
-                "x-ms-path": "body.content"
-              }
-            },
-            "required": [
-              "contentType",
-              "content"
-            ]
-          },
-          "start": {
-            "type": "object",
-            "description": "Event start timestamp with time zone. Must be today or after.",
-            "x-ms-location": "body",
-            "x-ms-path": "start",
-            "properties": {
-              "dateTime": {
-                "type": "string",
-                "description": "Event start time in ISO 8601 without offset: 'yyyy-MM-ddTHH:mm:ss' (e.g., '2025-09-18T09:00:00').",
-                "x-ms-location": "body",
-                "x-ms-path": "start.dateTime",
-                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$"
-              },
-              "timeZone": {
-                "type": "string",
-                "description": "Time zone identifier for start time. Use the system time zone if known.",
-                "x-ms-location": "body",
-                "x-ms-path": "start.timeZone"
-              }
-            },
-            "required": [
-              "dateTime",
-              "timeZone"
-            ]
-          },
-          "end": {
-            "type": "object",
-            "description": "Event end timestamp with time zone. Must be after 'start'.",
-            "x-ms-location": "body",
-            "x-ms-path": "end",
-            "properties": {
-              "dateTime": {
-                "type": "string",
-                "description": "Event end time in ISO 8601 without offset: 'yyyy-MM-ddTHH:mm:ss' (e.g., '2025-09-18T10:00:00').",
-                "x-ms-location": "body",
-                "x-ms-path": "end.dateTime",
-                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$"
-              },
-              "timeZone": {
-                "type": "string",
-                "description": "Time zone identifier of 'dateTime'. Use the same timeZone as 'start.timeZone' for consistency.",
-                "x-ms-location": "body",
-                "x-ms-path": "end.timeZone"
-              }
-            },
-            "required": [
-              "dateTime",
-              "timeZone"
-            ]
-          },
-          "location": {
-            "type": "object",
-            "description": "Primary location for the event. Use a concise name (e.g., room name, address, or 'Microsoft Teams Meeting').If not specified, default to 'Microsoft Team Meeting'",
-            "x-ms-location": "body",
-            "x-ms-path": "location",
-            "properties": {
-              "displayName": {
-                "type": "string",
-                "description": "Human-readable location label (e.g., 'Conf Room 12A', '1 Microsoft Way, Redmond', or 'Teams Meeting').",
-                "x-ms-location": "body",
-                "x-ms-path": "location.displayName"
-              }
-            }
-          },
-          "attendees_addresses": {
-            "type": "array",
-            "description": "Email addresses of attendees. Each must be a valid email address.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string",
-              "format": "email",
-              "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
-            }
-          },
-          "attendees_types": {
-            "type": "array",
-            "description": "Attendee roles corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each type applies to the attendee at the same index.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
+    "responseTemplate": "Event '{{eventId}}' cancelled (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "createEvent",
+    "description": "\"Use this to create a new event in current user's calendar. IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses..If time is provided, schedule the event — even if there are conflicts/ even if attendee/organizer is busy in that slot.If only a date is given, use the earliest slot where all or most attendees (> 50% of them) are free. If no date is given, schedule meeting at given time for today.If no time/date is given, use the first slot where all attendees are free.Try to create events during working hours of signed-in user (8 AM – 5 PM) if explicit time is not specified.Specify recurrence using recurrence property.Online meetings can be created by setting isOnlineMeeting to true.Default meeting duration is 30 minutes, if not specified by user.\"",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Use current user if no organizer is specified.If not, get the organizer's user principal name first, and use that value.'",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Non-empty event subject/title. Avoid trailing whitespace and control characters.",
+          "x-ms-location": "body",
+          "x-ms-path": "subject",
+          "minLength": 1
+        },
+        "body": {
+          "type": "object",
+          "description": "Event body/description content. Use 'html' for rich formatting or 'text' for plain.",
+          "x-ms-location": "body",
+          "x-ms-path": "body",
+          "properties": {
+            "contentType": {
               "type": "string",
               "enum": [
-                "required",
-                "optional",
-                "resource"
-              ]
-            }
-          },
-          "attendees_names": {
-            "type": "array",
-            "description": "Display names of attendees corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each name applies to the attendee at the same index.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string"
-            }
-          },
-          "recurrence": {
-            "type": "object",
-            "description": "Recurrence specification. Provide both 'pattern' and 'range'. Omit for one-time events.",
-            "x-ms-location": "body",
-            "x-ms-path": "recurrence",
-            "properties": {
-              "pattern": {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "daily",
-                      "weekly",
-                      "absoluteMonthly",
-                      "relativeMonthly",
-                      "absoluteYearly",
-                      "relativeYearly"
-                    ],
-                    "description": "The recurrence pattern type"
-                  },
-                  "interval": {
-                    "type": "integer",
-                    "description": "The time interval between occurrences (e.g., every 2 weeks)"
-                  },
-                  "daysOfWeek": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "sunday",
-                        "monday",
-                        "tuesday",
-                        "wednesday",
-                        "thursday",
-                        "friday",
-                        "saturday"
-                      ]
-                    },
-                    "description": "Days of the week for recurrence, if applicable"
-                  },
-                  "dayOfMonth": {
-                    "type": "integer",
-                    "description": "Day of the month for monthly pattern"
-                  },
-                  "month": {
-                    "type": "integer",
-                    "description": "Month for yearly pattern"
-                  }
-                },
-                "required": [
-                  "type",
-                  "interval"
-                ]
-              },
-              "range": {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "endDate",
-                      "noEnd",
-                      "numbered"
-                    ],
-                    "description": "The recurrence range type"
-                  },
-                  "startDate": {
-                    "type": "string",
-                    "description": "The start date of the recurrence (yyyy-MM-dd)"
-                  },
-                  "endDate": {
-                    "type": "string",
-                    "description": "The end date of the recurrence (yyyy-MM-dd)"
-                  },
-                  "numberOfOccurrences": {
-                    "type": "integer",
-                    "description": "The number of times the event occurs"
-                  }
-                },
-                "required": [
-                  "type",
-                  "startDate"
-                ]
-              }
+                "Text",
+                "HTML"
+              ],
+              "description": "Body content type. If unsure, use 'Text'.",
+              "x-ms-location": "body",
+              "x-ms-path": "body.contentType"
             },
-            "required": [
-              "pattern",
-              "range"
-            ]
+            "content": {
+              "type": "string",
+              "description": "Body content string. For 'html', provide well-formed HTML; for 'text', provide plain UTF-8 text.",
+              "x-ms-location": "body",
+              "x-ms-path": "body.content"
+            }
           },
-          "allowNewTimeProposals": {
-            "type": "boolean",
-            "description": "Whether invitees can propose a new time. Defaults to true if omitted.",
-            "x-ms-location": "body",
-            "x-ms-path": "allowNewTimeProposals"
+          "required": [
+            "contentType",
+            "content"
+          ]
+        },
+        "start": {
+          "type": "object",
+          "description": "Event start timestamp with time zone. Must be today or after.",
+          "x-ms-location": "body",
+          "x-ms-path": "start",
+          "properties": {
+            "dateTime": {
+              "type": "string",
+              "description": "Event start time in ISO 8601 without offset: 'yyyy-MM-ddTHH:mm:ss' (e.g., '2025-09-18T09:00:00').",
+              "x-ms-location": "body",
+              "x-ms-path": "start.dateTime",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$"
+            },
+            "timeZone": {
+              "type": "string",
+              "description": "Time zone identifier for start time. Use the system time zone if known.",
+              "x-ms-location": "body",
+              "x-ms-path": "start.timeZone"
+            }
           },
-          "transactionId": {
+          "required": [
+            "dateTime",
+            "timeZone"
+          ]
+        },
+        "end": {
+          "type": "object",
+          "description": "Event end timestamp with time zone. Must be after 'start'.",
+          "x-ms-location": "body",
+          "x-ms-path": "end",
+          "properties": {
+            "dateTime": {
+              "type": "string",
+              "description": "Event end time in ISO 8601 without offset: 'yyyy-MM-ddTHH:mm:ss' (e.g., '2025-09-18T10:00:00').",
+              "x-ms-location": "body",
+              "x-ms-path": "end.dateTime",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$"
+            },
+            "timeZone": {
+              "type": "string",
+              "description": "Time zone identifier of 'dateTime'. Use the same timeZone as 'start.timeZone' for consistency.",
+              "x-ms-location": "body",
+              "x-ms-path": "end.timeZone"
+            }
+          },
+          "required": [
+            "dateTime",
+            "timeZone"
+          ]
+        },
+        "location": {
+          "type": "object",
+          "description": "Primary location for the event. Use a concise name (e.g., room name, address, or 'Microsoft Teams Meeting').If not specified, default to 'Microsoft Team Meeting'",
+          "x-ms-location": "body",
+          "x-ms-path": "location",
+          "properties": {
+            "displayName": {
+              "type": "string",
+              "description": "Human-readable location label (e.g., 'Conf Room 12A', '1 Microsoft Way, Redmond', or 'Teams Meeting').",
+              "x-ms-location": "body",
+              "x-ms-path": "location.displayName"
+            }
+          }
+        },
+        "attendees_addresses": {
+          "type": "array",
+          "description": "Email addresses of attendees. Each must be a valid email address.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
             "type": "string",
-            "description": "Optional unique client-provided identifier to ensure idempotence",
-            "x-ms-location": "body",
-            "x-ms-path": "transactionId"
-          },
-          "isOnlineMeeting": {
-            "type": "boolean",
-            "description": "Set to true to create an online meeting. Defaults to false.",
-            "x-ms-location": "body",
-            "x-ms-path": "isOnlineMeeting"
-          },
-          "onlineMeetingProvider": {
+            "format": "email",
+            "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
+          }
+        },
+        "attendees_types": {
+          "type": "array",
+          "description": "Attendee roles corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each type applies to the attendee at the same index.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
             "type": "string",
             "enum": [
-              "teamsForBusiness",
-              "skypeForBusiness",
-              "skypeForConsumer"
-            ],
-            "description": "Online meeting provider. REQUIRED when 'isOnlineMeeting' = true; omit otherwise.",
-            "x-ms-location": "body",
-            "x-ms-path": "onlineMeetingProvider"
+              "required",
+              "optional",
+              "resource"
+            ]
           }
         },
-        "required": [
-          "subject",
-          "start",
-          "end",
-          "attendees_addresses"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "declineEvent",
-      "description": "Decline the specified event invitation in a user's calendar.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the user.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "eventId": {
-            "type": "string",
-            "description": "The ID of the event to decline.",
-            "x-ms-location": "path",
-            "x-ms-path": "eventId"
-          },
-          "comment": {
-            "type": "string",
-            "description": "Optional text included in the response.",
-            "x-ms-location": "body",
-            "x-ms-path": "comment"
-          },
-          "sendResponse": {
-            "type": "boolean",
-            "description": "Whether to send a response to the organizer.",
-            "x-ms-location": "body",
-            "x-ms-path": "sendResponse"
+        "attendees_names": {
+          "type": "array",
+          "description": "Display names of attendees corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each name applies to the attendee at the same index.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
+            "type": "string"
           }
         },
-        "required": [
-          "eventId"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "deleteEvent",
-      "description": "Delete an event from a specified user's calendar.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the user whose event is being deleted.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "eventId": {
-            "type": "string",
-            "description": "The unique identifier of the event to delete.",
-            "x-ms-location": "path",
-            "x-ms-path": "eventId"
-          }
-        },
-        "required": [
-          "eventId"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "findMeetingTimes",
-      "description": "Suggest possible meeting times and locations based on organizer and attendee availability. Use only when the user requests to find an open time slot for a new meeting (e.g., 'schedule a meeting', 'find a slot', 'when can we meet'). Do not use this tool for locating or updating existing meetings.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the organizer.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "attendees_addresses": {
-            "type": "array",
-            "description": "Email addresses of attendees for meeting time suggestions. Each must be a valid email address.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string",
-              "format": "email",
-              "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
-            }
-          },
-          "attendees_types": {
-            "type": "array",
-            "description": "Attendee types corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each type applies to the attendee at the same index.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string",
-              "enum": [
-                "required",
-                "optional",
-                "resource"
+        "recurrence": {
+          "type": "object",
+          "description": "Recurrence specification. Provide both 'pattern' and 'range'. Omit for one-time events.",
+          "x-ms-location": "body",
+          "x-ms-path": "recurrence",
+          "properties": {
+            "pattern": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "weekly",
+                    "absoluteMonthly",
+                    "relativeMonthly",
+                    "absoluteYearly",
+                    "relativeYearly"
+                  ],
+                  "description": "The recurrence pattern type"
+                },
+                "interval": {
+                  "type": "integer",
+                  "description": "The time interval between occurrences (e.g., every 2 weeks)"
+                },
+                "daysOfWeek": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "sunday",
+                      "monday",
+                      "tuesday",
+                      "wednesday",
+                      "thursday",
+                      "friday",
+                      "saturday"
+                    ]
+                  },
+                  "description": "Days of the week for recurrence, if applicable"
+                },
+                "dayOfMonth": {
+                  "type": "integer",
+                  "description": "Day of the month for monthly pattern"
+                },
+                "month": {
+                  "type": "integer",
+                  "description": "Month for yearly pattern"
+                }
+              },
+              "required": [
+                "type",
+                "interval"
+              ]
+            },
+            "range": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "endDate",
+                    "noEnd",
+                    "numbered"
+                  ],
+                  "description": "The recurrence range type"
+                },
+                "startDate": {
+                  "type": "string",
+                  "description": "The start date of the recurrence (yyyy-MM-dd)"
+                },
+                "endDate": {
+                  "type": "string",
+                  "description": "The end date of the recurrence (yyyy-MM-dd)"
+                },
+                "numberOfOccurrences": {
+                  "type": "integer",
+                  "description": "The number of times the event occurs"
+                }
+              },
+              "required": [
+                "type",
+                "startDate"
               ]
             }
           },
-          "attendees_names": {
-            "type": "array",
-            "description": "Display names of attendees corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each name applies to the attendee at the same index.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string"
-            }
-          },
-          "timeConstraint": {
-            "type": "object",
-            "description": "Time availability (timeslots, activityDomain).",
-            "x-ms-location": "body",
-            "x-ms-path": "timeConstraint",
-            "properties": {
-              "timeSlots": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "start": {
-                      "type": "object",
-                      "properties": {
-                        "dateTime": {
-                          "type": "string"
-                        },
-                        "timeZone": {
-                          "type": "string"
-                        }
+          "required": [
+            "pattern",
+            "range"
+          ]
+        },
+        "allowNewTimeProposals": {
+          "type": "boolean",
+          "description": "Whether invitees can propose a new time. Defaults to true if omitted.",
+          "x-ms-location": "body",
+          "x-ms-path": "allowNewTimeProposals"
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Optional unique client-provided identifier to ensure idempotence",
+          "x-ms-location": "body",
+          "x-ms-path": "transactionId"
+        },
+        "isOnlineMeeting": {
+          "type": "boolean",
+          "description": "Set to true to create an online meeting. Defaults to false.",
+          "x-ms-location": "body",
+          "x-ms-path": "isOnlineMeeting"
+        },
+        "onlineMeetingProvider": {
+          "type": "string",
+          "enum": [
+            "teamsForBusiness",
+            "skypeForBusiness",
+            "skypeForConsumer"
+          ],
+          "description": "Online meeting provider. REQUIRED when 'isOnlineMeeting' = true; omit otherwise.",
+          "x-ms-location": "body",
+          "x-ms-path": "onlineMeetingProvider"
+        }
+      },
+      "required": [
+        "subject",
+        "start",
+        "end",
+        "attendees_addresses"
+      ]
+    },
+    "responseTemplate": "Event '{{subject}}' created successfully (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "declineEvent",
+    "description": "Decline the specified event invitation in a user's calendar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the user.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "The ID of the event to decline.",
+          "x-ms-location": "path",
+          "x-ms-path": "eventId"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional text included in the response.",
+          "x-ms-location": "body",
+          "x-ms-path": "comment"
+        },
+        "sendResponse": {
+          "type": "boolean",
+          "description": "Whether to send a response to the organizer.",
+          "x-ms-location": "body",
+          "x-ms-path": "sendResponse"
+        }
+      },
+      "required": [
+        "eventId"
+      ]
+    },
+    "responseTemplate": "Event '{{eventId}}' declined (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "deleteEvent",
+    "description": "Delete an event from a specified user's calendar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the user whose event is being deleted.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "The unique identifier of the event to delete.",
+          "x-ms-location": "path",
+          "x-ms-path": "eventId"
+        }
+      },
+      "required": [
+        "eventId"
+      ]
+    },
+    "responseTemplate": "Event '{{eventId}}' deleted (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "findMeetingTimes",
+    "description": "Suggest possible meeting times and locations based on organizer and attendee availability. Use only when the user requests to find an open time slot for a new meeting (e.g., 'schedule a meeting', 'find a slot', 'when can we meet'). Do not use this tool for locating or updating existing meetings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the organizer.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "attendees_addresses": {
+          "type": "array",
+          "description": "Email addresses of attendees for meeting time suggestions. Each must be a valid email address.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
+          }
+        },
+        "attendees_types": {
+          "type": "array",
+          "description": "Attendee types corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each type applies to the attendee at the same index.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
+            "type": "string",
+            "enum": [
+              "required",
+              "optional",
+              "resource"
+            ]
+          }
+        },
+        "attendees_names": {
+          "type": "array",
+          "description": "Display names of attendees corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each name applies to the attendee at the same index.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeConstraint": {
+          "type": "object",
+          "description": "Time availability (timeslots, activityDomain).",
+          "x-ms-location": "body",
+          "x-ms-path": "timeConstraint",
+          "properties": {
+            "timeSlots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "type": "object",
+                    "properties": {
+                      "dateTime": {
+                        "type": "string"
                       },
-                      "required": [
-                        "dateTime",
-                        "timeZone"
-                      ]
+                      "timeZone": {
+                        "type": "string"
+                      }
                     },
-                    "end": {
-                      "type": "object",
-                      "properties": {
-                        "dateTime": {
-                          "type": "string"
-                        },
-                        "timeZone": {
-                          "type": "string"
-                        }
+                    "required": [
+                      "dateTime",
+                      "timeZone"
+                    ]
+                  },
+                  "end": {
+                    "type": "object",
+                    "properties": {
+                      "dateTime": {
+                        "type": "string"
                       },
-                      "required": [
-                        "dateTime",
-                        "timeZone"
-                      ]
-                    }
+                      "timeZone": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "dateTime",
+                      "timeZone"
+                    ]
                   }
                 }
-              },
-              "activityDomain": {
-                "type": "string",
-                "enum": [
-                  "work",
-                  "unrestricted"
+              }
+            },
+            "activityDomain": {
+              "type": "string",
+              "enum": [
+                "work",
+                "unrestricted"
+              ]
+            }
+          }
+        },
+        "meetingDuration": {
+          "type": "string",
+          "description": "Meeting duration (e.g. 'PT1H').",
+          "x-ms-location": "body",
+          "x-ms-path": "meetingDuration"
+        },
+        "locationConstraint": {
+          "type": "object",
+          "description": "Options for meeting location.",
+          "x-ms-location": "body",
+          "x-ms-path": "locationConstraint",
+          "properties": {
+            "isRequired": {
+              "type": "boolean"
+            },
+            "suggestLocation": {
+              "type": "boolean"
+            },
+            "locations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "locationEmailAddress": {
+                    "type": "string"
+                  },
+                  "resolveAvailability": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "displayName"
                 ]
               }
             }
-          },
-          "meetingDuration": {
-            "type": "string",
-            "description": "Meeting duration (e.g. 'PT1H').",
-            "x-ms-location": "body",
-            "x-ms-path": "meetingDuration"
-          },
-          "locationConstraint": {
-            "type": "object",
-            "description": "Options for meeting location.",
-            "x-ms-location": "body",
-            "x-ms-path": "locationConstraint",
-            "properties": {
-              "isRequired": {
-                "type": "boolean"
-              },
-              "suggestLocation": {
-                "type": "boolean"
-              },
-              "locations": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "displayName": {
-                      "type": "string"
-                    },
-                    "locationEmailAddress": {
-                      "type": "string"
-                    },
-                    "resolveAvailability": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "displayName"
-                  ]
-                }
-              }
-            }
-          },
-          "maxCandidates": {
-            "type": "integer"
-          },
-          "isOrganizerOptional": {
-            "type": "boolean"
-          },
-          "returnSuggestionReasons": {
-            "type": "boolean"
-          },
-          "minimumAttendeePercentage": {
-            "type": "number",
-            "format": "double"
           }
         },
-        "required": [
-          "meetingDuration"
-        ]
+        "maxCandidates": {
+          "type": "integer"
+        },
+        "isOrganizerOptional": {
+          "type": "boolean"
+        },
+        "returnSuggestionReasons": {
+          "type": "boolean"
+        },
+        "minimumAttendeePercentage": {
+          "type": "number",
+          "format": "double"
+        }
       },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
+      "required": [
+        "meetingDuration"
+      ]
     },
-    {
-      "name": "getEvent",
-      "description": "Get a single calendar event from a specified user’s calendar.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the user whose event is being retrieved.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "eventId": {
-            "type": "string",
-            "description": "The unique identifier of the event.",
-            "x-ms-location": "path",
-            "x-ms-path": "eventId"
-          },
-          "select": {
-            "type": "string",
-            "description": "OData $select query parameter to specify returned properties.",
-            "x-ms-location": "query",
-            "x-ms-path": "$select"
-          },
-          "expand": {
-            "type": "string",
-            "description": "OData $expand query parameter to include navigation properties like exceptionOccurrences.",
-            "x-ms-location": "query",
-            "x-ms-path": "$expand"
+    "responseTemplate": "Meeting time suggestions found for duration {{meetingDuration}} (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "getEvent",
+    "description": "Get a single calendar event from a specified user’s calendar.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the user whose event is being retrieved.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "The unique identifier of the event.",
+          "x-ms-location": "path",
+          "x-ms-path": "eventId"
+        },
+        "select": {
+          "type": "string",
+          "description": "OData $select query parameter to specify returned properties.",
+          "x-ms-location": "query",
+          "x-ms-path": "$select"
+        },
+        "expand": {
+          "type": "string",
+          "description": "OData $expand query parameter to include navigation properties like exceptionOccurrences.",
+          "x-ms-location": "query",
+          "x-ms-path": "$expand"
+        }
+      },
+      "required": [
+        "eventId"
+      ]
+    },
+    "responseTemplate": "Event '{{eventId}}' retrieved (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "getOrganization",
+    "description": "Retrieve the properties and relationships of the specified organization (tenant). Supports $select to choose specific fields.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "description": "The ID of the organization (tenant) to retrieve.",
+          "x-ms-location": "path",
+          "x-ms-path": "organizationId"
+        },
+        "select": {
+          "type": "string",
+          "description": "Comma-separated list of organization properties to return (via $select).",
+          "x-ms-location": "query",
+          "x-ms-path": "$select"
+        }
+      },
+      "required": [
+        "organizationId"
+      ]
+    },
+    "responseTemplate": "Organization '{{organizationId}}' retrieved (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "getSchedule",
+    "description": "Get the free/busy schedule for a user, distribution list, or resource.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the user.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "schedules": {
+          "type": "array",
+          "description": "SMTP addresses of users or resources.",
+          "x-ms-location": "body",
+          "x-ms-path": "schedules",
+          "items": {
+            "type": "string"
           }
         },
-        "required": [
-          "eventId"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "getOrganization",
-      "description": "Retrieve the properties and relationships of the specified organization (tenant). Supports $select to choose specific fields.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "organizationId": {
-            "type": "string",
-            "description": "The ID of the organization (tenant) to retrieve.",
-            "x-ms-location": "path",
-            "x-ms-path": "organizationId"
-          },
-          "select": {
-            "type": "string",
-            "description": "Comma-separated list of organization properties to return (via $select).",
-            "x-ms-location": "query",
-            "x-ms-path": "$select"
-          }
-        },
-        "required": [
-          "organizationId"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "getSchedule",
-      "description": "Get the free/busy schedule for a user, distribution list, or resource.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the user.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "schedules": {
-            "type": "array",
-            "description": "SMTP addresses of users or resources.",
-            "x-ms-location": "body",
-            "x-ms-path": "schedules",
-            "items": {
+        "startTime": {
+          "type": "object",
+          "description": "Start time for the query. Should be today / after today. Use system timezone if not specified. ",
+          "x-ms-location": "body",
+          "x-ms-path": "startTime",
+          "properties": {
+            "dateTime": {
+              "type": "string"
+            },
+            "timeZone": {
               "type": "string"
             }
           },
-          "startTime": {
-            "type": "object",
-            "description": "Start time for the query. Should be today / after today. Use system timezone if not specified. ",
-            "x-ms-location": "body",
-            "x-ms-path": "startTime",
-            "properties": {
-              "dateTime": {
-                "type": "string"
-              },
-              "timeZone": {
-                "type": "string"
-              }
+          "required": [
+            "dateTime",
+            "timeZone"
+          ]
+        },
+        "endTime": {
+          "type": "object",
+          "description": "End time for the query.Should be after startTime. Use system timezone if not specified",
+          "x-ms-location": "body",
+          "x-ms-path": "endTime",
+          "properties": {
+            "dateTime": {
+              "type": "string"
             },
-            "required": [
-              "dateTime",
-              "timeZone"
-            ]
+            "timeZone": {
+              "type": "string"
+            }
           },
-          "endTime": {
-            "type": "object",
-            "description": "End time for the query.Should be after startTime. Use system timezone if not specified",
-            "x-ms-location": "body",
-            "x-ms-path": "endTime",
-            "properties": {
-              "dateTime": {
-                "type": "string"
-              },
-              "timeZone": {
-                "type": "string"
-              }
+          "required": [
+            "dateTime",
+            "timeZone"
+          ]
+        },
+        "availabilityViewInterval": {
+          "type": "integer",
+          "description": "Time slot length in minutes."
+        }
+      },
+      "required": [
+        "schedules",
+        "startTime",
+        "endTime"
+      ]
+    },
+    "responseTemplate": "Schedule retrieved for {{schedules.length}} users/resources (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "listCalendarView",
+    "description": "Retrieve events from a user's calendar view. Use this tool whenever you need to retrieve  one meeting instance of a recurrening event(not master series) occurring in a window (e.g., 'tomorrow morning' or 'between 2 PM and 4 PM') before calling any tool that modifies, updates, or cancels a meeting.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "startDateTime": {
+          "type": "string",
+          "description": "Start of the time range (ISO 8601). Should be today / after today.",
+          "x-ms-location": "query",
+          "x-ms-path": "startDateTime"
+        },
+        "endDateTime": {
+          "type": "string",
+          "description": "End of the time range (ISO 8601).should be after startDateTime.",
+          "x-ms-location": "query",
+          "x-ms-path": "endDateTime"
+        },
+        "top": {
+          "type": "integer",
+          "description": "Max number of events to return.",
+          "x-ms-location": "query",
+          "x-ms-path": "$top"
+        },
+        "orderby": {
+          "type": "string",
+          "description": "Order by clause (e.g. start/dateTime).",
+          "x-ms-location": "query",
+          "x-ms-path": "$orderby"
+        }
+      },
+      "required": [
+        "startDateTime",
+        "endDateTime"
+      ]
+    },
+    "responseTemplate": "Calendar view retrieved from {{startDateTime}} to {{endDateTime}} (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "listEvents",
+    "description": "Retrieve a list of events in a user's calendar.For recurring meetings, only return one / first record with full recurrence details (pattern, start, end) to the agent.For searching by meeting title, filter using contains(subject,'X'); avoid 'eq' or startswith(subject,'X') filter for this case.Use this tool to find existing meetings whenever the user refers to a meeting by day, date, time , or title (e.g., “add someone to the architecture review at 2 PM”), before calling any tool that modifies, updates, or cancels a meeting.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "If no organizer is specified, use current user. If organizer is explicitly mentioned - retrieve their user principal name and use that value.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "startDateTime": {
+          "type": "string",
+          "description": "The start of the time range for the events (ISO 8601 format). Should be today / after today.",
+          "x-ms-location": "query",
+          "x-ms-path": "startDateTime"
+        },
+        "endDateTime": {
+          "type": "string",
+          "description": "The end of the time range for the events (ISO 8601 format). Should be after the startTime",
+          "x-ms-location": "query",
+          "x-ms-path": "endDateTime"
+        },
+        "top": {
+          "type": "integer",
+          "description": "The maximum number of events to return.",
+          "x-ms-location": "query",
+          "x-ms-path": "$top"
+        },
+        "filter": {
+          "type": "string",
+          "description": "OData filter query to filter events.Filter by the date, time, day if supplied in the input prompt.",
+          "x-ms-location": "query",
+          "x-ms-path": "$filter"
+        },
+        "orderby": {
+          "type": "string",
+          "description": "OData order by query to sort events.",
+          "x-ms-location": "query",
+          "x-ms-path": "$orderby"
+        }
+      }
+    },
+    "responseTemplate": "Events list retrieved for user {{userId}} (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "updateEvent",
+    "description": "Update an existing calendar event in a specified user's calendar. Address of the attendees should be a valid email address.IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID or userPrincipalName of the user whose event is being updated.",
+          "x-ms-location": "path",
+          "x-ms-path": "userId"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "The unique identifier of the event to update.",
+          "x-ms-location": "path",
+          "x-ms-path": "eventId"
+        },
+        "subject": {
+          "type": "string",
+          "description": "The updated subject of the event.",
+          "x-ms-location": "body",
+          "x-ms-path": "subject"
+        },
+        "body": {
+          "type": "object",
+          "description": "The updated body content of the event.",
+          "x-ms-location": "body",
+          "x-ms-path": "body",
+          "properties": {
+            "contentType": {
+              "type": "string",
+              "enum": [
+                "Text",
+                "HTML"
+              ],
+              "description": "The content type of the body.",
+              "x-ms-location": "body",
+              "x-ms-path": "body.contentType"
             },
-            "required": [
-              "dateTime",
-              "timeZone"
-            ]
-          },
-          "availabilityViewInterval": {
-            "type": "integer",
-            "description": "Time slot length in minutes."
+            "content": {
+              "type": "string",
+              "description": "The body content.",
+              "x-ms-location": "body",
+              "x-ms-path": "body.content"
+            }
           }
         },
-        "required": [
-          "schedules",
-          "startTime",
-          "endTime"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "listCalendarView",
-      "description": "Retrieve events from a user's calendar view. Use this tool whenever you need to retrieve  one meeting instance of a recurrening event(not master series) occurring in a window (e.g., 'tomorrow morning' or 'between 2 PM and 4 PM') before calling any tool that modifies, updates, or cancels a meeting.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "startDateTime": {
-            "type": "string",
-            "description": "Start of the time range (ISO 8601). Should be today / after today.",
-            "x-ms-location": "query",
-            "x-ms-path": "startDateTime"
-          },
-          "endDateTime": {
-            "type": "string",
-            "description": "End of the time range (ISO 8601).should be after startDateTime.",
-            "x-ms-location": "query",
-            "x-ms-path": "endDateTime"
-          },
-          "top": {
-            "type": "integer",
-            "description": "Max number of events to return.",
-            "x-ms-location": "query",
-            "x-ms-path": "$top"
-          },
-          "orderby": {
-            "type": "string",
-            "description": "Order by clause (e.g. start/dateTime).",
-            "x-ms-location": "query",
-            "x-ms-path": "$orderby"
+        "start": {
+          "type": "object",
+          "description": "Updated start time of the event.",
+          "x-ms-location": "body",
+          "x-ms-path": "start",
+          "properties": {
+            "dateTime": {
+              "type": "string",
+              "description": "Start date and time in ISO format.",
+              "x-ms-location": "body",
+              "x-ms-path": "start.dateTime"
+            },
+            "timeZone": {
+              "type": "string",
+              "description": "Time zone for the start time.Use the system timezone if not explictly specified.",
+              "x-ms-location": "body",
+              "x-ms-path": "start.timeZone"
+            }
           }
         },
-        "required": [
-          "startDateTime",
-          "endDateTime"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    },
-    {
-      "name": "listEvents",
-      "description": "Retrieve a list of events in a user's calendar. For recurring meetings, only return one / first record with full recurrence details (pattern, start, end) to the agent.For searching by meeting title, filter using contains(subject,'X'); avoid 'eq' or startswith(subject,'X') filter for this case.Use this tool to find existing meetings whenever the user refers to a meeting by day, date, time , or title (e.g., “add someone to the architecture review at 2 PM”), before calling any tool that modifies, updates, or cancels a meeting.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
+        "end": {
+          "type": "object",
+          "description": "Updated end time of the event.",
+          "x-ms-location": "body",
+          "x-ms-path": "end",
+          "properties": {
+            "dateTime": {
+              "type": "string",
+              "description": "End date and time in ISO format.",
+              "x-ms-location": "body",
+              "x-ms-path": "end.dateTime"
+            },
+            "timeZone": {
+              "type": "string",
+              "description": "Time zone for the end time. Should be same as the start timezone.",
+              "x-ms-location": "body",
+              "x-ms-path": "end.timeZone"
+            }
+          }
+        },
+        "location": {
+          "type": "object",
+          "description": "Updated location of the event.",
+          "x-ms-location": "body",
+          "x-ms-path": "location",
+          "properties": {
+            "displayName": {
+              "type": "string",
+              "description": "Display name of the location.",
+              "x-ms-location": "body",
+              "x-ms-path": "location.displayName"
+            }
+          }
+        },
+        "attendees_addresses": {
+          "type": "array",
+          "description": "Email addresses of updated attendees. Each must be a valid email address.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
             "type": "string",
-            "description": "If no organizer is specified, use current user. If organizer is explicitly mentioned - retrieve their user principal name and use that value.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "startDateTime": {
+            "format": "email",
+            "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
+          }
+        },
+        "attendees_types": {
+          "type": "array",
+          "description": "Attendee types corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each type applies to the attendee at the same index.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
             "type": "string",
-            "description": "The start of the time range for the events (ISO 8601 format). Should be today / after today.",
-            "x-ms-location": "query",
-            "x-ms-path": "startDateTime"
-          },
-          "endDateTime": {
-            "type": "string",
-            "description": "The end of the time range for the events (ISO 8601 format). Should be after the startTime",
-            "x-ms-location": "query",
-            "x-ms-path": "endDateTime"
-          },
-          "top": {
-            "type": "integer",
-            "description": "The maximum number of events to return.",
-            "x-ms-location": "query",
-            "x-ms-path": "$top"
-          },
-          "filter": {
-            "type": "string",
-            "description": "OData filter query to filter events.Filter by the date, time, day if supplied in the input prompt.",
-            "x-ms-location": "query",
-            "x-ms-path": "$filter"
-          },
-          "orderby": {
-            "type": "string",
-            "description": "OData order by query to sort events.",
-            "x-ms-location": "query",
-            "x-ms-path": "$orderby"
+            "enum": [
+              "required",
+              "optional",
+              "resource"
+            ]
+          }
+        },
+        "attendees_names": {
+          "type": "array",
+          "description": "Display names of attendees corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each name applies to the attendee at the same index.",
+          "x-ms-location": "body",
+          "x-ms-path": "attendees",
+          "x-ms-restructure": "attendees",
+          "items": {
+            "type": "string"
+          }
+        },
+        "isCancelled": {
+          "type": "boolean",
+          "description": "Set to true to cancel the event.",
+          "x-ms-location": "body",
+          "x-ms-path": "isCancelled"
+        },
+        "recurrence": {
+          "type": "object",
+          "description": "Defines the recurrence pattern and range for the event.Default duration is 6 months.",
+          "x-ms-location": "body",
+          "x-ms-path": "recurrence",
+          "properties": {
+            "pattern": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "daily",
+                    "weekly",
+                    "absoluteMonthly",
+                    "relativeMonthly",
+                    "absoluteYearly",
+                    "relativeYearly"
+                  ],
+                  "description": "The recurrence pattern type."
+                },
+                "interval": {
+                  "type": "integer",
+                  "description": "The interval between occurrences."
+                },
+                "daysOfWeek": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "sunday",
+                      "monday",
+                      "tuesday",
+                      "wednesday",
+                      "thursday",
+                      "friday",
+                      "saturday"
+                    ]
+                  },
+                  "description": "The days of the week for the recurrence."
+                },
+                "dayOfMonth": {
+                  "type": "integer",
+                  "description": "The day of the month for the recurrence."
+                },
+                "month": {
+                  "type": "integer",
+                  "description": "The month for the yearly pattern."
+                }
+              }
+            },
+            "range": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "endDate",
+                    "noEnd",
+                    "numbered"
+                  ],
+                  "description": "The recurrence range type. Default duration is 6 months."
+                },
+                "startDate": {
+                  "type": "string",
+                  "description": "The date to start the recurrence (yyyy-mm-dd). Should be today / after today."
+                },
+                "endDate": {
+                  "type": "string",
+                  "description": "The date to end the recurrence (yyyy-mm-dd). should be after startDate"
+                },
+                "numberOfOccurrences": {
+                  "type": "integer",
+                  "description": "The number of times to repeat."
+                }
+              }
+            }
           }
         }
       },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
+      "required": [
+        "eventId"
+      ]
     },
-    {
-      "name": "updateEvent",
-      "description": "Update an existing calendar event in a specified user's calendar. Address of the attendees should be a valid email address.IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "userId": {
-            "type": "string",
-            "description": "The ID or userPrincipalName of the user whose event is being updated.",
-            "x-ms-location": "path",
-            "x-ms-path": "userId"
-          },
-          "eventId": {
-            "type": "string",
-            "description": "The unique identifier of the event to update.",
-            "x-ms-location": "path",
-            "x-ms-path": "eventId"
-          },
-          "subject": {
-            "type": "string",
-            "description": "The updated subject of the event.",
-            "x-ms-location": "body",
-            "x-ms-path": "subject"
-          },
-          "body": {
-            "type": "object",
-            "description": "The updated body content of the event.",
-            "x-ms-location": "body",
-            "x-ms-path": "body",
-            "properties": {
-              "contentType": {
-                "type": "string",
-                "enum": [
-                  "Text",
-                  "HTML"
-                ],
-                "description": "The content type of the body.",
-                "x-ms-location": "body",
-                "x-ms-path": "body.contentType"
-              },
-              "content": {
-                "type": "string",
-                "description": "The body content.",
-                "x-ms-location": "body",
-                "x-ms-path": "body.content"
-              }
-            }
-          },
-          "start": {
-            "type": "object",
-            "description": "Updated start time of the event.",
-            "x-ms-location": "body",
-            "x-ms-path": "start",
-            "properties": {
-              "dateTime": {
-                "type": "string",
-                "description": "Start date and time in ISO format.",
-                "x-ms-location": "body",
-                "x-ms-path": "start.dateTime"
-              },
-              "timeZone": {
-                "type": "string",
-                "description": "Time zone for the start time.Use the system timezone if not explictly specified.",
-                "x-ms-location": "body",
-                "x-ms-path": "start.timeZone"
-              }
-            }
-          },
-          "end": {
-            "type": "object",
-            "description": "Updated end time of the event.",
-            "x-ms-location": "body",
-            "x-ms-path": "end",
-            "properties": {
-              "dateTime": {
-                "type": "string",
-                "description": "End date and time in ISO format.",
-                "x-ms-location": "body",
-                "x-ms-path": "end.dateTime"
-              },
-              "timeZone": {
-                "type": "string",
-                "description": "Time zone for the end time. Should be same as the start timezone.",
-                "x-ms-location": "body",
-                "x-ms-path": "end.timeZone"
-              }
-            }
-          },
-          "location": {
-            "type": "object",
-            "description": "Updated location of the event.",
-            "x-ms-location": "body",
-            "x-ms-path": "location",
-            "properties": {
-              "displayName": {
-                "type": "string",
-                "description": "Display name of the location.",
-                "x-ms-location": "body",
-                "x-ms-path": "location.displayName"
-              }
-            }
-          },
-          "attendees_addresses": {
-            "type": "array",
-            "description": "Email addresses of updated attendees. Each must be a valid email address.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string",
-              "format": "email",
-              "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$"
-            }
-          },
-          "attendees_types": {
-            "type": "array",
-            "description": "Attendee types corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each type applies to the attendee at the same index.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string",
-              "enum": [
-                "required",
-                "optional",
-                "resource"
-              ]
-            }
-          },
-          "attendees_names": {
-            "type": "array",
-            "description": "Display names of attendees corresponding to each address in 'attendees_addresses'. Must appear in the same order as the email array so that each name applies to the attendee at the same index.",
-            "x-ms-location": "body",
-            "x-ms-path": "attendees",
-            "x-ms-restructure": "attendees",
-            "items": {
-              "type": "string"
-            }
-          },
-          "isCancelled": {
-            "type": "boolean",
-            "description": "Set to true to cancel the event.",
-            "x-ms-location": "body",
-            "x-ms-path": "isCancelled"
-          },
-          "recurrence": {
-            "type": "object",
-            "description": "Defines the recurrence pattern and range for the event.Default duration is 6 months.",
-            "x-ms-location": "body",
-            "x-ms-path": "recurrence",
-            "properties": {
-              "pattern": {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "daily",
-                      "weekly",
-                      "absoluteMonthly",
-                      "relativeMonthly",
-                      "absoluteYearly",
-                      "relativeYearly"
-                    ],
-                    "description": "The recurrence pattern type."
-                  },
-                  "interval": {
-                    "type": "integer",
-                    "description": "The interval between occurrences."
-                  },
-                  "daysOfWeek": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "sunday",
-                        "monday",
-                        "tuesday",
-                        "wednesday",
-                        "thursday",
-                        "friday",
-                        "saturday"
-                      ]
-                    },
-                    "description": "The days of the week for the recurrence."
-                  },
-                  "dayOfMonth": {
-                    "type": "integer",
-                    "description": "The day of the month for the recurrence."
-                  },
-                  "month": {
-                    "type": "integer",
-                    "description": "The month for the yearly pattern."
-                  }
-                }
-              },
-              "range": {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "endDate",
-                      "noEnd",
-                      "numbered"
-                    ],
-                    "description": "The recurrence range type. Default duration is 6 months."
-                  },
-                  "startDate": {
-                    "type": "string",
-                    "description": "The date to start the recurrence (yyyy-mm-dd). Should be today / after today."
-                  },
-                  "endDate": {
-                    "type": "string",
-                    "description": "The date to end the recurrence (yyyy-mm-dd). should be after startDate"
-                  },
-                  "numberOfOccurrences": {
-                    "type": "integer",
-                    "description": "The number of times to repeat."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "required": [
-          "eventId"
-        ]
-      },
-      "responseTemplate": {},
-      "delayMs": 100,
-      "errorRate": 0,
-      "statusCode": 200,
-      "enabled": true
-    }
-  ]
-}
+    "responseTemplate": "Event '{{eventId}}' updated (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  }
+]
