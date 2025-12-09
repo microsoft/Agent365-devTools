@@ -475,27 +475,27 @@ internal static class BlueprintSubcommand
             logger.LogInformation("  - App ID: {AppId}", appId);
             logger.LogInformation("  - Object ID: {ObjectId}", objectId);
 
-            // Wait for application propagation
-            const int maxRetries = 30;
-            const int delayMs = 4000;
-            bool appAvailable = false;
-            for (int i = 0; i < maxRetries; i++)
-            {
-                var checkResp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/applications/{objectId}", ct);
-                if (checkResp.IsSuccessStatusCode)
+            // Wait for application propagation using RetryHelper
+            var retryHelper = new RetryHelper(logger);
+            logger.LogInformation("Waiting for application object to propagate in directory...");
+            var appAvailable = await retryHelper.ExecuteWithRetryAsync(
+                async ct =>
                 {
-                    appAvailable = true;
-                    break;
-                }
-                logger.LogInformation("Waiting for application object to be available in directory (attempt {Attempt}/{Max})...", i + 1, maxRetries);
-                await Task.Delay(delayMs, ct);
-            }
+                    var checkResp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/applications/{objectId}", ct);
+                    return checkResp.IsSuccessStatusCode;
+                },
+                result => !result,
+                maxRetries: 10,
+                baseDelaySeconds: 5,
+                ct);
 
             if (!appAvailable)
             {
-                logger.LogError("App object not available after creation. Aborting setup.");
+                logger.LogError("Application object not available after creation and retries. Aborting setup.");
                 return (false, null, null, null);
             }
+            
+            logger.LogInformation("Application object verified in directory");
 
             // Update application with identifier URI
             var identifierUri = $"api://{appId}";
@@ -550,9 +550,36 @@ internal static class BlueprintSubcommand
                 logger.LogDebug("Service principal creation deferred (propagation delay): {Error}", spError);
             }
 
-            // Wait for service principal propagation
-            logger.LogInformation("Waiting 10 seconds to ensure Service Principal is fully propagated...");
-            await Task.Delay(10000, ct);
+            // Wait for service principal propagation using RetryHelper
+            if (!string.IsNullOrWhiteSpace(servicePrincipalId))
+            {
+                logger.LogInformation("Verifying service principal propagation in directory...");
+                var spPropagated = await retryHelper.ExecuteWithRetryAsync(
+                    async ct =>
+                    {
+                        var checkSp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'", ct);
+                        if (checkSp.IsSuccessStatusCode)
+                        {
+                            var content = await checkSp.Content.ReadAsStringAsync(ct);
+                            var spList = JsonDocument.Parse(content);
+                            return spList.RootElement.GetProperty("value").GetArrayLength() > 0;
+                        }
+                        return false;
+                    },
+                    result => !result,
+                    maxRetries: 10,
+                    baseDelaySeconds: 5,
+                    ct);
+
+                if (spPropagated)
+                {
+                    logger.LogInformation("Service principal verified in directory");
+                }
+                else
+                {
+                    logger.LogWarning("Service principal not fully propagated after retries. This may cause issues with federated credentials.");
+                }
+            }
 
             // Create Federated Identity Credential ONLY when MSI is relevant (if managed identity provided)
             if (useManagedIdentity && !string.IsNullOrWhiteSpace(managedIdentityPrincipalId))
@@ -952,9 +979,6 @@ internal static class BlueprintSubcommand
         ILogger logger,
         CancellationToken ct)
     {
-        const int maxRetries = 5;
-        const int initialDelayMs = 2000;
-
         try
         {
             var federatedCredential = new JsonObject
@@ -975,49 +999,74 @@ internal static class BlueprintSubcommand
                 $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials"
             };
 
-            string? lastError = null;
-
+            // Use RetryHelper for federated credential creation with exponential backoff
+            var retryHelper = new RetryHelper(logger);
+            
             foreach (var url in urls)
             {
-                for (int attempt = 1; attempt <= maxRetries; attempt++)
+                logger.LogDebug("Attempting federated credential creation with endpoint: {Url}", url);
+                
+                var result = await retryHelper.ExecuteWithRetryAsync(
+                    async ct =>
+                    {
+                        var response = await httpClient.PostAsync(
+                            url,
+                            new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                            ct);
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            return (success: true, error: string.Empty, shouldRetry: false);
+                        }
+
+                        var error = await response.Content.ReadAsStringAsync(ct);
+
+                        // Check if it's a transient error that should be retried
+                        if (error.Contains("Request_ResourceNotFound") || error.Contains("does not exist"))
+                        {
+                            return (success: false, error, shouldRetry: true);
+                        }
+
+                        // Check if credential already exists
+                        if (error.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                        {
+                            logger.LogInformation("Federated Identity Credential already exists (name: {Name})", credentialName);
+                            return (success: true, error: string.Empty, shouldRetry: false);
+                        }
+
+                        // Check if we should try the alternative endpoint
+                        if (error.Contains("Agent Blueprints are not supported on the API version"))
+                        {
+                            logger.LogDebug("Standard endpoint not supported, will try Agent Blueprint-specific path...");
+                            return (success: false, error, shouldRetry: false);
+                        }
+
+                        // Non-retryable error
+                        return (success: false, error, shouldRetry: false);
+                    },
+                    r => r.shouldRetry,
+                    maxRetries: 10,
+                    baseDelaySeconds: 3,
+                    ct);
+
+                if (result.success)
                 {
-                    var response = await httpClient.PostAsync(
-                        url,
-                        new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                        ct);
+                    logger.LogInformation("  - Credential Name: {Name}", credentialName);
+                    logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+                    logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                    return true;
+                }
 
-                    if (response.IsSuccessStatusCode)
-                    {
-                        logger.LogInformation("  - Credential Name: {Name}", credentialName);
-                        logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-                        logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
-                        return true;
-                    }
-
-                    var error = await response.Content.ReadAsStringAsync(ct);
-                    lastError = error;
-
-                    if ((error.Contains("Request_ResourceNotFound") || error.Contains("does not exist")) && attempt < maxRetries)
-                    {
-                        var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1);
-                        logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...",
-                            attempt, maxRetries, delayMs);
-                        await Task.Delay(delayMs, ct);
-                        continue;
-                    }
-
-                    if (error.Contains("Agent Blueprints are not supported on the API version"))
-                    {
-                        logger.LogDebug("Standard endpoint not supported, trying Agent Blueprint-specific path...");
-                        break;
-                    }
-
-                    logger.LogDebug("FIC creation failed with error: {Error}", error);
-                    break;
+                // If we got a non-retryable error and it's not the endpoint issue, fail
+                if (!string.IsNullOrEmpty(result.error) && 
+                    !result.error.Contains("Agent Blueprints are not supported on the API version"))
+                {
+                    logger.LogDebug("FIC creation failed with error: {Error}", result.error);
+                    return false;
                 }
             }
 
-            logger.LogDebug("Failed to create federated identity credential after trying all endpoints: {Error}", lastError);
+            logger.LogDebug("Failed to create federated identity credential after trying all endpoints");
             return false;
         }
         catch (Exception ex)
