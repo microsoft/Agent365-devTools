@@ -86,7 +86,7 @@
         "properties": {
           "userId": {
             "type": "string",
-            "description": "Use current user if no organizer is specified.If not, get the organizer's user principal name first, and use that value.'",
+            "description": "Use current user if no organizer is specified. If not, get the organizer's user principal name first, and use that value.",
             "x-ms-location": "path",
             "x-ms-path": "userId"
           },
@@ -790,7 +790,7 @@
     },
     {
       "name": "listEvents",
-      "description": "Retrieve a list of events in a user's calendar.For recurring meetings, only return one / first record with full recurrence details (pattern, start, end) to the agent.For searching by meeting title, filter using contains(subject,'X'); avoid 'eq' or startswith(subject,'X') filter for this case.Use this tool to find existing meetings whenever the user refers to a meeting by day, date, time , or title (e.g., “add someone to the architecture review at 2 PM”), before calling any tool that modifies, updates, or cancels a meeting.",
+      "description": "Retrieve a list of events in a user's calendar. For recurring meetings, only return one / first record with full recurrence details (pattern, start, end) to the agent.For searching by meeting title, filter using contains(subject,'X'); avoid 'eq' or startswith(subject,'X') filter for this case.Use this tool to find existing meetings whenever the user refers to a meeting by day, date, time , or title (e.g., “add someone to the architecture review at 2 PM”), before calling any tool that modifies, updates, or cancels a meeting.",
       "inputSchema": {
         "type": "object",
         "properties": {

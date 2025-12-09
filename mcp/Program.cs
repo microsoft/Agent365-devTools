@@ -90,7 +90,13 @@ app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, Http
                 idValue = null;
             }
         }
-        var method = root.GetProperty("method").GetString();
+
+        if (!root.TryGetProperty("method", out var methodProp) || methodProp.ValueKind != JsonValueKind.String)
+        {
+            return Results.BadRequest(new { error = "Invalid or missing 'method' property." });
+        }
+
+        var method = methodProp.GetString();
 
         if (string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase))
         {
@@ -134,7 +140,7 @@ app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, Http
             var listResult = await executor.ListToolsAsync(mcpServerName);
             return Results.Json(new { jsonrpc = "2.0", id = idValue, result = listResult });
         }
-        else if (string.Equals(method, "tools/call", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(method, "tools/call", StringComparison.OrdinalIgnoreCase))
         {
             var name = root.GetProperty("params").GetProperty("name").GetString() ?? string.Empty;
             var argsDict = new Dictionary<string, object?>();
@@ -173,10 +179,8 @@ app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, Http
             }
             return Results.Json(new { jsonrpc = "2.0", id = idValue, result = callResult });
         }
-        else
-        {
-            return Results.Json(new { jsonrpc = "2.0", id = idValue, error = new { code = -32601, message = "Method not found" } });
-        }
+
+        return Results.Json(new { jsonrpc = "2.0", id = idValue, error = new { code = -32601, message = $"Method ({method}) not found" } });
     }
     catch (Exception ex)
     {
