@@ -337,7 +337,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
         {
             Console.WriteLine($"{i + 1:D2}. {resourceGroups[i].Name} ({resourceGroups[i].Location})");
         }
-        Console.WriteLine($"{resourceGroups.Count + 1:D2}. Create new resource group");
         Console.WriteLine();
 
         var defaultIndex = existingConfig?.ResourceGroup != null ? 
@@ -346,7 +345,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
 
         while (true)
         {
-            Console.Write($"Select resource group [1-{resourceGroups.Count + 1}] (default: {Math.Max(1, defaultIndex)}): ");
+            Console.Write($"Select resource group [1-{resourceGroups.Count}] (default: {Math.Max(1, defaultIndex)}), or type a new resource group name: ");
             var input = Console.ReadLine()?.Trim();
             
             if (string.IsNullOrWhiteSpace(input))
@@ -360,14 +359,14 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 {
                     return resourceGroups[index - 1].Name;
                 }
-                else if (index == resourceGroups.Count + 1)
-                {
-                    // Create new resource group
-                    return $"{Environment.UserName}-agent365-rg";
-                }
-            }
 
-            Console.WriteLine($"Please enter a number between 1 and {resourceGroups.Count + 1}");
+                Console.WriteLine($"Please enter a number between 1 and {resourceGroups.Count}");
+            }
+            else
+            {
+                // Create new resource group
+                return input;
+            }
         }
     }
 
