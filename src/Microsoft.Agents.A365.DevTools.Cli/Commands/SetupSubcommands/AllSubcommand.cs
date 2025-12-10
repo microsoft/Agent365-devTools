@@ -220,7 +220,7 @@ internal static class AllSubcommand
 
                 try
                 {
-                    var blueprintCreated = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
+                    var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
                         setupConfig,
                         config,
                         executor,
@@ -234,10 +234,22 @@ internal static class AllSubcommand
                         graphApiService
                         );
 
-                    setupResults.BlueprintCreated = blueprintCreated;
-                    setupResults.MessagingEndpointRegistered = blueprintCreated;
+                    setupResults.BlueprintCreated = result.BlueprintCreated;
+                    setupResults.MessagingEndpointRegistered = result.EndpointRegistered;
+                    
+                    if (result.EndpointAlreadyExisted)
+                    {
+                        setupResults.Warnings.Add("Messaging endpoint already exists (not newly created)");
+                    }
 
-                    if (!blueprintCreated)
+                    // If endpoint registration was attempted but failed, add to errors
+                    // Do NOT add error if registration was skipped (--no-endpoint or missing config)
+                    if (result.EndpointRegistrationAttempted && !result.EndpointRegistered)
+                    {
+                        setupResults.Errors.Add("Messaging endpoint registration failed");
+                    }
+
+                    if (!result.BlueprintCreated)
                     {
                         throw new GraphApiException(
                             operation: "Create Agent Blueprint",

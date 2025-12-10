@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Headers;
@@ -35,7 +36,7 @@ public class BotConfigurator : IBotConfigurator
     /// <summary>
     /// Create endpoint with Agent Blueprint Identity
     /// </summary>
-    public async Task<bool> CreateEndpointWithAgentBlueprintAsync(
+    public async Task<EndpointRegistrationResult> CreateEndpointWithAgentBlueprintAsync(
         string endpointName,
         string location,
         string messagingEndpoint,
@@ -54,13 +55,13 @@ public class BotConfigurator : IBotConfigurator
             if (subscriptionResult == null)
             {
                 _logger.LogError("Failed to execute account show command - null result");
-                return false;
+                return EndpointRegistrationResult.Failed;
             }
 
             if (!subscriptionResult.Success)
             {
                 _logger.LogError("Failed to get subscription information for endpoint creation");
-                return false;
+                return EndpointRegistrationResult.Failed;
             }
 
             var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
@@ -70,7 +71,7 @@ public class BotConfigurator : IBotConfigurator
             if (string.IsNullOrEmpty(tenantId))
             {
                 _logger.LogError("Could not determine tenant ID for endpoint creation");
-                return false;
+                return EndpointRegistrationResult.Failed;
             }
 
             // Create new endpoint with agent blueprint identity
@@ -94,7 +95,7 @@ public class BotConfigurator : IBotConfigurator
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
-                    return false;
+                    return EndpointRegistrationResult.Failed;
                 }
                 _logger.LogInformation("Successfully acquired access token");
 
@@ -123,34 +124,53 @@ public class BotConfigurator : IBotConfigurator
                     _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
 
                     var errorContent = await response.Content.ReadAsStringAsync();
+                    
+                    // Only treat HTTP 409 Conflict as "already exists" success case
+                    // InternalServerError (500) with "already exists" message is an actual failure
+                    if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+                    {
+                        _logger.LogWarning("Endpoint '{EndpointName}' already exists in the resource group", endpointName);
+                        _logger.LogInformation("Endpoint registration completed (already exists)");
+                        _logger.LogInformation("");
+                        _logger.LogInformation("If you need to update the endpoint:");
+                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup azure");
+                        _logger.LogInformation("  2. Register new endpoint: a365 setup blueprint --endpoint-only");
+                        return EndpointRegistrationResult.AlreadyExists;
+                    }
+                    
                     if (errorContent.Contains("Failed to provision bot resource via Azure Management API. Status: BadRequest", StringComparison.OrdinalIgnoreCase))
                     {
                         _logger.LogError("Please ensure that the Agent 365 CLI is supported in the selected region ('{Location}') and that your web app name ('{EndpointName}') is globally unique.", location, endpointName);
-                        return false;
+                        return EndpointRegistrationResult.Failed;
                     }
 
                     _logger.LogError("Error response: {Error}", errorContent);
-                    return false;
+                    _logger.LogError("");
+                    _logger.LogError("To resolve this issue:");
+                    _logger.LogError("  1. Check if endpoint exists: Review error details above");
+                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup azure");
+                    _logger.LogError("  3. Try registration again: a365 setup blueprint --endpoint-only");
+                    return EndpointRegistrationResult.Failed;
                 }
 
                 _logger.LogInformation("Successfully received response from create endpoint");
-                return true;
+                return EndpointRegistrationResult.Created;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to call create endpoint directly");
-                return false;
+                return EndpointRegistrationResult.Failed;
             }
         }
         catch (JsonException ex)
         {
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
-            return false;
+            return EndpointRegistrationResult.Failed;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error creating endpoint with agent blueprint: {Message}", ex.Message);
-            return false;
+            return EndpointRegistrationResult.Failed;
         }
     }
 
