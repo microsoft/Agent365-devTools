@@ -489,6 +489,46 @@ public class PermissionsSubcommandTests
         blueprintId.Should().NotBeNullOrEmpty();
     }
 
+    [Fact]
+    public void BotSubcommand_Description_ShouldNotReferenceNonExistentEndpointCommand()
+    {
+        // Act
+        var command = PermissionsSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService);
+
+        var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
+
+        // Assert
+        botSubcommand.Should().NotBeNull();
+        botSubcommand!.Description.Should().NotContain("a365 setup endpoint", 
+            "the 'a365 setup endpoint' command does not exist - endpoint is registered as part of blueprint setup");
+        botSubcommand.Description.Should().Contain("a365 deploy", 
+            "after permissions setup, users should deploy their agent code");
+    }
+
+    [Fact]
+    public void BotSubcommand_Description_ShouldMentionPrerequisites()
+    {
+        // Act
+        var command = PermissionsSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService);
+
+        var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
+
+        // Assert
+        botSubcommand.Should().NotBeNull();
+        botSubcommand!.Description.Should().Contain("Blueprint", 
+            "blueprint is a prerequisite for bot permissions");
+        botSubcommand.Description.Should().Contain("MCP permissions", 
+            "MCP permissions should be configured before bot permissions");
+    }
+
     #endregion
 }
 

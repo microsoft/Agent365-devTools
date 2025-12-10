@@ -80,12 +80,19 @@ a365 setup
 - This command creates the agent blueprint and registers the messaging endpoint for your application.
 - No subcommands are required. Deployment and messaging endpoint registration are handled together.
 
-### 4. Create an agent instance (run each step in order)
+### 4. Publish and Deploy
+
 ```bash
-a365 create-instance identity
-a365 create-instance licenses
-a365 create-instance enable-notifications
+# Publish manifest to MOS (Microsoft Online Services)
+a365 publish
+
+# Deploy application binaries (for Azure-hosted agents)
+# Can be run before or after publish
+a365 deploy
 ```
+
+- After publishing, hire your agent through Microsoft Teams to complete onboarding.
+- See [Microsoft Learn documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/onboard) for the complete workflow.
 
 ### 5. Query Microsoft Entra ID information
 ```bash
@@ -104,12 +111,14 @@ See below for frequently used commands. For full details, run `a365 --help` or s
 a365 setup
 ```
 
-### Instance Creation
+### Publish & Deploy
 ```bash
-a365 create-instance identity
-a365 create-instance licenses
-a365 create-instance enable-notifications
+a365 publish         # Publish manifest to MOS
+a365 deploy          # Deploy application to Azure (optional)
 ```
+
+> **Note:** After publishing, hire your agent through Microsoft Teams to complete onboarding.
+> See the [onboarding guide](https://learn.microsoft.com/en-us/microsoft-agent-365/onboard).
 
 ### Deploy & Cleanup
 ```bash

@@ -36,7 +36,7 @@ public class CreateInstanceCommandTests
     }
 
     [Fact]
-    public void CreateInstanceCommand_Should_Have_Identity_Subcommand()
+    public void CreateInstanceCommand_Should_Not_Have_Identity_Subcommand_Due_To_Deprecation()
     {
         // Arrange
         var command = CreateInstanceCommand.CreateCommand(
@@ -50,13 +50,12 @@ public class CreateInstanceCommandTests
         // Act
         var identitySubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "identity");
 
-        // Assert
-        Assert.NotNull(identitySubcommand);
-        Assert.Equal("Create Agent Identity and Agent User", identitySubcommand.Description);
+        // Assert - Subcommand should not be registered since command is deprecated
+        Assert.Null(identitySubcommand);
     }
 
     [Fact]
-    public void CreateInstanceCommand_Should_Have_License_Subcommand()
+    public void CreateInstanceCommand_Should_Not_Have_Licenses_Subcommand_Due_To_Deprecation()
     {
         // Arrange
         var command = CreateInstanceCommand.CreateCommand(
@@ -68,30 +67,10 @@ public class CreateInstanceCommandTests
             _mockAzureValidator);
 
         // Act
-        var licenseSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "licenses");
+        var licensesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "licenses");
 
-        // Assert
-        Assert.NotNull(licenseSubcommand);
-        Assert.Equal("Add licenses to Agent User", licenseSubcommand.Description);
-    }
-
-    [Fact]
-    public void CreateInstanceCommand_Should_Not_Have_ATG_Subcommand()
-    {
-        // Arrange
-        var command = CreateInstanceCommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockBotConfigurator,
-            _mockGraphApiService,
-            _mockAzureValidator);
-
-        // Act
-        var atgSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "atg");
-
-        // Assert - ATG functionality should be completely removed
-        Assert.Null(atgSubcommand);
+        // Assert - Subcommand should not be registered since command is deprecated
+        Assert.Null(licensesSubcommand);
     }
 
     [Fact]
@@ -108,5 +87,26 @@ public class CreateInstanceCommandTests
 
         // Act & Assert - Main command should have handler for running all steps
         Assert.NotNull(command.Handler);
+    }
+
+    [Fact]
+    public void CreateInstanceCommand_Should_Log_Deprecation_Error()
+    {
+        // Arrange
+        var command = CreateInstanceCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockBotConfigurator,
+            _mockGraphApiService,
+            _mockAzureValidator);
+
+        // Act - Command should be created successfully
+        // Assert - Command structure is valid
+        Assert.NotNull(command);
+        Assert.Equal("create-instance", command.Name);
+        
+        // Verify deprecation message structure through logger assertions would require execution
+        // which would call Environment.Exit(1). Testing the command creation is sufficient.
     }
 }

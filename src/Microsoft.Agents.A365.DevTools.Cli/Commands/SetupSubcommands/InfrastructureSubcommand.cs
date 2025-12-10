@@ -5,6 +5,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.Text.Json;
@@ -485,6 +486,28 @@ public static class InfrastructureSubcommand
                         throw new AzureResourceException("WebApp", webAppName, createResult.StandardError);
                     }
                 }
+
+                // Use RetryHelper to verify the web app was created with exponential backoff
+                var retryHelper = new RetryHelper(logger);
+                logger.LogInformation("Verifying web app creation...");
+                var webAppCreated = await retryHelper.ExecuteWithRetryAsync(
+                    async ct =>
+                    {
+                        var verifyResult = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+                        return verifyResult.Success;
+                    },
+                    result => !result,
+                    maxRetries: 8,
+                    baseDelaySeconds: 5,
+                    cancellationToken);
+
+                if (!webAppCreated)
+                {
+                    logger.LogError("ERROR: Web app creation verification failed. The web app '{App}' cannot be found after retries.", webAppName);
+                    throw new AzureResourceException("WebApp", webAppName, "Web app creation succeeded but verification failed after retries. The resource may still be propagating.");
+                }
+
+                logger.LogInformation("Web app created and verified successfully: {App}", webAppName);
             }
             else
             {
@@ -492,17 +515,6 @@ public static class InfrastructureSubcommand
                 logger.LogInformation("Web app already exists: {App} (skipping creation)", webAppName);
                 logger.LogInformation("Configuring web app to use {Platform} runtime ({LinuxFxVersion})...", platform, linuxFxVersion);
                 await AzWarnAsync(executor, logger, $"webapp config set -g {resourceGroup} -n {webAppName} --linux-fx-version \"{linuxFxVersion}\" --subscription {subscriptionId}", "Configure runtime");
-            }
-
-            // Verify web app
-            var verifyResult = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-            if (!verifyResult.Success)
-            {
-                logger.LogWarning("WARNING: Unable to verify web app via az webapp show.");
-            }
-            else
-            {
-                logger.LogInformation("Verified web app presence.");
             }
 
             // Managed Identity
@@ -517,6 +529,29 @@ public static class InfrastructureSubcommand
                     if (!string.IsNullOrEmpty(principalId))
                     {
                         logger.LogInformation("Managed Identity principalId: {Id}", principalId);
+
+                        // Use RetryHelper to verify MSI propagation to Azure AD with exponential backoff
+                        var retryHelper = new RetryHelper(logger);
+                        logger.LogInformation("Verifying managed identity propagation in Azure AD...");
+                        var msiPropagated = await retryHelper.ExecuteWithRetryAsync(
+                            async ct =>
+                            {
+                                var verifyMsi = await executor.ExecuteAsync("az", $"ad sp show --id {principalId}", captureOutput: true, suppressErrorLogging: true);
+                                return verifyMsi.Success;
+                            },
+                            result => !result,
+                            maxRetries: 10,
+                            baseDelaySeconds: 5,
+                            cancellationToken);
+
+                        if (msiPropagated)
+                        {
+                            logger.LogInformation("Managed identity service principal verified in Azure AD");
+                        }
+                        else
+                        {
+                            logger.LogWarning("Managed identity service principal not yet visible in Azure AD after retries. This may cause issues in blueprint creation.");
+                        }
                     }
                 }
                 catch
@@ -553,9 +588,6 @@ public static class InfrastructureSubcommand
                 await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
                 logger.LogInformation("Generated config updated with MSI principalId: {Id}", principalId);
             }
-
-            logger.LogInformation("Waiting 10 seconds to ensure Service Principal is fully propagated...");
-            await Task.Delay(10000, cancellationToken);
         }
     }
 
@@ -620,7 +652,15 @@ public static class InfrastructureSubcommand
     /// <summary>
     /// Ensures that an App Service Plan exists, creating it if necessary and verifying its existence.
     /// </summary>
-    internal static async Task EnsureAppServicePlanExistsAsync(CommandExecutor executor, ILogger logger, string resourceGroup, string planName, string? planSku, string subscriptionId)
+    internal static async Task EnsureAppServicePlanExistsAsync(
+        CommandExecutor executor, 
+        ILogger logger, 
+        string resourceGroup, 
+        string planName, 
+        string? planSku, 
+        string subscriptionId,
+        int maxRetries = 8,
+        int baseDelaySeconds = 5)
     {
         var planShow = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
         if (planShow.Success)
@@ -632,12 +672,24 @@ public static class InfrastructureSubcommand
             logger.LogInformation("Creating App Service plan {Plan}", planName);
             await AzWarnAsync(executor, logger, $"appservice plan create -g {resourceGroup} -n {planName} --sku {planSku} --is-linux --subscription {subscriptionId}", "Create App Service plan");
 
-            // Verify the plan was created successfully
-            var verifyPlan = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-            if (!verifyPlan.Success)
+            // Use RetryHelper to verify the plan was created successfully with exponential backoff
+            var retryHelper = new RetryHelper(logger);
+            logger.LogInformation("Verifying App Service plan creation...");
+            var planCreated = await retryHelper.ExecuteWithRetryAsync(
+                async ct =>
+                {
+                    var verifyPlan = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+                    return verifyPlan.Success;
+                },
+                result => !result,
+                maxRetries,
+                baseDelaySeconds,
+                CancellationToken.None);
+
+            if (!planCreated)
             {
-                logger.LogError("ERROR: App Service plan creation failed. The plan '{Plan}' does not exist.", planName);
-                throw new InvalidOperationException($"Failed to create App Service plan '{planName}'. This may be due to quota limits or insufficient permissions. Setup cannot continue.");
+                logger.LogError("App Service plan creation verification failed after retries. The plan '{Plan}' does not exist.", planName);
+                throw new InvalidOperationException($"Failed to create App Service plan '{planName}' after {maxRetries} verification attempts. This may be due to quota limits or insufficient permissions. Setup cannot continue.");
             }
             logger.LogInformation("App Service plan created successfully: {Plan}", planName);
         }
