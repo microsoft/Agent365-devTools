@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using NSubstitute;
 using Xunit;
@@ -53,7 +54,7 @@ public class BotConfiguratorTests
             botName, location, messagingEndpoint, description, agentBlueprintId);
 
         // Assert
-        Assert.False(result);
+        Assert.Equal(EndpointRegistrationResult.Failed, result);
     }
 
     [Fact(Skip = "Test requires interactive confirmation - bot creation commands now enforce user confirmation instead of --force")]
@@ -87,9 +88,9 @@ public class BotConfiguratorTests
 
         // Act
         var result = await _configurator.CreateEndpointWithAgentBlueprintAsync(
-            botName,  location, messagingEndpoint, description, agentBlueprintId);
+            botName, location, messagingEndpoint, description, agentBlueprintId);
 
         // Assert
-        Assert.True(result);
+        Assert.Equal(EndpointRegistrationResult.Created, result);
     }
 }

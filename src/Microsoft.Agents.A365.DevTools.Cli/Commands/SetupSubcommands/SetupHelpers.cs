@@ -152,6 +152,12 @@ internal static class SetupHelpers
             {
                 logger.LogInformation("  - Bot API Permissions: Run 'a365 setup permissions bot' to retry");
             }
+            
+            if (!results.MessagingEndpointRegistered)
+            {
+                logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
+                logger.LogInformation("    Or delete conflicting endpoint first: a365 cleanup azure");
+            }
         }
         else if (results.HasWarnings)
         {
@@ -366,8 +372,9 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Register blueprint messaging endpoint
+    /// Returns (success, alreadyExisted)
     /// </summary>
-    public static async Task RegisterBlueprintMessagingEndpointAsync(
+    public static async Task<(bool success, bool alreadyExisted)> RegisterBlueprintMessagingEndpointAsync(
         Agent365Config setupConfig,
         ILogger logger,
         IBotConfigurator botConfigurator)
@@ -431,21 +438,9 @@ internal static class SetupHelpers
             // No deployment - use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
-                logger.LogError("MessagingEndpoint must be provided in a365.config.json for non-Azure hosting.");
-                throw new SetupValidationException(
-                    issueDescription: "Messaging endpoint is required for messaging endpoint registration.",
-                    errorDetails: new List<string>
-                    {
-                        "needDeployment is set to 'no', but MessagingEndpoint was not provided in a365.config.json."
-                    },
-                    mitigationSteps: new List<string>
-                    {
-                        "Open your a365.config.json file.",
-                        "If you want the CLI to deploy an Azure Web App, set \"needDeployment\": \"yes\" and provide \"webAppName\".",
-                        "If your agent is hosted elsewhere, keep \"needDeployment\": \"no\" and add a \"MessagingEndpoint\" with a valid HTTPS URL (e.g. \"https://your-host/api/messages\").",
-                        "Re-run 'a365 setup'."
-                    }
-                );
+                logger.LogWarning("MessagingEndpoint not configured. Skipping endpoint registration.");
+                logger.LogWarning("Configure 'messagingEndpoint' in a365.config.json and re-run 'a365 setup blueprint' to register the endpoint.");
+                return (false, false);
             }
 
             if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var uri) ||
@@ -475,14 +470,14 @@ internal static class SetupHelpers
         logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
         logger.LogInformation("     * Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
-        var endpointRegistered = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
+        var endpointResult = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
             endpointName: endpointName,
             location: setupConfig.Location,
             messagingEndpoint: messagingEndpoint,
             agentDescription: "Agent 365 messaging endpoint for automated interactions",
             agentBlueprintId: setupConfig.AgentBlueprintId);
 
-        if (!endpointRegistered)
+        if (endpointResult == Models.EndpointRegistrationResult.Failed)
         {
             logger.LogError("Failed to register blueprint messaging endpoint");
             throw new SetupValidationException("Blueprint messaging endpoint registration failed");
@@ -492,5 +487,8 @@ internal static class SetupHelpers
         setupConfig.BotId = setupConfig.AgentBlueprintId;
         setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
         setupConfig.BotMessagingEndpoint = messagingEndpoint;
+        
+        bool alreadyExisted = endpointResult == Models.EndpointRegistrationResult.AlreadyExists;
+        return (true, alreadyExisted);
     }
 }
