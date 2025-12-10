@@ -242,8 +242,9 @@ internal static class AllSubcommand
                         setupResults.Warnings.Add("Messaging endpoint already exists (not newly created)");
                     }
 
-                    // If endpoint registration failed, add to errors
-                    if (!result.EndpointRegistered)
+                    // If endpoint registration was attempted but failed, add to errors
+                    // Do NOT add error if registration was skipped (--no-endpoint or missing config)
+                    if (result.EndpointRegistrationAttempted && !result.EndpointRegistered)
                     {
                         setupResults.Errors.Add("Messaging endpoint registration failed");
                     }

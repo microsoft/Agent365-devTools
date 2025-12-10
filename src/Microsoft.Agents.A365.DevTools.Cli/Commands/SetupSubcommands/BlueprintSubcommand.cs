@@ -28,6 +28,10 @@ internal class BlueprintCreationResult
     public bool BlueprintCreated { get; set; }
     public bool EndpointRegistered { get; set; }
     public bool EndpointAlreadyExisted { get; set; }
+    /// <summary>
+    /// Indicates whether endpoint registration was attempted (vs. skipped via --no-endpoint or missing config)
+    /// </summary>
+    public bool EndpointRegistrationAttempted { get; set; }
 }
 
 /// <summary>
@@ -84,7 +88,7 @@ internal static class BlueprintSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
-        var noEndpointOption = new Option<bool>(
+        var skipEndpointRegistrationOption = new Option<bool>(
             "--no-endpoint",
             description: "Do not register messaging endpoint (blueprint only)");
 
@@ -95,10 +99,10 @@ internal static class BlueprintSubcommand
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
-        command.AddOption(noEndpointOption);
+        command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
 
-        command.SetHandler(async (config, verbose, dryRun, noEndpoint, endpointOnly) =>
+        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly) =>
         {
             var setupConfig = await configService.LoadAsync(config.FullName);
 
@@ -109,7 +113,7 @@ internal static class BlueprintSubcommand
                 logger.LogInformation("  - Display Name: {DisplayName}", setupConfig.AgentBlueprintDisplayName);
                 logger.LogInformation("  - Tenant: {TenantId}", setupConfig.TenantId);
                 logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
-                if (!noEndpoint)
+                if (!skipEndpointRegistration)
                 {
                     logger.LogInformation("  - Would register messaging endpoint");
                 }
@@ -160,10 +164,10 @@ internal static class BlueprintSubcommand
                 botConfigurator,
                 platformDetector,
                 graphApiService,
-                noEndpoint
+                skipEndpointRegistration
                 );
 
-        }, configOption, verboseOption, dryRunOption, noEndpointOption, endpointOnlyOption);
+        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption);
 
         return command;
     }
@@ -180,7 +184,7 @@ internal static class BlueprintSubcommand
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
-        bool noEndpoint = false,
+        bool skipEndpointRegistration = false,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -189,7 +193,12 @@ internal static class BlueprintSubcommand
         // Validate Azure authentication
         if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
         {
-            return new BlueprintCreationResult { BlueprintCreated = false, EndpointRegistered = false };
+            return new BlueprintCreationResult 
+            { 
+                BlueprintCreated = false, 
+                EndpointRegistered = false, 
+                EndpointRegistrationAttempted = false 
+            };
         }
 
         var generatedConfigPath = Path.Combine(
@@ -255,7 +264,12 @@ internal static class BlueprintSubcommand
         if (!consentResult)
         {
             logger.LogError("Failed to ensure AgentApplication.Create permission after multiple attempts");
-            return new BlueprintCreationResult { BlueprintCreated = false, EndpointRegistered = false };
+            return new BlueprintCreationResult 
+            { 
+                BlueprintCreated = false, 
+                EndpointRegistered = false, 
+                EndpointRegistrationAttempted = false 
+            };
         }
 
         // ========================================================================
@@ -289,7 +303,12 @@ internal static class BlueprintSubcommand
         if (!blueprintResult.success)
         {
             logger.LogError("Failed to create agent blueprint");
-            return new BlueprintCreationResult { BlueprintCreated = false, EndpointRegistered = false };
+            return new BlueprintCreationResult 
+            { 
+                BlueprintCreated = false, 
+                EndpointRegistered = false, 
+                EndpointRegistrationAttempted = false 
+            };
         }
 
         var blueprintAppId = blueprintResult.appId;
@@ -341,9 +360,14 @@ internal static class BlueprintSubcommand
         // Register messaging endpoint unless --no-endpoint flag is used
         bool endpointRegistered = false;
         bool endpointAlreadyExisted = false;
-        if (!noEndpoint)
+        if (!skipEndpointRegistration)
         {
-            // Attempt endpoint registration, but don't fail setup if it fails during 'setup all'
+            // Exception Handling Strategy:
+            // - During 'setup all': Endpoint failures are NON-BLOCKING. This allows subsequent steps
+            //   (Bot API permissions) to still execute, enabling partial setup progress.
+            // - Standalone 'setup blueprint': Endpoint failures are BLOCKING (exception propagates).
+            //   User explicitly requested endpoint registration, so failures should halt execution.
+            // - With '--no-endpoint': This block is skipped entirely (no registration attempted).
             try
             {
                 var (registered, alreadyExisted) = await RegisterEndpointAndSyncAsync(
@@ -357,7 +381,7 @@ internal static class BlueprintSubcommand
             }
             catch (Exception endpointEx) when (isSetupAll)
             {
-                // During 'setup all', endpoint registration failure is non-blocking
+                // ONLY during 'setup all': Treat endpoint registration failure as non-blocking
                 // This allows Bot API permissions (Step 4) to still be configured
                 endpointRegistered = false;
                 endpointAlreadyExisted = false;
@@ -371,6 +395,8 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("  Or rerun full setup: a365 setup blueprint");
                 logger.LogWarning("");
             }
+            // NOTE: If NOT isSetupAll, exception propagates to caller (blocking behavior)
+            // This is intentional: standalone 'a365 setup blueprint' should fail fast on endpoint errors
         }
         else
         {
@@ -401,7 +427,8 @@ internal static class BlueprintSubcommand
         {
             BlueprintCreated = true,
             EndpointRegistered = endpointRegistered,
-            EndpointAlreadyExisted = endpointAlreadyExisted
+            EndpointAlreadyExisted = endpointAlreadyExisted,
+            EndpointRegistrationAttempted = !skipEndpointRegistration
         };
     }
 
