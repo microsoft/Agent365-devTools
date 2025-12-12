@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -19,7 +20,12 @@ public static class DevelopCommand
     /// <summary>
     /// Creates the develop command with subcommands for MCP tool server management
     /// </summary>
-    public static Command CreateCommand(ILogger logger, IConfigService configService, CommandExecutor commandExecutor, AuthenticationService authService)
+    public static Command CreateCommand(
+        ILogger logger,
+        IConfigService configService,
+        CommandExecutor commandExecutor,
+        AuthenticationService authService,
+        GraphApiService graphApiService)
     {
         var developCommand = new Command("develop", "Manage MCP tool servers for agent development");
 
@@ -42,6 +48,10 @@ public static class DevelopCommand
         developCommand.AddCommand(CreateAddMcpServersSubcommand(logger, configService, authService, commandExecutor));
         developCommand.AddCommand(CreateRemoveMcpServersSubcommand(logger, configService, commandExecutor));
         developCommand.AddCommand(CreateStartMockToolingServerSubcommand(logger, configService, commandExecutor));
+
+        // Add new MCP authentication subcommands
+        developCommand.AddCommand(GetTokenSubcommand.CreateCommand(logger, configService, authService));
+        developCommand.AddCommand(AddPermissionsSubcommand.CreateCommand(logger, configService, graphApiService));
 
         return developCommand;
     }
