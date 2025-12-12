@@ -74,7 +74,7 @@ class Program
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
 
             // Add commands
-            rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService));
+            rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor, 
                 deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService));

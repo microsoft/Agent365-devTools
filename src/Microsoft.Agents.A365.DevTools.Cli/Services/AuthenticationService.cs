@@ -34,14 +34,30 @@ public class AuthenticationService
     /// <param name="resourceUrl">The resource URL to request a token for (e.g., https://agent365.svc.cloud.microsoft or environment-specific URL)</param>
     /// <param name="tenantId">Optional tenant ID for single-tenant authentication. If provided and cached token is for different tenant, forces re-authentication</param>
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
-    public async Task<string> GetAccessTokenAsync(string resourceUrl, string? tenantId = null, bool forceRefresh = false)
+    /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
+    /// <param name="scopes">Optional explicit scopes to request. If not provided, uses .default scope pattern</param>
+    public async Task<string> GetAccessTokenAsync(
+        string resourceUrl, 
+        string? tenantId = null, 
+        bool forceRefresh = false, 
+        string? clientId = null,
+        IEnumerable<string>? scopes = null,
+        bool useInteractiveBrowser = false)
     {
-        // Try to load cached token for this resourceUrl
+        // Build cache key based on resource and tenant only
+        // Azure AD returns tokens with all consented scopes regardless of which scopes are requested,
+        // so we don't include scopes in the cache key to avoid duplicate cache entries for the same token.
+        // The scopes parameter is still passed to Azure AD for incremental consent and validation.
+        string cacheKey = string.IsNullOrWhiteSpace(tenantId)
+            ? resourceUrl
+            : $"{resourceUrl}:tenant:{tenantId}";
+
+        // Try to load cached token for this cache key
         if (!forceRefresh && File.Exists(_tokenCachePath))
         {
             try
             {
-                var cachedToken = await LoadCachedTokenAsync(resourceUrl);
+                var cachedToken = await LoadCachedTokenAsync(cacheKey);
                 if (cachedToken != null && !IsTokenExpired(cachedToken))
                 {
                     // If tenant ID is specified, validate that cached token is for the correct tenant
@@ -78,100 +94,153 @@ public class AuthenticationService
             }
         }
 
-        // Authenticate interactively with specific tenant
+        // Authenticate interactively with specific tenant and scopes
         _logger.LogInformation("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId);
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser);
 
-        // Cache the token for this resourceUrl
-        await CacheTokenAsync(resourceUrl, token);
+        // Cache the token with the appropriate cache key
+        await CacheTokenAsync(cacheKey, token);
 
         return token.AccessToken;
     }
 
     /// <summary>
-    /// Authenticates user interactively using device code flow or browser
+    /// Authenticates user interactively using browser or device code flow
     /// </summary>
     /// <param name="resourceUrl">The resource URL to request a token for</param>
     /// <param name="tenantId">Optional tenant ID for single-tenant authentication. If null, uses common tenant</param>
-    private async Task<TokenInfo> AuthenticateInteractivelyAsync(string resourceUrl, string? tenantId = null)
+    /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
+    /// <param name="explicitScopes">Optional explicit scopes to request. If not provided, uses .default scope pattern</param>
+    /// <param name="useInteractiveBrowser">If true, uses browser authentication with redirect URI; if false, uses device code flow. Default is false for backward compatibility.</param>
+    private async Task<TokenInfo> AuthenticateInteractivelyAsync(
+        string resourceUrl, 
+        string? tenantId = null, 
+        string? clientId = null,
+        IEnumerable<string>? explicitScopes = null,
+        bool useInteractiveBrowser = false)
     {
+        // Declare variables outside try block so they're available in catch for logging
+        string effectiveTenantId = tenantId ?? "unknown";
+        string effectiveClientId = clientId ?? "unknown";
+        string[] scopes = Array.Empty<string>();
+        
         try
         {
             // Use specific tenant ID if provided, otherwise use common tenant for multi-tenant apps
-            var effectiveTenantId = string.IsNullOrWhiteSpace(tenantId)
+            effectiveTenantId = string.IsNullOrWhiteSpace(tenantId)
                 ? AuthenticationConstants.CommonTenantId
                 : tenantId;
 
             // Determine which scope to use based on the resource URL or App ID
-            string scope;
-
-            // Check if this is the production App ID
-            if (resourceUrl == McpConstants.Agent365ToolsProdAppId)
+            if (explicitScopes != null && explicitScopes.Any())
             {
-                scope = $"{resourceUrl}/.default";
-                _logger.LogInformation("Authenticating to Agent 365 Tools");
-            }
-            // Check for Agent 365 endpoint URLs (legacy support)
-            else if (resourceUrl.Contains("agent365", StringComparison.OrdinalIgnoreCase))
-            {
-                // Use production App ID by default
-                // For non-production environments, users should provide the App ID directly via config
-                // or set environment variable A365_MCP_APP_ID (without environment suffix for backward compatibility)
-                var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.Agent365ToolsProdAppId;
-                
-                if (appId != McpConstants.Agent365ToolsProdAppId)
-                {
-                    _logger.LogInformation("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
-                }
-                else
-                {
-                    _logger.LogInformation("Authenticating to Agent 365 Tools");
-                }
-
-                scope = $"{appId}/.default";
+                // Construct scope strings for the token request by prefixing with the resource App ID
+                // This creates the format required by Azure AD for the TokenRequestContext: {resourceAppId}/{scope}
+                // Example: "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
+                scopes = explicitScopes.Select(s => $"{resourceUrl}/{s}").ToArray();
+                _logger.LogInformation("Using explicit scopes for authentication: {Scopes}", string.Join(", ", explicitScopes));
+                _logger.LogInformation("Formatted as: {FormattedScopes}", string.Join(", ", scopes));
             }
             else
             {
-                // Default: use the resource as-is with /.default suffix (likely an App ID)
-                // This allows passing custom App IDs directly via config
-                scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
-                    ? resourceUrl
-                    : $"{resourceUrl}/.default";
-                _logger.LogInformation("Using custom resource for authentication: {Resource}", resourceUrl);
+                string scope;
+                // Check if this is the production App ID
+                if (resourceUrl == McpConstants.Agent365ToolsProdAppId)
+                {
+                    scope = $"{resourceUrl}/.default";
+                    _logger.LogInformation("Authenticating to Agent 365 Tools");
+                }
+                // Check for Agent 365 endpoint URLs (legacy support)
+                else if (resourceUrl.Contains("agent365", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Use production App ID by default
+                    // For non-production environments, users should provide the App ID directly via config
+                    // or set environment variable A365_MCP_APP_ID (without environment suffix for backward compatibility)
+                    var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.Agent365ToolsProdAppId;
+
+                    if (appId != McpConstants.Agent365ToolsProdAppId)
+                    {
+                        _logger.LogInformation("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Authenticating to Agent 365 Tools");
+                    }
+
+                    scope = $"{appId}/.default";
+                }
+                else
+                {
+                    // Default: use the resource as-is with /.default suffix (likely an App ID)
+                    // This allows passing custom App IDs directly via config
+                    scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
+                        ? resourceUrl
+                        : $"{resourceUrl}/.default";
+                    _logger.LogInformation("Using custom resource for authentication: {Resource}", resourceUrl);
+                }
+                scopes = [scope];
+                _logger.LogInformation($"Token scope: {scope}");
             }
 
-            _logger.LogInformation("Token scope: {Scope}", scope);
             _logger.LogInformation("Authenticating for tenant: {TenantId}", effectiveTenantId);
 
-            // For Power Platform API authentication, use device code flow to avoid URL length issues
-            // InteractiveBrowserCredential with Power Platform scopes can create URLs that exceed browser limits
-            _logger.LogInformation("Using device code authentication...");
-            _logger.LogInformation("Please sign in with your Microsoft account");
+            // Use provided client ID or default to PowerShell client ID
+            effectiveClientId = string.IsNullOrWhiteSpace(clientId) 
+                ? AuthenticationConstants.PowershellClientId 
+                : clientId;
 
-            TokenCredential credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
+            TokenCredential credential;
+
+            if (useInteractiveBrowser)
             {
-                TenantId = effectiveTenantId,
-                ClientId = AuthenticationConstants.PowershellClientId,
-                TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-                {
-                    Name = "Microsoft.Agents.A365.DevTools.Cli"
-                },
-                DeviceCodeCallback = (code, cancellation) =>
-                {
-                    Console.WriteLine();
-                    Console.WriteLine("==========================================================================");
-                    Console.WriteLine($"To sign in, use a web browser to open the page:");
-                    Console.WriteLine($"    {code.VerificationUri}");
-                    Console.WriteLine();
-                    Console.WriteLine($"And enter the code: {code.UserCode}");
-                    Console.WriteLine("==========================================================================");
-                    Console.WriteLine();
-                    return Task.CompletedTask;
-                }
-            });
+                // Use InteractiveBrowserCredential with redirect URI for better public client support
+                _logger.LogInformation("Using interactive browser authentication...");
+                _logger.LogInformation("IMPORTANT: A browser window will open for authentication.");
+                _logger.LogInformation("Please sign in with your Microsoft account and grant consent for the requested permissions.");
+                _logger.LogInformation("");
 
-            string[] scopes = new[] { scope };
-            _logger.LogInformation("Requesting token with scope: {Scope}", scope);
+                credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
+                {
+                    TenantId = effectiveTenantId,
+                    ClientId = effectiveClientId,
+                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+                    RedirectUri = new Uri(AuthenticationConstants.LocalhostRedirectUri),
+                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+                    {
+                        Name = AuthenticationConstants.ApplicationName
+                    }
+                });
+            }
+            else
+            {
+                // For Power Platform API authentication, use device code flow to avoid URL length issues
+                // InteractiveBrowserCredential with Power Platform scopes can create URLs that exceed browser limits
+                _logger.LogInformation("Using device code authentication...");
+                _logger.LogInformation("Please sign in with your Microsoft account");
+
+                credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
+                {
+                    TenantId = effectiveTenantId,
+                    ClientId = effectiveClientId,
+                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+                    {
+                        Name = AuthenticationConstants.ApplicationName
+                    },
+                    DeviceCodeCallback = (code, cancellation) =>
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine("==========================================================================");
+                        Console.WriteLine($"To sign in, use a web browser to open the page:");
+                        Console.WriteLine($"    {code.VerificationUri}");
+                        Console.WriteLine();
+                        Console.WriteLine($"And enter the code: {code.UserCode}");
+                        Console.WriteLine("==========================================================================");
+                        Console.WriteLine();
+                        return Task.CompletedTask;
+                    }
+                });
+            }
 
             var tokenRequestContext = new TokenRequestContext(scopes);
             var tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
@@ -193,11 +262,31 @@ public class AuthenticationService
         catch (AuthenticationFailedException ex)
         {
             _logger.LogError("Interactive authentication failed: {Message}", ex.Message);
+            _logger.LogError("Exception type: {Type}", ex.GetType().FullName);
+            
+            if (ex.InnerException != null)
+            {
+                _logger.LogError("Inner exception: {InnerMessage}", ex.InnerException.Message);
+                _logger.LogError("Inner exception type: {InnerType}", ex.InnerException.GetType().FullName);
+            }
+            
+            // Log more details for debugging
+            _logger.LogError("Requested scopes: {Scopes}", string.Join(", ", scopes));
+            _logger.LogError("Tenant ID: {TenantId}", effectiveTenantId);
+            _logger.LogError("Client ID: {ClientId}", effectiveClientId);
+            
             throw new AzureAuthenticationException($"Authentication failed: {ex.Message}");
         }
         catch (Exception ex)
         {
             _logger.LogError("Unexpected authentication error: {Message}", ex.Message);
+            _logger.LogError("Exception type: {Type}", ex.GetType().FullName);
+            
+            if (ex.InnerException != null)
+            {
+                _logger.LogError("Inner exception: {InnerMessage}", ex.InnerException.Message);
+            }
+            
             throw new AzureAuthenticationException($"Unexpected authentication error: {ex.Message}");
         }
     }
@@ -247,7 +336,40 @@ public class AuthenticationService
     }
 
     /// <summary>
+    /// Gets an access token with explicit scopes for MCP servers or other resources
+    /// This is a convenience wrapper around GetAccessTokenAsync with scope validation
+    /// </summary>
+    /// <param name="resourceAppId">The resource application ID (e.g., Agent 365 Tools App ID)</param>
+    /// <param name="scopes">Explicit list of scopes to request (e.g., ["McpServers.Mail.All", "McpServers.Calendar.All"])</param>
+    /// <param name="tenantId">Optional tenant ID for single-tenant authentication</param>
+    /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
+    /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
+    /// <returns>Access token with the requested scopes</returns>
+    public async Task<string> GetAccessTokenWithScopesAsync(
+        string resourceAppId, 
+        IEnumerable<string> scopes, 
+        string? tenantId = null, 
+        bool forceRefresh = false,
+        string? clientId = null,
+        bool useInteractiveBrowser = false)
+    {
+        if (string.IsNullOrWhiteSpace(resourceAppId))
+            throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));
+        
+        if (scopes == null || !scopes.Any())
+            throw new ArgumentException("At least one scope must be specified", nameof(scopes));
+
+        _logger.LogInformation("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}", 
+            resourceAppId, string.Join(", ", scopes));
+
+        // Delegate to the consolidated GetAccessTokenAsync method
+        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser);
+    }
+
+    /// <summary>
     /// Gets an access token with scope resolution for MCP servers
+    /// This method uses the .default scope pattern for backward compatibility
+    /// For explicit scope control, use GetAccessTokenWithScopesAsync instead
     /// </summary>
     /// <param name="resourceUrl">The resource URL to request a token for</param>
     /// <param name="manifestPath">Optional path to ToolingManifest.json for MCP scope resolution</param>
@@ -261,7 +383,7 @@ public class AuthenticationService
         _logger.LogInformation("Resolved scopes for resource {ResourceUrl}: {Scopes}", resourceUrl, string.Join(", ", scopes));
 
         // Use the existing method for backward compatibility
-        // In the future, this could use the specific scopes for targeted authentication
+        // For explicit scope control, callers should use GetAccessTokenWithScopesAsync
         return await GetAccessTokenAsync(resourceUrl, tenantId, forceRefresh);
     }
 
