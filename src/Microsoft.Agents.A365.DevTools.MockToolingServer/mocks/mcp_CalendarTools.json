@@ -33,7 +33,12 @@
       "required": [
         "eventId"
       ]
-    }
+    },
+    "responseTemplate": "Event '{{eventId}}' accepted (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
   },
   {
     "name": "cancelEvent",
