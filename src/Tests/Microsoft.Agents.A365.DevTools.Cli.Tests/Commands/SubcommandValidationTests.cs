@@ -36,7 +36,8 @@ public class SubcommandValidationTests
             ResourceGroup = "test-rg",
             AppServicePlanName = "test-plan",
             WebAppName = "test-webapp",
-            Location = "westus"
+            Location = "westus",
+            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
         };
 
         // Act
@@ -57,7 +58,8 @@ public class SubcommandValidationTests
             ResourceGroup = "test-rg",
             AppServicePlanName = "test-plan",
             WebAppName = "test-webapp",
-            Location = "westus"
+            Location = "westus",
+            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
         };
 
         // Act
@@ -79,7 +81,8 @@ public class SubcommandValidationTests
             ResourceGroup = "",
             AppServicePlanName = "test-plan",
             WebAppName = "test-webapp",
-            Location = "westus"
+            Location = "westus",
+            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
         };
 
         // Act
@@ -101,7 +104,8 @@ public class SubcommandValidationTests
             ResourceGroup = "",
             AppServicePlanName = "",
             WebAppName = "test-webapp",
-            Location = "westus"
+            Location = "westus",
+            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
         };
 
         // Act
@@ -133,6 +137,87 @@ public class SubcommandValidationTests
 
         // Assert
         errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task InfrastructureSubcommand_WithInvalidSku_FailsValidation()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            NeedDeployment = true,
+            SubscriptionId = "test-sub-id",
+            ResourceGroup = "test-rg",
+            AppServicePlanName = "test-plan",
+            WebAppName = "test-webapp",
+            Location = "westus",
+            AppServicePlanSku = "INVALID_SKU"
+        };
+
+        // Act
+        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+
+        // Assert
+        errors.Should().ContainSingle()
+            .Which.Should().Contain("Invalid appServicePlanSku");
+    }
+
+    [Fact]
+    public async Task InfrastructureSubcommand_WithB1Sku_ReturnsWarning()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            NeedDeployment = true,
+            SubscriptionId = "test-sub-id",
+            ResourceGroup = "test-rg",
+            AppServicePlanName = "test-plan",
+            WebAppName = "test-webapp",
+            Location = "westus",
+            AppServicePlanSku = "B1"
+        };
+
+        // Act
+        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+
+        // Assert
+        errors.Should().ContainSingle()
+            .Which.Should().ContainAll("WARNING", "B1", "westus", "quota", "F1");
+    }
+
+    [Theory]
+    [InlineData("F1")]
+    [InlineData("B1")]
+    [InlineData("B2")]
+    [InlineData("S1")]
+    [InlineData("P1V2")]
+    [InlineData("P1V3")]
+    public async Task InfrastructureSubcommand_WithValidSku_PassesValidationOrWarning(string sku)
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            NeedDeployment = true,
+            SubscriptionId = "test-sub-id",
+            ResourceGroup = "test-rg",
+            AppServicePlanName = "test-plan",
+            WebAppName = "test-webapp",
+            Location = "westus",
+            AppServicePlanSku = sku
+        };
+
+        // Act
+        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+
+        // Assert - Valid SKUs pass, B1 gets a warning (not a hard error)
+        if (sku == "B1")
+        {
+            errors.Should().ContainSingle().Which.Should().Contain("WARNING");
+        }
+        else
+        {
+            errors.Should().BeEmpty();
+        }
     }
 
     #endregion

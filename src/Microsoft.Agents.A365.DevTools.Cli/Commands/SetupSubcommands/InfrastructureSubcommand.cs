@@ -22,6 +22,7 @@ public static class InfrastructureSubcommand
 {
     /// <summary>
     /// Validates infrastructure prerequisites without performing any actions.
+    /// Includes validation of App Service Plan SKU and provides recommendations.
     /// </summary>
     public static Task<List<string>> ValidateAsync(
         Agent365Config config,
@@ -50,7 +51,52 @@ public static class InfrastructureSubcommand
         if (string.IsNullOrWhiteSpace(config.Location))
             errors.Add("location is required for Azure hosting");
 
+        // Validate App Service Plan SKU
+        var sku = string.IsNullOrWhiteSpace(config.AppServicePlanSku) 
+            ? ConfigConstants.DefaultAppServicePlanSku 
+            : config.AppServicePlanSku;
+        
+        if (!IsValidAppServicePlanSku(sku))
+        {
+            errors.Add($"Invalid appServicePlanSku '{sku}'. Valid SKUs: F1 (Free), B1/B2/B3 (Basic), S1/S2/S3 (Standard), P1V2/P2V2/P3V2 (Premium V2), P1V3/P2V3/P3V3 (Premium V3)");
+        }
+        else if (sku.Equals("B1", StringComparison.OrdinalIgnoreCase))
+        {
+            // Warning: B1 often has quota issues - suggest F1 for dev/test
+            var locationInfo = !string.IsNullOrWhiteSpace(config.Location) ? $" in region '{config.Location}'" : "";
+            errors.Add($"WARNING: SKU 'B1'{locationInfo} often has zero quota in Azure subscriptions by default. Consider using 'F1' (Free tier) for development/testing, or request quota increase in Azure Portal > Subscriptions > Usage + quotas");
+        }
+
         return Task.FromResult(errors);
+    }
+
+    /// <summary>
+    /// Validates if the provided SKU is a valid App Service Plan SKU.
+    /// </summary>
+    private static bool IsValidAppServicePlanSku(string sku)
+    {
+        if (string.IsNullOrWhiteSpace(sku))
+            return false;
+
+        // Common valid SKUs (case-insensitive)
+        var validSkus = new[]
+        {
+            // Free tier
+            "F1",
+            // Basic tier
+            "B1", "B2", "B3",
+            // Standard tier
+            "S1", "S2", "S3",
+            // Premium V2
+            "P1V2", "P2V2", "P3V2",
+            // Premium V3
+            "P1V3", "P2V3", "P3V3",
+            // Isolated (less common)
+            "I1", "I2", "I3",
+            "I1V2", "I2V2", "I3V2"
+        };
+
+        return validSkus.Contains(sku, StringComparer.OrdinalIgnoreCase);
     }
     public static Command CreateCommand(
         ILogger logger,
@@ -449,7 +495,7 @@ public static class InfrastructureSubcommand
             }
 
             // App Service plan
-            await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, subscriptionId);
+            await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId);
 
             // Web App
             var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
@@ -658,9 +704,10 @@ public static class InfrastructureSubcommand
         string resourceGroup, 
         string planName, 
         string? planSku, 
+        string location,
         string subscriptionId,
-        int maxRetries = 8,
-        int baseDelaySeconds = 5)
+        int maxRetries = 5,
+        int baseDelaySeconds = 3)
     {
         var planShow = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
         if (planShow.Success)
@@ -669,8 +716,78 @@ public static class InfrastructureSubcommand
         }
         else
         {
-            logger.LogInformation("Creating App Service plan {Plan}", planName);
-            await AzWarnAsync(executor, logger, $"appservice plan create -g {resourceGroup} -n {planName} --sku {planSku} --is-linux --subscription {subscriptionId}", "Create App Service plan");
+            logger.LogInformation("Creating App Service plan {Plan} in location {Location}", planName, location);
+            
+            // Execute creation command directly and check result immediately
+            var createResult = await executor.ExecuteAsync(
+                "az", 
+                $"appservice plan create -g {resourceGroup} -n {planName} --sku {planSku} --location {location} --is-linux --subscription {subscriptionId}", 
+                captureOutput: true, 
+                suppressErrorLogging: true);
+
+            if (!createResult.Success)
+            {
+                // Log detailed error information for diagnosis
+                logger.LogError("ERROR: App Service plan creation failed for '{Plan}'", planName);
+                logger.LogError("Exit code: {Code}", createResult.ExitCode);
+                
+                if (!string.IsNullOrWhiteSpace(createResult.StandardError))
+                {
+                    logger.LogError("Error output: {Error}", createResult.StandardError);
+                }
+                
+                if (!string.IsNullOrWhiteSpace(createResult.StandardOutput))
+                {
+                    logger.LogError("Standard output: {Output}", createResult.StandardOutput);
+                }
+
+                // Check for specific error conditions and throw appropriate exception
+                if (createResult.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase) ||
+                    createResult.StandardError.Contains("authorization", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new AzureAppServicePlanException(
+                        planName,
+                        location,
+                        planSku ?? "Unknown",
+                        AppServicePlanErrorType.AuthorizationFailed,
+                        createResult.StandardError);
+                }
+                else if (createResult.StandardError.Contains("QuotaExceeded", StringComparison.OrdinalIgnoreCase) ||
+                         createResult.StandardError.Contains("quota", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new AzureAppServicePlanException(
+                        planName,
+                        location,
+                        planSku ?? "Unknown",
+                        AppServicePlanErrorType.QuotaExceeded,
+                        createResult.StandardError);
+                }
+                else if (createResult.StandardError.Contains("InvalidSku", StringComparison.OrdinalIgnoreCase) ||
+                         createResult.StandardError.Contains("SkuNotAvailable", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new AzureAppServicePlanException(
+                        planName,
+                        location,
+                        planSku ?? "Unknown",
+                        AppServicePlanErrorType.SkuNotAvailable,
+                        createResult.StandardError);
+                }
+                else
+                {
+                    throw new AzureAppServicePlanException(
+                        planName,
+                        location,
+                        planSku ?? "Unknown",
+                        AppServicePlanErrorType.Other,
+                        $"Azure CLI command failed with exit code {createResult.ExitCode}. Error: {Short(createResult.StandardError)}");
+                }
+            }
+
+            logger.LogInformation("App Service plan creation command completed successfully");
+            
+            // Add small delay to allow Azure resource propagation
+            logger.LogInformation("Waiting for Azure resource propagation...");
+            await Task.Delay(TimeSpan.FromSeconds(3));
 
             // Use RetryHelper to verify the plan was created successfully with exponential backoff
             var retryHelper = new RetryHelper(logger);
@@ -688,10 +805,17 @@ public static class InfrastructureSubcommand
 
             if (!planCreated)
             {
-                logger.LogError("App Service plan creation verification failed after retries. The plan '{Plan}' does not exist.", planName);
-                throw new InvalidOperationException($"Failed to create App Service plan '{planName}' after {maxRetries} verification attempts. This may be due to quota limits or insufficient permissions. Setup cannot continue.");
+                logger.LogError("ERROR: App Service plan creation verification failed after {Retries} retries. The plan '{Plan}' does not exist.", maxRetries, planName);
+                logger.LogError("The creation command succeeded, but the plan cannot be found. This may indicate an Azure propagation delay or regional issue.");
+                logger.LogError("Please check the Azure Portal to verify if the plan exists. If it does, you may need to wait a few minutes and retry.");
+                throw new AzureAppServicePlanException(
+                    planName,
+                    location,
+                    planSku ?? "Unknown",
+                    AppServicePlanErrorType.VerificationTimeout,
+                    $"Verification failed after {maxRetries} attempts. The plan may still be propagating in Azure.");
             }
-            logger.LogInformation("App Service plan created successfully: {Plan}", planName);
+            logger.LogInformation("App Service plan created and verified successfully: {Plan}", planName);
         }
     }
 

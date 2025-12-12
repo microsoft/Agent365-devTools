@@ -53,8 +53,8 @@ public class FileHelperTests
             // On Windows, should return true (file opened)
             // On other platforms, may succeed or log warning depending on environment
             // We can't assert the exact outcome since it depends on the system configuration
-            // but we can verify it doesn't throw an exception
-            result.Should().BeOneOf(true, false);
+            // The fact that this code executes without throwing verifies the method works correctly
+            // No assertion needed - successful execution is the test
         }
         finally
         {
@@ -125,7 +125,7 @@ public class FileHelperTests
 
             // Assert
             // Should handle different file types without throwing
-            result.Should().BeOneOf(true, false);
+            // No assertion needed - successful execution without exception is the test
         }
         finally
         {

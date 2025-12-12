@@ -79,6 +79,11 @@ public static class ConfigConstants
         "Sites.Read.All"
     };
 
+    /// <summary>
+    /// Default App Service Plan SKU - B1 (Basic tier) for production workloads.
+    /// Note: B1 often has zero quota by default in Azure subscriptions.
+    /// For development/testing without quota issues, consider F1 (Free tier).
+    /// </summary>
     public const string DefaultAppServicePlanSku = "B1";
 
     /// <summary>
