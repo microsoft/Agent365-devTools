@@ -46,13 +46,13 @@ public class DevelopCommandTests
     }
 
     [Fact]
-    public void CreateCommand_HasSixSubcommands()
+    public void CreateCommand_HasSevenSubcommands()
     {
         // Act
         var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService);
 
         // Assert
-        Assert.Equal(6, command.Subcommands.Count);
+        Assert.Equal(7, command.Subcommands.Count);
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         Assert.Contains("list-available", subcommandNames);
@@ -61,6 +61,7 @@ public class DevelopCommandTests
         Assert.Contains("remove-mcp-servers", subcommandNames);
         Assert.Contains("gettoken", subcommandNames);
         Assert.Contains("addpermissions", subcommandNames);
+        Assert.Contains("start-mock-tooling-server", subcommandNames);
     }
 
     [Fact]
@@ -157,5 +158,17 @@ public class DevelopCommandTests
         Assert.Contains("scopes", optionNames);
         Assert.Contains("verbose", optionNames);
         Assert.Contains("dry-run", optionNames);
+    }
+
+    [Fact]
+    public void StartMockToolingServerSubcommand_HasCorrectOptions()
+    {
+        // Act
+        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "start-mock-tooling-server");
+
+        // Assert
+        var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
+        Assert.Contains("port", optionNames);
     }
 }
