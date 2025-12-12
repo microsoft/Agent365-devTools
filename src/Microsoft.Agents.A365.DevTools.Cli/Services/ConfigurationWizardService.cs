@@ -110,7 +110,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             }
 
             // Step 5: Select Resource Group
-            var resourceGroup = await PromptForResourceGroupAsync(existingConfig);
+            var (resourceGroup, resourceGroupLocation) = await PromptForResourceGroupAsync(existingConfig);
             if (string.IsNullOrWhiteSpace(resourceGroup))
             {
                 _logger.LogError("Configuration wizard cancelled: Resource group not selected");
@@ -150,7 +150,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             }
 
             // Step 8: Get location (with smart default from account or existing config)
-            var location = PromptForLocation(existingConfig, accountInfo);
+            var location = PromptForLocation(existingConfig, accountInfo, resourceGroupLocation);
 
             // Step 9: Show configuration summary and allow override
             Console.WriteLine();
@@ -315,7 +315,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
         return path;
     }
 
-    private async Task<string> PromptForResourceGroupAsync(Agent365Config? existingConfig)
+    private async Task<(string name, string location)> PromptForResourceGroupAsync(Agent365Config? existingConfig)
     {
         Console.WriteLine();
         Console.WriteLine("Loading resource groups from Azure...");
@@ -324,11 +324,13 @@ public class ConfigurationWizardService : IConfigurationWizardService
         if (!resourceGroups.Any())
         {
             Console.WriteLine("WARNING: No resource groups found. You may need to create one first.");
-            return PromptWithDefault(
+            var resourceGroupName = PromptWithDefault(
                 "Resource group name",
                 existingConfig?.ResourceGroup ?? $"{Environment.UserName}-agent365-rg",
                 input => !string.IsNullOrWhiteSpace(input) ? (true, "") : (false, "Resource group name cannot be empty")
             );
+            // Return empty string for location when creating a new resource group
+            return (resourceGroupName, string.Empty);
         }
 
         Console.WriteLine();
@@ -357,15 +359,16 @@ public class ConfigurationWizardService : IConfigurationWizardService
             {
                 if (index >= 1 && index <= resourceGroups.Count)
                 {
-                    return resourceGroups[index - 1].Name;
+                    var selectedRg = resourceGroups[index - 1];
+                    return (selectedRg.Name, selectedRg.Location);
                 }
 
                 Console.WriteLine($"Please enter a number between 1 and {resourceGroups.Count}");
             }
             else
             {
-                // Create new resource group
-                return input;
+                // Create new resource group - return empty string for location
+                return (input, string.Empty);
             }
         }
     }
@@ -457,15 +460,21 @@ public class ConfigurationWizardService : IConfigurationWizardService
         );
     }
 
-    private string PromptForLocation(Agent365Config? existingConfig, AzureAccountInfo accountInfo)
+    private string PromptForLocation(Agent365Config? existingConfig, AzureAccountInfo accountInfo, string resourceGroupLocation)
     {
         // Try to get a smart default location
         var defaultLocation = existingConfig?.Location;
-        
+
+        // Use resource group location if available
+        if (!string.IsNullOrEmpty(resourceGroupLocation))
+        {
+            defaultLocation = resourceGroupLocation;
+        }
+
         if (string.IsNullOrEmpty(defaultLocation))
         {
             // Try to get from resource group or common defaults
-            defaultLocation = "westus"; // Conservative default
+            defaultLocation = "eastus"; // Conservative default
         }
 
         return PromptWithDefault(
