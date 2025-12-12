@@ -74,7 +74,7 @@ See `a365.config.example.json` for all available options.
 
 ```bash
 # Create agent blueprint and register messaging endpoint
-a365 setup
+a365 setup all
 ```
 
 - This command creates the agent blueprint and registers the messaging endpoint for your application.
@@ -108,7 +108,20 @@ See below for frequently used commands. For full details, run `a365 --help` or s
 
 ### Setup & Registration
 ```bash
-a365 setup
+a365 setup all
+```
+
+If infrastructure has already been deployed then skip the deployment using:
+```bash
+a365 setup all --skip-infrastructure
+```
+
+The above command will run the following commands in sequence. You may also run the commands individually.
+```bash
+a365 setup infrastructure
+a365 setup blueprint
+a365 setup permissions mcp
+a365 setup permissions bot
 ```
 
 ### Publish & Deploy
@@ -241,7 +254,7 @@ This prevents leaving config "crumbs" in random folders and ensures your configu
 
 - If you run CLI commands in different folders, each folder may have its own `a365.generated.config.json`.
 - The CLI will warn you if the local generated config is older than the global config in your user profile. This helps prevent using stale configuration by accident.
-- If you see this warning, you should consider running `a365 setup` again in your current directory, or manually sync the latest config from your global config folder.
+- If you see this warning, you should consider running `a365 setup all` again in your current directory, or manually sync the latest config from your global config folder.
 - Best practice: Work from a single project directory, or always ensure your local config is up to date before running commands.
 
 You can create or update these files using `a365 config init` (interactive) or `a365 config init -c <file>` (import). If you want a config in your current directory, create it there first.
@@ -378,7 +391,7 @@ a365 develop --help
 
 ### Messaging Endpoint Registration Architecture
 
-The `a365 setup` command configures the agent blueprint and registers the messaging endpoint using the blueprint identity. This ensures proper identity isolation and secure communication for your agent application.
+The `a365 setup blueprint` command configures the agent blueprint and registers the messaging endpoint using the blueprint identity. This ensures proper identity isolation and secure communication for your agent application.
 
 **Key Technical Details:**
 - Messaging endpoint registration uses the agent blueprint identity (from `a365.generated.config.json`)
@@ -390,7 +403,7 @@ The `a365 setup` command configures the agent blueprint and registers the messag
 
 **Generated during:**
 ```bash
-a365 setup  # Creates agent blueprint and registers messaging endpoint
+a365 setup blueprint  # Creates agent blueprint and registers messaging endpoint
 ```
 
 ---
