@@ -255,7 +255,9 @@ public class BlueprintSubcommandTests
                 _mockGraphApiService);
 
         // Assert - Should return false when consent service fails
-        result.Should().BeFalse();
+        result.Should().NotBeNull();
+        result.BlueprintCreated.Should().BeFalse();
+        result.EndpointRegistered.Should().BeFalse();
     }
 
     [Fact]
@@ -290,7 +292,9 @@ public class BlueprintSubcommandTests
             _mockGraphApiService);
 
         // Assert
-        result.Should().BeFalse();
+        result.Should().NotBeNull();
+        result.BlueprintCreated.Should().BeFalse();
+        result.EndpointRegistered.Should().BeFalse();
         await _mockAzureValidator.Received(1).ValidateAllAsync(config.SubscriptionId);
     }
 
@@ -486,7 +490,9 @@ public class BlueprintSubcommandTests
             _mockGraphApiService);
 
         // Assert
-        result.Should().BeFalse();
+        result.Should().NotBeNull();
+        result.BlueprintCreated.Should().BeFalse();
+        result.EndpointRegistered.Should().BeFalse();
         
         // Verify progress logging occurred
         _mockLogger.Received().Log(
@@ -755,7 +761,7 @@ public class BlueprintSubcommandTests
 
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(true);
+                .Returns(EndpointRegistrationResult.Created);
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -819,7 +825,7 @@ public class BlueprintSubcommandTests
 
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(true);
+                .Returns(EndpointRegistrationResult.Created);
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -876,7 +882,7 @@ public class BlueprintSubcommandTests
 
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(true);
+                .Returns(EndpointRegistrationResult.Created);
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -942,7 +948,7 @@ public class BlueprintSubcommandTests
 
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(true);
+                .Returns(EndpointRegistrationResult.Created);
 
             // Act - should not throw
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -959,6 +965,78 @@ public class BlueprintSubcommandTests
                 Arg.Is<object>(o => o.ToString()!.Contains("Project settings sync failed") && o.ToString()!.Contains("non-blocking")),
                 Arg.Any<Exception>(),
                 Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            if (File.Exists(generatedPath))
+            {
+                File.Delete(generatedPath);
+            }
+            if (File.Exists(configPath))
+            {
+                File.Delete(configPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RegisterEndpointAndSyncAsync_WhenEndpointAlreadyExists_ShouldLogAlreadyRegistered()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-existing",
+            WebAppName = "test-webapp",
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            // Mock endpoint registration returning AlreadyExists status
+            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(EndpointRegistrationResult.AlreadyExists);
+
+            // Act
+            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+                configPath,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector);
+
+            // Assert
+            success.Should().BeTrue();
+            alreadyExisted.Should().BeTrue();
+
+            // Verify the specific "already registered" message is logged
+            _mockLogger.Received().Log(
+                LogLevel.Information,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Blueprint messaging endpoint already registered")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+
+            // Verify endpoint registration was called
+            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                config.Location,
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                config.AgentBlueprintId);
         }
         finally
         {
@@ -1003,7 +1081,7 @@ public class BlueprintSubcommandTests
 
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(true);
+                .Returns(EndpointRegistrationResult.Created);
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -1018,6 +1096,138 @@ public class BlueprintSubcommandTests
             savedConfig!.BotId.Should().Be(config.AgentBlueprintId);
             savedConfig.BotMsaAppId.Should().Be(config.AgentBlueprintId);
             savedConfig.BotMessagingEndpoint.Should().Contain("test-webapp.azurewebsites.net");
+        }
+        finally
+        {
+            if (File.Exists(generatedPath))
+            {
+                File.Delete(generatedPath);
+            }
+            if (File.Exists(configPath))
+            {
+                File.Delete(configPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RegisterEndpointAndSyncAsync_WithNeedDeploymentFalseAndMessagingEndpoint_ShouldSucceed()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            NeedDeployment = false,
+            MessagingEndpoint = "https://custom-host.example.com/api/messages",
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(EndpointRegistrationResult.Created);
+
+            // Act
+            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+                configPath,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector);
+
+            // Assert
+            success.Should().BeTrue();
+            alreadyExisted.Should().BeFalse();
+            
+            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                config.Location,
+                config.MessagingEndpoint,
+                Arg.Any<string>(),
+                config.AgentBlueprintId);
+
+            await _mockConfigService.Received(1).SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>());
+        }
+        finally
+        {
+            if (File.Exists(generatedPath))
+            {
+                File.Delete(generatedPath);
+            }
+            if (File.Exists(configPath))
+            {
+                File.Delete(configPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RegisterEndpointAndSyncAsync_WithNeedDeploymentFalseAndNoMessagingEndpoint_ShouldSkipRegistration()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            NeedDeployment = false,
+            MessagingEndpoint = string.Empty,
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            // Act
+            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+                configPath,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector);
+
+            // Assert - should return (false, false) since endpoint registration was skipped
+            success.Should().BeFalse();
+            alreadyExisted.Should().BeFalse();
+            
+            // Should NOT call bot configurator
+            await _mockBotConfigurator.DidNotReceive().CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>());
+
+            // Should still save state with completed flag
+            await _mockConfigService.Received(1).SaveStateAsync(
+                Arg.Is<Agent365Config>(c => c.Completed),
+                Arg.Any<string>());
         }
         finally
         {
@@ -1075,3 +1285,4 @@ public class BlueprintSubcommandTests
 
     #endregion
 }
+

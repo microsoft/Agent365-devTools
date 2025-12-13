@@ -345,7 +345,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
 
         while (true)
         {
-            Console.Write($"Select resource group [1-{resourceGroups.Count}] (default: {Math.Max(1, defaultIndex)}): ");
+            Console.Write($"Select resource group [1-{resourceGroups.Count}] (default: {Math.Max(1, defaultIndex)}), or type a new resource group name: ");
             var input = Console.ReadLine()?.Trim();
             
             if (string.IsNullOrWhiteSpace(input))
@@ -353,12 +353,20 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 input = Math.Max(1, defaultIndex).ToString();
             }
 
-            if (int.TryParse(input, out int index) && index >= 1 && index <= resourceGroups.Count)
+            if (int.TryParse(input, out int index))
             {
-                return resourceGroups[index - 1].Name;
-            }
+                if (index >= 1 && index <= resourceGroups.Count)
+                {
+                    return resourceGroups[index - 1].Name;
+                }
 
-            Console.WriteLine($"Please enter a number between 1 and {resourceGroups.Count}");
+                Console.WriteLine($"Please enter a number between 1 and {resourceGroups.Count}");
+            }
+            else
+            {
+                // Create new resource group
+                return input;
+            }
         }
     }
 

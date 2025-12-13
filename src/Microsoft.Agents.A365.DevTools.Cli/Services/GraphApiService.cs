@@ -658,7 +658,60 @@ public class GraphApiService
             _httpClient.DefaultRequestHeaders.Authorization = null;
         }
     }
-    
+
+    /// <summary>
+    /// Deletes the specified agent identity application from the tenant using delegated permissions.
+    /// This method deletes the service principal object, not the application registration.
+    /// </summary>
+    /// <param name="tenantId">The unique identifier of the Azure Active Directory tenant containing the agent identity application.</param>
+    /// <param name="applicationId">The unique identifier of the agent identity application to delete.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the delete operation.</param>
+    /// <returns>True if deletion succeeded or resource not found; false otherwise</returns>
+    public async Task<bool> DeleteAgentIdentityAsync(
+        string tenantId,
+        string applicationId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting agent identity application: {applicationId}", applicationId);
+
+            // Agent Identity deletion requires special delegated permission scope
+            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+
+            if (_tokenProvider == null)
+            {
+                _logger.LogError("Token provider is not configured. Agent Identity deletion requires delegated permissions via interactive authentication.");
+                _logger.LogError("Please ensure the GraphApiService is initialized with a token provider.");
+                return false;
+            }
+
+            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
+            _logger.LogInformation("A browser window will open for authentication.");
+
+            // Use the special servicePrincipals endpoint for deletion
+            var deletePath = $"/beta/servicePrincipals/{applicationId}";
+
+            // Use GraphDeleteAsync with the special scopes required for identity operations
+            return await GraphDeleteAsync(
+                tenantId,
+                deletePath,
+                cancellationToken,
+                treatNotFoundAsSuccess: true,
+                scopes: requiredScopes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception deleting agent identity application");
+            return false;
+        }
+        finally
+        {
+            // Clear authorization header to avoid issues with other requests
+            _httpClient.DefaultRequestHeaders.Authorization = null;
+        }
+    }
+
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         var token = (scopes != null && _tokenProvider != null) ? await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, ct) : await GetGraphAccessTokenAsync(tenantId, ct);

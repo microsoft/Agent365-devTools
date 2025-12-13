@@ -40,13 +40,18 @@ public class CreateInstanceCommand
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        // Add subcommands
-        command.AddCommand(CreateIdentitySubcommand(logger, configService, executor));
-        command.AddCommand(CreateLicensesSubcommand(logger, configService, executor));
+        // Subcommands removed - command is deprecated
+        // Keeping subcommand implementation code for local development only
 
-        // Default handler runs all 4 steps
+        // Default handler
         command.SetHandler(async (config, verbose, dryRun) =>
         {
+            LogDeprecationError(logger, "create-instance");
+            Environment.Exit(1);
+            
+            // Unreachable code below - preserved for local development use cases
+            #pragma warning disable CS0162 // Unreachable code detected
+            
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Agent 365 Instance Creation - All Steps");
@@ -308,6 +313,12 @@ public class CreateInstanceCommand
 
         command.SetHandler(async (config, verbose, dryRun) =>
         {
+            LogDeprecationError(logger, "create-instance identity");
+            Environment.Exit(1);
+            
+            // Unreachable code below - preserved for local development
+            #pragma warning disable CS0162
+            
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Creating Agent Identity and Agent User");
@@ -416,6 +427,12 @@ public class CreateInstanceCommand
 
         command.SetHandler(async (config, verbose, dryRun) =>
         {
+            LogDeprecationError(logger, "create-instance licenses");
+            Environment.Exit(1);
+            
+            // Unreachable code below - preserved for local development
+            #pragma warning disable CS0162
+            
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Adding licenses to Agent User");
@@ -502,5 +519,26 @@ public class CreateInstanceCommand
             logger.LogError(ex, "Error loading configuration: {Message}", ex.Message);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Logs deprecation error message for create-instance command and its subcommands.
+    /// Uses plain ASCII text for cross-platform compatibility.
+    /// </summary>
+    private static void LogDeprecationError(ILogger logger, string commandName)
+    {
+        logger.LogError("ERROR: Command '{Command}' has been deprecated.", commandName);
+        logger.LogError("");
+        logger.LogError("This command bypasses the Microsoft Online Services (MOS) workflow,");
+        logger.LogError("which prevents proper agent registration and event propagation.");
+        logger.LogError("");
+        logger.LogError("Use the recommended workflow instead:");
+        logger.LogError("  1. Run 'a365 publish' to publish your agent to MOS");
+        logger.LogError("  2. Run 'a365 deploy' to deploy your application (if Azure-hosted)");
+        logger.LogError("  3. Hire your agent through Microsoft Teams");
+        logger.LogError("");
+        logger.LogError("For more information, see:");
+        logger.LogError("https://learn.microsoft.com/en-us/microsoft-agent-365/onboard");
+        logger.LogError("");
     }
 }

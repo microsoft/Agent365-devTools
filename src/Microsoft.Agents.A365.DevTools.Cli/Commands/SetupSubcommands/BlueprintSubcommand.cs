@@ -21,6 +21,20 @@ using System.Threading;
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 /// <summary>
+/// Result of blueprint creation including endpoint registration status
+/// </summary>
+internal class BlueprintCreationResult
+{
+    public bool BlueprintCreated { get; set; }
+    public bool EndpointRegistered { get; set; }
+    public bool EndpointAlreadyExisted { get; set; }
+    /// <summary>
+    /// Indicates whether endpoint registration was attempted (vs. skipped via --no-endpoint or missing config)
+    /// </summary>
+    public bool EndpointRegistrationAttempted { get; set; }
+}
+
+/// <summary>
 /// Blueprint subcommand - Creates agent blueprint (Entra ID application)
 /// Required Permissions: Agent ID Developer role
 /// COMPLETE IMPLEMENTATION of A365SetupRunner Phase 2 blueprint creation
@@ -74,11 +88,21 @@ internal static class BlueprintSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
+        var skipEndpointRegistrationOption = new Option<bool>(
+            "--no-endpoint",
+            description: "Do not register messaging endpoint (blueprint only)");
+
+        var endpointOnlyOption = new Option<bool>(
+            "--endpoint-only",
+            description: "Register messaging endpoint only (requires existing blueprint)");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
+        command.AddOption(skipEndpointRegistrationOption);
+        command.AddOption(endpointOnlyOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly) =>
         {
             var setupConfig = await configService.LoadAsync(config.FullName);
 
@@ -89,9 +113,45 @@ internal static class BlueprintSubcommand
                 logger.LogInformation("  - Display Name: {DisplayName}", setupConfig.AgentBlueprintDisplayName);
                 logger.LogInformation("  - Tenant: {TenantId}", setupConfig.TenantId);
                 logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
+                if (!skipEndpointRegistration)
+                {
+                    logger.LogInformation("  - Would register messaging endpoint");
+                }
                 return;
             }
 
+            // Handle --endpoint-only flag
+            if (endpointOnly)
+            {
+                try
+                {
+                    logger.LogInformation("Registering blueprint messaging endpoint...");
+                    logger.LogInformation("");
+
+                    await RegisterEndpointAndSyncAsync(
+                        configPath: config.FullName,
+                        logger: logger,
+                        configService: configService,
+                        botConfigurator: botConfigurator,
+                        platformDetector: platformDetector);
+
+                    logger.LogInformation("");
+                    logger.LogInformation("Endpoint registration completed successfully!");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Endpoint registration failed: {Message}", ex.Message);
+                    logger.LogError("");
+                    logger.LogError("To resolve this issue:");
+                    logger.LogError("  1. If endpoint already exists, delete it: a365 cleanup azure");
+                    logger.LogError("  2. Verify your messaging endpoint configuration in a365.config.json");
+                    logger.LogError("  3. Try registration again: a365 setup blueprint --endpoint-only");
+                    Environment.Exit(1);
+                }
+                return;
+            }
+
+            // Normal blueprint creation (with optional endpoint skipping)
             await CreateBlueprintImplementationAsync(
                 setupConfig,
                 config,
@@ -103,15 +163,16 @@ internal static class BlueprintSubcommand
                 configService,
                 botConfigurator,
                 platformDetector,
-                graphApiService
+                graphApiService,
+                skipEndpointRegistration
                 );
 
-        }, configOption, verboseOption, dryRunOption);
+        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption);
 
         return command;
     }
 
-    public static async Task<bool> CreateBlueprintImplementationAsync(
+    public static async Task<BlueprintCreationResult> CreateBlueprintImplementationAsync(
         Models.Agent365Config setupConfig,
         FileInfo config,
         CommandExecutor executor,
@@ -123,6 +184,7 @@ internal static class BlueprintSubcommand
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
+        bool skipEndpointRegistration = false,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -131,7 +193,12 @@ internal static class BlueprintSubcommand
         // Validate Azure authentication
         if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
         {
-            return false;
+            return new BlueprintCreationResult 
+            { 
+                BlueprintCreated = false, 
+                EndpointRegistered = false, 
+                EndpointRegistrationAttempted = false 
+            };
         }
 
         var generatedConfigPath = Path.Combine(
@@ -197,7 +264,12 @@ internal static class BlueprintSubcommand
         if (!consentResult)
         {
             logger.LogError("Failed to ensure AgentApplication.Create permission after multiple attempts");
-            return false;
+            return new BlueprintCreationResult 
+            { 
+                BlueprintCreated = false, 
+                EndpointRegistered = false, 
+                EndpointRegistrationAttempted = false 
+            };
         }
 
         // ========================================================================
@@ -231,7 +303,12 @@ internal static class BlueprintSubcommand
         if (!blueprintResult.success)
         {
             logger.LogError("Failed to create agent blueprint");
-            return false;
+            return new BlueprintCreationResult 
+            { 
+                BlueprintCreated = false, 
+                EndpointRegistered = false, 
+                EndpointRegistrationAttempted = false 
+            };
         }
 
         var blueprintAppId = blueprintResult.appId;
@@ -280,12 +357,52 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Generated config saved: {Path}", generatedConfigPath);
         logger.LogInformation("");
 
-        await RegisterEndpointAndSyncAsync(
-            configPath: config.FullName,
-            logger: logger,
-            configService: configService,
-            botConfigurator: botConfigurator,
-            platformDetector: platformDetector);
+        // Register messaging endpoint unless --no-endpoint flag is used
+        bool endpointRegistered = false;
+        bool endpointAlreadyExisted = false;
+        if (!skipEndpointRegistration)
+        {
+            // Exception Handling Strategy:
+            // - During 'setup all': Endpoint failures are NON-BLOCKING. This allows subsequent steps
+            //   (Bot API permissions) to still execute, enabling partial setup progress.
+            // - Standalone 'setup blueprint': Endpoint failures are BLOCKING (exception propagates).
+            //   User explicitly requested endpoint registration, so failures should halt execution.
+            // - With '--no-endpoint': This block is skipped entirely (no registration attempted).
+            try
+            {
+                var (registered, alreadyExisted) = await RegisterEndpointAndSyncAsync(
+                    configPath: config.FullName,
+                    logger: logger,
+                    configService: configService,
+                    botConfigurator: botConfigurator,
+                    platformDetector: platformDetector);
+                endpointRegistered = registered;
+                endpointAlreadyExisted = alreadyExisted;
+            }
+            catch (Exception endpointEx) when (isSetupAll)
+            {
+                // ONLY during 'setup all': Treat endpoint registration failure as non-blocking
+                // This allows Bot API permissions (Step 4) to still be configured
+                endpointRegistered = false;
+                endpointAlreadyExisted = false;
+                logger.LogWarning("");
+                logger.LogWarning("Endpoint registration failed: {Message}", endpointEx.Message);
+                logger.LogWarning("Setup will continue to configure Bot API permissions");
+                logger.LogWarning("");
+                logger.LogWarning("To resolve endpoint registration issues:");
+                logger.LogWarning("  1. Delete existing endpoint: a365 cleanup azure");
+                logger.LogWarning("  2. Register endpoint again: a365 setup blueprint --endpoint-only");
+                logger.LogWarning("  Or rerun full setup: a365 setup blueprint");
+                logger.LogWarning("");
+            }
+            // NOTE: If NOT isSetupAll, exception propagates to caller (blocking behavior)
+            // This is intentional: standalone 'a365 setup blueprint' should fail fast on endpoint errors
+        }
+        else
+        {
+            logger.LogInformation("Skipping endpoint registration (--no-endpoint flag)");
+            logger.LogInformation("Register endpoint later with: a365 setup blueprint --endpoint-only");
+        }
 
         // Display verification info and summary
         await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
@@ -293,11 +410,26 @@ internal static class BlueprintSubcommand
         if (!isSetupAll)
         {
             logger.LogInformation("Next steps:");
-            logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
-            logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
+            if (!endpointRegistered)
+            {
+                logger.LogInformation("  1. Register endpoint: a365 setup blueprint --endpoint-only");
+                logger.LogInformation("  2. Run 'a365 setup permissions mcp' to configure MCP permissions");
+                logger.LogInformation("  3. Run 'a365 setup permissions bot' to configure Bot API permissions");
+            }
+            else
+            {
+                logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
+                logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
+            }
         }
 
-        return true;
+        return new BlueprintCreationResult
+        {
+            BlueprintCreated = true,
+            EndpointRegistered = endpointRegistered,
+            EndpointAlreadyExisted = endpointAlreadyExisted,
+            EndpointRegistrationAttempted = !skipEndpointRegistration
+        };
     }
 
     /// <summary>
@@ -475,27 +607,27 @@ internal static class BlueprintSubcommand
             logger.LogInformation("  - App ID: {AppId}", appId);
             logger.LogInformation("  - Object ID: {ObjectId}", objectId);
 
-            // Wait for application propagation
-            const int maxRetries = 30;
-            const int delayMs = 4000;
-            bool appAvailable = false;
-            for (int i = 0; i < maxRetries; i++)
-            {
-                var checkResp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/applications/{objectId}", ct);
-                if (checkResp.IsSuccessStatusCode)
+            // Wait for application propagation using RetryHelper
+            var retryHelper = new RetryHelper(logger);
+            logger.LogInformation("Waiting for application object to propagate in directory...");
+            var appAvailable = await retryHelper.ExecuteWithRetryAsync(
+                async ct =>
                 {
-                    appAvailable = true;
-                    break;
-                }
-                logger.LogInformation("Waiting for application object to be available in directory (attempt {Attempt}/{Max})...", i + 1, maxRetries);
-                await Task.Delay(delayMs, ct);
-            }
+                    var checkResp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/applications/{objectId}", ct);
+                    return checkResp.IsSuccessStatusCode;
+                },
+                result => !result,
+                maxRetries: 10,
+                baseDelaySeconds: 5,
+                ct);
 
             if (!appAvailable)
             {
-                logger.LogError("App object not available after creation. Aborting setup.");
+                logger.LogError("Application object not available after creation and retries. Aborting setup.");
                 return (false, null, null, null);
             }
+            
+            logger.LogInformation("Application object verified in directory");
 
             // Update application with identifier URI
             var identifierUri = $"api://{appId}";
@@ -550,9 +682,36 @@ internal static class BlueprintSubcommand
                 logger.LogDebug("Service principal creation deferred (propagation delay): {Error}", spError);
             }
 
-            // Wait for service principal propagation
-            logger.LogInformation("Waiting 10 seconds to ensure Service Principal is fully propagated...");
-            await Task.Delay(10000, ct);
+            // Wait for service principal propagation using RetryHelper
+            if (!string.IsNullOrWhiteSpace(servicePrincipalId))
+            {
+                logger.LogInformation("Verifying service principal propagation in directory...");
+                var spPropagated = await retryHelper.ExecuteWithRetryAsync(
+                    async ct =>
+                    {
+                        var checkSp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'", ct);
+                        if (checkSp.IsSuccessStatusCode)
+                        {
+                            var content = await checkSp.Content.ReadAsStringAsync(ct);
+                            var spList = JsonDocument.Parse(content);
+                            return spList.RootElement.GetProperty("value").GetArrayLength() > 0;
+                        }
+                        return false;
+                    },
+                    result => !result,
+                    maxRetries: 10,
+                    baseDelaySeconds: 5,
+                    ct);
+
+                if (spPropagated)
+                {
+                    logger.LogInformation("Service principal verified in directory");
+                }
+                else
+                {
+                    logger.LogWarning("Service principal not fully propagated after retries. This may cause issues with federated credentials.");
+                }
+            }
 
             // Create Federated Identity Credential ONLY when MSI is relevant (if managed identity provided)
             if (useManagedIdentity && !string.IsNullOrWhiteSpace(managedIdentityPrincipalId))
@@ -877,8 +1036,9 @@ internal static class BlueprintSubcommand
     /// <summary>
     /// Registers blueprint messaging endpoint and syncs project settings.
     /// Public method that can be called by AllSubcommand.
+    /// Returns (success, alreadyExisted)
     /// </summary>
-    public static async Task RegisterEndpointAndSyncAsync(
+    public static async Task<(bool success, bool alreadyExisted)> RegisterEndpointAndSyncAsync(
         string configPath,
         ILogger logger,
         IConfigService configService,
@@ -894,7 +1054,8 @@ internal static class BlueprintSubcommand
             Environment.Exit(1);
         }
 
-        if (string.IsNullOrWhiteSpace(setupConfig.WebAppName))
+        // Only validate webAppName if needDeployment is true
+        if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
         {
             logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
             Environment.Exit(1);
@@ -903,7 +1064,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Registering blueprint messaging endpoint...");
         logger.LogInformation("");
 
-        await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+        var (endpointRegistered, endpointAlreadyExisted) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
             setupConfig, logger, botConfigurator);
 
 
@@ -913,7 +1074,21 @@ internal static class BlueprintSubcommand
         await configService.SaveStateAsync(setupConfig);
 
         logger.LogInformation("");
-        logger.LogInformation("Blueprint messaging endpoint registered successfully");
+        if (endpointRegistered)
+        {
+            if (endpointAlreadyExisted)
+            {
+                logger.LogInformation("Blueprint messaging endpoint already registered");
+            }
+            else
+            {
+                logger.LogInformation("Blueprint messaging endpoint registered successfully");
+            }
+        }
+        else
+        {
+            logger.LogInformation("Blueprint messaging endpoint registration skipped");
+        }
 
         // Sync generated config to project settings (appsettings.json or .env)
         logger.LogInformation("");
@@ -939,6 +1114,8 @@ internal static class BlueprintSubcommand
         {
             logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually if needed.");
         }
+        
+        return (endpointRegistered, endpointAlreadyExisted);
     }
 
     #region Private Helper Methods
@@ -952,9 +1129,6 @@ internal static class BlueprintSubcommand
         ILogger logger,
         CancellationToken ct)
     {
-        const int maxRetries = 5;
-        const int initialDelayMs = 2000;
-
         try
         {
             var federatedCredential = new JsonObject
@@ -975,49 +1149,74 @@ internal static class BlueprintSubcommand
                 $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials"
             };
 
-            string? lastError = null;
-
+            // Use RetryHelper for federated credential creation with exponential backoff
+            var retryHelper = new RetryHelper(logger);
+            
             foreach (var url in urls)
             {
-                for (int attempt = 1; attempt <= maxRetries; attempt++)
+                logger.LogDebug("Attempting federated credential creation with endpoint: {Url}", url);
+                
+                var result = await retryHelper.ExecuteWithRetryAsync(
+                    async ct =>
+                    {
+                        var response = await httpClient.PostAsync(
+                            url,
+                            new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                            ct);
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            return (success: true, error: string.Empty, shouldRetry: false);
+                        }
+
+                        var error = await response.Content.ReadAsStringAsync(ct);
+
+                        // Check if it's a transient error that should be retried
+                        if (error.Contains("Request_ResourceNotFound") || error.Contains("does not exist"))
+                        {
+                            return (success: false, error, shouldRetry: true);
+                        }
+
+                        // Check if credential already exists
+                        if (error.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                        {
+                            logger.LogInformation("Federated Identity Credential already exists (name: {Name})", credentialName);
+                            return (success: true, error: string.Empty, shouldRetry: false);
+                        }
+
+                        // Check if we should try the alternative endpoint
+                        if (error.Contains("Agent Blueprints are not supported on the API version"))
+                        {
+                            logger.LogDebug("Standard endpoint not supported, will try Agent Blueprint-specific path...");
+                            return (success: false, error, shouldRetry: false);
+                        }
+
+                        // Non-retryable error
+                        return (success: false, error, shouldRetry: false);
+                    },
+                    r => r.shouldRetry,
+                    maxRetries: 10,
+                    baseDelaySeconds: 3,
+                    ct);
+
+                if (result.success)
                 {
-                    var response = await httpClient.PostAsync(
-                        url,
-                        new StringContent(federatedCredential.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                        ct);
+                    logger.LogInformation("  - Credential Name: {Name}", credentialName);
+                    logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+                    logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                    return true;
+                }
 
-                    if (response.IsSuccessStatusCode)
-                    {
-                        logger.LogInformation("  - Credential Name: {Name}", credentialName);
-                        logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-                        logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
-                        return true;
-                    }
-
-                    var error = await response.Content.ReadAsStringAsync(ct);
-                    lastError = error;
-
-                    if ((error.Contains("Request_ResourceNotFound") || error.Contains("does not exist")) && attempt < maxRetries)
-                    {
-                        var delayMs = initialDelayMs * (int)Math.Pow(2, attempt - 1);
-                        logger.LogWarning("Application object not yet propagated (attempt {Attempt}/{MaxRetries}). Retrying in {Delay}ms...",
-                            attempt, maxRetries, delayMs);
-                        await Task.Delay(delayMs, ct);
-                        continue;
-                    }
-
-                    if (error.Contains("Agent Blueprints are not supported on the API version"))
-                    {
-                        logger.LogDebug("Standard endpoint not supported, trying Agent Blueprint-specific path...");
-                        break;
-                    }
-
-                    logger.LogDebug("FIC creation failed with error: {Error}", error);
-                    break;
+                // If we got a non-retryable error and it's not the endpoint issue, fail
+                if (!string.IsNullOrEmpty(result.error) && 
+                    !result.error.Contains("Agent Blueprints are not supported on the API version"))
+                {
+                    logger.LogDebug("FIC creation failed with error: {Error}", result.error);
+                    return false;
                 }
             }
 
-            logger.LogDebug("Failed to create federated identity credential after trying all endpoints: {Error}", lastError);
+            logger.LogDebug("Failed to create federated identity credential after trying all endpoints");
             return false;
         }
         catch (Exception ex)

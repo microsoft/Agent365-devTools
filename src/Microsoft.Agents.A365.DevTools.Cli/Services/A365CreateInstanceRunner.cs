@@ -49,6 +49,25 @@ public sealed class A365CreateInstanceRunner
         string step = "all",
         CancellationToken cancellationToken = default)
     {
+        // DEPRECATED: This service bypasses MOS workflows
+        _logger.LogError("===============================================================================");
+        _logger.LogError("WARNING: A365CreateInstanceRunner bypasses MOS workflow");
+        _logger.LogError("===============================================================================");
+        _logger.LogError("");
+        _logger.LogError("This service uses Graph API directly and skips Microsoft Online Services");
+        _logger.LogError("(MOS) workflows. Agents provisioned this way will NOT:");
+        _logger.LogError("  - Be properly registered with Microsoft 365 partners");
+        _logger.LogError("  - Receive OnHire events");
+        _logger.LogError("  - Work correctly with messaging and event propagation");
+        _logger.LogError("");
+        _logger.LogError("Use 'a365 publish' followed by Teams-based hiring instead.");
+        _logger.LogError("See: https://learn.microsoft.com/en-us/microsoft-agent-365/onboard");
+        _logger.LogError("");
+        return false;
+
+        // Unreachable code below - preserved for local development use cases
+        #pragma warning disable CS0162 // Unreachable code detected
+
         // Validate inputs
         if (!File.Exists(configPath))
         {

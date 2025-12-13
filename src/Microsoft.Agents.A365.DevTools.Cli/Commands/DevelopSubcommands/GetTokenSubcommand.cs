@@ -204,8 +204,8 @@ internal static class GetTokenSubcommand
                     // Get token cache file path for display (matches AuthenticationService cache location)
                     var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                     var tokenCachePath = Path.Combine(appDataPath, 
-                        Constants.AuthenticationConstants.ApplicationName, 
-                        Constants.AuthenticationConstants.TokenCacheFileName);
+                        AuthenticationConstants.ApplicationName, 
+                        AuthenticationConstants.TokenCacheFileName);
 
                     // Create a single result representing the consolidated token
                     var tokenResult = new McpServerTokenResult

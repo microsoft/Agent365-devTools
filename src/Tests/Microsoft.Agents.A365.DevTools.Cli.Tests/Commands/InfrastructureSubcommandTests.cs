@@ -49,7 +49,9 @@ public class InfrastructureSubcommandTests
 
         // Act & Assert - The method should throw because verification fails
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(_commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId));
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 1));
 
         exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
     }
@@ -75,7 +77,9 @@ public class InfrastructureSubcommandTests
             });
 
         // Act
-        await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(_commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId);
+        await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+            _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+            maxRetries: 2, baseDelaySeconds: 1);
 
         // Assert - Verify creation command was never called
         await _commandExecutor.DidNotReceive().ExecuteAsync("az",
@@ -114,7 +118,9 @@ public class InfrastructureSubcommandTests
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = "Plan created" });
 
         // Act
-        await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(_commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId);
+        await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+            _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+            maxRetries: 2, baseDelaySeconds: 1);
 
         // Assert - Verify the plan creation was called
         await _commandExecutor.Received(1).ExecuteAsync("az",
@@ -152,7 +158,9 @@ public class InfrastructureSubcommandTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(_commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId));
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 1));
 
         exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
     }
@@ -185,8 +193,85 @@ public class InfrastructureSubcommandTests
 
         // Act & Assert - The method should throw because verification fails
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(_commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId));
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+                maxRetries: 2, baseDelaySeconds: 1));
 
         exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
+    }
+
+    [Fact]
+    public async Task EnsureAppServicePlanExists_WithRetry_WhenPlanPropagatesSlowly_EventuallySucceeds()
+    {
+        // Arrange
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "slow-plan";
+        var planSku = "B1";
+
+        // Mock app service plan doesn't exist initially
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName) && !s.Contains("create")),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(
+                new CommandResult { ExitCode = 1, StandardError = "Plan not found" },
+                new CommandResult { ExitCode = 1, StandardError = "Plan not found" },
+                new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"slow-plan\"}" });
+
+        // Mock app service plan creation succeeds
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 0 });
+
+        // Act
+        await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+            _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+            maxRetries: 2, baseDelaySeconds: 1);
+
+        // Assert - Verify show was called multiple times (initial check + retries)
+        await _commandExecutor.Received(3).ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true);
+    }
+
+    [Fact]
+    public async Task EnsureAppServicePlanExists_WithRetry_WhenPlanNeverAppears_ThrowsAfterRetries()
+    {
+        // Arrange
+        var subscriptionId = "test-sub-id";
+        var resourceGroup = "test-rg";
+        var planName = "missing-plan";
+        var planSku = "B1";
+
+        // Mock app service plan never appears even after creation
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan show") && s.Contains(planName)),
+            captureOutput: true,
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "Plan not found" });
+
+        // Mock app service plan creation succeeds
+        _commandExecutor.ExecuteAsync("az",
+            Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            suppressErrorLogging: true)
+            .Returns(new CommandResult { ExitCode = 0 });
+
+        // Act & Assert - Use minimal retries for test performance
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
+                _commandExecutor, 
+                _logger, 
+                resourceGroup, 
+                planName, 
+                planSku, 
+                subscriptionId,
+                maxRetries: 2,
+                baseDelaySeconds: 1));
+
+        exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
+        exception.Message.Should().Contain("after");
     }
 }
