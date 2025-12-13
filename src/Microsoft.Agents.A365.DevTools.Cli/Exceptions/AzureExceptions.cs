@@ -140,3 +140,84 @@ public class GraphApiException : Agent365Exception
 
     public override int ExitCode => 5; // Graph API error
 }
+
+/// <summary>
+/// Exception thrown when App Service Plan creation or configuration fails.
+/// Provides specific mitigation steps based on the error type (quota, SKU, permissions).
+/// </summary>
+public class AzureAppServicePlanException : Agent365Exception
+{
+    public string PlanName { get; }
+    public string? Location { get; }
+    public string? Sku { get; }
+    public AppServicePlanErrorType ErrorType { get; }
+
+    public AzureAppServicePlanException(
+        string planName,
+        string location,
+        string sku,
+        AppServicePlanErrorType errorType,
+        string errorDetails)
+        : base(
+            errorCode: GetErrorCode(errorType),
+            issueDescription: GetIssueDescription(planName, location, sku, errorType),
+            errorDetails: new List<string> { errorDetails },
+            mitigationSteps: GetMitigationSteps(errorType, location, sku))
+    {
+        PlanName = planName;
+        Location = location;
+        Sku = sku;
+        ErrorType = errorType;
+    }
+
+    private static string GetErrorCode(AppServicePlanErrorType errorType) => errorType switch
+    {
+        AppServicePlanErrorType.QuotaExceeded => "APPSERVICE_QUOTA_EXCEEDED",
+        AppServicePlanErrorType.SkuNotAvailable => "APPSERVICE_SKU_NOT_AVAILABLE",
+        AppServicePlanErrorType.AuthorizationFailed => "APPSERVICE_PERMISSION_DENIED",
+        AppServicePlanErrorType.VerificationTimeout => "APPSERVICE_VERIFICATION_TIMEOUT",
+        _ => "APPSERVICE_CREATION_FAILED"
+    };
+
+    private static string GetIssueDescription(string planName, string location, string sku, AppServicePlanErrorType errorType)
+    {
+        var locationDisplay = string.IsNullOrWhiteSpace(location) ? "(not specified)" : location;
+        var skuDisplay = string.IsNullOrWhiteSpace(sku) ? "(not specified)" : sku;
+
+        return errorType switch
+        {
+            AppServicePlanErrorType.QuotaExceeded => $"Cannot create App Service Plan '{planName}' (SKU: {skuDisplay}, Region: {locationDisplay}) - Azure quota limit exceeded",
+            AppServicePlanErrorType.SkuNotAvailable => $"Cannot create App Service Plan '{planName}' (SKU: {skuDisplay}, Region: {locationDisplay}) - SKU not available in this region",
+            AppServicePlanErrorType.AuthorizationFailed => $"Cannot create App Service Plan '{planName}' (Region: {locationDisplay}) - insufficient permissions",
+            AppServicePlanErrorType.VerificationTimeout => $"App Service Plan '{planName}' (Region: {locationDisplay}) creation succeeded but verification timed out",
+            _ => $"Failed to create App Service Plan '{planName}' (SKU: {skuDisplay}, Region: {locationDisplay})"
+        };
+    }
+
+    private static List<string> GetMitigationSteps(AppServicePlanErrorType errorType, string location, string sku)
+    {
+        return errorType switch
+        {
+            AppServicePlanErrorType.QuotaExceeded => ErrorMessages.GetQuotaExceededMitigation(location),
+            AppServicePlanErrorType.SkuNotAvailable => ErrorMessages.GetSkuNotAvailableMitigation(location, sku),
+            AppServicePlanErrorType.AuthorizationFailed => ErrorMessages.GetAuthorizationFailedMitigation(),
+            AppServicePlanErrorType.VerificationTimeout => ErrorMessages.GetVerificationTimeoutMitigation(),
+            _ => ErrorMessages.GetGenericAppServicePlanMitigation()
+        };
+    }
+
+    public override int ExitCode => 4; // Resource operation error
+    public override bool IsUserError => ErrorType != AppServicePlanErrorType.VerificationTimeout; // Verification timeout is likely an Azure issue
+}
+
+/// <summary>
+/// Types of errors that can occur when creating an App Service Plan
+/// </summary>
+public enum AppServicePlanErrorType
+{
+    QuotaExceeded,
+    SkuNotAvailable,
+    AuthorizationFailed,
+    VerificationTimeout,
+    Other
+}

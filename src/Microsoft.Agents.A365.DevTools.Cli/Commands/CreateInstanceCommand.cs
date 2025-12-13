@@ -20,7 +20,10 @@ public class CreateInstanceCommand
     public static Command CreateCommand(ILogger<CreateInstanceCommand> logger, IConfigService configService, CommandExecutor executor,
         IBotConfigurator botConfigurator, GraphApiService graphApiService, IAzureValidator azureValidator)
     {
-        var command = new Command("create-instance", "Create and configure agent user identities with appropriate\nlicenses and notification settings for your deployed agent");
+        // Command description - deprecated
+        // Old: Create and configure agent user identities with appropriate
+        // licenses and notification settings for your deployed agent
+        var command = new Command("create-instance", "DEPRECATED: Use 'a365 publish', optionally 'a365 deploy', then create instances in Microsoft Teams");
 
         // Options for the main create-instance command
         var configOption = new Option<FileInfo>(
@@ -535,7 +538,7 @@ public class CreateInstanceCommand
         logger.LogError("Use the recommended workflow instead:");
         logger.LogError("  1. Run 'a365 publish' to publish your agent to MOS");
         logger.LogError("  2. Run 'a365 deploy' to deploy your application (if Azure-hosted)");
-        logger.LogError("  3. Hire your agent through Microsoft Teams");
+        logger.LogError("  3. Create an agent instance through Microsoft Teams");
         logger.LogError("");
         logger.LogError("For more information, see:");
         logger.LogError("https://learn.microsoft.com/en-us/microsoft-agent-365/onboard");

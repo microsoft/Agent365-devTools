@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -40,6 +41,7 @@ public class InfrastructureSubcommandTests
         // Mock app service plan creation fails with quota error
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
             suppressErrorLogging: true)
             .Returns(new CommandResult
             {
@@ -47,13 +49,14 @@ public class InfrastructureSubcommandTests
                 StandardError = "ERROR: Operation cannot be completed without additional quota.\n\nAdditional details - Location:\n\nCurrent Limit (Basic VMs): 0\n\nCurrent Usage: 0\n\nAmount required for this deployment (Basic VMs): 1"
             });
 
-        // Act & Assert - The method should throw because verification fails
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Act & Assert - The method should throw immediately because creation fails
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
-                _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
                 maxRetries: 2, baseDelaySeconds: 1));
 
-        exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.QuotaExceeded);
+        exception.PlanName.Should().Be(planName);
     }
 
     [Fact]
@@ -78,12 +81,13 @@ public class InfrastructureSubcommandTests
 
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
-            _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+            _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
             maxRetries: 2, baseDelaySeconds: 1);
 
         // Assert - Verify creation command was never called
         await _commandExecutor.DidNotReceive().ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create")),
+            captureOutput: true,
             suppressErrorLogging: true);
     }
 
@@ -114,17 +118,19 @@ public class InfrastructureSubcommandTests
         // Mock app service plan creation succeeds
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = "Plan created" });
 
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
-            _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+            _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
             maxRetries: 2, baseDelaySeconds: 1);
 
         // Assert - Verify the plan creation was called
         await _commandExecutor.Received(1).ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
             suppressErrorLogging: true);
 
         // Verify the plan was checked twice (before creation and verification after)
@@ -153,16 +159,18 @@ public class InfrastructureSubcommandTests
         // Mock plan creation appears to succeed but doesn't actually create the plan
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = "" });
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
-                _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
                 maxRetries: 2, baseDelaySeconds: 1));
 
-        exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.VerificationTimeout);
+        exception.PlanName.Should().Be(planName);
     }
 
     [Fact]
@@ -184,6 +192,7 @@ public class InfrastructureSubcommandTests
         // Mock app service plan creation fails with permission error
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
             suppressErrorLogging: true)
             .Returns(new CommandResult
             {
@@ -191,13 +200,14 @@ public class InfrastructureSubcommandTests
                 StandardError = "ERROR: The client does not have authorization to perform action"
             });
 
-        // Act & Assert - The method should throw because verification fails
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Act & Assert - The method should throw immediately because creation fails
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
-                _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+                _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
                 maxRetries: 2, baseDelaySeconds: 1));
 
-        exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.AuthorizationFailed);
+        exception.PlanName.Should().Be(planName);
     }
 
     [Fact]
@@ -222,12 +232,13 @@ public class InfrastructureSubcommandTests
         // Mock app service plan creation succeeds
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 0 });
 
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
-            _commandExecutor, _logger, resourceGroup, planName, planSku, subscriptionId,
+            _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
             maxRetries: 2, baseDelaySeconds: 1);
 
         // Assert - Verify show was called multiple times (initial check + retries)
@@ -256,22 +267,24 @@ public class InfrastructureSubcommandTests
         // Mock app service plan creation succeeds
         _commandExecutor.ExecuteAsync("az",
             Arg.Is<string>(s => s.Contains("appservice plan create") && s.Contains(planName)),
+            captureOutput: true,
             suppressErrorLogging: true)
             .Returns(new CommandResult { ExitCode = 0 });
 
         // Act & Assert - Use minimal retries for test performance
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
                 _commandExecutor, 
                 _logger, 
                 resourceGroup, 
                 planName, 
                 planSku, 
+                "eastus",
                 subscriptionId,
                 maxRetries: 2,
                 baseDelaySeconds: 1));
 
-        exception.Message.Should().Contain($"Failed to create App Service plan '{planName}'");
-        exception.Message.Should().Contain("after");
+        exception.ErrorType.Should().Be(AppServicePlanErrorType.VerificationTimeout);
+        exception.PlanName.Should().Be(planName);
     }
 }

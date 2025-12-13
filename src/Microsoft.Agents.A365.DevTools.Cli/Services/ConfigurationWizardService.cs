@@ -110,38 +110,57 @@ public class ConfigurationWizardService : IConfigurationWizardService
             }
 
             // Step 5: Select Resource Group
-            var resourceGroup = await PromptForResourceGroupAsync(existingConfig);
+            var (resourceGroup, resourceGroupLocation) = await PromptForResourceGroupAsync(existingConfig);
             if (string.IsNullOrWhiteSpace(resourceGroup))
             {
                 _logger.LogError("Configuration wizard cancelled: Resource group not selected");
                 return null;
             }
 
-            // Step 6: Select Web App Service Plan or Messaging endpoint
-            string appServicePlan = string.Empty;
-            string messagingEndpoint = string.Empty;
+        // Step 6: Select Web App Service Plan or Messaging endpoint
+        string appServicePlan = string.Empty;
+        string appServicePlanSku = string.Empty;
+        string resourceLocation = string.Empty;
+        string messagingEndpoint = string.Empty;
 
-            bool needDeployment = PromptForWebAppCreate(existingConfig, derivedNames);
-            if (needDeployment)
+        bool needDeployment = PromptForWebAppCreate(existingConfig, derivedNames);
+        if (needDeployment)
+        {
+            var (planName, isNewPlan) = await PromptForAppServicePlanAsync(existingConfig, resourceGroup);
+            appServicePlan = planName;
+            
+            if (string.IsNullOrWhiteSpace(appServicePlan))
             {
-                appServicePlan = await PromptForAppServicePlanAsync(existingConfig, resourceGroup);
-                if (string.IsNullOrWhiteSpace(appServicePlan))
-                {
-                    _logger.LogError("Configuration wizard cancelled: App Service Plan not selected");
-                    return null;
-                }
+                _logger.LogError("Configuration wizard cancelled: App Service Plan not selected");
+                return null;
+            }
+
+            // Only ask for location and SKU if creating a new plan
+            if (isNewPlan)
+            {
+                resourceLocation = PromptForLocation(existingConfig, resourceGroupLocation);
+                appServicePlanSku = PromptForAppServicePlanSku(existingConfig);
             }
             else
             {
-                messagingEndpoint = PromptForMessagingEndpoint(existingConfig);
-                if (string.IsNullOrWhiteSpace(messagingEndpoint))
-                {
-                    _logger.LogError("Configuration wizard cancelled: Messaging Endpoint not provided");
-                    return null;
-                }
+                // Get location from existing plan
+                var allPlans = await _azureCliService.ListAppServicePlansAsync();
+                var selectedPlan = allPlans.FirstOrDefault(p => p.Name.Equals(appServicePlan, StringComparison.OrdinalIgnoreCase));
+                resourceLocation = selectedPlan?.Location ?? resourceGroupLocation ?? ConfigConstants.DefaultAzureLocation;
             }
-
-            // Step 7: Get manager email (required for agent creation)
+        }
+        else
+        {
+            // External hosting - use resource group location for potential RG creation
+            resourceLocation = resourceGroupLocation ?? existingConfig?.Location ?? ConfigConstants.DefaultAzureLocation;
+            
+            messagingEndpoint = PromptForMessagingEndpoint(existingConfig);
+            if (string.IsNullOrWhiteSpace(messagingEndpoint))
+            {
+                _logger.LogError("Configuration wizard cancelled: Messaging Endpoint not provided");
+                return null;
+            }
+        }            // Step 7: Get manager email (required for agent creation)
             var managerEmail = PromptForManagerEmail(existingConfig, accountInfo);
             if (string.IsNullOrWhiteSpace(managerEmail))
             {
@@ -149,10 +168,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 return null;
             }
 
-            // Step 8: Get location (with smart default from account or existing config)
-            var location = PromptForLocation(existingConfig, accountInfo);
-
-            // Step 9: Show configuration summary and allow override
+            // Step 8: Show configuration summary and allow override
             Console.WriteLine();
             Console.WriteLine("=================================================================");
             Console.WriteLine(" Configuration Summary");
@@ -177,7 +193,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine($"Manager Email          : {managerEmail}");
             Console.WriteLine($"Deployment Path        : {deploymentPath}");
             Console.WriteLine($"Resource Group         : {resourceGroup}");
-            Console.WriteLine($"Location               : {location}");
+            Console.WriteLine($"Location               : {resourceLocation}");
             Console.WriteLine($"Subscription           : {accountInfo.Name} ({accountInfo.Id})");
             Console.WriteLine($"Tenant                 : {accountInfo.TenantId}");
             Console.WriteLine();
@@ -203,10 +219,12 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 ClientAppId = clientAppId,
                 SubscriptionId = accountInfo.Id,
                 ResourceGroup = resourceGroup,
-                Location = location,
+                Location = resourceLocation,
                 Environment = existingConfig?.Environment ?? "prod", // Default to prod, not asking for this
                 AppServicePlanName = appServicePlan,
-                AppServicePlanSku = string.IsNullOrWhiteSpace(appServicePlan) ? string.Empty : (existingConfig?.AppServicePlanSku ?? ConfigConstants.DefaultAppServicePlanSku),
+                // AppServicePlanSku is only set when creating a NEW plan. For existing plans, it's left empty
+                // since the SKU cannot be changed and doesn't need to be specified during infrastructure setup
+                AppServicePlanSku = appServicePlanSku ?? string.Empty,
                 WebAppName = string.IsNullOrWhiteSpace(appServicePlan) ? string.Empty : customizedNames.WebAppName,
                 NeedDeployment = needDeployment,
                 MessagingEndpoint = messagingEndpoint,
@@ -234,7 +252,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
     {
         if (!await _azureCliService.IsLoggedInAsync())
         {
-            _logger.LogError("You are not logged in to Azure CLI. Please run 'az login' and select your subscription, then try again");
+            _logger.LogError(ErrorMessages.AzureCliNotAuthenticated);
             return false;
         }
 
@@ -315,7 +333,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
         return path;
     }
 
-    private async Task<string> PromptForResourceGroupAsync(Agent365Config? existingConfig)
+    private async Task<(string name, string? location)> PromptForResourceGroupAsync(Agent365Config? existingConfig)
     {
         Console.WriteLine();
         Console.WriteLine("Loading resource groups from Azure...");
@@ -324,11 +342,13 @@ public class ConfigurationWizardService : IConfigurationWizardService
         if (!resourceGroups.Any())
         {
             Console.WriteLine("WARNING: No resource groups found. You may need to create one first.");
-            return PromptWithDefault(
+            var rgName = PromptWithDefault(
                 "Resource group name",
                 existingConfig?.ResourceGroup ?? $"{Environment.UserName}-agent365-rg",
                 input => !string.IsNullOrWhiteSpace(input) ? (true, "") : (false, "Resource group name cannot be empty")
             );
+            // New RG - will ask for location later
+            return (rgName, null);
         }
 
         Console.WriteLine();
@@ -357,20 +377,21 @@ public class ConfigurationWizardService : IConfigurationWizardService
             {
                 if (index >= 1 && index <= resourceGroups.Count)
                 {
-                    return resourceGroups[index - 1].Name;
+                    var selectedRg = resourceGroups[index - 1];
+                    return (selectedRg.Name, selectedRg.Location);
                 }
 
                 Console.WriteLine($"Please enter a number between 1 and {resourceGroups.Count}");
             }
             else
             {
-                // Create new resource group
-                return input;
+                // Create new resource group - will ask for location later
+                return (input, null);
             }
         }
     }
 
-    private async Task<string> PromptForAppServicePlanAsync(Agent365Config? existingConfig, string resourceGroup)
+    private async Task<(string planName, bool isNewPlan)> PromptForAppServicePlanAsync(Agent365Config? existingConfig, string resourceGroup)
     {
         Console.WriteLine();
         Console.WriteLine("Loading app service plans from Azure...");
@@ -407,12 +428,13 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 {
                     if (index >= 1 && index <= plansInRg.Count)
                     {
-                        return plansInRg[index - 1].Name;
+                        // Existing plan - don't need SKU
+                        return (plansInRg[index - 1].Name, false);
                     }
                     else if (index == plansInRg.Count + 1)
                     {
-                        // Create new plan name
-                        return $"{Environment.UserName}-agent365-plan";
+                        // Create new plan - will need SKU
+                        return ($"{Environment.UserName}-agent365-plan", true);
                     }
                 }
 
@@ -422,7 +444,121 @@ public class ConfigurationWizardService : IConfigurationWizardService
         else
         {
             Console.WriteLine($"No existing app service plans found in {resourceGroup}. A new plan will be created.");
-            return existingConfig?.AppServicePlanName ?? $"{Environment.UserName}-agent365-plan";
+            return (existingConfig?.AppServicePlanName ?? $"{Environment.UserName}-agent365-plan", true);
+        }
+    }
+
+    private string PromptForLocation(Agent365Config? existingConfig, string? resourceGroupLocation)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Select Azure region for the new App Service Plan:");
+        Console.WriteLine();
+        
+        // Use RG location as default if available, otherwise use existing config or default location
+        var defaultLocation = resourceGroupLocation ?? existingConfig?.Location ?? ConfigConstants.DefaultAzureLocation;
+        
+        Console.WriteLine("Common regions:");
+        Console.WriteLine("  1. eastus         - East US");
+        Console.WriteLine("  2. westus         - West US");
+        Console.WriteLine("  3. canadacentral  - Canada Central");
+        Console.WriteLine("  4. westeurope     - West Europe");
+        Console.WriteLine("  5. uksouth        - UK South");
+        Console.WriteLine("  6. australiaeast  - Australia East");
+        Console.WriteLine();
+        if (!string.IsNullOrWhiteSpace(resourceGroupLocation))
+        {
+            Console.WriteLine($"NOTE: Your resource group is in '{resourceGroupLocation}'. Using the same region is recommended.");
+        }
+        else
+        {
+            Console.WriteLine($"NOTE: Default region is '{defaultLocation}'.");
+        }
+        Console.WriteLine("      Quota limits are per-region, so choosing a different region may help if you have quota issues.");
+        Console.WriteLine();
+
+        while (true)
+        {
+            Console.Write($"Enter region [1-6] or type a region name (default: {defaultLocation}): ");
+            var input = Console.ReadLine()?.Trim();
+            
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return defaultLocation;
+            }
+
+            var location = input switch
+            {
+                "1" => "eastus",
+                "2" => "westus",
+                "3" => "canadacentral",
+                "4" => "westeurope",
+                "5" => "uksouth",
+                "6" => "australiaeast",
+                _ => input.ToLowerInvariant()
+            };
+
+            // Basic validation - must be lowercase and no spaces
+            if (location.Contains(' '))
+            {
+                Console.WriteLine("Region names cannot contain spaces. Use lowercase, no spaces (e.g., 'eastus', 'canadacentral')");
+                continue;
+            }
+
+            return location;
+        }
+    }
+
+    private string PromptForAppServicePlanSku(Agent365Config? existingConfig)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Select App Service Plan SKU (pricing tier):");
+        Console.WriteLine("  1. F1  - Free (for dev/test, limited resources)");
+        Console.WriteLine("  2. B1  - Basic (requires quota, production workloads)");
+        Console.WriteLine("  3. B2  - Basic (more CPU/RAM)");
+        Console.WriteLine("  4. S1  - Standard (auto-scale, staging slots)");
+        Console.WriteLine("  5. P1V3 - Premium V3 (high performance)");
+        Console.WriteLine();
+        Console.WriteLine("NOTE: Free tier (F1) is recommended for development and testing.");
+        Console.WriteLine("      Basic tier (B1) often has zero quota by default - may require quota increase.");
+        Console.WriteLine();
+
+        var defaultSku = existingConfig?.AppServicePlanSku ?? ConfigConstants.DefaultAppServicePlanSku;
+        var defaultOption = defaultSku.ToUpperInvariant() switch
+        {
+            "F1" => "1",
+            "B1" => "2",
+            "B2" => "3",
+            "S1" => "4",
+            "P1V3" => "5",
+            _ => "1"
+        };
+
+        while (true)
+        {
+            Console.Write($"Select option [1-5] (default: {defaultOption} - {defaultSku}): ");
+            var input = Console.ReadLine()?.Trim();
+            
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return defaultSku;
+            }
+
+            var sku = input switch
+            {
+                "1" => "F1",
+                "2" => "B1",
+                "3" => "B2",
+                "4" => "S1",
+                "5" => "P1V3",
+                _ => null
+            };
+
+            if (sku != null)
+            {
+                return sku;
+            }
+
+            Console.WriteLine("Please enter a number between 1 and 5");
         }
     }
 

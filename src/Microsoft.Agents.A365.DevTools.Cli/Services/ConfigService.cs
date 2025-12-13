@@ -241,9 +241,7 @@ public class ConfigService : IConfigService
         if (!File.Exists(resolvedConfigPath))
         {
             _logger?.LogError("Static configuration file not found: {ConfigPath}", resolvedConfigPath);
-            throw new FileNotFoundException(
-                $"Static configuration file not found: {resolvedConfigPath}. " +
-                $"Run 'a365 config init' to create a new configuration or specify a different path.");
+            throw new FileNotFoundException($"{ErrorMessages.ConfigFileNotFound} (Path: {resolvedConfigPath})");
         }
 
         // Load static configuration (required)

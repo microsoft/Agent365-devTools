@@ -11,6 +11,7 @@ using System.Reflection;
 using System.Net.Http.Headers;
 using System.IO.Compression;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -167,38 +168,53 @@ public class PublishCommand
                 }
 
                 await File.WriteAllTextAsync(manifestPath, updatedManifest);
-                logger.LogInformation("Manifest updatedManifest successfully with agentBlueprintId {Id}", blueprintId);
+                logger.LogInformation("Manifest updated successfully with agentBlueprintId {Id}", blueprintId);
 
                 await File.WriteAllTextAsync(agenticUserManifestTemplatePath, updatedAgenticUserManifestTemplate);
-                logger.LogInformation("Manifest agentic user manifest template successfully with agentBlueprintId {Id}", blueprintId);
+                logger.LogInformation("Agentic user manifest template updated successfully with agentBlueprintId {Id}", blueprintId);
 
                 // Interactive pause for user customization
                 logger.LogInformation("");
+                logger.LogInformation("=== MANIFEST UPDATED ===");
+                Console.WriteLine($"Location: {manifestPath}");
+                logger.LogInformation("");
+                logger.LogInformation("");
                 logger.LogInformation("=== CUSTOMIZE YOUR AGENT MANIFEST ===");
                 logger.LogInformation("");
-                logger.LogInformation("Your manifest has been updated at: {ManifestPath}", manifestPath);
-                logger.LogInformation("");
                 logger.LogInformation("Please customize these fields before publishing:");
-                logger.LogInformation("    Version ('version'): Increment for republishing (e.g., 1.0.0 to 1.0.1)");
-                logger.LogInformation("    REQUIRED: Must be higher than previously published version");
-                logger.LogInformation("    Agent Name ('name.short' and 'name.full'): Make it descriptive and user-friendly");
-                logger.LogInformation("    Currently: {Name}", agentBlueprintDisplayName);
-                logger.LogInformation("    IMPORTANT: 'name.short' must be 30 characters or less");
-                logger.LogInformation("    Descriptions ('description.short' and 'description.full'): Explain what your agent does");
-                logger.LogInformation("    Short: 1-2 sentences, Full: Detailed capabilities");
-                logger.LogInformation("    Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
-                logger.LogInformation("    Should reflect your organization details");
-                logger.LogInformation("    Icons: Replace 'color.png' and 'outline.png' with your custom branding");
                 logger.LogInformation("");
-                logger.LogInformation("When you're done customizing, type 'continue' (or 'c') and press Enter to proceed:");
-
-                // Wait for user confirmation
-                string? userInput;
-                do
+                logger.LogInformation("  Version ('version')");
+                logger.LogInformation("    - Increment for republishing (e.g., 1.0.0 to 1.0.1)");
+                logger.LogInformation("    - REQUIRED: Must be higher than previously published version");
+                logger.LogInformation("");
+                logger.LogInformation("  Agent Name ('name.short' and 'name.full')");
+                logger.LogInformation("    - Make it descriptive and user-friendly");
+                logger.LogInformation("    - Currently: {Name}", agentBlueprintDisplayName);
+                logger.LogInformation("    - IMPORTANT: 'name.short' must be 30 characters or less");
+                logger.LogInformation("");
+                logger.LogInformation("  Descriptions ('description.short' and 'description.full')");
+                logger.LogInformation("    - Short: 1-2 sentences");
+                logger.LogInformation("    - Full: Detailed capabilities");
+                logger.LogInformation("");
+                logger.LogInformation("  Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
+                logger.LogInformation("    - Should reflect your organization details");
+                logger.LogInformation("");
+                logger.LogInformation("  Icons");
+                logger.LogInformation("    - Replace 'color.png' and 'outline.png' with your custom branding");
+                logger.LogInformation("");
+                
+                // Ask if user wants to open the file now
+                Console.Write("Open manifest in your default editor now? (Y/n): ");
+                var openResponse = Console.ReadLine()?.Trim().ToLowerInvariant();
+                
+                if (openResponse != "n" && openResponse != "no")
                 {
-                    Console.Write("> ");
-                    userInput = Console.ReadLine()?.Trim().ToLowerInvariant();
-                } while (userInput != "continue" && userInput != "c");
+                    FileHelper.TryOpenFileInDefaultEditor(manifestPath, logger);
+                    logger.LogInformation("");
+                }
+                
+                Console.Write("Press Enter when you have finished editing the manifest to continue with publish: ");
+                Console.ReadLine();
 
                 logger.LogInformation("Continuing with publish process...");
                 logger.LogInformation("");
