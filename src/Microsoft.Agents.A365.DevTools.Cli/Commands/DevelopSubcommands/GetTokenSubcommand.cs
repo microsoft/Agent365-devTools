@@ -201,6 +201,12 @@ internal static class GetTokenSubcommand
                         string.Join(", ", requestedScopes));
                     logger.LogInformation("");
 
+                    // Get token cache file path for display (matches AuthenticationService cache location)
+                    var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                    var tokenCachePath = Path.Combine(appDataPath, 
+                        AuthenticationConstants.ApplicationName, 
+                        AuthenticationConstants.TokenCacheFileName);
+
                     // Create a single result representing the consolidated token
                     var tokenResult = new McpServerTokenResult
                     {
@@ -210,7 +216,8 @@ internal static class GetTokenSubcommand
                         Audience = resourceAppId,
                         Success = true,
                         Token = token,
-                        ExpiresOn = DateTime.UtcNow.AddHours(1) // Estimate
+                        ExpiresOn = DateTime.UtcNow.AddHours(1), // Estimate
+                        CacheFilePath = tokenCachePath
                     };
 
                     var tokenResults = new List<McpServerTokenResult> { tokenResult };
@@ -281,6 +288,11 @@ internal static class GetTokenSubcommand
                 {
                     logger.LogInformation("  Token: {Token}", result.Token);
                 }
+
+                if (!string.IsNullOrWhiteSpace(result.CacheFilePath))
+                {
+                    logger.LogInformation("  Cached at: {CacheFilePath}", result.CacheFilePath);
+                }
             }
             else
             {
@@ -303,7 +315,8 @@ internal static class GetTokenSubcommand
             success = r.Success,
             token = r.Token,
             expiresOn = r.ExpiresOn?.ToString("o"),
-            error = r.Error
+            error = r.Error,
+            cacheFilePath = r.CacheFilePath
         });
 
         var json = JsonSerializer.Serialize(output, new JsonSerializerOptions 
@@ -346,5 +359,6 @@ internal static class GetTokenSubcommand
         public string? Token { get; set; }
         public DateTime? ExpiresOn { get; set; }
         public string? Error { get; set; }
+        public string? CacheFilePath { get; set; }
     }
 }
