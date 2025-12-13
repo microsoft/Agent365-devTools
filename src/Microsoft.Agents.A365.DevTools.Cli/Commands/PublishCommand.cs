@@ -23,7 +23,7 @@ public class PublishCommand
 {
     // MOS Titles service URLs
     private const string MosTitlesUrlProd = "https://titles.prod.mos.microsoft.com";
-    
+
     /// <summary>
     /// Gets the appropriate MOS Titles URL based on environment variable override or defaults to production.
     /// Set MOS_TITLES_URL environment variable to override the default production URL.
@@ -38,7 +38,7 @@ public class PublishCommand
         {
             return envUrl;
         }
-        
+
         return MosTitlesUrlProd;
     }
 
@@ -52,7 +52,7 @@ public class PublishCommand
     private static string GetProjectDirectory(Agent365Config config, ILogger logger)
     {
         var projectPath = config.DeploymentProjectPath;
-        
+
         if (string.IsNullOrWhiteSpace(projectPath))
         {
             logger.LogWarning("deploymentProjectPath not configured, using current directory. Set this in a365.config.json for portability.");
@@ -62,8 +62,8 @@ public class PublishCommand
         // Resolve to absolute path (handles both relative and absolute paths)
         try
         {
-            var absolutePath = Path.IsPathRooted(projectPath) 
-                ? projectPath 
+            var absolutePath = Path.IsPathRooted(projectPath)
+                ? projectPath
                 : Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, projectPath));
 
             if (!Directory.Exists(absolutePath))
@@ -112,7 +112,7 @@ public class PublishCommand
 
                 if (string.IsNullOrWhiteSpace(blueprintId))
                 {
-                    logger.LogError("agentBlueprintId missing in configuration. Run 'a365 setup' first.");
+                    logger.LogError("agentBlueprintId missing in configuration. Run 'a365 setup all' first.");
                     return;
                 }
 

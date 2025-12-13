@@ -18,11 +18,11 @@ public static class ConfigCommand
     {
         var directory = configDir ?? Services.ConfigService.GetGlobalConfigDirectory();
         var command = new Command("config", "Configure Azure subscription, resource settings, and deployment options\nfor a365 CLI commands");
-        
+
         // Always add init command - it supports both wizard and direct import (-c option)
         command.AddCommand(CreateInitSubcommand(logger, directory, wizardService));
         command.AddCommand(CreateDisplaySubcommand(logger, directory));
-        
+
         return command;
     }
 
@@ -38,15 +38,15 @@ public static class ConfigCommand
         {
             var configFileOption = cmd.Options.OfType<Option<string?>>().First(opt => opt.HasAlias("-c"));
             var globalOption = cmd.Options.OfType<Option<bool>>().First(opt => opt.HasAlias("--global"));
-            
+
             string? configFile = context.ParseResult.GetValueForOption(configFileOption);
             bool useGlobal = context.ParseResult.GetValueForOption(globalOption);
-            
+
             // Determine config path
-            string configPath = useGlobal 
+            string configPath = useGlobal
                 ? Path.Combine(configDir, "a365.config.json")
                 : Path.Combine(Environment.CurrentDirectory, "a365.config.json");
-            
+
             if (useGlobal)
             {
                 Directory.CreateDirectory(configDir);
@@ -60,12 +60,12 @@ public static class ConfigCommand
                     logger.LogError($"Config file '{configFile}' not found.");
                     return;
                 }
-                
+
                 try
                 {
                     var json = await File.ReadAllTextAsync(configFile);
                     var importedConfig = JsonSerializer.Deserialize<Agent365Config>(json);
-                    
+
                     if (importedConfig == null)
                     {
                         logger.LogError("Failed to parse config file.");
@@ -90,7 +90,7 @@ public static class ConfigCommand
                     var staticConfig = importedConfig.GetStaticConfig();
                     var outputJson = JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true });
                     await File.WriteAllTextAsync(configPath, outputJson);
-                    
+
                     // Also save to global if saving locally
                     if (!useGlobal)
                     {
@@ -98,7 +98,7 @@ public static class ConfigCommand
                         Directory.CreateDirectory(configDir);
                         await File.WriteAllTextAsync(globalConfigPath, outputJson);
                     }
-                    
+
                     logger.LogInformation($"\nConfiguration imported to: {configPath}");
                     return;
                 }
@@ -137,17 +137,17 @@ public static class ConfigCommand
             {
                 // Run the wizard with existing config
                 var config = await wizardService.RunWizardAsync(existingConfig);
-                
+
                 if (config != null)
                 {
                     // CRITICAL: Only serialize static properties (init-only) to a365.config.json
                     // Dynamic properties (get/set) should only be in a365.generated.config.json
                     var staticConfig = config.GetStaticConfig();
                     var json = JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true });
-                    
+
                     // Save to primary location (local or global based on flag)
                     await File.WriteAllTextAsync(configPath, json);
-                    
+
                     // Also save to global config directory for reuse
                     if (!useGlobal)
                     {
@@ -155,11 +155,11 @@ public static class ConfigCommand
                         Directory.CreateDirectory(configDir);
                         await File.WriteAllTextAsync(globalConfigPath, json);
                     }
-                    
+
                     logger.LogInformation($"\nConfiguration saved to: {configPath}");
                     logger.LogInformation("\nYou can now run:");
-                    logger.LogInformation("  a365 setup      - Create Azure resources");
-                    logger.LogInformation("  a365 deploy     - Deploy your agent");
+                    logger.LogInformation("  a365 setup all      - Create Azure resources");
+                    logger.LogInformation("  a365 deploy         - Deploy your agent");
                 }
                 else
                 {
@@ -201,8 +201,8 @@ public static class ConfigCommand
                 var config = await configService.LoadAsync();
 
                 // JSON serialization options for display
-                var displayOptions = new JsonSerializerOptions 
-                { 
+                var displayOptions = new JsonSerializerOptions
+                {
                     WriteIndented = true,
                     DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
                     Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
@@ -223,16 +223,16 @@ public static class ConfigCommand
                             Console.WriteLine($"Location: {configPath}");
                         }
                     }
-                    
+
                     // Use the model's method to get only static configuration fields
                     var staticConfig = config.GetStaticConfig();
                     var displayJson = JsonSerializer.Serialize(staticConfig, displayOptions);
-                    
+
                     // Post-process: Replace escaped backslashes with single backslashes for better readability
                     displayJson = System.Text.RegularExpressions.Regex.Replace(displayJson, @"\\\\", @"\");
-                    
+
                     Console.WriteLine(displayJson);
-                    
+
                     if (showAll && displayGenerated)
                     {
                         Console.WriteLine();
@@ -250,14 +250,14 @@ public static class ConfigCommand
                             Console.WriteLine($"Location: {generatedPath}");
                         }
                     }
-                    
+
                     // Use the model's method to get only generated configuration fields
                     var generatedConfig = config.GetGeneratedConfig();
                     var displayJson = JsonSerializer.Serialize(generatedConfig, displayOptions);
-                    
+
                     // Post-process: Replace escaped backslashes
                     displayJson = System.Text.RegularExpressions.Regex.Replace(displayJson, @"\\\\", @"\");
-                    
+
                     Console.WriteLine(displayJson);
 
                     // Display resource consents table when showing generated config (default or -a)
@@ -269,13 +269,13 @@ public static class ConfigCommand
                         Console.WriteLine(new string('-', ConsentsTableWidth));
                         Console.WriteLine($"{"Resource Name",-30} {"App ID",-40} {"Consented",-12} {"Timestamp",-25}");
                         Console.WriteLine(new string('-', ConsentsTableWidth));
-                        
+
                         foreach (var consent in config.ResourceConsents.OrderBy(c => c.ResourceName))
                         {
                             var timestamp = consent.ConsentTimestamp?.ToString("yyyy-MM-dd HH:mm:ss UTC") ?? "N/A";
                             var consented = consent.ConsentGranted ? "Yes" : "No";
                             Console.WriteLine($"{consent.ResourceName,-30} {consent.ResourceAppId,-40} {consented,-12} {timestamp,-25}");
-                            
+
                             if (consent.Scopes != null && consent.Scopes.Count > 0)
                             {
                                 Console.WriteLine($"  Scopes: {string.Join(", ", consent.Scopes)}");

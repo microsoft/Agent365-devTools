@@ -6,7 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 /// <summary>
-/// Validation errors that occur during `a365 setup` (user-fixable issues).
+/// Validation errors that occur during `a365 setup all` (user-fixable issues).
 /// </summary>
 public sealed class SetupValidationException : Agent365Exception
 {

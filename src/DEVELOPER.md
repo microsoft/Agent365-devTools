@@ -219,7 +219,7 @@ The publish command works with two manifest files:
 a365 config display
 
 # 2. Run setup to create agent blueprint (if not already done)
-a365 setup
+a365 setup all
 
 # 3. Publish the manifest
 a365 publish

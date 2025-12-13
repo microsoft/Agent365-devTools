@@ -240,8 +240,8 @@ Save this configuration? (Y/n): Y
 Configuration saved to: C:\Users\user\a365.config.json
 
 You can now run:
-  a365 setup      - Create Azure resources
-  a365 deploy     - Deploy your agent
+  a365 setup all      - Create Azure resources
+  a365 deploy         - Deploy your agent
 ```
 
 ## Configuration Fields
@@ -481,7 +481,7 @@ Resource group [a365demorg]: new-rg  ← Type to update
 a365 config init
 
 # Then run setup to create Azure resources and agent blueprint
-a365 setup
+a365 setup all
 ```
 
 The `setup` command uses:
@@ -558,7 +558,7 @@ configs/
 
 ```bash
 # Use environment-specific configs
-a365 setup --config configs/a365.config.prod.json
+a365 setup all --config configs/a365.config.prod.json
 ```
 
 ### 4. Secure Sensitive Data
@@ -637,7 +637,7 @@ After running `a365 config init`:
 
 2. **Run setup** to create Azure resources:
    ```bash
-   a365 setup
+   a365 setup all
    ```
 
 3. **Deploy your agent**:

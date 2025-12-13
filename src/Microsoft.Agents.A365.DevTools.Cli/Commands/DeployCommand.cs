@@ -15,8 +15,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public class DeployCommand
 {
     public static Command CreateCommand(
-        ILogger<DeployCommand> logger, 
-        IConfigService configService, 
+        ILogger<DeployCommand> logger,
+        IConfigService configService,
         CommandExecutor executor,
         DeploymentService deploymentService,
         IAzureValidator azureValidator,
@@ -138,7 +138,7 @@ public class DeployCommand
                 // Suppress stale warning since deploy is a legitimate read-only operation
                 var configData = await configService.LoadAsync(config.FullName);
                 if (configData == null) return;
-                
+
                 if (dryRun)
                 {
                     logger.LogInformation("DRY RUN: Deploy application binaries");
@@ -166,7 +166,7 @@ public class DeployCommand
                 HandleDeploymentException(ex, logger);
             }
         }, configOption, verboseOption, dryRunOption, inspectOption, restartOption);
-        
+
         return command;
     }
 
@@ -266,7 +266,7 @@ public class DeployCommand
                 configData.WebAppName, configData.ResourceGroup);
             logger.LogInformation("");
             logger.LogInformation("Please ensure the Web App exists before deploying:");
-            logger.LogInformation("  1. Run 'a365 setup' to create all required Azure resources");
+            logger.LogInformation("  1. Run 'a365 setup all' to create all required Azure resources");
             logger.LogInformation("  2. Or verify your a365.config.json has the correct WebAppName and ResourceGroup");
             logger.LogInformation("");
             logger.LogError("Deployment cannot proceed without a valid Azure Web App target");
@@ -290,7 +290,7 @@ public class DeployCommand
     {
         var deployConfig = ConvertToDeploymentConfig(configData);
         var success = await deploymentService.DeployAsync(deployConfig, verbose, inspect, restart);
-        
+
         if (!success)
         {
             logger.LogError("Deployment failed");
@@ -299,7 +299,7 @@ public class DeployCommand
         {
             logger.LogInformation("Deployment completed successfully");
         }
-        
+
         return success;
     }
 
@@ -408,7 +408,7 @@ public class DeployCommand
 
         if (!ok && !alreadyExists)
         {
-            throw new InvalidOperationException("Failed to set inheritable permissions: " + err + 
+            throw new InvalidOperationException("Failed to set inheritable permissions: " + err +
                 ". Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All and Application.ReadWrite.All permissions in your custom client app.");
         }
 
@@ -468,7 +468,7 @@ public class DeployCommand
                 break;
             default:
                 logger.LogError("Deployment failed: {Message}", ex.Message);
-                
+
                 throw new DeployAppException($"Deployment failed: {ex.Message}", ex);
         }
     }
