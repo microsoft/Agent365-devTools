@@ -205,51 +205,6 @@ public static class ManifestHelper
     }
 
     /// <summary>
-    /// Reads toolingManifest.json and returns the unique list of audiences required by all MCP servers.
-    /// Strategy:
-    ///  1) If a server entry has an explicit "audience" property, use it.
-    ///  2) Otherwise, use McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName).
-    ///  3) If no servers found, returns empty array.
-    /// </summary>
-    public static async Task<string[]> GetRequiredAudiencesAsync(string manifestPath)
-    {
-        var audiences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        var parsed = await ReadManifestAsync(manifestPath);
-        if (parsed is null) return audiences.OrderBy(a => a).ToArray();
-
-        var (servers, _) = parsed.Value;
-
-        foreach (var element in servers)
-        {
-            // Prefer explicit "audience" in manifest
-            if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl) &&
-                audienceEl.ValueKind == JsonValueKind.String)
-            {
-                var aud = audienceEl.GetString();
-                if (!string.IsNullOrWhiteSpace(aud))
-                {
-                    audiences.Add(aud);
-                    continue;
-                }
-            }
-
-            // Fallback to mapping
-            var serverName = ExtractServerName(element);
-            if (!string.IsNullOrWhiteSpace(serverName))
-            {
-                var (_, mappedAudience) = McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName);
-                if (!string.IsNullOrWhiteSpace(mappedAudience))
-                {
-                    audiences.Add(mappedAudience);
-                }
-            }
-        }
-
-        return audiences.OrderBy(a => a).ToArray();
-    }
-
-    /// <summary>
     /// Reads toolingManifest.json and returns the unique list of scopes required by all MCP servers.
     /// Strategy:
     ///  1) If a server entry has an explicit "scope" property, use it.
