@@ -75,14 +75,27 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Copying MockToolingServer deps.json file..."
 $sourceDepsFile = Join-Path (Split-Path $projectPath) "bin\Release\net8.0\Microsoft.Agents.A365.DevTools.MockToolingServer.deps.json"
 if (Test-Path $sourceDepsFile) {
-    # Find the installed CLI location
-    $cliToolsPath = Join-Path $env:USERPROFILE ".dotnet\tools\.store\microsoft.agents.a365.devtools.cli\$version\microsoft.agents.a365.devtools.cli\$version\tools\net8.0\any"
-    if (Test-Path $cliToolsPath) {
-        $targetDepsFile = Join-Path $cliToolsPath "Microsoft.Agents.A365.DevTools.MockToolingServer.deps.json"
-        Copy-Item $sourceDepsFile $targetDepsFile -Force
-        Write-Host "MockToolingServer deps.json copied successfully." -ForegroundColor Green
-    } else {
-        Write-Warning "Could not find CLI installation path: $cliToolsPath"
+    try {
+        # Find the actual installation path by discovering the MockToolingServer.dll location
+        # This approach doesn't assume any specific directory structure
+        $a365Command = Get-Command a365 -ErrorAction Stop
+        $toolsRoot = Split-Path $a365Command.Source
+
+        $mockServerDll = Get-ChildItem "$toolsRoot\.store" -Recurse -Filter "Microsoft.Agents.A365.DevTools.MockToolingServer.dll" -ErrorAction Stop | Select-Object -First 1
+
+        if ($mockServerDll) {
+            $cliToolsPath = Split-Path $mockServerDll.FullName
+
+            $targetDepsFile = Join-Path $cliToolsPath "Microsoft.Agents.A365.DevTools.MockToolingServer.deps.json"
+            Copy-Item $sourceDepsFile $targetDepsFile -Force
+        } else {
+            Write-Warning "Could not find MockToolingServer.dll in the CLI installation."
+            Write-Warning "MockToolingServer may not work correctly without deps.json file."
+        }
+    } catch {
+        Write-Warning "Failed to locate CLI installation: $($_.Exception.Message)"
+        Write-Warning "Make sure the CLI tool is properly installed and accessible via 'a365' command."
+        Write-Warning "MockToolingServer may not work correctly without deps.json file."
     }
 } else {
     Write-Warning "MockToolingServer deps.json not found at: $sourceDepsFile"
