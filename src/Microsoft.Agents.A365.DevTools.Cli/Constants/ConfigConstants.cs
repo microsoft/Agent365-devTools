@@ -63,6 +63,11 @@ public static class ConfigConstants
     /// </summary>
     public const string ProductionClusterCategory = "prod";
 
+    /// <summary>
+    /// Default region location
+    /// </summary>
+    public const string DefaultLocation = "eastus";
+
     // Hardcoded default scopes
 
     /// <summary>
