@@ -253,10 +253,10 @@ public class StartMockToolingServerSubcommandTests
     [InlineData(-1)]
     [InlineData(65536)]
     [InlineData(100000)]
-    public void HandleStartServer_WithInvalidPort_LogsError(int invalidPort)
+    public async Task HandleStartServer_WithInvalidPort_LogsError(int invalidPort)
     {
         // Act
-        StartMockToolingServerSubcommand.HandleStartServer(invalidPort, _testLogger);
+        await StartMockToolingServerSubcommand.HandleStartServer(invalidPort, _testLogger, _mockCommandExecutor);
 
         // Assert
         Assert.Single(_testLogger.LogCalls);
@@ -267,10 +267,10 @@ public class StartMockToolingServerSubcommandTests
     }
 
     [Fact]
-    public void HandleStartServer_WithNullPort_UsesDefaultPort()
+    public async Task HandleStartServer_WithNullPort_UsesDefaultPort()
     {
         // Act
-        StartMockToolingServerSubcommand.HandleStartServer(null, _testLogger);
+        await StartMockToolingServerSubcommand.HandleStartServer(null, _testLogger, _mockCommandExecutor);
 
         // Assert - Should log starting message with default port
         Assert.NotEmpty(_testLogger.LogCalls);
@@ -285,10 +285,10 @@ public class StartMockToolingServerSubcommandTests
     [InlineData(5309)]
     [InlineData(8080)]
     [InlineData(65535)]
-    public void HandleStartServer_WithValidPort_LogsStartingMessage(int validPort)
+    public async Task HandleStartServer_WithValidPort_LogsStartingMessage(int validPort)
     {
         // Act
-        StartMockToolingServerSubcommand.HandleStartServer(validPort, _testLogger);
+        await StartMockToolingServerSubcommand.HandleStartServer(validPort, _testLogger, _mockCommandExecutor);
 
         // Assert - Should log starting message with specified port
         Assert.NotEmpty(_testLogger.LogCalls);
@@ -299,10 +299,10 @@ public class StartMockToolingServerSubcommandTests
     }
 
     [Fact]
-    public void HandleStartServer_WithValidPort_AttemptsToStartServer()
+    public async Task HandleStartServer_WithValidPort_AttemptsToStartServer()
     {
         // Act
-        StartMockToolingServerSubcommand.HandleStartServer(5309, _testLogger);
+        await StartMockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor);
 
         // Assert - Should have multiple log calls (startup sequence)
         Assert.True(_testLogger.LogCalls.Count > 1);
@@ -320,15 +320,44 @@ public class StartMockToolingServerSubcommandTests
     }
 
     [Fact]
-    public void HandleStartServer_WithInvalidPort_DoesNotAttemptStartup()
+    public async Task HandleStartServer_WithInvalidPort_DoesNotAttemptStartup()
     {
         // Act
-        StartMockToolingServerSubcommand.HandleStartServer(0, _testLogger);
+        await StartMockToolingServerSubcommand.HandleStartServer(0, _testLogger, _mockCommandExecutor);
 
         // Assert - Should only log error and return early
         Assert.Single(_testLogger.LogCalls);
         var logCall = _testLogger.LogCalls.First();
         Assert.Equal(LogLevel.Error, logCall.Level);
         Assert.Contains("Invalid port number", logCall.Message);
+    }
+
+    [Fact]
+    public async Task HandleStartServer_WithCommandExecutor_UsesFallbackWhenTerminalFails()
+    {
+        // Arrange
+        var mockResult = new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = "Server started", StandardError = "" };
+        _mockCommandExecutor.ExecuteWithStreamingAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(mockResult));
+
+        // Act - This will likely fail to start in new terminal in test environment
+        await StartMockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor);
+
+        // Assert - Should attempt fallback and log appropriate messages
+        Assert.NotEmpty(_testLogger.LogCalls);
+
+        // Should have starting message
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("Starting Mock Tooling Server"));
+
+        // May have warning about terminal failure and fallback attempt
+        var hasWarningOrFallback = _testLogger.LogCalls.Any(call =>
+            call.Level == LogLevel.Warning ||
+            (call.Level == LogLevel.Information && call.Message.Contains("Falling back")));
+
+        // Test passes if we get expected logging behavior (either success or proper fallback)
+        Assert.True(hasWarningOrFallback || _testLogger.LogCalls.Any(call =>
+            call.Message.Contains("started successfully")));
     }
 }

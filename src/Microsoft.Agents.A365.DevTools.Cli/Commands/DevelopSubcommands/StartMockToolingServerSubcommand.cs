@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -20,7 +19,10 @@ internal static class StartMockToolingServerSubcommand
     /// </summary>
     /// <param name="logger">Logger for progress reporting</param>
     /// <param name="commandExecutor">Command Executor for running processes</param>
-    /// <returns></returns>
+    /// <returns>
+    /// A <see cref="Command"/> object representing the 'start-mock-tooling-server'
+    /// subcommand, used to start the Mock Tooling Server for local development and testing.
+    /// </returns>
     public static Command CreateCommand(
         ILogger logger,
         CommandExecutor commandExecutor)
@@ -34,7 +36,7 @@ internal static class StartMockToolingServerSubcommand
         );
         command.AddOption(portOption);
 
-        command.SetHandler((port) => HandleStartServer(port, logger), portOption);
+        command.SetHandler(async (port) => await HandleStartServer(port, logger, commandExecutor), portOption);
 
         return command;
     }
@@ -44,7 +46,8 @@ internal static class StartMockToolingServerSubcommand
     /// </summary>
     /// <param name="port">The port number to run the server on</param>
     /// <param name="logger">Logger for progress reporting</param>
-    public static void HandleStartServer(int? port, ILogger logger)
+    /// <param name="commandExecutor">Command executor for fallback execution</param>
+    public static async Task HandleStartServer(int? port, ILogger logger, CommandExecutor commandExecutor)
     {
         var serverPort = port ?? 5309;
         if (serverPort < 1 || serverPort > 65535)
@@ -81,14 +84,12 @@ internal static class StartMockToolingServerSubcommand
 
             logger.LogInformation("Starting server on port {Port} in a new terminal window...", serverPort);
 
-            // Start the mock server in a new terminal window
-            if (!StartServerInNewTerminal(executableCommand, arguments, assemblyDir, logger))
+            if (!await StartServer(executableCommand, arguments, assemblyDir, logger, commandExecutor))
             {
-                logger.LogError("Failed to start Mock Tooling Server in a new terminal window.");
+                logger.LogError("Failed to start Mock Tooling Server.");
                 return;
             }
 
-            logger.LogInformation("Mock Tooling Server started successfully in a new terminal window.");
             logger.LogInformation("The server is running on http://localhost:{Port}", serverPort);
             logger.LogInformation("Close the terminal window or press Ctrl+C in it to stop the server.");
         }
@@ -96,6 +97,37 @@ internal static class StartMockToolingServerSubcommand
         {
             logger.LogError(ex, "Failed to start Mock Tooling Server: {Message}", ex.Message);
         }
+    }
+
+    private static async Task<bool> StartServer(string executableCommand, string arguments, string assemblyDir, ILogger logger, CommandExecutor commandExecutor)
+    {
+        // Start the mock server in a new terminal window
+        if (StartServerInNewTerminal(executableCommand, arguments, assemblyDir, logger))
+        {
+            logger.LogInformation("Mock Tooling Server started successfully in a new terminal window.");
+            return true;
+        }
+
+        logger.LogWarning("Failed to start Mock Tooling Server in a new terminal window.");
+
+        // Fallback to running in current terminal using CommandExecutor
+        logger.LogInformation("Falling back to running server in current terminal...");
+
+        var result = await commandExecutor.ExecuteWithStreamingAsync(
+            executableCommand,
+            arguments,
+            assemblyDir,
+            "MockServer: ",
+            interactive: true);
+
+        if (result.ExitCode != 0)
+        {
+            logger.LogError("Mock Tooling Server exited with code {ExitCode}", result.ExitCode);
+            logger.LogError("Error output: {ErrorOutput}", result.StandardError);
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -241,14 +273,9 @@ internal static class StartMockToolingServerSubcommand
             FileName = foundTerminal
         };
 
-        if (foundTerminal == "gnome-terminal")
-        {
-            processStartInfo.Arguments = $"--title=\"Mock Tooling Server\" -- {command} {arguments}";
-        }
-        else
-        {
-            processStartInfo.Arguments = $"-e \"{command} {arguments}\"";
-        }
+        processStartInfo.Arguments = foundTerminal == "gnome-terminal" ?
+            $"--title=\"Mock Tooling Server\" -- {command} {arguments}" :
+            $"-e \"{command} {arguments}\"";
 
         return processStartInfo;
     }
