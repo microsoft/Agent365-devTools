@@ -19,13 +19,15 @@ internal static class StartMockToolingServerSubcommand
     /// </summary>
     /// <param name="logger">Logger for progress reporting</param>
     /// <param name="commandExecutor">Command Executor for running processes</param>
+    /// <param name="processService">Process service for starting processes</param>
     /// <returns>
     /// A <see cref="Command"/> object representing the 'start-mock-tooling-server'
     /// subcommand, used to start the Mock Tooling Server for local development and testing.
     /// </returns>
     public static Command CreateCommand(
         ILogger logger,
-        CommandExecutor commandExecutor)
+        CommandExecutor commandExecutor,
+        IProcessService processService)
     {
         var command = new Command("start-mock-tooling-server", "Start the Mock Tooling Server for local development and testing");
         command.AddAlias("start-mcp");
@@ -36,7 +38,7 @@ internal static class StartMockToolingServerSubcommand
         );
         command.AddOption(portOption);
 
-        command.SetHandler(async (port) => await HandleStartServer(port, logger, commandExecutor), portOption);
+        command.SetHandler(async (port) => await HandleStartServer(port, logger, commandExecutor, processService), portOption);
 
         return command;
     }
@@ -47,7 +49,8 @@ internal static class StartMockToolingServerSubcommand
     /// <param name="port">The port number to run the server on</param>
     /// <param name="logger">Logger for progress reporting</param>
     /// <param name="commandExecutor">Command executor for fallback execution</param>
-    public static async Task HandleStartServer(int? port, ILogger logger, CommandExecutor commandExecutor)
+    /// <param name="processService">Process service for starting processes</param>
+    public static async Task HandleStartServer(int? port, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
     {
         var serverPort = port ?? 5309;
         if (serverPort < 1 || serverPort > 65535)
@@ -84,7 +87,7 @@ internal static class StartMockToolingServerSubcommand
 
             logger.LogInformation("Starting server on port {Port} in a new terminal window...", serverPort);
 
-            if (!await StartServer(executableCommand, arguments, assemblyDir, logger, commandExecutor))
+            if (!await StartServer(executableCommand, arguments, assemblyDir, logger, commandExecutor, processService))
             {
                 logger.LogError("Failed to start Mock Tooling Server.");
                 return;
@@ -99,10 +102,10 @@ internal static class StartMockToolingServerSubcommand
         }
     }
 
-    private static async Task<bool> StartServer(string executableCommand, string arguments, string assemblyDir, ILogger logger, CommandExecutor commandExecutor)
+    private static async Task<bool> StartServer(string executableCommand, string arguments, string assemblyDir, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
     {
         // Start the mock server in a new terminal window
-        if (StartServerInNewTerminal(executableCommand, arguments, assemblyDir, logger))
+        if (StartServerInNewTerminal(executableCommand, arguments, assemblyDir, logger, processService))
         {
             logger.LogInformation("Mock Tooling Server started successfully in a new terminal window.");
             return true;
@@ -137,8 +140,9 @@ internal static class StartMockToolingServerSubcommand
     /// <param name="arguments">The arguments for the command</param>
     /// <param name="workingDirectory">Working directory for the process</param>
     /// <param name="logger">Logger for output</param>
+    /// <param name="processService">Process service for starting processes</param>
     /// <returns>True if the process was started successfully, false otherwise</returns>
-    private static bool StartServerInNewTerminal(string command, string arguments, string workingDirectory, ILogger logger)
+    private static bool StartServerInNewTerminal(string command, string arguments, string workingDirectory, ILogger logger, IProcessService processService)
     {
         try
         {
@@ -167,7 +171,7 @@ internal static class StartMockToolingServerSubcommand
             processStartInfo.UseShellExecute = true;
             processStartInfo.CreateNoWindow = false;
 
-            var process = Process.Start(processStartInfo);
+            var process = processService.Start(processStartInfo);
             return process != null;
         }
         catch (Exception ex)
