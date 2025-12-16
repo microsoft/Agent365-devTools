@@ -4,7 +4,8 @@
 // WebApplication for SSE hosting
 var builder = WebApplication.CreateBuilder(args);
 
-// Send logs to stderr so stdout stays clean for the protocol
+// Clear default providers and add only console logging to avoid EventLog dependency issues
+builder.Logging.ClearProviders();
 builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
 Console.WriteLine($"[Program.cs] MCP Server starting at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff} UTC");
