@@ -34,60 +34,68 @@ internal static class StartMockToolingServerSubcommand
         );
         command.AddOption(portOption);
 
-        command.SetHandler((port) =>
+        command.SetHandler((port) => HandleStartServer(port, logger), portOption);
+
+        return command;
+    }
+
+    /// <summary>
+    /// Handles the start server command execution
+    /// </summary>
+    /// <param name="port">The port number to run the server on</param>
+    /// <param name="logger">Logger for progress reporting</param>
+    public static void HandleStartServer(int? port, ILogger logger)
+    {
+        var serverPort = port ?? 5309;
+        if (serverPort < 1 || serverPort > 65535)
         {
-            var serverPort = port ?? 5309;
-            if (serverPort < 1 || serverPort > 65535)
+            logger.LogError("Invalid port number: {Port}. Port must be between 1 and 65535.", serverPort);
+            return;
+        }
+
+        logger.LogInformation("Starting Mock Tooling Server on port {Port}...", serverPort);
+
+        try
+        {
+            // Find the bundled MockToolingServer executable
+            var assemblyDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            if (assemblyDir == null)
             {
-                logger.LogError("Invalid port number: {Port}. Port must be between 1 and 65535.", serverPort);
+                logger.LogError("Unable to determine CLI assembly location");
                 return;
             }
 
-            logger.LogInformation("Starting Mock Tooling Server on port {Port}...", serverPort);
+            var mockServerDll = Path.Combine(assemblyDir, "Microsoft.Agents.A365.DevTools.MockToolingServer.dll");
 
-            try
+            // Use dotnet to run the DLL as it properly resolves dependencies in the same directory
+            if (!File.Exists(mockServerDll))
             {
-                // Find the bundled MockToolingServer executable
-                var assemblyDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-                if (assemblyDir == null)
-                {
-                    logger.LogError("Unable to determine CLI assembly location");
-                    return;
-                }
-
-                var mockServerDll = Path.Combine(assemblyDir, "Microsoft.Agents.A365.DevTools.MockToolingServer.dll");
-
-                // Use dotnet to run the DLL as it properly resolves dependencies in the same directory
-                if (!File.Exists(mockServerDll))
-                {
-                    logger.LogError("Mock Tooling Server DLL not found in CLI package.");
-                    logger.LogError("Expected location: {DllPath}", mockServerDll);
-                    logger.LogError("Please ensure the Mock Tooling Server is properly packaged with the CLI.");
-                    return;
-                }
-
-                var executableCommand = "dotnet";
-                var arguments = $"\"{mockServerDll}\" --urls http://localhost:{serverPort}";
-
-                logger.LogInformation("Starting server on port {Port} in a new terminal window...", serverPort);
-
-                // Start the mock server in a new terminal window
-                if (!StartServerInNewTerminal(executableCommand, arguments, assemblyDir, logger))
-                {
-                    logger.LogError("Failed to start Mock Tooling Server in a new terminal window.");
-                }
-
-                logger.LogInformation("Mock Tooling Server started successfully in a new terminal window.");
-                logger.LogInformation("The server is running on http://localhost:{Port}", serverPort);
-                logger.LogInformation("Close the terminal window or press Ctrl+C in it to stop the server.");
+                logger.LogError("Mock Tooling Server DLL not found in CLI package.");
+                logger.LogError("Expected location: {DllPath}", mockServerDll);
+                logger.LogError("Please ensure the Mock Tooling Server is properly packaged with the CLI.");
+                return;
             }
-            catch (Exception ex)
+
+            var executableCommand = "dotnet";
+            var arguments = $"\"{mockServerDll}\" --urls http://localhost:{serverPort}";
+
+            logger.LogInformation("Starting server on port {Port} in a new terminal window...", serverPort);
+
+            // Start the mock server in a new terminal window
+            if (!StartServerInNewTerminal(executableCommand, arguments, assemblyDir, logger))
             {
-                logger.LogError(ex, "Failed to start Mock Tooling Server: {Message}", ex.Message);
+                logger.LogError("Failed to start Mock Tooling Server in a new terminal window.");
+                return;
             }
-        }, portOption);
 
-        return command;
+            logger.LogInformation("Mock Tooling Server started successfully in a new terminal window.");
+            logger.LogInformation("The server is running on http://localhost:{Port}", serverPort);
+            logger.LogInformation("Close the terminal window or press Ctrl+C in it to stop the server.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to start Mock Tooling Server: {Message}", ex.Message);
+        }
     }
 
     /// <summary>
