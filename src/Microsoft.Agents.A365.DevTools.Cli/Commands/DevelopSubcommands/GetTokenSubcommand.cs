@@ -332,17 +332,7 @@ internal static class GetTokenSubcommand
         {
             if (result.Success && !string.IsNullOrWhiteSpace(result.Token))
             {
-                if (verbose)
-                {
-                    Console.WriteLine($"# {result.ServerName}");
-                    Console.WriteLine($"# Scope: {result.Scope}");
-                    Console.WriteLine($"# Audience: {result.Audience}");
-                }
                 Console.WriteLine(result.Token);
-                if (verbose)
-                {
-                    Console.WriteLine();
-                }
             }
         }
     }

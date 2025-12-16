@@ -59,7 +59,7 @@ public static class FileHelper
                         }
                         else
                         {
-                            logger.LogInformation("Opened file in {Editor}", editor);
+                            logger.LogDebug("Opened file in {Editor}", editor);
                             return true;
                         }
                     }
@@ -77,7 +77,7 @@ public static class FileHelper
                 // On Windows with UseShellExecute, Process.Start may return null even on success
                 // when the file is opened in an existing process (e.g., Notepad, VS Code)
                 Process.Start(new ProcessStartInfo(filePath) { UseShellExecute = true });
-                logger.LogInformation("Opened file in default Windows editor");
+                logger.LogDebug("Opened file in default Windows editor");
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
@@ -93,7 +93,7 @@ public static class FileHelper
                     logger.LogWarning("Failed to open file using macOS 'open' command (process returned null)");
                     return false;
                 }
-                logger.LogInformation("Opened file using macOS 'open' command");
+                logger.LogDebug("Opened file using macOS 'open' command");
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {

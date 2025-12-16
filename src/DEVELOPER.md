@@ -271,8 +271,48 @@ If automated upload fails due to insufficient privileges:
 
 For detailed MOS upload instructions, see the [MOS Titles Documentation](https://aka.ms/mos-titles-docs).
 
+**MOS Token Authentication:**
+
+The publish command uses **custom client app** authentication to acquire MOS (Microsoft Office Store) tokens:
+
+- **MosTokenService**: Native C# service using MSAL.NET for interactive authentication
+- **Custom Client App**: Uses the client app ID configured during `a365 config init` (not hardcoded Microsoft IDs)
+- **Tenant-Specific Authorities**: Uses `https://login.microsoftonline.com/{tenantId}` for single-tenant app support (not `/common` endpoint)
+- **Token Caching**: Caches tokens locally in `.mos-token-cache.json` to reduce auth prompts
+- **MOS Environments**: Supports prod, sdf, test, gccm, gcch, and dod environments
+- **Redirect URI**: Uses `http://localhost:8400/` for OAuth callback (aligns with custom client app configuration)
+
+**Important:** Single-tenant apps (created after October 15, 2018) cannot use the `/common` endpoint due to Azure policy. The CLI automatically uses tenant-specific authority URLs built from the `TenantId` in your configuration to ensure compatibility.
+
+**MOS Prerequisites (Auto-Configured):**
+
+On first run, `a365 publish` automatically configures MOS API access:
+
+1. **Service Principal Creation**: Creates service principals for MOS resource apps in your tenant:
+   - `6ec511af-06dc-4fe2-b493-63a37bc397b1` (TPS AppServices 3p App - MOS publishing)
+   - `8578e004-a5c6-46e7-913e-12f58912df43` (Power Platform API - MOS token acquisition)
+   - `e8be65d6-d430-4289-a665-51bf2a194bda` (MOS Titles API - titles.prod.mos.microsoft.com access)
+
+2. **Idempotency Check**: Skips setup if MOS permissions already exist in custom client app
+
+3. **Admin Consent Detection**: Checks OAuth2 permission grants and prompts user to grant admin consent if missing
+
+4. **Fail-Fast on Privilege Errors**: If you lack Application Administrator/Cloud Application Administrator/Global Administrator role, the CLI shows manual service principal creation commands:
+   ```bash
+   az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1
+   az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43
+   az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda
+   ```
+
 **Architecture Details:**
 
+- **MosConstants.cs**: Centralized constants for MOS resource app IDs, environment scopes, authorities, redirect URI
+- **MosTokenService.cs**: Handles token acquisition using MSAL.NET PublicClientApplication with tenant-specific authorities:
+  - Validates both `ClientAppId` and `TenantId` from configuration
+  - Builds authority URL dynamically: `https://login.microsoftonline.com/{tenantId}`
+  - Government cloud: `https://login.microsoftonline.us/{tenantId}`
+  - Returns null if TenantId is missing (fail-fast validation)
+- **PublishHelpers.EnsureMosPrerequisitesAsync**: Just-in-time provisioning of MOS prerequisites with idempotency and error handling
 - **ManifestTemplateService**: Handles embedded resource extraction and manifest customization
 - **Embedded Resources**: 4 files embedded at build time:
   - `manifest.json` - Base Teams app manifest
@@ -284,10 +324,16 @@ For detailed MOS upload instructions, see the [MOS Titles Documentation](https:/
 
 **Error Handling:**
 
+- **AADSTS650052 (Missing Service Principal/Admin Consent)**: Shows Portal URL for admin consent or prompts interactive consent
+- **AADSTS50194 (Single-Tenant App / Multi-Tenant Endpoint)**: Fixed by using tenant-specific authority URLs instead of `/common` endpoint
+- **MOS Prerequisites Failure**: Displays manual `az ad sp create` commands for all three MOS resource apps if automatic creation fails
 - **401 Unauthorized / 403 Forbidden**: Graceful fallback with manual upload instructions
 - **Missing Blueprint ID**: Clear error message directing user to run `a365 setup`
+- **Missing TenantId**: MosTokenService returns null if TenantId is not configured (fail-fast validation)
 - **Invalid Manifest**: JSON validation errors with specific field information
 - **Network Errors**: Detailed HTTP status codes and response bodies for troubleshooting
+- **Consistent Error Codes**: Uses `ErrorCodes.MosTokenAcquisitionFailed`, `ErrorCodes.MosPrerequisitesFailed`, `ErrorCodes.MosAdminConsentRequired`
+- **Centralized Messages**: Error guidance from `ErrorMessages.GetMosServicePrincipalMitigation()` and `ErrorMessages.GetMosAdminConsentMitigation()`
 
 ## Permissions Architecture
 

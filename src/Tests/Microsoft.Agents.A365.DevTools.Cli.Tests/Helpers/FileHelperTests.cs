@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using System.Runtime.InteropServices;
+using static Microsoft.Agents.A365.DevTools.Cli.Tests.TestConstants;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Helpers;
 
@@ -37,7 +38,7 @@ public class FileHelperTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
-    [Fact]
+    [Fact(Skip = "Requires interactive file opening - causes Windows 'Select app' dialog during test execution")]
     public void TryOpenFileInDefaultEditor_WithExistingFile_AttemptsToOpen()
     {
         // Arrange
@@ -77,7 +78,7 @@ public class FileHelperTests
         }
     }
 
-    [Fact]
+    [Fact(Skip = SkipReasons.RequiresInteractiveFileOpening)]
     public void TryOpenFileInDefaultEditor_LogsAppropriateMessages()
     {
         // Arrange
@@ -120,7 +121,7 @@ public class FileHelperTests
         result.Should().BeFalse();
     }
 
-    [Theory]
+    [Theory(Skip = SkipReasons.RequiresInteractiveFileOpening)]
     [InlineData("manifest.json")]
     [InlineData("config.yaml")]
     [InlineData("readme.md")]

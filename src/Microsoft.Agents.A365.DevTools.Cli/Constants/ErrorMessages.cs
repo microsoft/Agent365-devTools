@@ -96,6 +96,7 @@ public static class ErrorMessages
     }
 
     #endregion
+
     #region Azure Authentication Messages
 
     public const string AzureCliNotAuthenticated = 
@@ -113,6 +114,107 @@ public static class ErrorMessages
 
     public const string InvalidConfigFormat = 
         "Configuration file has invalid JSON format";
+
+    #endregion
+
+    #region MOS Token and Prerequisites Messages
+
+    public const string MosClientAppIdMissing = 
+        "Custom client app ID not found in configuration. Run 'a365 config init' first.";
+
+    public const string MosClientAppNotFound = 
+        "Custom client app not found in tenant. Verify the app exists and you have access.";
+
+    public const string MosTokenAcquisitionFailed = 
+        "Failed to acquire MOS token. Check your authentication and permissions.";
+
+    public const string MosAdminConsentRequired = 
+        "Admin consent required for MOS API permissions. Visit the Azure Portal to grant consent.";
+
+    /// <summary>
+    /// Gets mitigation steps for MOS service principal creation failures.
+    /// </summary>
+    public static List<string> GetMosServicePrincipalMitigation(string appId)
+    {
+        return new List<string>
+        {
+            $"Failed to create service principal for application {appId}",
+            "",
+            "You need one of these roles to create service principals:",
+            "  - Application Administrator (recommended)",
+            "  - Cloud Application Administrator",
+            "  - Global Administrator",
+            "",
+            "To check your current roles:",
+            "  az rest --method GET --url https://graph.microsoft.com/v1.0/me/memberOf",
+            "",
+            "Contact your tenant administrator if you don't have these roles.",
+            "",
+            "Alternatively, ask your admin to run this Azure CLI command:",
+            $"  az ad sp create --id {appId}"
+        };
+    }
+
+    /// <summary>
+    /// Gets mitigation steps for first-party client app service principal creation.
+    /// </summary>
+    public static List<string> GetFirstPartyClientAppServicePrincipalMitigation()
+    {
+        return new List<string>
+        {
+            "Failed to create service principal for Microsoft first-party client app",
+            "This app is required for MOS token acquisition",
+            "",
+            "You need one of these roles:",
+            "  - Application Administrator (recommended)",
+            "  - Cloud Application Administrator",
+            "  - Global Administrator",
+            "",
+            "Ask your tenant administrator to run:",
+            $"  az ad sp create --id {MosConstants.TpsAppServicesClientAppId}",
+            "",
+            "Or grant you one of the required roles above."
+        };
+    }
+
+    /// <summary>
+    /// Gets mitigation steps for all MOS resource app service principals.
+    /// </summary>
+    public static List<string> GetMosResourceAppsServicePrincipalMitigation()
+    {
+        return new List<string>
+        {
+            "Failed to create service principals for MOS resource applications",
+            "These service principals are required for MOS API access",
+            "",
+            "You need one of these roles:",
+            "  - Application Administrator (recommended)",
+            "  - Cloud Application Administrator",
+            "  - Global Administrator",
+            "",
+            "Ask your tenant administrator to run these commands:",
+            "  az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1",
+            "  az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43",
+            "  az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda",
+            "",
+            "Or grant you one of the required roles above."
+        };
+    }
+
+    /// <summary>
+    /// Gets mitigation steps for MOS admin consent issues.
+    /// </summary>
+    public static List<string> GetMosAdminConsentMitigation(string clientAppId)
+    {
+        return new List<string>
+        {
+            "Grant admin consent in Azure Portal:",
+            $"  1. Go to: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{clientAppId}",
+            "  2. Click 'Grant admin consent for [Your Organization]'",
+            "  3. Wait 1-2 minutes for consent to propagate",
+            "Alternatively, authenticate interactively when running 'a365 publish' and consent when prompted."
+        };
+    }
 
     #endregion
 }

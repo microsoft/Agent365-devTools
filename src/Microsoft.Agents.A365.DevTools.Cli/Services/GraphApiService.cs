@@ -61,7 +61,7 @@ public class GraphApiService
     /// </summary>
     public async Task<string?> GetGraphAccessTokenAsync(string tenantId, CancellationToken ct = default)
     {
-        _logger.LogInformation("Acquiring Graph API access token...");
+        _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
         
         try
         {
@@ -98,7 +98,7 @@ public class GraphApiService
             if (tokenResult.Success && !string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
             {
                 var token = tokenResult.StandardOutput.Trim();
-                _logger.LogInformation("Graph API access token acquired successfully");
+                _logger.LogDebug("Graph API access token acquired successfully");
                 return token;
             }
 
@@ -222,11 +222,13 @@ public class GraphApiService
                 cancellationToken);
 
             // Step 3: Lookup Service Principal
-            _logger.LogInformation("[STEP 3] Looking up service principal...");
+            _logger.LogInformation("[STEP 3] Looking up service principal for blueprint {BlueprintId}...", blueprintId);
             var spObjectId = await LookupServicePrincipalAsync(blueprintId, cancellationToken);
             if (string.IsNullOrWhiteSpace(spObjectId))
             {
-                _logger.LogError("Failed to lookup service principal");
+                _logger.LogError("Failed to lookup service principal for blueprint {BlueprintId}", blueprintId);
+                _logger.LogError("The agent blueprint service principal may not have been created yet.");
+                _logger.LogError("Try running 'a365 deploy' or 'a365 setup' to create the agent identity first.");
                 return false;
             }
 
@@ -389,12 +391,16 @@ public class GraphApiService
     {
         try
         {
+            _logger.LogDebug("Looking up service principal for blueprint appId: {BlueprintId}", blueprintId);
             var url = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{blueprintId}'";
+            _logger.LogDebug("Service principal lookup URL: {Url}", url);
             var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Failed to lookup service principal");
+                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("Failed to lookup service principal for blueprint {BlueprintId}. HTTP {StatusCode}: {ErrorBody}", 
+                    blueprintId, (int)response.StatusCode, errorBody);
                 return null;
             }
 
@@ -406,15 +412,19 @@ public class GraphApiService
                 var sp = value[0];
                 if (sp.TryGetProperty("id", out var id))
                 {
-                    return id.GetString();
+                    var spObjectId = id.GetString();
+                    _logger.LogDebug("Found service principal with objectId: {SpObjectId}", spObjectId);
+                    return spObjectId;
                 }
             }
 
+            _logger.LogWarning("No service principal found for blueprint appId {BlueprintId}. The blueprint's service principal must be created before publish. Response: {Json}", 
+                blueprintId, json);
             return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Exception looking up service principal");
+            _logger.LogError(ex, "Exception looking up service principal for blueprint {BlueprintId}", blueprintId);
             return null;
         }
     }
@@ -724,7 +734,7 @@ public class GraphApiService
         return true;
     }
 
-    public async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
@@ -785,7 +795,7 @@ public class GraphApiService
         };
     }
 
-    public async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct)) return false;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
@@ -796,6 +806,12 @@ public class GraphApiService
         var resp = await _httpClient.SendAsync(request, ct);
 
         // Many PATCH calls return 204 NoContent on success
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+        }
+        
         return resp.IsSuccessStatusCode;
     }
 
@@ -828,7 +844,7 @@ public class GraphApiService
         return true;
     }
 
-    public async Task<string?> LookupServicePrincipalByAppIdAsync(string tenantId, string appId, CancellationToken ct = default)
+    public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(string tenantId, string appId, CancellationToken ct = default)
     {
         var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id", ct);
         if (doc == null) return null;
@@ -836,7 +852,7 @@ public class GraphApiService
         return value[0].GetProperty("id").GetString();
     }
 
-    public async Task<string> EnsureServicePrincipalForAppIdAsync(
+    public virtual async Task<string> EnsureServicePrincipalForAppIdAsync(
         string tenantId, string appId, CancellationToken ct = default)
     {
         // Try existing
@@ -1105,7 +1121,7 @@ public class GraphApiService
         }
     }
 
-    public async Task<bool> ReplaceOauth2PermissionGrantAsync(
+    public virtual async Task<bool> ReplaceOauth2PermissionGrantAsync(
         string tenantId,
         string clientSpObjectId,  
         string resourceSpObjectId,
@@ -1352,6 +1368,88 @@ public class GraphApiService
         {
             _logger.LogError(ex, "Failed to add required resource access: {Message}", ex.Message);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Checks if the current user has sufficient privileges to create service principals.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>True if user has required roles, false otherwise</returns>
+    public virtual async Task<(bool hasPrivileges, List<string> roles)> CheckServicePrincipalCreationPrivilegesAsync(
+        string tenantId, 
+        CancellationToken ct = default)
+    {
+        try
+        {
+            _logger.LogDebug("Checking user's directory roles for service principal creation privileges");
+            
+            var token = await GetGraphAccessTokenAsync(tenantId, ct);
+            if (token == null)
+            {
+                _logger.LogWarning("Could not acquire Graph token to check privileges");
+                return (false, new List<string>());
+            }
+
+            var request = new HttpRequestMessage(HttpMethod.Get, 
+                "https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var response = await _httpClient.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Could not retrieve user's directory roles: {Status}", response.StatusCode);
+                return (false, new List<string>());
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            var doc = JsonDocument.Parse(json);
+
+            var roles = new List<string>();
+            if (doc.RootElement.TryGetProperty("value", out var rolesArray))
+            {
+                foreach (var role in rolesArray.EnumerateArray())
+                {
+                    if (role.TryGetProperty("displayName", out var displayName))
+                    {
+                        var roleName = displayName.GetString();
+                        if (!string.IsNullOrEmpty(roleName))
+                        {
+                            roles.Add(roleName);
+                        }
+                    }
+                }
+            }
+
+            _logger.LogDebug("User has {Count} directory roles", roles.Count);
+
+            // Check for required roles
+            var requiredRoles = new[] 
+            { 
+                "Application Administrator", 
+                "Cloud Application Administrator", 
+                "Global Administrator" 
+            };
+
+            var hasRequiredRole = roles.Any(r => requiredRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
+            
+            if (hasRequiredRole)
+            {
+                _logger.LogDebug("User has sufficient privileges for service principal creation");
+            }
+            else
+            {
+                _logger.LogDebug("User does not have required roles for service principal creation. Roles: {Roles}", 
+                    string.Join(", ", roles));
+            }
+
+            return (hasRequiredRole, roles);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check service principal creation privileges: {Message}", ex.Message);
+            return (false, new List<string>());
         }
     }
 }
