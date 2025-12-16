@@ -74,4 +74,10 @@ public static class AuthenticationConstants
     /// Used by the gettoken command to set/clear authentication tokens
     /// </summary>
     public const string MCPBearerTokenEnvironmentVariable = "MCP_BEARER_TOKEN";
+
+    /// <summary>
+    /// MCP bearer token cache file name (simple JSON format with token and expiry)
+    /// Stored in the same directory as auth-token.json for easy access by other applications
+    /// </summary>
+    public const string MCPBearerTokenFileName = "mcp_bearer_token.json";
 }

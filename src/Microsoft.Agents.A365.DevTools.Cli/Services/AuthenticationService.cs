@@ -36,14 +36,19 @@ public class AuthenticationService
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
     /// <param name="scopes">Optional explicit scopes to request. If not provided, uses .default scope pattern</param>
+    /// <param name="cacheFilePath">Optional custom cache file path. If not provided, uses default auth-token.json</param>
     public async Task<string> GetAccessTokenAsync(
         string resourceUrl, 
         string? tenantId = null, 
         bool forceRefresh = false, 
         string? clientId = null,
         IEnumerable<string>? scopes = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = false,
+        string? cacheFilePath = null)
     {
+        // Use custom cache path if provided, otherwise use default
+        var effectiveCachePath = cacheFilePath ?? _tokenCachePath;
+
         // Build cache key based on resource and tenant only
         // Azure AD returns tokens with all consented scopes regardless of which scopes are requested,
         // so we don't include scopes in the cache key to avoid duplicate cache entries for the same token.
@@ -53,11 +58,11 @@ public class AuthenticationService
             : $"{resourceUrl}:tenant:{tenantId}";
 
         // Try to load cached token for this cache key
-        if (!forceRefresh && File.Exists(_tokenCachePath))
+        if (!forceRefresh && File.Exists(effectiveCachePath))
         {
             try
             {
-                var cachedToken = await LoadCachedTokenAsync(cacheKey);
+                var cachedToken = await LoadCachedTokenAsync(cacheKey, effectiveCachePath);
                 if (cachedToken != null && !IsTokenExpired(cachedToken))
                 {
                     // If tenant ID is specified, validate that cached token is for the correct tenant
@@ -99,7 +104,7 @@ public class AuthenticationService
         var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser);
 
         // Cache the token with the appropriate cache key
-        await CacheTokenAsync(cacheKey, token);
+        await CacheTokenAsync(cacheKey, token, effectiveCachePath);
 
         return token.AccessToken;
     }
@@ -294,12 +299,26 @@ public class AuthenticationService
     /// <summary>
     /// Loads cached token for a specific resourceUrl from disk
     /// </summary>
-    private async Task<TokenInfo?> LoadCachedTokenAsync(string resourceUrl)
+    /// <param name="resourceUrl">The resource URL key to look up in the cache</param>
+    /// <param name="cacheFilePath">Optional custom cache file path. If not provided, uses default</param>
+    private async Task<TokenInfo?> LoadCachedTokenAsync(string resourceUrl, string? cacheFilePath = null)
     {
-        if (!File.Exists(_tokenCachePath))
+        var effectiveCachePath = cacheFilePath ?? _tokenCachePath;
+        
+        if (!File.Exists(effectiveCachePath))
             return null;
 
-        var json = await File.ReadAllTextAsync(_tokenCachePath);
+        var json = await File.ReadAllTextAsync(effectiveCachePath);
+        
+        // If the cache file is mcp_bearer_token.json, use single token format
+        var fileName = Path.GetFileName(effectiveCachePath);
+        if (fileName == AuthenticationConstants.MCPBearerTokenFileName)
+        {
+            var singleToken = JsonSerializer.Deserialize<TokenInfo>(json);
+            return singleToken;
+        }
+        
+        // Default behavior: load from dictionary cache structure
         var cache = JsonSerializer.Deserialize<TokenCache>(json) ?? new TokenCache();
         cache.Tokens.TryGetValue(resourceUrl, out var token);
         return token;
@@ -308,12 +327,35 @@ public class AuthenticationService
     /// <summary>
     /// Caches token for a specific resourceUrl to disk
     /// </summary>
-    private async Task CacheTokenAsync(string resourceUrl, TokenInfo token)
+    /// <param name="resourceUrl">The resource URL key to store in the cache</param>
+    /// <param name="token">The token information to cache</param>
+    /// <param name="cacheFilePath">Optional custom cache file path. If not provided, uses default</param>
+    private async Task CacheTokenAsync(string resourceUrl, TokenInfo token, string? cacheFilePath = null)
     {
-        TokenCache cache;
-        if (File.Exists(_tokenCachePath))
+        var effectiveCachePath = cacheFilePath ?? _tokenCachePath;
+        
+        // Ensure the directory exists
+        var cacheDir = Path.GetDirectoryName(effectiveCachePath);
+        if (!string.IsNullOrEmpty(cacheDir))
         {
-            var json = await File.ReadAllTextAsync(_tokenCachePath);
+            Directory.CreateDirectory(cacheDir);
+        }
+
+        // If the cache file is mcp_bearer_token.json, store as single token
+        var fileName = Path.GetFileName(effectiveCachePath);
+        if (fileName == AuthenticationConstants.MCPBearerTokenFileName)
+        {
+            var singleTokenJson = JsonSerializer.Serialize(token, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(effectiveCachePath, singleTokenJson);
+            _logger.LogInformation("Authentication token cached at: {Path}", effectiveCachePath);
+            return;
+        }
+
+        // Default behavior: store in dictionary cache structure
+        TokenCache cache;
+        if (File.Exists(effectiveCachePath))
+        {
+            var json = await File.ReadAllTextAsync(effectiveCachePath);
             cache = JsonSerializer.Deserialize<TokenCache>(json) ?? new TokenCache();
         }
         else
@@ -323,8 +365,8 @@ public class AuthenticationService
 
         cache.Tokens[resourceUrl] = token;
         var updatedJson = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(_tokenCachePath, updatedJson);
-        _logger.LogInformation("Authentication token cached for {ResourceUrl} at: {Path}", resourceUrl, _tokenCachePath);
+        await File.WriteAllTextAsync(effectiveCachePath, updatedJson);
+        _logger.LogInformation("Authentication token cached for {ResourceUrl} at: {Path}", resourceUrl, effectiveCachePath);
     }
 
     /// <summary>
@@ -344,6 +386,7 @@ public class AuthenticationService
     /// <param name="tenantId">Optional tenant ID for single-tenant authentication</param>
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
+    /// <param name="cacheFilePath">Optional custom cache file path. If not provided, uses default auth-token.json</param>
     /// <returns>Access token with the requested scopes</returns>
     public async Task<string> GetAccessTokenWithScopesAsync(
         string resourceAppId, 
@@ -351,7 +394,8 @@ public class AuthenticationService
         string? tenantId = null, 
         bool forceRefresh = false,
         string? clientId = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = false,
+        string? cacheFilePath = null)
     {
         if (string.IsNullOrWhiteSpace(resourceAppId))
             throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));
@@ -363,7 +407,7 @@ public class AuthenticationService
             resourceAppId, string.Join(", ", scopes));
 
         // Delegate to the consolidated GetAccessTokenAsync method
-        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser);
+        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser, cacheFilePath);
     }
 
     /// <summary>

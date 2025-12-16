@@ -63,14 +63,6 @@ internal static class GetTokenSubcommand
             ["--force-refresh"],
             description: "Force token refresh even if cached token is valid");
 
-        var setEnvOption = new Option<bool>(
-            ["--set-env"],
-            description: "Set the token as the BEARER_TOKEN environment variable");
-
-        var clearEnvOption = new Option<bool>(
-            ["--clear-env"],
-            description: "Clear the BEARER_TOKEN environment variable");
-
         command.AddOption(configOption);
         command.AddOption(appIdOption);
         command.AddOption(manifestOption);
@@ -78,8 +70,6 @@ internal static class GetTokenSubcommand
         command.AddOption(outputFormatOption);
         command.AddOption(verboseOption);
         command.AddOption(forceRefreshOption);
-        command.AddOption(setEnvOption);
-        command.AddOption(clearEnvOption);
 
         command.SetHandler(async (InvocationContext context) =>
         {
@@ -90,17 +80,9 @@ internal static class GetTokenSubcommand
             var outputFormat = context.ParseResult.GetValueForOption(outputFormatOption)!;
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var forceRefresh = context.ParseResult.GetValueForOption(forceRefreshOption);
-            var setEnv = context.ParseResult.GetValueForOption(setEnvOption);
-            var clearEnv = context.ParseResult.GetValueForOption(clearEnvOption);
 
             try
             {
-                // Handle clear environment variable option
-                if (clearEnv)
-                {
-                    HandleClearEnvironmentVariable(logger);
-                    return;
-                }
 
                 logger.LogInformation("Retrieving bearer token for MCP servers...");
                 logger.LogInformation("");
@@ -209,14 +191,22 @@ internal static class GetTokenSubcommand
                     
                     logger.LogInformation("");
                     
+                    // Get MCP bearer token cache file path
+                    var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                    var mcpTokenCachePath = Path.Combine(appDataPath, 
+                        AuthenticationConstants.ApplicationName, 
+                        AuthenticationConstants.MCPBearerTokenFileName);
+                    
                     // Use GetAccessTokenWithScopesAsync for explicit scope control
+                    // Cache to mcp_bearer_token.json instead of auth-token.json
                     var token = await authService.GetAccessTokenWithScopesAsync(
                         resourceAppId,
                         requestedScopes,
                         tenantId,
                         forceRefresh,
                         clientAppId,
-                        useInteractiveBrowser: true);
+                        useInteractiveBrowser: true,
+                        cacheFilePath: mcpTokenCachePath);
 
                     if (string.IsNullOrWhiteSpace(token))
                     {
@@ -229,12 +219,6 @@ internal static class GetTokenSubcommand
                         string.Join(", ", requestedScopes));
                     logger.LogInformation("");
 
-                    // Get token cache file path for display (matches AuthenticationService cache location)
-                    var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                    var tokenCachePath = Path.Combine(appDataPath, 
-                        AuthenticationConstants.ApplicationName, 
-                        AuthenticationConstants.TokenCacheFileName);
-
                     // Create a single result representing the consolidated token
                     var tokenResult = new McpServerTokenResult
                     {
@@ -245,7 +229,7 @@ internal static class GetTokenSubcommand
                         Success = true,
                         Token = token,
                         ExpiresOn = DateTime.UtcNow.AddHours(1), // Estimate
-                        CacheFilePath = tokenCachePath
+                        CacheFilePath = mcpTokenCachePath
                     };
 
                     var tokenResults = new List<McpServerTokenResult> { tokenResult };
@@ -253,12 +237,13 @@ internal static class GetTokenSubcommand
                     // Display results based on output format
                     DisplayResults(tokenResults, outputFormat, verbose, logger);
 
-                    // Set environment variable if requested
-                    if (setEnv)
-                    {
-                        HandleSetEnvironmentVariable(token, logger);
-                    }
+                    logger.LogInformation("");
+                    logger.LogInformation("For use in other applications:");
+                    logger.LogInformation("  - MCP Bearer Token File: {Path}", mcpTokenCachePath);
+                    logger.LogInformation("  - Read the 'Token' field from the JSON file");
+                    logger.LogInformation("  - Check 'ExpiresOn' to determine if token is still valid");
 
+                    logger.LogInformation("");
                     logger.LogInformation("Token acquired successfully!");
                 }
                 catch (Exception ex)
@@ -381,90 +366,6 @@ internal static class GetTokenSubcommand
                 }
             }
         }
-    }
-
-    /// <summary>
-    /// Handles the --clear-env option to clear the BEARER_TOKEN environment variable
-    /// </summary>
-    /// <param name="logger">Logger instance for output</param>
-    private static void HandleClearEnvironmentVariable(ILogger logger)
-    {
-        var envVarName = AuthenticationConstants.MCPBearerTokenEnvironmentVariable;
-        var currentValue = Environment.GetEnvironmentVariable(envVarName, EnvironmentVariableTarget.Process);
-        Environment.SetEnvironmentVariable(envVarName, null, EnvironmentVariableTarget.Process);
-        
-        logger.LogInformation("=== Clear Environment Variable ===");
-        logger.LogInformation("Variable Name: {EnvVar}", envVarName);
-        logger.LogInformation("Status: Cleared from current process");
-        
-        if (!string.IsNullOrWhiteSpace(currentValue))
-        {
-            logger.LogInformation("Previous Value: {TokenPreview}...", currentValue.Length > 20 ? currentValue[..20] : currentValue);
-        }
-        
-        logger.LogInformation("");
-        logger.LogInformation("Note: The environment variable is cleared only in the current process.");
-        logger.LogInformation("To clear it in your shell session, use one of these commands:");
-        logger.LogInformation("");
-        
-        // Detect OS and provide appropriate command
-        if (OperatingSystem.IsWindows())
-        {
-            logger.LogInformation("PowerShell:");
-            logger.LogInformation("  Remove-Item Env:{EnvVar}", envVarName);
-            logger.LogInformation("");
-            logger.LogInformation("Command Prompt:");
-            logger.LogInformation("  set {EnvVar}=", envVarName);
-        }
-        else
-        {
-            logger.LogInformation("Bash/Zsh:");
-            logger.LogInformation("  unset {EnvVar}", envVarName);
-        }
-        logger.LogInformation("");
-        logger.LogInformation("Environment variable cleared successfully!");
-    }
-
-    /// <summary>
-    /// Handles the --set-env option to set the BEARER_TOKEN environment variable
-    /// </summary>
-    /// <param name="token">The bearer token to set</param>
-    /// <param name="logger">Logger instance for output</param>
-    private static void HandleSetEnvironmentVariable(string token, ILogger logger)
-    {
-        var envVarName = AuthenticationConstants.MCPBearerTokenEnvironmentVariable;
-        Environment.SetEnvironmentVariable(envVarName, token, EnvironmentVariableTarget.Process);
-        logger.LogInformation("");
-        logger.LogInformation("=== Environment Variable ===");
-        logger.LogInformation("Variable Name: {EnvVar}", envVarName);
-        logger.LogInformation("Value: {TokenPreview}... (token set)", token.Length > 20 ? token[..20] : token);
-        logger.LogInformation("");
-        logger.LogInformation("Note: The environment variable is set only in the current process.");
-        logger.LogInformation("To set it in your shell session, use one of these commands:");
-        logger.LogInformation("");
-        
-        // Detect OS and provide appropriate command
-        if (OperatingSystem.IsWindows())
-        {
-            logger.LogInformation("PowerShell:");
-            logger.LogInformation("  $env:{EnvVar} = (a365 develop gettoken --output raw)", envVarName);
-            logger.LogInformation("");
-            logger.LogInformation("Command Prompt:");
-            logger.LogInformation("  for /f %i in ('a365 develop gettoken --output raw') do set {EnvVar}=%i", envVarName);
-            logger.LogInformation("");
-            logger.LogInformation("To clear the variable:");
-            logger.LogInformation("  PowerShell: Remove-Item Env:{EnvVar}", envVarName);
-            logger.LogInformation("  Command Prompt: set {EnvVar}=", envVarName);
-        }
-        else
-        {
-            logger.LogInformation("Bash/Zsh:");
-            logger.LogInformation("  export {EnvVar}=$(a365 develop gettoken --output raw)", envVarName);
-            logger.LogInformation("");
-            logger.LogInformation("To clear the variable:");
-            logger.LogInformation("  unset {EnvVar}", envVarName);
-        }
-        logger.LogInformation("");
     }
 
     private class McpServerTokenResult

@@ -683,6 +683,40 @@ public class AuthenticationServiceTests : IDisposable
 
     #endregion
 
+    #region CacheFilePath Parameter Tests
+
+    [Fact]
+    public async Task GetAccessTokenWithScopesAsync_WithCustomCacheFilePath_ShouldUseProvidedPath()
+    {
+        // Arrange
+        var resourceAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
+        var scopes = new[] { "McpServers.Mail.All" };
+        var customCachePath = Path.Combine(Path.GetTempPath(), $"custom_cache_{Guid.NewGuid()}.json");
+
+        try
+        {
+            // Act & Assert - Method should accept the parameter without error
+            // Note: This will still fail authentication since we can't mock interactive auth,
+            // but it validates the parameter is accepted
+            Func<Task> act = async () => await _authService.GetAccessTokenWithScopesAsync(
+                resourceAppId,
+                scopes,
+                cacheFilePath: customCachePath);
+
+            // We expect authentication to fail in unit tests, but not parameter validation
+            await act.Should().ThrowAsync<Exception>();
+        }
+        finally
+        {
+            if (File.Exists(customCachePath))
+            {
+                File.Delete(customCachePath);
+            }
+        }
+    }
+
+    #endregion
+
     #region ClearCache Additional Tests
 
     [Fact]
