@@ -81,8 +81,7 @@ internal static class MockToolingServerSubcommand
         {
             logger.LogInformation("[DRY RUN] Would start Mock Tooling Server on port {Port}", serverPort);
             logger.LogInformation("[DRY RUN] Would use verbose logging: {Verbose}", verbose);
-            logger.LogInformation("[DRY RUN] Would search for MockToolingServer DLL in CLI assembly directory");
-            logger.LogInformation("[DRY RUN] Would execute: dotnet \"MockToolingServer.dll\" --urls http://localhost:{Port}", serverPort);
+            logger.LogInformation("[DRY RUN] Would execute: a365-mock-tooling-server --urls http://localhost:{Port}", serverPort);
             logger.LogInformation("[DRY RUN] Would start server in new terminal window");
             return;
         }
@@ -96,47 +95,27 @@ internal static class MockToolingServerSubcommand
 
         try
         {
-            // Find the bundled MockToolingServer executable
-            var assemblyDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-            if (assemblyDir == null)
-            {
-                logger.LogError("Unable to determine CLI assembly location");
-                return;
-            }
-
-            if (verbose)
-            {
-                logger.LogInformation("CLI assembly directory: {AssemblyDir}", assemblyDir);
-            }
-
-            var mockServerDll = Path.Combine(assemblyDir, "Microsoft.Agents.A365.DevTools.MockToolingServer.dll");
-
-            if (verbose)
-            {
-                logger.LogInformation("Looking for MockToolingServer DLL at: {DllPath}", mockServerDll);
-            }
-
-            // Use dotnet to run the DLL as it properly resolves dependencies in the same directory
-            if (!File.Exists(mockServerDll))
-            {
-                logger.LogError("Mock Tooling Server DLL not found in CLI package.");
-                logger.LogError("Expected location: {DllPath}", mockServerDll);
-                logger.LogError("Please ensure the Mock Tooling Server is properly packaged with the CLI.");
-                return;
-            }
-
-            var executableCommand = "dotnet";
-            var arguments = $"\"{mockServerDll}\" --urls http://localhost:{serverPort}";
+            // Use the global dotnet tool directly
+            var executableCommand = "a365-mock-tooling-server";
+            var arguments = $"--urls http://localhost:{serverPort}";
 
             if (verbose)
             {
                 logger.LogInformation("Command to execute: {Command} {Arguments}", executableCommand, arguments);
-                logger.LogInformation("Working directory: {WorkingDir}", assemblyDir);
             }
 
             logger.LogInformation("Starting server on port {Port} in a new terminal window...", serverPort);
 
-            if (!await StartServer(executableCommand, arguments, assemblyDir, verbose, logger, commandExecutor, processService))
+            // Check if the tool is installed
+            if (!await IsToolInstalled(logger, commandExecutor, verbose))
+            {
+                logger.LogError("MockToolingServer tool not found. Please install it first:");
+                logger.LogError("Run the install-cli.ps1 script or manually install with:");
+                logger.LogError("dotnet tool install --global Microsoft.Agents.A365.DevTools.MockToolingServer");
+                return;
+            }
+
+            if (!await StartServer(executableCommand, arguments, Environment.CurrentDirectory, verbose, logger, commandExecutor, processService))
             {
                 logger.LogError("Failed to start Mock Tooling Server.");
                 return;
@@ -190,6 +169,49 @@ internal static class MockToolingServerSubcommand
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Checks if the MockToolingServer dotnet tool is installed
+    /// </summary>
+    /// <param name="logger">Logger for output</param>
+    /// <param name="commandExecutor">Command executor for running dotnet tool list</param>
+    /// <param name="verbose">Enable verbose logging</param>
+    /// <returns>True if the tool is installed, false otherwise</returns>
+    private static async Task<bool> IsToolInstalled(ILogger logger, CommandExecutor commandExecutor, bool verbose)
+    {
+        try
+        {
+            if (verbose)
+            {
+                logger.LogInformation("Checking if a365-mock-tooling-server tool is installed...");
+            }
+
+            var result = await commandExecutor.ExecuteAsync("dotnet", "tool list --global");
+
+            if (result.ExitCode == 0 && result.StandardOutput.Contains("a365-mock-tooling-server"))
+            {
+                if (verbose)
+                {
+                    logger.LogInformation("MockToolingServer tool is installed");
+                }
+                return true;
+            }
+
+            if (verbose)
+            {
+                logger.LogWarning("MockToolingServer tool not found in global tools list");
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            if (verbose)
+            {
+                logger.LogError(ex, "Failed to check if MockToolingServer tool is installed");
+            }
+            return false;
+        }
     }
 
     /// <summary>

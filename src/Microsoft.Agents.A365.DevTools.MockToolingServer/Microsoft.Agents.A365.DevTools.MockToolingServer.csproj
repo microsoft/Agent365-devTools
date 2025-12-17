@@ -5,6 +5,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Microsoft.Agents.A365.DevTools.MockToolingServer</RootNamespace>
+
+    <!-- Package as dotnet tool -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>a365-mock-tooling-server</ToolCommandName>
+    <PackageId>Microsoft.Agents.A365.DevTools.MockToolingServer</PackageId>
   </PropertyGroup>
   <ItemGroup>
     <Using Include="System.Collections.Concurrent" />

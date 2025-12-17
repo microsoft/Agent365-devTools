@@ -209,6 +209,9 @@ class Program
         // Register AzureWebAppCreator for SDK-based web app creation
         services.AddSingleton<AzureWebAppCreator>();
 
+        // Register ProcessService for cross-platform process launching
+        services.AddSingleton<ProcessService>();
+
         // Register Azure CLI service and Configuration Wizard
         services.AddSingleton<IAzureCliService, AzureCliService>();
         services.AddSingleton<IConfigurationWizardService, ConfigurationWizardService>();

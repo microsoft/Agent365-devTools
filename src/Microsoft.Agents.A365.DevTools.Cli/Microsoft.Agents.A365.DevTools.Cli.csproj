@@ -63,33 +63,4 @@
     <EmbeddedResource Include="Templates\color.png" />
     <EmbeddedResource Include="Templates\outline.png" />
   </ItemGroup>
-
-  <ItemGroup>
-    <!-- Reference MockToolingServer project to include it in the package -->
-    <ProjectReference Include="..\Microsoft.Agents.A365.DevTools.MockToolingServer\Microsoft.Agents.A365.DevTools.MockToolingServer.csproj">
-      <IncludeAssets>All</IncludeAssets>
-    </ProjectReference>
-  </ItemGroup>
-
-  <!-- Target to publish and copy MockToolingServer with all dependencies -->
-  <Target Name="PublishMockToolingServer" BeforeTargets="Build;Pack">
-    <!-- Publish MockToolingServer as framework-dependent to generate proper deps.json -->
-    <Exec Command="dotnet publish &quot;..\Microsoft.Agents.A365.DevTools.MockToolingServer\Microsoft.Agents.A365.DevTools.MockToolingServer.csproj&quot; -c $(Configuration) -o &quot;$(OutputPath)mockserver&quot;"
-          WorkingDirectory="$(MSBuildProjectDirectory)" />
-  </Target>
-
-  <!-- Target to copy MockToolingServer files after publish -->
-  <Target Name="CopyMockToolingServer" AfterTargets="PublishMockToolingServer">
-    <ItemGroup>
-      <!-- Copy all published files from mockserver subdirectory to main output -->
-      <MockServerPublished Include="$(OutputPath)mockserver\**\*" />
-    </ItemGroup>
-
-    <Copy SourceFiles="@(MockServerPublished)"
-          DestinationFiles="@(MockServerPublished->'$(OutputPath)%(Filename)%(Extension)')" />
-
-    <!-- Clean up the temporary mockserver directory -->
-    <RemoveDir Directories="$(OutputPath)mockserver" />
-  </Target>
-
 </Project>

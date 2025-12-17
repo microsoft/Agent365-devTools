@@ -6,9 +6,9 @@
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $projectPath = Join-Path $repoRoot 'src\Microsoft.Agents.A365.DevTools.Cli\Microsoft.Agents.A365.DevTools.Cli.csproj'
 
-# Verify the project file exists
+# Verify project file exists
 if (-not (Test-Path $projectPath)) {
-    Write-Error "ERROR: Project file not found at $projectPath"
+    Write-Error "ERROR: CLI project file not found at $projectPath"
     exit 1
 }
 
@@ -57,6 +57,8 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "ERROR: dotnet pack failed. Check output above for details."
     exit 1
 }
+
+
 
 # Find the generated .nupkg
 $nupkg = Get-ChildItem -Path $outputDir -Filter 'Microsoft.Agents.A365.DevTools.Cli*.nupkg' | Select-Object -First 1
@@ -111,35 +113,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Copy the MockToolingServer deps.json file to the installed CLI location
-Write-Host "Copying MockToolingServer deps.json file..."
-$sourceDepsFile = Join-Path (Split-Path $projectPath) "bin\Release\net8.0\Microsoft.Agents.A365.DevTools.MockToolingServer.deps.json"
-if (Test-Path $sourceDepsFile) {
-    try {
-        # Find the actual installation path by discovering the MockToolingServer.dll location
-        # This approach doesn't assume any specific directory structure
-        $a365Command = Get-Command a365 -ErrorAction Stop
-        $toolsRoot = Split-Path $a365Command.Source
 
-        $mockServerDll = Get-ChildItem "$toolsRoot\.store" -Recurse -Filter "Microsoft.Agents.A365.DevTools.MockToolingServer.dll" -ErrorAction Stop | Select-Object -First 1
-
-        if ($mockServerDll) {
-            $cliToolsPath = Split-Path $mockServerDll.FullName
-
-            $targetDepsFile = Join-Path $cliToolsPath "Microsoft.Agents.A365.DevTools.MockToolingServer.deps.json"
-            Copy-Item $sourceDepsFile $targetDepsFile -Force
-        } else {
-            Write-Warning "Could not find MockToolingServer.dll in the CLI installation."
-            Write-Warning "MockToolingServer may not work correctly without deps.json file."
-        }
-    } catch {
-        Write-Warning "Failed to locate CLI installation: $($_.Exception.Message)"
-        Write-Warning "Make sure the CLI tool is properly installed and accessible via 'a365' command."
-        Write-Warning "MockToolingServer may not work correctly without deps.json file."
-    }
-} else {
-    Write-Warning "MockToolingServer deps.json not found at: $sourceDepsFile"
-}
 
 Write-Host "Agent 365 CLI installed successfully." -ForegroundColor Green
 Write-Host ""
@@ -148,6 +122,7 @@ $installedVersion = dotnet tool list -g | Select-String "microsoft.agents.a365.d
 if ($installedVersion) {
     Write-Host "Installed: $installedVersion" -ForegroundColor Cyan
     Write-Host ""
+    Write-Host "To install MockToolingServer separately, run: .\scripts\cli\install-mts.ps1" -ForegroundColor Green
     Write-Host "IMPORTANT: If you have the CLI running in another terminal, close it and reopen to pick up the new version." -ForegroundColor Yellow
 } else {
     Write-Warning "Could not verify installation. Try running 'a365 --help' to test."
