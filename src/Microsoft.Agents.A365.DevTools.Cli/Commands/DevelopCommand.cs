@@ -26,7 +26,7 @@ public static class DevelopCommand
         CommandExecutor commandExecutor,
         AuthenticationService authService,
         GraphApiService graphApiService,
-        ProcessService processService)
+        IProcessService processService)
     {
         var developCommand = new Command("develop", "Manage MCP tool servers for agent development");
 

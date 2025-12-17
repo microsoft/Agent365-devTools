@@ -48,13 +48,9 @@ internal static class MockToolingServerSubcommand
         );
         command.AddOption(dryRunOption);
 
-        var helpOption = new Option<bool>(
-            ["-?", "--help"],
-            description: "Show help and usage information"
-        );
-        command.AddOption(helpOption);
-
-        command.SetHandler(async (port, verbose, dryRun) => await HandleStartServer(port, verbose, dryRun, logger, commandExecutor, processService), portOption, verboseOption, dryRunOption);
+        command.SetHandler(async (port, verbose, dryRun) => {
+            await HandleStartServer(port, verbose, dryRun, logger, commandExecutor, processService);
+        }, portOption, verboseOption, dryRunOption);
 
         return command;
     }
@@ -115,7 +111,7 @@ internal static class MockToolingServerSubcommand
                 return;
             }
 
-            if (!await StartServer(executableCommand, arguments, Environment.CurrentDirectory, verbose, logger, commandExecutor, processService))
+            if (!await StartServerWithFallback(executableCommand, arguments, Environment.CurrentDirectory, verbose, logger, commandExecutor, processService))
             {
                 logger.LogError("Failed to start Mock Tooling Server.");
                 return;
@@ -130,7 +126,7 @@ internal static class MockToolingServerSubcommand
         }
     }
 
-    private static async Task<bool> StartServer(string executableCommand, string arguments, string assemblyDir, bool verbose, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
+    private static async Task<bool> StartServerWithFallback(string executableCommand, string arguments, string assemblyDir, bool verbose, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
     {
         // Start the mock server in a new terminal window
         if (verbose)

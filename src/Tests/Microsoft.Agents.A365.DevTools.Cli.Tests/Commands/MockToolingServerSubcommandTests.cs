@@ -92,7 +92,7 @@ public class MockToolingServerSubcommandTests : IDisposable
         var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert
-        Assert.Equal(4, command.Options.Count);
+        Assert.Equal(3, command.Options.Count);
 
         // Port option
         var portOption = command.Options.First(o => o.Name == "port");
@@ -114,13 +114,6 @@ public class MockToolingServerSubcommandTests : IDisposable
         Assert.Equal("dry-run", dryRunOption.Name);
         Assert.Contains("--dry-run", dryRunOption.Aliases);
         Assert.Equal("Show what would be done without executing", dryRunOption.Description);
-
-        // Help option
-        var helpOption = command.Options.First(o => o.Name == "help");
-        Assert.Equal("help", helpOption.Name);
-        Assert.Contains("-?", helpOption.Aliases);
-        Assert.Contains("--help", helpOption.Aliases);
-        Assert.Equal("Show help and usage information", helpOption.Description);
     }
 
     [Fact]
@@ -425,5 +418,82 @@ public class MockToolingServerSubcommandTests : IDisposable
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Error &&
             call.Message.Contains("Failed to start Mock Tooling Server"));
+    }
+
+    // Verbose Mode Tests
+
+    [Fact]
+    public async Task HandleStartServer_WithVerboseTrue_LogsVerboseMessage()
+    {
+        // Arrange - Configure StartInNewTerminal to succeed
+        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
+
+        // Act
+        await MockToolingServerSubcommand.HandleStartServer(5309, true, false, _testLogger, _mockCommandExecutor, _mockProcessService);
+
+        // Assert - Should log verbose enabled message
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("Verbose logging enabled"));
+
+        // Should also log command details
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("Command to execute"));
+    }
+
+    // Dry Run Tests
+
+    [Fact]
+    public async Task HandleStartServer_WithDryRunTrue_LogsDryRunMessagesOnly()
+    {
+        // Act
+        await MockToolingServerSubcommand.HandleStartServer(7000, false, true, _testLogger, _mockCommandExecutor, _mockProcessService);
+
+        // Assert - Should log dry run messages
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would start Mock Tooling Server on port 7000"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would use verbose logging: False"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would execute: a365-mock-tooling-server --urls http://localhost:7000"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would start server in new terminal window"));
+
+        // Should NOT attempt to start terminal or execute commands
+        _mockProcessService.DidNotReceive().StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>());
+        await _mockCommandExecutor.DidNotReceive().ExecuteWithStreamingAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleStartServer_WithDryRunTrueAndVerboseTrue_LogsBothFlags()
+    {
+        // Act
+        await MockToolingServerSubcommand.HandleStartServer(6000, true, true, _testLogger, _mockCommandExecutor, _mockProcessService);
+
+        // Assert - Should log dry run message with verbose flag shown as True
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would use verbose logging: True"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would start Mock Tooling Server on port 6000"));
+
+        // Should NOT attempt actual execution
+        _mockProcessService.DidNotReceive().StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>());
     }
 }
