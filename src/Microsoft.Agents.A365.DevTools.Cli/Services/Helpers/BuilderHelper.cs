@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers
@@ -49,6 +50,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers
                 {
                     var key = line.Substring(0, equalIndex).Trim();
                     var value = line.Substring(equalIndex + 1).Trim();
+
+                    // Skip BEARER_TOKEN - this is for local development only, not production
+                    if (key.Equals(AuthenticationConstants.BearerTokenEnvironmentVariable, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogDebug("Skipping BEARER_TOKEN (local development only, not deployed to Azure)");
+                        continue;
+                    }
 
                     // Remove quotes if present
                     if ((value.StartsWith("\"") && value.EndsWith("\"")) ||

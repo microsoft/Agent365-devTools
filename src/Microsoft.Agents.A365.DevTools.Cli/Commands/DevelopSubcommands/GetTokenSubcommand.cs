@@ -227,7 +227,7 @@ internal static class GetTokenSubcommand
                 // Save bearer token to project configuration files
                 if (setupConfig != null)
                 {
-                    await SaveBearerTokenToEnvFileAsync(token, setupConfig, logger);
+                    await SaveBearerTokenToPlatformConfigAsync(token, setupConfig, logger);
                 }
                 else
                 {
@@ -379,7 +379,7 @@ internal static class GetTokenSubcommand
     /// <summary>
     /// Saves the bearer token to .env file for Python/Node.js samples or launchSettings.json for .NET samples
     /// </summary>
-    private static async Task SaveBearerTokenToEnvFileAsync(
+    private static async Task SaveBearerTokenToPlatformConfigAsync(
         string token,
         Agent365Config config,
         ILogger logger)
@@ -448,7 +448,7 @@ internal static class GetTokenSubcommand
         {
             logger.LogDebug(".env file not found at {Path}, skipping token update for {Platform} project", envPath, platform);
             logger.LogInformation("To use the bearer token in your {Platform} application, add it to .env file:", platform);
-            logger.LogInformation("  Create .env file in your project directory with: BEARER_TOKEN={Token}", token);
+            logger.LogInformation("  Create .env file in your project directory with: BEARER_TOKEN=<your bearer token>");
             return;
         }
 
@@ -456,10 +456,9 @@ internal static class GetTokenSubcommand
         var lines = (await File.ReadAllLinesAsync(envPath)).ToList();
 
         // Update or add BEARER_TOKEN
-        var bearerTokenKey = "BEARER_TOKEN";
-        var bearerTokenLine = $"{bearerTokenKey}={token}";
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={token}";
         var existingIndex = lines.FindIndex(l => 
-            l.StartsWith($"{bearerTokenKey}=", StringComparison.OrdinalIgnoreCase));
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {

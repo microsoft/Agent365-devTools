@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -536,7 +537,7 @@ public class GetTokenSubcommandTests
                 {
                     foreach (var envVar in envVars.EnumerateObject())
                     {
-                        if (envVar.Name == "BEARER_TOKEN")
+                        if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
                         {
                             hasBearerToken = true;
                             break;
@@ -579,7 +580,7 @@ public class GetTokenSubcommandTests
                 {
                     foreach (var envVar in envVars.EnumerateObject())
                     {
-                        if (envVar.Name == "BEARER_TOKEN")
+                        if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
                         {
                             hasBearerToken = true;
                             break;
@@ -624,7 +625,7 @@ public class GetTokenSubcommandTests
         envVars.TryGetProperty("CUSTOM_VAR", out var customVar).Should().BeTrue();
         customVar.GetString().Should().Be("custom-value");
         
-        envVars.TryGetProperty("BEARER_TOKEN", out var bearerToken).Should().BeTrue();
+        envVars.TryGetProperty(AuthenticationConstants.BearerTokenEnvironmentVariable, out var bearerToken).Should().BeTrue();
     }
 
     [Fact]
@@ -663,7 +664,7 @@ public class GetTokenSubcommandTests
             {
                 foreach (var envVar in envVars.EnumerateObject())
                 {
-                    if (envVar.Name == "BEARER_TOKEN")
+                    if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
                     {
                         profilesWithBearerToken.Add(profile.Name);
                         break;
@@ -710,10 +711,9 @@ public class GetTokenSubcommandTests
         var newToken = "new-token-123";
 
         // Act
-        var bearerTokenKey = "BEARER_TOKEN";
-        var bearerTokenLine = $"{bearerTokenKey}={newToken}";
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
         var existingIndex = envLines.FindIndex(l => 
-            l.StartsWith($"{bearerTokenKey}=", StringComparison.OrdinalIgnoreCase));
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {
@@ -738,10 +738,9 @@ public class GetTokenSubcommandTests
         var newToken = "new-token-123";
 
         // Act
-        var bearerTokenKey = "BEARER_TOKEN";
-        var bearerTokenLine = $"{bearerTokenKey}={newToken}";
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
         var existingIndex = envLines.FindIndex(l => 
-            l.StartsWith($"{bearerTokenKey}=", StringComparison.OrdinalIgnoreCase));
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {
@@ -769,10 +768,9 @@ public class GetTokenSubcommandTests
         var newToken = "new-token-123";
 
         // Act
-        var bearerTokenKey = "BEARER_TOKEN";
-        var bearerTokenLine = $"{bearerTokenKey}={newToken}";
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
         var existingIndex = envLines.FindIndex(l => 
-            l.StartsWith($"{bearerTokenKey}=", StringComparison.OrdinalIgnoreCase));
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {
@@ -799,10 +797,9 @@ public class GetTokenSubcommandTests
         var newToken = "new-token-123";
 
         // Act
-        var bearerTokenKey = "BEARER_TOKEN";
-        var bearerTokenLine = $"{bearerTokenKey}={newToken}";
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
         var existingIndex = envLines.FindIndex(l => 
-            l.StartsWith($"{bearerTokenKey}=", StringComparison.OrdinalIgnoreCase));
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {
@@ -826,10 +823,9 @@ public class GetTokenSubcommandTests
         var newToken = "new-token-123";
 
         // Act
-        var bearerTokenKey = "BEARER_TOKEN";
-        var bearerTokenLine = $"{bearerTokenKey}={newToken}";
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
         var existingIndex = envLines.FindIndex(l => 
-            l.StartsWith($"{bearerTokenKey}=", StringComparison.OrdinalIgnoreCase));
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {
