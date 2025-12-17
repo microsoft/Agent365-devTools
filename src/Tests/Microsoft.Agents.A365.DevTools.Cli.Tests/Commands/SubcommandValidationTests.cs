@@ -5,6 +5,9 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
 
@@ -375,6 +378,81 @@ public class SubcommandValidationTests
         // Assert
         errors.Should().ContainSingle()
             .Which.Should().Contain("Blueprint ID");
+    }
+
+    #endregion
+
+    #region RequirementsSubcommand Validation Tests
+
+    [Fact]
+    public async Task RequirementsSubcommand_WithValidConfig_CompletesWithoutException()
+    {
+        // Arrange
+        var mockLogger = Substitute.For<ILogger>();
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            SubscriptionId = "test-sub-id",
+            ClientAppId = "test-client-app-id"
+        };
+        var listOfChecks = new List<IRequirementCheck>{new AlwaysPassRequirementCheck()};
+
+        // Act & Assert - Should complete without throwing exceptions
+        var result = await RequirementsSubcommand.RunRequirementChecksAsync(listOfChecks, config, mockLogger, null);
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RequirementsSubcommand_WithFailingCheck_ReturnsFalse()
+    {
+        // Arrange
+        var mockLogger = Substitute.For<ILogger>();
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            SubscriptionId = "test-sub-id",
+            ClientAppId = "test-client-app-id"
+        };
+        var listOfChecks = new List<IRequirementCheck> { new AlwaysFailRequirementCheck() };
+
+        // Act & Assert - Should complete without throwing exceptions
+        var result = await RequirementsSubcommand.RunRequirementChecksAsync(listOfChecks, config, mockLogger, null);
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RequirementsSubcommand_WithCategoryFilter_CompletesWithoutException()
+    {
+        // Arrange
+        var mockLogger = Substitute.For<ILogger>();
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            SubscriptionId = "test-sub-id"
+        };
+        var listOfChecks = new List<IRequirementCheck> { new AlwaysFailRequirementCheck() };
+
+        // Act & Assert - Should complete without throwing exceptions since failing check is skipped
+        var result = await RequirementsSubcommand.RunRequirementChecksAsync(listOfChecks, config, mockLogger, "Powershell");
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RequirementsSubcommand_WithNullCategory_CompletesWithoutException()
+    {
+        // Arrange
+        var mockLogger = Substitute.For<ILogger>();
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            SubscriptionId = "test-sub-id",
+            ClientAppId = "test-client-app-id"
+        };
+        var listOfChecks = new List<IRequirementCheck> { new AlwaysPassRequirementCheck() };
+
+        // Act & Assert - Should complete without throwing exceptions
+        var result = await RequirementsSubcommand.RunRequirementChecksAsync(listOfChecks, config, mockLogger, null);
+        result.Should().BeTrue();
     }
 
     #endregion

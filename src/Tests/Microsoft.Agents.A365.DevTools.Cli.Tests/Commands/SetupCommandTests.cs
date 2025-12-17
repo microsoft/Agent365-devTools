@@ -314,7 +314,7 @@ public class SetupCommandTests
     }
 
     [Fact]
-    public async Task RequirementsSubcommand_ValidConfig_RunsTemplateCheck()
+    public async Task RequirementsSubcommand_ValidConfig_CompletesSuccessfully()
     {
         // Arrange
         var config = new Agent365Config 
@@ -388,7 +388,7 @@ public class SetupCommandTests
         var testConsole = new TestConsole();
 
         // Act
-        var result = await parser.InvokeAsync("requirements --category Template", testConsole);
+        var result = await parser.InvokeAsync("requirements --category Powershell", testConsole);
 
         // Assert
         Assert.Equal(0, result);

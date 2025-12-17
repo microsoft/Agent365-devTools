@@ -134,11 +134,20 @@ internal static class AllSubcommand
 
                     try
                     {
-                        await RequirementsSubcommand.RunRequirementChecksAsync(
+                        var result = await RequirementsSubcommand.RunRequirementChecksAsync(
+                            RequirementsSubcommand.GetRequirementChecks(),
                             setupConfig,
                             logger,
                             category: null,
                             CancellationToken.None);
+
+                        if (!result)
+                        {
+                            logger.LogError("");
+                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
+                            ExceptionHandler.ExitWithCleanup(1);
+                            return;
+                        }
                     }
                     catch (Exception reqEx)
                     {

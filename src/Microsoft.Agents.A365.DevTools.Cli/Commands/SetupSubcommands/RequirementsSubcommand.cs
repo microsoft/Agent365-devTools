@@ -56,7 +56,8 @@ internal static class RequirementsSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                await RunRequirementChecksAsync(setupConfig, logger, category);
+                var requirementChecks = GetRequirementChecks();
+                await RunRequirementChecksAsync(requirementChecks, setupConfig, logger, category);
             }
             catch (Exception ex)
             {
@@ -68,12 +69,12 @@ internal static class RequirementsSubcommand
     }
 
     public static async Task<bool> RunRequirementChecksAsync(
+        List<IRequirementCheck> requirementChecks,
         Agent365Config setupConfig,
         ILogger logger,
         string? category = null,
         CancellationToken ct = default)
     {
-        var requirementChecks = GetRequirementChecks();
         // Filter by category if specified
         if (!string.IsNullOrWhiteSpace(category))
         {
@@ -97,7 +98,6 @@ internal static class RequirementsSubcommand
         var totalChecks = requirementChecks.Count;
         var passedChecks = 0;
         var failedChecks = 0;
-        var allResults = new List<(IRequirementCheck Check, RequirementCheckResult Result)>();
 
         // Execute all checks
         foreach (var categoryGroup in checksByCategory)
@@ -108,7 +108,6 @@ internal static class RequirementsSubcommand
             foreach (var check in categoryGroup)
             {
                 var result = await check.CheckAsync(setupConfig, logger, ct);
-                allResults.Add((check, result));
 
                 if (result.Passed)
                 {
@@ -142,14 +141,13 @@ internal static class RequirementsSubcommand
             logger.LogInformation("All requirements passed! You're ready to run Agent 365 setup.");
         }
 
-        return true;
+        return failedChecks == 0;
     }
 
     /// <summary>
     /// Gets all available requirement checks
-    /// TODO: Replace this with dependency injection or a factory pattern for better extensibility
     /// </summary>
-    private static List<IRequirementCheck> GetRequirementChecks()
+    public static List<IRequirementCheck> GetRequirementChecks()
     {
         return new List<IRequirementCheck>
         {

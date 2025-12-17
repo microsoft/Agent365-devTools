@@ -18,7 +18,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     public override string Name => "PowerShell Modules";
 
     /// <inheritdoc />
-    public override string Description => "Validates that required PowerShell modules are installed for setup and deployment operations";
+    public override string Description => "Validates that Powershell 7+ and required PowerShell modules are installed for setup and deployment operations";
 
     /// <inheritdoc />
     public override string Category => "PowerShell";
@@ -29,7 +29,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     private static readonly RequiredModule[] RequiredModules =
     {
         new("Microsoft.Graph.Authentication", "Microsoft Graph authentication module for token management"),
-        new("Microsoft.Graph.Applications", "Microsoft Graph applications module for app registration operations"),
+        new("Microsoft.Graph.Applications", "Microsoft Graph applications module for app registration operations")
     };
 
     /// <inheritdoc />
@@ -105,7 +105,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     {
         try
         {
-            // Check for PowerhShell 7+ (pwsh)
+            // Check for PowerShell 7+ (pwsh)
             var result = await ExecutePowerShellCommandAsync("pwsh", "$PSVersionTable.PSVersion.Major", logger, cancellationToken);
             if (result.success && int.TryParse(result.output?.Trim(), out var major) && major >= 7)
             {
@@ -129,18 +129,9 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     {
         try
         {
-            // Use simpler command that just outputs the module name if found, or nothing if not found
-            // This avoids JSON parsing issues with PowerShell 7+ output formatting
             var command = $"(Get-Module -ListAvailable -Name '{moduleName}' | Select-Object -First 1).Name";
             
-            // Try PowerShell 7+ first
             var result = await ExecutePowerShellCommandAsync("pwsh", command, logger, cancellationToken);
-            if (!result.success)
-            {
-                // Fallback to Windows PowerShell
-                result = await ExecutePowerShellCommandAsync("powershell", command, logger, cancellationToken);
-            }
-
             if (!result.success || string.IsNullOrWhiteSpace(result.output))
             {
                 return false;
@@ -170,10 +161,11 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     {
         try
         {
+            var wrappedCommand = $"try {{ {command} }} catch {{ Write-Error $_.Exception.Message; exit 1 }}";
             var processStartInfo = new ProcessStartInfo
             {
                 FileName = executable,
-                Arguments = $"-Command \"{command}\"",
+                Arguments = $"-Command \"{wrappedCommand}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -195,11 +187,9 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             {
                 return (true, output);
             }
-            else
-            {
-                logger.LogDebug("PowerShell command failed: {Error}", error);
-                return (false, null);
-            }
+            
+            logger.LogDebug("PowerShell command failed: {Error}", error);
+            return (false, null);
         }
         catch (Exception ex)
         {
@@ -221,17 +211,12 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         };
 
         // PowerShell 7+ command
-        var moduleNames = string.Join("', '", missingModules.Select(m => m.Name));
+        var moduleNames = string.Join(",", missingModules.Select(m => $"'{m.Name}'"));
         instructions.Add($"  pwsh -Command \"Install-Module -Name '{moduleNames}' -Scope CurrentUser -Force\"");
         instructions.Add("");
 
-        // Windows PowerShell fallback
-        instructions.Add("Method 2: Windows PowerShell (if pwsh is not available)");
-        instructions.Add($"  powershell -Command \"Install-Module -Name '{moduleNames}' -Scope CurrentUser -Force\"");
-        instructions.Add("");
-
         // Individual module instructions
-        instructions.Add("Method 3: Install modules individually");
+        instructions.Add("Method 2: Install modules individually");
         foreach (var module in missingModules)
         {
             instructions.Add($"  Install-Module -Name '{module.Name}' -Scope CurrentUser -Force");
