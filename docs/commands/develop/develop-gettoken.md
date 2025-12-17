@@ -107,3 +107,24 @@ curl -H "Authorization: Bearer $TOKEN" https://agent365.svc.cloud.microsoft/agen
 2. **Scope Resolution**: Uses `--scopes` or reads from `ToolingManifest.json`
 3. **Token Acquisition**: Opens browser for interactive OAuth2 authentication
 4. **Token Caching**: Cached in local storage for reuse (until expiration or `--force-refresh`)
+
+## Token Storage for Development
+
+When `a365.config.json` exists in your project, the command automatically attempts to save the bearer token to your project's configuration files for convenient local testing:
+
+### .NET Projects
+- **Target File**: `Properties/launchSettings.json`
+- **Behavior**: Updates `BEARER_TOKEN` only in profiles that already have it defined. Shows which profiles were updated.
+- **Setup**: Add `"BEARER_TOKEN": ""` to your profile's `environmentVariables` before running the command.
+
+### Python/Node.js Projects
+- **Target File**: `.env` in project root
+- **Behavior**: Updates `BEARER_TOKEN=<token>` if the file exists. Shows guidance if file is missing.
+- **Setup**: Create a `.env` file with `BEARER_TOKEN=` before running the command.
+
+### Without Config File
+When running `a365 develop gettoken` with `--app-id` (no config file), the token is **not** automatically saved to any project files. You must manually copy and paste it into:
+- **.NET projects**: `Properties/launchSettings.json` > `profiles` > `environmentVariables` > `BEARER_TOKEN`
+- **Python/Node.js projects**: `.env` file as `BEARER_TOKEN=<token>`
+
+> **Note**: This token storage is for **development convenience only**. Production agents use inheritable permissions configured through `a365 setup permissions mcp`.
