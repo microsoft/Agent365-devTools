@@ -40,7 +40,9 @@ public sealed class ClientAppValidationException : Agent365Exception
             mitigationSteps: new List<string>
             {
                 "Verify 'clientAppId' in a365.config.json is the Application (client) ID, not Object ID.",
-                "Run 'a365 config init' to create a new app, or check the app exists in Azure Portal."
+                "Run 'a365 config init' to create a new app, or check the app exists in Azure Portal.",
+                "Ensure you are logged in with the correct tenant using 'az login'.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
@@ -65,7 +67,10 @@ public sealed class ClientAppValidationException : Agent365Exception
             mitigationSteps: new List<string>
             {
                 "Add missing Microsoft Graph delegated permissions in Azure Portal > App registrations > Your app > API permissions.",
-                "Grant admin consent after adding permissions."
+                "Grant admin consent after adding permissions.",
+                "Wait a few minutes for permission changes to propagate.",
+                "Verify the permissions match the required list exactly.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
@@ -89,7 +94,11 @@ public sealed class ClientAppValidationException : Agent365Exception
             mitigationSteps: new List<string>
             {
                 "Grant admin consent at: Azure Portal > App registrations > Your app > API permissions.",
-                "Click 'Grant admin consent for [Your Tenant]' and wait for propagation."
+                "Click 'Grant admin consent for [Your Tenant]' and wait for propagation.",
+                "Confirm the consent dialog when prompted.",
+                "Verify the status shows 'Granted for [Your Tenant]' with a green checkmark.",
+                "Wait a few minutes for consent to propagate through Azure AD.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
