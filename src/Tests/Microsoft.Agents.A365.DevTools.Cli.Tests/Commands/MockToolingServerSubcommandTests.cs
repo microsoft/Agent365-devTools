@@ -341,7 +341,7 @@ public class MockToolingServerSubcommandTests : IDisposable
             Arg.Any<string>(),
             Arg.Any<string>(),
             Arg.Is<string>(prefix => prefix == "MockServer: "),
-            Arg.Is<bool>(interactive => interactive == true),
+            Arg.Is<bool>(interactive => interactive),
             Arg.Any<CancellationToken>());
     }
 
