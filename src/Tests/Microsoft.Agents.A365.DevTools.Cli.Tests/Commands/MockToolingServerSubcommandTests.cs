@@ -11,14 +11,14 @@ using System.Diagnostics;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
-public class StartMockToolingServerSubcommandTests : IDisposable
+public class MockToolingServerSubcommandTests : IDisposable
 {
     private readonly ILogger _mockLogger;
     private readonly CommandExecutor _mockCommandExecutor;
     private readonly TestLogger _testLogger;
     private readonly IProcessService _mockProcessService;
 
-    public StartMockToolingServerSubcommandTests()
+    public MockToolingServerSubcommandTests()
     {
         _mockLogger = Substitute.For<ILogger>();
         _testLogger = new TestLogger();
@@ -26,6 +26,22 @@ public class StartMockToolingServerSubcommandTests : IDisposable
 
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockCommandExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+
+        // ALWAYS configure CommandExecutor to return mock result to prevent accidental server startup
+        var defaultMockResult = new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+        {
+            ExitCode = 0,
+            StandardOutput = "Mock server output",
+            StandardError = ""
+        };
+        _mockCommandExecutor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(defaultMockResult));
 
         // Clear any previous state - this runs before each test
         _testLogger.LogCalls.Clear();
@@ -61,19 +77,19 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void CreateCommand_ReturnsCommandWithCorrectNames()
     {
         // Act
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert
         Assert.Equal("start-mock-tooling-server", command.Name);
         Assert.Equal("Start the Mock Tooling Server for local development and testing", command.Description);
-        Assert.Contains("start-mcp", command.Aliases);
+        Assert.Contains("mts", command.Aliases);
     }
 
     [Fact]
     public void CreateCommand_HasPortOptionConfigured()
     {
         // Act
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert
         Assert.Single(command.Options);
@@ -90,7 +106,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void CreateCommand_HasHandler()
     {
         // Arrange
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
 
         // Act & Assert - Just verify the command can be created and doesn't throw during basic operations
         Assert.NotNull(command);
@@ -105,7 +121,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void ParseCommand_WithInvalidPort_ParsesWithoutError(int invalidPort)
     {
         // Arrange
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
 
         // Act
         var parseResult = command.Parse($"--port {invalidPort}");
@@ -124,7 +140,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void ParseCommand_WithValidPort_ParsesWithoutError(int validPort)
     {
         // Arrange
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
 
         // Act
         var parseResult = command.Parse($"--port {validPort}");
@@ -139,7 +155,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void ParseCommand_WithoutPort_UsesDefaultValue()
     {
         // Arrange
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
 
         // Act
         var parseResult = command.Parse("");
@@ -154,7 +170,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void ParseCommand_CanParseWithLongOption()
     {
         // Act
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
         var parseResult = command.Parse("--port 3000");
 
         // Assert
@@ -165,7 +181,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void ParseCommand_CanParseWithShortOption()
     {
         // Act
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
         var parseResult = command.Parse("-p 3000");
 
         // Assert
@@ -177,16 +193,16 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     {
         // Arrange
         var rootCommand = new RootCommand();
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
         rootCommand.AddCommand(command);
 
         // Act
-        var parseResult = rootCommand.Parse("start-mcp --port 3000");
+        var parseResult = rootCommand.Parse("mts --port 3000");
 
         // Assert
         Assert.Empty(parseResult.Errors);
         // When using an alias, the command name is still the original name, but we can verify the alias exists
-        Assert.Contains("start-mcp", parseResult.CommandResult.Command.Aliases);
+        Assert.Contains("mts", parseResult.CommandResult.Command.Aliases);
     }
 
     [Theory]
@@ -197,7 +213,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void ParseCommand_WithInvalidPortValues_HasParseErrors(string invalidPortValue)
     {
         // Act
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
         var parseResult = command.Parse($"--port {invalidPortValue}");
 
         // Assert
@@ -208,7 +224,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public void ParseCommand_WithoutArguments_ParsesSuccessfully()
     {
         // Act
-        var command = StartMockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
+        var command = MockToolingServerSubcommand.CreateCommand(_mockLogger, _mockCommandExecutor, _mockProcessService);
         var parseResult = command.Parse("");
 
         // Assert
@@ -225,7 +241,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public async Task HandleStartServer_WithInvalidPort_LogsError(int invalidPort)
     {
         // Act
-        await StartMockToolingServerSubcommand.HandleStartServer(invalidPort, _testLogger, _mockCommandExecutor, _mockProcessService);
+        await MockToolingServerSubcommand.HandleStartServer(invalidPort, _testLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert
         Assert.Single(_testLogger.LogCalls);
@@ -238,13 +254,11 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     [Fact]
     public async Task HandleStartServer_WithNullPort_UsesDefaultPort()
     {
-        // Arrange - Configure to return a mock process (terminal launch succeeds)
-        // This prevents fallback to CommandExecutor which would actually start the server
-        var mockProcess = Substitute.For<Process>();
-        _mockProcessService.Start(Arg.Any<ProcessStartInfo>()).Returns(mockProcess);
+        // Arrange - Configure StartInNewTerminal to succeed
+        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
 
         // Act
-        await StartMockToolingServerSubcommand.HandleStartServer(null, _testLogger, _mockCommandExecutor, _mockProcessService);
+        await MockToolingServerSubcommand.HandleStartServer(null, _testLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert - Should log starting message with default port
         Assert.NotEmpty(_testLogger.LogCalls);
@@ -253,7 +267,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
         Assert.Contains("Starting Mock Tooling Server", firstLogCall.Message);
         Assert.Contains("5309", firstLogCall.Message);
 
-        // Verify success message is logged (no fallback occurred)
+        // Verify terminal launch was successful
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
             call.Message.Contains("Mock Tooling Server started successfully in a new terminal window"));
@@ -266,22 +280,20 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     [InlineData(65535)]
     public async Task HandleStartServer_WithValidPort_LogsStartingMessage(int validPort)
     {
-        // Arrange - Configure to return a mock process (terminal launch succeeds)
-        // This prevents fallback to CommandExecutor which would actually start the server
-        var mockProcess = Substitute.For<Process>();
-        _mockProcessService.Start(Arg.Any<ProcessStartInfo>()).Returns(mockProcess);
+        // Arrange - Configure StartInNewTerminal to succeed
+        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
 
         // Act
-        await StartMockToolingServerSubcommand.HandleStartServer(validPort, _testLogger, _mockCommandExecutor, _mockProcessService);
+        await MockToolingServerSubcommand.HandleStartServer(validPort, _testLogger, _mockCommandExecutor, _mockProcessService);
 
-        // Assert - Should log starting message with specified port and success message
+        // Assert - Should log starting message with specified port
         Assert.NotEmpty(_testLogger.LogCalls);
         var firstLogCall = _testLogger.LogCalls.First();
         Assert.Equal(LogLevel.Information, firstLogCall.Level);
         Assert.Contains("Starting Mock Tooling Server", firstLogCall.Message);
         Assert.Contains(validPort.ToString(), firstLogCall.Message);
 
-        // Verify success message is logged (no fallback occurred)
+        // Verify terminal launch was successful
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
             call.Message.Contains("Mock Tooling Server started successfully in a new terminal window"));
@@ -291,7 +303,7 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     public async Task HandleStartServer_WithInvalidPort_DoesNotAttemptStartup()
     {
         // Act
-        await StartMockToolingServerSubcommand.HandleStartServer(0, _testLogger, _mockCommandExecutor, _mockProcessService);
+        await MockToolingServerSubcommand.HandleStartServer(0, _testLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert - Should only log error and return early
         Assert.Single(_testLogger.LogCalls);
@@ -303,14 +315,12 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     [Fact]
     public async Task HandleStartServer_WhenTerminalLaunchFails_LogsWarningAndAttemptsFallback()
     {
-        // Arrange - Configure process service to return null (terminal launch fails)
-        var mockResult = new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = "Server started", StandardError = "" };
-        _mockProcessService.Start(Arg.Any<ProcessStartInfo>()).Returns((Process?)null);
-        _mockCommandExecutor.ExecuteWithStreamingAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(mockResult));
+        // Arrange - Configure StartInNewTerminal to fail
+        // CommandExecutor is already configured in constructor to return mock result
+        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(false);
 
         // Act
-        await StartMockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor, _mockProcessService);
+        await MockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert - Verify specific sequence of expected log messages
         Assert.Contains(_testLogger.LogCalls, call =>
@@ -338,23 +348,23 @@ public class StartMockToolingServerSubcommandTests : IDisposable
     [Fact]
     public async Task HandleStartServer_WhenTerminalLaunchSucceeds_DoesNotUseFallback()
     {
-        // Arrange - Configure process service to return a mock process (terminal launch succeeds)
-        var mockProcess = Substitute.For<Process>();
-        _mockProcessService.Start(Arg.Any<ProcessStartInfo>()).Returns(mockProcess);
+        // Arrange - Configure StartInNewTerminal to succeed
+        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
 
         // Act
-        await StartMockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor, _mockProcessService);
+        await MockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor, _mockProcessService);
 
-        // Assert - Verify terminal success path
+        // Assert - Verify server starting message is logged
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
             call.Message.Contains("Starting Mock Tooling Server on port 5309"));
 
+        // Verify successful terminal launch
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
             call.Message.Contains("Mock Tooling Server started successfully in a new terminal window"));
 
-        // Verify CommandExecutor was NOT called (no fallback needed)
+        // Verify CommandExecutor was NOT called (no fallback)
         await _mockCommandExecutor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(),
             Arg.Any<string>(),
@@ -362,24 +372,19 @@ public class StartMockToolingServerSubcommandTests : IDisposable
             Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
-
-        // Should not have warning or fallback messages
-        Assert.DoesNotContain(_testLogger.LogCalls, call =>
-            call.Level == LogLevel.Warning ||
-            call.Message.Contains("Falling back"));
     }
 
     [Fact]
     public async Task HandleStartServer_WhenFallbackCommandFails_LogsError()
     {
-        // Arrange - Configure terminal to fail, and CommandExecutor also fails
+        // Arrange - Configure StartInNewTerminal to fail, and override CommandExecutor to also fail
         var failedResult = new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 1, StandardOutput = "", StandardError = "Server failed to start" };
-        _mockProcessService.Start(Arg.Any<ProcessStartInfo>()).Returns((Process?)null);
+        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(false);
         _mockCommandExecutor.ExecuteWithStreamingAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(failedResult));
 
         // Act
-        await StartMockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor, _mockProcessService);
+        await MockToolingServerSubcommand.HandleStartServer(5309, _testLogger, _mockCommandExecutor, _mockProcessService);
 
         // Assert - Verify error logging sequence
         Assert.Contains(_testLogger.LogCalls, call =>

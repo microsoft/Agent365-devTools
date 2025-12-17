@@ -53,7 +53,7 @@ public static class DevelopCommand
         developCommand.AddCommand(AddPermissionsSubcommand.CreateCommand(logger, configService, graphApiService));
 
         // Start Mock Tooling Server subcommand
-        developCommand.AddCommand(StartMockToolingServerSubcommand.CreateCommand(logger, commandExecutor, new ProcessService()));
+        developCommand.AddCommand(MockToolingServerSubcommand.CreateCommand(logger, commandExecutor, new ProcessService()));
 
         return developCommand;
     }
