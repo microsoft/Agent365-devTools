@@ -122,7 +122,7 @@ public class ProcessServiceTests : IDisposable
     public void StartInNewTerminal_WithNullArguments_ThrowsArgumentException()
     {
         // Act & Assert - Should throw ArgumentException
-        Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentNullException>(() =>
             _processService.StartInNewTerminal("cmd", null!, "C:\\", _testLogger));
     }
 
