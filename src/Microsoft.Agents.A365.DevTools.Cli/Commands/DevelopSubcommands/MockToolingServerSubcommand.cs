@@ -68,6 +68,7 @@ internal static class MockToolingServerSubcommand
     /// <param name="port">The port number to run the server on</param>
     /// <param name="verbose">Enable verbose logging</param>
     /// <param name="dryRun">Show what would be done without executing</param>
+    /// <param name="foreground">Run the server in the foreground (blocks current terminal)</param>
     /// <param name="logger">Logger for progress reporting</param>
     /// <param name="commandExecutor">Command executor for fallback execution</param>
     /// <param name="processService">Process service for starting processes</param>
@@ -104,22 +105,14 @@ internal static class MockToolingServerSubcommand
             logger.LogInformation("Verbose logging enabled");
         }
 
-        logger.LogInformation("Starting Mock Tooling Server on port {Port}...", serverPort);
-
         try
         {
             if (foreground)
             {
                 // Run in foreground (blocks current terminal) using MockToolingServer.Start()
-                logger.LogInformation("Starting server in foreground mode...");
+                logger.LogInformation("Starting Up MockToolingServer.");
                 logger.LogInformation("Press Ctrl+C to stop the server.");
-
                 var args = new[] { "--urls", $"http://localhost:{serverPort}" };
-
-                if (verbose)
-                {
-                    logger.LogInformation("Starting MockToolingServer with args: {Args}", string.Join(" ", args));
-                }
 
                 // This will run in foreground and block the current terminal until the server is stopped
                 await MockToolingServer.Server.Start(args);
@@ -137,8 +130,6 @@ internal static class MockToolingServerSubcommand
             {
                 logger.LogInformation("Starting in new terminal: a365 {Arguments}", arguments);
             }
-
-            logger.LogInformation("Starting server on port {Port} in a new terminal...", serverPort);
 
             var success = processService.StartInNewTerminal("a365", arguments, Environment.CurrentDirectory, logger);
 
