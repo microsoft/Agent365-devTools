@@ -298,9 +298,13 @@ internal static class GetTokenSubcommand
                 logger.LogInformation("  Status: [SUCCESS]");
                 logger.LogInformation("  Expires: ~{Expiry}", result.ExpiresOn?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "Unknown");
 
-                if (!string.IsNullOrWhiteSpace(result.Token))
+                if (verbose && !string.IsNullOrWhiteSpace(result.Token))
                 {
                     logger.LogInformation("  Token: {Token}", result.Token);
+                }
+                else if (!verbose)
+                {
+                    logger.LogInformation("  Token: <use --verbose to display>");
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.CacheFilePath))
@@ -327,7 +331,7 @@ internal static class GetTokenSubcommand
             scope = r.Scope,
             audience = r.Audience,
             success = r.Success,
-            token = r.Token,
+            token = verbose ? r.Token : "<use --verbose to display>",
             expiresOn = r.ExpiresOn?.ToString("o"),
             error = r.Error,
             cacheFilePath = r.CacheFilePath
