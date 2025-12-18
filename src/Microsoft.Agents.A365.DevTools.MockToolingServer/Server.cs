@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace Microsoft.Agents.A365.DevTools.MockToolingServer;
 
 public static class Server
@@ -164,7 +167,7 @@ public static class Server
                                     converted = prop.Value.GetString();
                                     break;
                                 case JsonValueKind.Number:
-                                    if (prop.Value.TryGetInt64(out var lnum)) converted = lnum; else converted = prop.Value.GetDouble();
+                                    converted = prop.Value.TryGetInt64(out var lnum) ? lnum : prop.Value.GetDouble();
                                     break;
                                 case JsonValueKind.True:
                                     converted = true; break;

@@ -19,6 +19,16 @@ public class ProcessService : IProcessService
 
     public bool StartInNewTerminal(string command, string[] arguments, string workingDirectory, ILogger logger)
     {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            throw new ArgumentException("Command cannot be null or empty", nameof(command));
+        }
+
+        if (arguments == null)
+        {
+            throw new ArgumentNullException(nameof(arguments));
+        }
+
         try
         {
             ProcessStartInfo? processStartInfo = null;
@@ -195,7 +205,7 @@ public class ProcessService : IProcessService
     private static string EscapeAppleScriptString(string input)
     {
         if (string.IsNullOrEmpty(input))
-            return String.Empty;
+            return input ?? String.Empty;
 
         return input
             .Replace("\\", "\\\\")  // Escape backslashes first

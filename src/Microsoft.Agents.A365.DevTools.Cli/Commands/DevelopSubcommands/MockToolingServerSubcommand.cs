@@ -17,7 +17,6 @@ internal static class MockToolingServerSubcommand
     /// Creates the start-mock-tooling-server subcommand to start the MockToolingServer for development
     /// </summary>
     /// <param name="logger">Logger for progress reporting</param>
-    /// <param name="commandExecutor">Command Executor for running processes</param>
     /// <param name="processService">Process service for starting processes</param>
     /// <returns>
     /// A <see cref="Command"/> object representing the 'start-mock-tooling-server'
@@ -25,7 +24,6 @@ internal static class MockToolingServerSubcommand
     /// </returns>
     public static Command CreateCommand(
         ILogger logger,
-        CommandExecutor commandExecutor,
         IProcessService processService)
     {
         var command = new Command("start-mock-tooling-server", "Start the Mock Tooling Server for local development and testing");
@@ -56,7 +54,7 @@ internal static class MockToolingServerSubcommand
         command.AddOption(foregroundOption);
 
         command.SetHandler(async (port, verbose, dryRun, foreground) => {
-            await HandleStartServer(port, verbose, dryRun, foreground, logger, commandExecutor, processService);
+            await HandleStartServer(port, verbose, dryRun, foreground, logger, processService);
         }, portOption, verboseOption, dryRunOption, foregroundOption);
 
         return command;
@@ -70,9 +68,8 @@ internal static class MockToolingServerSubcommand
     /// <param name="dryRun">Show what would be done without executing</param>
     /// <param name="foreground">Run the server in the foreground (blocks current terminal)</param>
     /// <param name="logger">Logger for progress reporting</param>
-    /// <param name="commandExecutor">Command executor for fallback execution</param>
     /// <param name="processService">Process service for starting processes</param>
-    public static async Task HandleStartServer(int? port, bool verbose, bool dryRun, bool foreground, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
+    public static async Task HandleStartServer(int? port, bool verbose, bool dryRun, bool foreground, ILogger logger, IProcessService processService)
     {
         var serverPort = port ?? 5309;
         if (serverPort < 1 || serverPort > 65535)

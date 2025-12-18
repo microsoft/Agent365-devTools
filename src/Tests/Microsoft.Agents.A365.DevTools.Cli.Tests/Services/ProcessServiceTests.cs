@@ -111,19 +111,19 @@ public class ProcessServiceTests : IDisposable
     }
 
     [Fact]
-    public void StartInNewTerminal_WithNullCommand_HandlesGracefully()
+    public void StartInNewTerminal_WithNullCommand_ThrowsArgumentException()
     {
-        // Act & Assert - Should not throw
-        var result = _processService.StartInNewTerminal(null!, new string[] { "args" }, "C:\\", _testLogger);
-        Assert.False(result);
+        // Act & Assert - Should throw ArgumentException
+        Assert.Throws<ArgumentException>(() =>
+            _processService.StartInNewTerminal(null!, ["args"], "C:\\", _testLogger));
     }
 
     [Fact]
-    public void StartInNewTerminal_WithNullArguments_HandlesGracefully()
+    public void StartInNewTerminal_WithNullArguments_ThrowsArgumentException()
     {
-        // Act & Assert - Should not throw
-        var result = _processService.StartInNewTerminal("cmd", null!, "C:\\", _testLogger);
-        Assert.False(result);
+        // Act & Assert - Should throw ArgumentException
+        Assert.Throws<ArgumentException>(() =>
+            _processService.StartInNewTerminal("cmd", null!, "C:\\", _testLogger));
     }
 
     private string InvokeEscapeAppleScriptString(string? input)
