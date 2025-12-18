@@ -23,7 +23,7 @@ internal static class GetTokenSubcommand
         AuthenticationService authService)
     {
         var command = new Command(
-            "gettoken",
+            "get-token",
             "Retrieve bearer tokens for MCP server authentication\n" +
             "Scopes are read from ToolingManifest.json or specified via command line");
 

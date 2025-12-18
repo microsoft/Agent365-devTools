@@ -36,7 +36,7 @@ public class AddPermissionsSubcommandTests
         var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
 
         // Assert
-        command.Name.Should().Be("addpermissions");
+        command.Name.Should().Be("add-permissions");
     }
 
     [Fact]
