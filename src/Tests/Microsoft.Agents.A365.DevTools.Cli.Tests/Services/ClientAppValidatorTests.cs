@@ -60,56 +60,44 @@ public class ClientAppValidatorTests
 
     #endregion
 
-    #region ValidateClientAppAsync - Input Validation Tests
+    #region EnsureValidClientAppAsync - Input Validation Tests
 
     [Fact]
-    public async Task ValidateClientAppAsync_WithNullClientAppId_ThrowsArgumentException()
+    public async Task EnsureValidClientAppAsync_WithNullClientAppId_ThrowsArgumentException()
     {
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => 
-            _validator.ValidateClientAppAsync(null!, ValidTenantId));
+            _validator.EnsureValidClientAppAsync(null!, ValidTenantId));
     }
 
     [Fact]
-    public async Task ValidateClientAppAsync_WithEmptyClientAppId_ThrowsArgumentException()
+    public async Task EnsureValidClientAppAsync_WithEmptyClientAppId_ThrowsArgumentException()
     {
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(() => 
-            _validator.ValidateClientAppAsync(string.Empty, ValidTenantId));
+            _validator.EnsureValidClientAppAsync(string.Empty, ValidTenantId));
     }
 
     [Fact]
-    public async Task ValidateClientAppAsync_WithInvalidClientAppIdFormat_ReturnsInvalidFormatFailure()
+    public async Task EnsureValidClientAppAsync_WithInvalidClientAppIdFormat_ReturnsInvalidFormatFailure()
     {
         // Act
-        var result = await _validator.ValidateClientAppAsync(InvalidGuid, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.InvalidFormat);
-        result.Errors.Should().ContainSingle()
-            .Which.Should().Contain("must be a valid GUID format");
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(InvalidGuid, ValidTenantId));
     }
 
     [Fact]
-    public async Task ValidateClientAppAsync_WithInvalidTenantIdFormat_ReturnsInvalidFormatFailure()
+    public async Task EnsureValidClientAppAsync_WithInvalidTenantIdFormat_ReturnsInvalidFormatFailure()
     {
         // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, InvalidGuid);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.InvalidFormat);
-        result.Errors.Should().ContainSingle()
-            .Which.Should().Contain("must be a valid GUID format");
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, InvalidGuid));
     }
 
     #endregion
 
-    #region ValidateClientAppAsync - Token Acquisition Tests
+    #region EnsureValidClientAppAsync - Token Acquisition Tests
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenTokenAcquisitionFails_ReturnsAuthenticationFailed()
+    public async Task EnsureValidClientAppAsync_WhenTokenAcquisitionFails_ReturnsAuthenticationFailed()
     {
         // Arrange
         _executor.ExecuteAsync(
@@ -119,17 +107,11 @@ public class ClientAppValidatorTests
             .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Not logged in" });
 
         // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.AuthenticationFailed);
-        result.Errors.Should().ContainSingle()
-            .Which.Should().Contain("Failed to acquire Microsoft Graph access token");
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenTokenIsEmpty_ReturnsAuthenticationFailed()
+    public async Task EnsureValidClientAppAsync_WhenTokenIsEmpty_ThrowsClientAppValidationException()
     {
         // Arrange
         _executor.ExecuteAsync(
@@ -138,20 +120,17 @@ public class ClientAppValidatorTests
             cancellationToken: Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = "   ", StandardError = string.Empty });
 
-        // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.AuthenticationFailed);
+        // Act & Assert
+        await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     #endregion
 
-    #region ValidateClientAppAsync - App Existence Tests
+    #region EnsureValidClientAppAsync - App Existence Tests
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenAppDoesNotExist_ReturnsAppNotFound()
+    public async Task EnsureValidClientAppAsync_WhenAppDoesNotExist_ReturnsAppNotFound()
     {
         // Arrange
         var token = "fake-token-123";
@@ -168,16 +147,11 @@ public class ClientAppValidatorTests
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\": []}", StandardError = string.Empty });
 
         // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.AppNotFound);
-        result.Errors.Should().Contain(e => e.Contains($"Client app with ID '{ValidClientAppId}' not found"));
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenGraphQueryFails_ReturnsInvalidResponse()
+    public async Task EnsureValidClientAppAsync_WhenGraphQueryFails_ThrowsClientAppValidationException()
     {
         // Arrange
         var token = "fake-token-123";
@@ -193,20 +167,17 @@ public class ClientAppValidatorTests
             cancellationToken: Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Graph API error" });
 
-        // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.AppNotFound);
+        // Act & Assert
+        await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     #endregion
 
-    #region ValidateClientAppAsync - Permission Validation Tests
+    #region EnsureValidClientAppAsync - Permission Validation Tests
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenAppHasNoRequiredResourceAccess_ReturnsMissingPermissions()
+    public async Task EnsureValidClientAppAsync_WhenAppHasNoRequiredResourceAccess_ReturnsMissingPermissions()
     {
         // Arrange
         var token = "fake-token-123";
@@ -214,16 +185,11 @@ public class ClientAppValidatorTests
         SetupAppExists(ValidClientAppId, "Test App", requiredResourceAccess: null);
 
         // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.MissingPermissions);
-        result.Errors.Should().Contain(e => e.Contains("missing required delegated permissions"));
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenAppMissingGraphPermissions_ReturnsMissingPermissions()
+    public async Task EnsureValidClientAppAsync_WhenAppMissingGraphPermissions_ThrowsClientAppValidationException()
     {
         // Arrange
         var token = "fake-token-123";
@@ -240,16 +206,13 @@ public class ClientAppValidatorTests
         
         SetupAppExists(ValidClientAppId, "Test App", requiredResourceAccess);
 
-        // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.MissingPermissions);
+        // Act & Assert
+        await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenAppMissingSomePermissions_ReturnsMissingPermissions()
+    public async Task EnsureValidClientAppAsync_WhenAppMissingSomePermissions_ThrowsClientAppValidationException()
     {
         // Arrange
         var token = "fake-token-123";
@@ -273,44 +236,17 @@ public class ClientAppValidatorTests
         
         SetupAppExists(ValidClientAppId, "Test App", requiredResourceAccess);
 
-        // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.MissingPermissions);
-        result.Errors.Should().Contain(e => e.Contains("missing required delegated permissions"))
-            .And.Contain(e => e.Contains("DelegatedPermissionGrant.ReadWrite.All") || e.Contains("Directory.Read.All"));
+        // Act & Assert
+        await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     #endregion
 
-    #region ValidateClientAppAsync - Success Tests
+    #region EnsureValidClientAppAsync - Success Tests
 
     [Fact]
-    public async Task ValidateClientAppAsync_WhenAllValidationsPass_ReturnsSuccess()
-    {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
-        SetupAdminConsentGranted(ValidClientAppId);
-
-        // Act
-        var result = await _validator.ValidateClientAppAsync(ValidClientAppId, ValidTenantId);
-
-        // Assert
-        result.IsValid.Should().BeTrue();
-        result.FailureType.Should().Be(ClientAppValidator.ValidationFailureType.None);
-        result.Errors.Should().BeEmpty();
-    }
-
-    #endregion
-
-    #region EnsureValidClientAppAsync Tests
-
-    [Fact]
-    public async Task EnsureValidClientAppAsync_WhenValidationPasses_DoesNotThrow()
+    public async Task EnsureValidClientAppAsync_WhenAllValidationsPass_DoesNotThrow()
     {
         // Arrange
         var token = "fake-token-123";
@@ -321,6 +257,10 @@ public class ClientAppValidatorTests
         // Act & Assert - should not throw
         await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
     }
+
+    #endregion
+
+    #region EnsureValidClientAppAsync Exception Tests
 
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenAppNotFound_ThrowsClientAppValidationException()
@@ -568,3 +508,4 @@ public class ClientAppValidatorTests
 
     #endregion
 }
+

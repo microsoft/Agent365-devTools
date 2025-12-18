@@ -6,27 +6,29 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
 public static class ConfigCommand
 {
     private const int ConsentsTableWidth = 120;
-    public static Command CreateCommand(ILogger logger, string? configDir = null, IConfigurationWizardService? wizardService = null)
+    public static Command CreateCommand(ILogger logger, string? configDir = null, IConfigurationWizardService? wizardService = null, IClientAppValidator? clientAppValidator = null)
     {
         var directory = configDir ?? Services.ConfigService.GetGlobalConfigDirectory();
         var command = new Command("config", "Configure Azure subscription, resource settings, and deployment options\nfor a365 CLI commands");
         
         // Always add init command - it supports both wizard and direct import (-c option)
-        command.AddCommand(CreateInitSubcommand(logger, directory, wizardService));
+        command.AddCommand(CreateInitSubcommand(logger, directory, wizardService, clientAppValidator));
         command.AddCommand(CreateDisplaySubcommand(logger, directory));
         
         return command;
     }
 
-    private static Command CreateInitSubcommand(ILogger logger, string configDir, IConfigurationWizardService? wizardService)
+    private static Command CreateInitSubcommand(ILogger logger, string configDir, IConfigurationWizardService? wizardService, IClientAppValidator? clientAppValidator)
     {
         var cmd = new Command("init", "Interactive wizard to configure Agent 365 with Azure CLI integration and smart defaults")
         {
@@ -82,6 +84,37 @@ public static class ConfigCommand
                             logger.LogError($"  {err}");
                         }
                         return;
+                    }
+
+                    // Validate client app if clientAppValidator is provided and clientAppId exists
+                    if (clientAppValidator != null && !string.IsNullOrWhiteSpace(importedConfig.ClientAppId))
+                    {
+                        try
+                        {
+                            await clientAppValidator.EnsureValidClientAppAsync(
+                                importedConfig.ClientAppId,
+                                importedConfig.TenantId,
+                                context.GetCancellationToken());
+                        }
+                        catch (ClientAppValidationException ex)
+                        {
+                            logger.LogError("");
+                            logger.LogError(ErrorMessages.ClientAppValidationFailed);
+                            logger.LogError($"  {ex.IssueDescription}");
+                            foreach (var detail in ex.ErrorDetails)
+                            {
+                                logger.LogError($"  {detail}");
+                            }
+                            if (ex.MitigationSteps.Count > 0)
+                            {
+                                foreach (var step in ex.MitigationSteps)
+                                {
+                                    logger.LogError(step);
+                                }
+                            }
+                            logger.LogError("");
+                            return;
+                        }
                     }
 
                     // CRITICAL: Only serialize static properties when saving to a365.config.json

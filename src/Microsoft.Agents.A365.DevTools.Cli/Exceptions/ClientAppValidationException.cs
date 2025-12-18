@@ -39,10 +39,10 @@ public sealed class ClientAppValidationException : Agent365Exception
             },
             mitigationSteps: new List<string>
             {
-                "Verify the clientAppId in your a365.config.json is correct",
-                "Check you're using the Application (client) ID, not the Object ID",
-                "Ensure the app is registered in the correct tenant",
-                $"Follow the setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
+                "Verify 'clientAppId' in a365.config.json is the Application (client) ID, not Object ID.",
+                "Run 'a365 config init' to create a new app, or check the app exists in Azure Portal.",
+                "Ensure you are logged in with the correct tenant using 'az login'.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
@@ -66,11 +66,11 @@ public sealed class ClientAppValidationException : Agent365Exception
             },
             mitigationSteps: new List<string>
             {
-                "Go to Azure Portal > App registrations > Your app",
-                "Navigate to API permissions",
-                "Add the missing Microsoft Graph delegated permissions",
-                "Grant admin consent after adding permissions",
-                $"See detailed guide: {ConfigConstants.Agent365CliDocumentationUrl}"
+                "Add missing Microsoft Graph delegated permissions in Azure Portal > App registrations > Your app > API permissions.",
+                "Grant admin consent after adding permissions.",
+                "Wait a few minutes for permission changes to propagate.",
+                "Verify the permissions match the required list exactly.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
@@ -93,12 +93,12 @@ public sealed class ClientAppValidationException : Agent365Exception
             },
             mitigationSteps: new List<string>
             {
-                "Go to Azure Portal > App registrations > Your app",
-                "Navigate to API permissions",
-                "Click 'Grant admin consent for [Your Tenant]'",
-                "Confirm the consent dialog",
-                "Wait a few seconds for consent to propagate",
-                $"See detailed guide: {ConfigConstants.Agent365CliDocumentationUrl}"
+                "Grant admin consent at: Azure Portal > App registrations > Your app > API permissions.",
+                "Click 'Grant admin consent for [Your Tenant]' and wait for propagation.",
+                "Confirm the consent dialog when prompted.",
+                "Verify the status shows 'Granted for [Your Tenant]' with a green checkmark.",
+                "Wait a few minutes for consent to propagate through Azure AD.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {

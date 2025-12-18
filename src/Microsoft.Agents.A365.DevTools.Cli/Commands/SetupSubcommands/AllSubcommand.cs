@@ -30,7 +30,8 @@ internal static class AllSubcommand
         IAzureValidator azureValidator,
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        IClientAppValidator clientAppValidator)
     {
         var command = new Command("all", 
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -130,10 +131,6 @@ internal static class AllSubcommand
                     if (infraErrors.Count > 0)
                     {
                         allErrors.AddRange(infraErrors.Select(e => $"Infrastructure: {e}"));
-                        foreach (var error in infraErrors)
-                        {
-                            logger.LogError("  - {Error}", error);
-                        }
                     }
                     else
                     {
@@ -143,14 +140,10 @@ internal static class AllSubcommand
 
                 // Validate Blueprint prerequisites
                 logger.LogInformation("Validating Blueprint prerequisites...");
-                var blueprintErrors = await BlueprintSubcommand.ValidateAsync(setupConfig, azureValidator, CancellationToken.None);
+                var blueprintErrors = await BlueprintSubcommand.ValidateAsync(setupConfig, azureValidator, clientAppValidator, CancellationToken.None);
                 if (blueprintErrors.Count > 0)
                 {
                     allErrors.AddRange(blueprintErrors.Select(e => $"Blueprint: {e}"));
-                    foreach (var error in blueprintErrors)
-                    {
-                        logger.LogError("  - {Error}", error);
-                    }
                 }
                 else
                 {

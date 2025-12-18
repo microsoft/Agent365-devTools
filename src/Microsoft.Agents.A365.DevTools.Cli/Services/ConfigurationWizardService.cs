@@ -5,12 +5,20 @@ using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for simplifying Agent 365 configuration initialization with smart defaults and Azure CLI integration
+/// Service for simplifying Agent 365 configuration initialization with smart defaults and Azure CLI integration.
+/// 
+/// IMPORTANT: This is an interactive wizard service. Output pattern:
+/// - Console.WriteLine: All user-facing output (info, prompts, errors) for direct console interaction
+/// - _logger.LogDebug: Internal diagnostics only, not shown to users by default
+/// - _logger.LogInformation: Wizard lifecycle events for logging infrastructure
+/// 
+/// This follows Azure CLI pattern where interactive commands write directly to console for immediate feedback.
 /// </summary>
 public interface IConfigurationWizardService
 {
@@ -64,7 +72,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             // Step 1: Verify Azure CLI login
             if (!await VerifyAzureLoginAsync())
             {
-                _logger.LogError("Configuration wizard cancelled: Azure CLI authentication required");
+                Console.WriteLine("ERROR: Configuration wizard cancelled: Azure CLI authentication required");
+                _logger.LogDebug("Configuration wizard cancelled: Azure CLI authentication required");
                 return null;
             }
 
@@ -72,7 +81,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var accountInfo = await _azureCliService.GetCurrentAccountAsync();
             if (accountInfo == null)
             {
-                _logger.LogError("Failed to retrieve Azure account information. Please run 'az login' first");
+                Console.WriteLine("ERROR: Failed to retrieve Azure account information. Please run 'az login' first");
+                _logger.LogDebug("Failed to retrieve Azure account information");
                 return null;
             }
 
@@ -86,7 +96,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var clientAppId = await PromptForClientAppIdAsync(existingConfig, accountInfo.TenantId);
             if (string.IsNullOrWhiteSpace(clientAppId))
             {
-                _logger.LogError("Client App ID is required. Configuration cancelled");
+                Console.WriteLine("ERROR: Client App ID is required. Configuration cancelled");
+                _logger.LogDebug("Client App ID not provided, configuration cancelled");
                 return null;
             }
 
@@ -94,7 +105,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var agentName = PromptForAgentName(existingConfig);
             if (string.IsNullOrWhiteSpace(agentName))
             {
-                _logger.LogError("Agent name is required. Configuration cancelled");
+                Console.WriteLine("ERROR: Agent name is required. Configuration cancelled");
+                _logger.LogDebug("Agent name not provided, configuration cancelled");
                 return null;
             }
 
@@ -105,7 +117,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var deploymentPath = PromptForDeploymentPath(existingConfig);
             if (string.IsNullOrWhiteSpace(deploymentPath))
             {
-                _logger.LogError("Configuration wizard cancelled: Deployment project path not provided or invalid");
+                Console.WriteLine("ERROR: Configuration wizard cancelled: Deployment project path not provided or invalid");
+                _logger.LogDebug("Deployment path validation failed, configuration cancelled");
                 return null;
             }
 
@@ -113,7 +126,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var (resourceGroup, resourceGroupLocation) = await PromptForResourceGroupAsync(existingConfig);
             if (string.IsNullOrWhiteSpace(resourceGroup))
             {
-                _logger.LogError("Configuration wizard cancelled: Resource group not selected");
+                Console.WriteLine("ERROR: Configuration wizard cancelled: Resource group not selected");
+                _logger.LogDebug("Resource group not selected, configuration cancelled");
                 return null;
             }
 
@@ -131,7 +145,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             
             if (string.IsNullOrWhiteSpace(appServicePlan))
             {
-                _logger.LogError("Configuration wizard cancelled: App Service Plan not selected");
+                Console.WriteLine("ERROR: Configuration wizard cancelled: App Service Plan not selected");
+                _logger.LogDebug("App service plan not selected, configuration cancelled");
                 return null;
             }
 
@@ -157,14 +172,16 @@ public class ConfigurationWizardService : IConfigurationWizardService
             messagingEndpoint = PromptForMessagingEndpoint(existingConfig);
             if (string.IsNullOrWhiteSpace(messagingEndpoint))
             {
-                _logger.LogError("Configuration wizard cancelled: Messaging Endpoint not provided");
+                Console.WriteLine("ERROR: Configuration wizard cancelled: Messaging Endpoint not provided");
+                _logger.LogDebug("Messaging endpoint not provided, configuration cancelled");
                 return null;
             }
         }            // Step 7: Get manager email (required for agent creation)
             var managerEmail = PromptForManagerEmail(existingConfig, accountInfo);
             if (string.IsNullOrWhiteSpace(managerEmail))
             {
-                _logger.LogError("Configuration wizard cancelled: Manager email not provided");
+                Console.WriteLine("ERROR: Configuration wizard cancelled: Manager email not provided");
+                _logger.LogDebug("Manager email not provided, configuration cancelled");
                 return null;
             }
 
@@ -320,7 +337,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
                 if (response != "y" && response != "yes")
                 {
-                    _logger.LogError("Deployment path must contain a valid project. Configuration cancelled");
+                    Console.WriteLine("ERROR: Deployment path must contain a valid project. Configuration cancelled");
+                    _logger.LogDebug("User cancelled due to invalid project detection");
                     return string.Empty;
                 }
             }
@@ -838,23 +856,32 @@ public class ConfigurationWizardService : IConfigurationWizardService
             var executor = new CommandExecutor(validationLoggerFactory.CreateLogger<CommandExecutor>());
             var validator = new ClientAppValidator(validationLoggerFactory.CreateLogger<ClientAppValidator>(), executor);
 
-            var validationResult = await validator.ValidateClientAppAsync(clientAppId, tenantId, CancellationToken.None);
-
-            if (validationResult.IsValid)
+            try
             {
+                await validator.EnsureValidClientAppAsync(clientAppId, tenantId, CancellationToken.None);
                 Console.WriteLine("Client app validation successful!");
                 Console.WriteLine();
                 return clientAppId;
             }
-
-            // Validation failed - show errors
-            Console.WriteLine();
-            Console.WriteLine("Client app validation FAILED:");
-            foreach (var error in validationResult.Errors)
+            catch (ClientAppValidationException ex)
             {
-                Console.WriteLine($"  - {error}");
+                // Validation failed - show errors
+                Console.WriteLine();
+                Console.WriteLine(ErrorMessages.ClientAppValidationFailed);
+                Console.WriteLine($"  {ex.IssueDescription}");
+                foreach (var error in ex.ErrorDetails)
+                {
+                    Console.WriteLine($"  {error}");
+                }
+                if (ex.MitigationSteps.Count > 0)
+                {
+                    foreach (var step in ex.MitigationSteps)
+                    {
+                        Console.WriteLine(step);
+                    }
+                }
+                Console.WriteLine();
             }
-            Console.WriteLine();
 
             if (attemptCount < maxAttempts)
             {

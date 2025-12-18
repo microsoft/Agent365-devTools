@@ -248,11 +248,77 @@ Common issues:
 
 For detailed troubleshooting, see [Microsoft's app registration documentation](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app).
 
+## MOS API Permissions (Auto-Configured)
+
+The `a365 publish` command requires access to Microsoft Office Store (MOS) APIs to publish agent packages. These permissions are **automatically configured** the first time you run `a365 publish`.
+
+### What Gets Configured Automatically
+
+When you run `a365 publish` for the first time, the CLI will:
+1. Create service principals for MOS resource applications in your tenant
+2. Configure your custom client app to request MOS API permissions
+3. Prompt you to grant admin consent if not already granted
+
+### MOS Resource Applications
+
+The following MOS resource applications need service principals created in your tenant:
+
+| Resource App ID | Purpose |
+|----------------|---------|
+| `6ec511af-06dc-4fe2-b493-63a37bc397b1` | TPS AppServices 3p App (Server) - Required for MOS publishing |
+| `8578e004-a5c6-46e7-913e-12f58912df43` | Power Platform API - MOS token acquisition |
+| `e8be65d6-d430-4289-a665-51bf2a194bda` | MOS Titles API - Access to titles.prod.mos.microsoft.com |
+
+### Redirect URI Requirement
+
+Ensure your custom client app registration includes the redirect URI `http://localhost:8400/` (already configured in Step 1 above). This URI is used for both Microsoft Graph and MOS token acquisition.
+
+### Admin Consent
+
+After the CLI automatically configures MOS permissions, you'll need to grant admin consent:
+
+1. The CLI will display a message with a direct link to the Azure Portal permissions page
+2. Go to the provided URL or navigate to: **Azure Portal** → **App registrations** → **Your app** → **API permissions**
+3. Click **Grant admin consent for [Your Tenant]**
+4. Verify all permissions show green checkmarks under "Status"
+
+Alternatively, you can consent interactively when the authentication prompt appears during `a365 publish`.
+
+### Manual Configuration (If Needed)
+
+If automatic configuration fails due to insufficient privileges, you can manually create the service principals:
+
+```powershell
+az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1
+az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43
+az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda
+```
+
+After creating service principals manually, run `a365 publish` again.
+
+### Troubleshooting MOS Permissions
+
+**Error: AADSTS650052 when running publish**
+- **Cause**: Service principals don't exist or admin consent not granted
+- **Solution**: Run `a365 publish` again (it will create service principals) and grant admin consent when prompted
+
+**Error: AADSTS650057 - Invalid resource**
+- **Cause**: MOS Titles API resource app not added to your client app's API permissions
+- **Solution**: Run `a365 publish` again (it will automatically add the missing resource) and grant admin consent when prompted
+
+**Error: Insufficient privileges to create service principal**
+- **Cause**: You don't have Application Administrator, Cloud Application Administrator, or Global Administrator role
+- **Solution**: Use the manual configuration commands above, or ask your tenant administrator to run `a365 publish` or execute the `az ad sp create` commands
+
+**Admin consent not showing up**
+- **Cause**: OAuth2 permission grant hasn't propagated yet
+- **Solution**: Wait a few minutes and run `a365 publish` again, or manually grant consent via Azure Portal
+
 ## Security Best Practices
 
 **Do**:
 - Use single-tenant registration
-- Grant only the five required delegated permissions
+- Grant only the required delegated permissions (Microsoft Graph + MOS APIs)
 - Audit permissions regularly
 - Remove the app when no longer needed
 

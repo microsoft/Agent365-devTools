@@ -72,12 +72,13 @@ class Program
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var webAppCreator = serviceProvider.GetRequiredService<AzureWebAppCreator>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
+            var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
 
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor, 
-                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService));
+                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, clientAppValidator));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService, azureValidator));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
@@ -88,7 +89,7 @@ class Program
             var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
             var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
-            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService));
+            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, graphApiService));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, graphApiService, manifestTemplateService));
@@ -152,6 +153,7 @@ class Program
         services.AddSingleton<IConfigService, ConfigService>();
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
+        services.AddSingleton<IClientAppValidator, ClientAppValidator>();
         
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>

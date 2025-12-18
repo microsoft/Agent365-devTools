@@ -59,7 +59,7 @@ public static class FileHelper
                         }
                         else
                         {
-                            logger.LogInformation("Opened file in {Editor}", editor);
+                            logger.LogDebug("Opened file in {Editor}", editor);
                             return true;
                         }
                     }
@@ -77,7 +77,7 @@ public static class FileHelper
                 // On Windows with UseShellExecute, Process.Start may return null even on success
                 // when the file is opened in an existing process (e.g., Notepad, VS Code)
                 Process.Start(new ProcessStartInfo(filePath) { UseShellExecute = true });
-                logger.LogInformation("Opened file in default Windows editor");
+                logger.LogDebug("Opened file in default Windows editor");
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
@@ -93,7 +93,7 @@ public static class FileHelper
                     logger.LogWarning("Failed to open file using macOS 'open' command (process returned null)");
                     return false;
                 }
-                logger.LogInformation("Opened file using macOS 'open' command");
+                logger.LogDebug("Opened file using macOS 'open' command");
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
@@ -126,5 +126,30 @@ public static class FileHelper
             logger.LogInformation("Please manually open the file to edit it");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Gets a secure cross-platform directory path for storing application data in the user's home directory.
+    /// Creates the directory if it doesn't exist.
+    /// </summary>
+    /// <param name="subdirectory">Optional subdirectory name within the .a365 folder (e.g., "cache", "logs")</param>
+    /// <returns>Absolute path to the secure directory</returns>
+    /// <remarks>
+    /// Directory locations by OS:
+    /// - Windows: C:\Users\{username}\.a365\{subdirectory}
+    /// - Linux: /home/{username}/.a365/{subdirectory}
+    /// - macOS: /Users/{username}/.a365/{subdirectory}
+    /// </remarks>
+    public static string GetSecureCrossOsDirectory(string? subdirectory = null)
+    {
+        var userProfilePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var baseDir = Path.Combine(userProfilePath, ".a365");
+        
+        var targetDir = string.IsNullOrWhiteSpace(subdirectory) 
+            ? baseDir 
+            : Path.Combine(baseDir, subdirectory);
+        
+        Directory.CreateDirectory(targetDir);
+        return targetDir;
     }
 }

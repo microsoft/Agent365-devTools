@@ -12,6 +12,9 @@ using System.Net.Http.Headers;
 using System.IO.Compression;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Identity.Client;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -93,17 +96,23 @@ public class PublishCommand
         var skipGraphOption = new Option<bool>("--skip-graph", "Skip Graph federated identity and role assignment steps");
         var mosEnvOption = new Option<string>("--mos-env", () => "prod", "MOS environment identifier (e.g. prod, dev) - use MOS_TITLES_URL environment variable for custom URLs");
         var mosPersonalTokenOption = new Option<string?>("--mos-token", () => Environment.GetEnvironmentVariable("MOS_PERSONAL_TOKEN"), "Override MOS token (personal token) - bypass script & cache");
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        
         command.AddOption(dryRunOption);
         command.AddOption(skipGraphOption);
         command.AddOption(mosEnvOption);
         command.AddOption(mosPersonalTokenOption);
+        command.AddOption(verboseOption);
 
-        command.SetHandler(async (bool dryRun, bool skipGraph, string mosEnv, string? mosPersonalToken) =>
+        command.SetHandler(async (bool dryRun, bool skipGraph, string mosEnv, string? mosPersonalToken, bool verbose) =>
         {
             try
             {
                 // Load configuration using ConfigService
                 var config = await configService.LoadAsync();
+                logger.LogDebug("Configuration loaded successfully");
 
                 // Extract required values from config
                 var tenantId = config.TenantId;
@@ -121,6 +130,10 @@ public class PublishCommand
                 var manifestDir = Path.Combine(baseDir, "manifest");
                 var manifestPath = Path.Combine(manifestDir, "manifest.json");
                 var agenticUserManifestTemplatePath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
+
+                logger.LogDebug("Using project directory: {BaseDir}", baseDir);
+                logger.LogDebug("Using manifest directory: {ManifestDir}", manifestDir);
+                logger.LogDebug("Using blueprint ID: {BlueprintId}", blueprintId);
 
                 // If manifest directory doesn't exist, extract templates from embedded resources
                 if (!Directory.Exists(manifestDir))
@@ -173,6 +186,8 @@ public class PublishCommand
                 await File.WriteAllTextAsync(agenticUserManifestTemplatePath, updatedAgenticUserManifestTemplate);
                 logger.LogInformation("Agentic user manifest template updated successfully with agentBlueprintId {Id}", blueprintId);
 
+                logger.LogDebug("Manifest files written to disk");
+
                 // Interactive pause for user customization
                 logger.LogInformation("");
                 logger.LogInformation("=== MANIFEST UPDATED ===");
@@ -210,10 +225,10 @@ public class PublishCommand
                 if (openResponse != "n" && openResponse != "no")
                 {
                     FileHelper.TryOpenFileInDefaultEditor(manifestPath, logger);
-                    logger.LogInformation("");
                 }
                 
                 Console.Write("Press Enter when you have finished editing the manifest to continue with publish: ");
+                Console.Out.Flush();
                 Console.ReadLine();
 
                 logger.LogInformation("Continuing with publish process...");
@@ -266,12 +281,112 @@ public class PublishCommand
                 }
                 logger.LogInformation("Created archive {ZipPath}", zipPath);
 
+                // Ensure MOS prerequisites are configured (service principals + permissions)
+                try
+                {
+                    logger.LogInformation("");
+                    logger.LogDebug("Checking MOS prerequisites (service principals and permissions)...");
+                    var mosPrereqsConfigured = await PublishHelpers.EnsureMosPrerequisitesAsync(
+                        graphApiService, config, logger);
+                    
+                    if (!mosPrereqsConfigured)
+                    {
+                        logger.LogError("Failed to configure MOS prerequisites. Aborting publish.");
+                        return;
+                    }
+                    logger.LogInformation("");
+                }
+                catch (SetupValidationException ex)
+                {
+                    logger.LogError("MOS prerequisites configuration failed: {Message}", ex.Message);
+                    logger.LogInformation("");
+                    logger.LogInformation("To manually create MOS service principals, run:");
+                    logger.LogInformation("  az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1");
+                    logger.LogInformation("  az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43");
+                    logger.LogInformation("  az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda");
+                    logger.LogInformation("");
+                    return;
+                }
+
                 // Acquire MOS token using native C# service
+                logger.LogDebug("Acquiring MOS authentication token for environment: {Environment}", mosEnv);
                 var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                 var mosTokenService = new MosTokenService(
-                    cleanLoggerFactory.CreateLogger<MosTokenService>());
+                    cleanLoggerFactory.CreateLogger<MosTokenService>(),
+                    configService);
 
-                var mosToken = await mosTokenService.AcquireTokenAsync(mosEnv, mosPersonalToken);
+                string? mosToken = null;
+                try
+                {
+                    mosToken = await mosTokenService.AcquireTokenAsync(mosEnv, mosPersonalToken);
+                    logger.LogDebug("MOS token acquired successfully");
+                }
+                catch (MsalServiceException ex) when (ex.ErrorCode == "invalid_client" && 
+                    ex.Message.Contains("AADSTS650052"))
+                {
+                    logger.LogError("MOS token acquisition failed: Missing service principal or admin consent (Error: {ErrorCode})", ex.ErrorCode);
+                    logger.LogInformation("");
+                    logger.LogInformation("The MOS service principals exist, but admin consent may not be granted.");
+                    logger.LogInformation("Grant admin consent at:");
+                    logger.LogInformation("  {PortalUrl}",
+                        MosConstants.GetApiPermissionsPortalUrl(config.ClientAppId));
+                    logger.LogInformation("");
+                    logger.LogInformation("Or authenticate interactively and consent when prompted.");
+                    logger.LogInformation("");
+                    return;
+                }
+                catch (MsalServiceException ex) when (ex.ErrorCode == "unauthorized_client" && 
+                    ex.Message.Contains("AADSTS50194"))
+                {
+                    logger.LogError("MOS token acquisition failed: Single-tenant app cannot use /common endpoint (Error: {ErrorCode})", ex.ErrorCode);
+                    logger.LogInformation("");
+                    logger.LogInformation("AADSTS50194: The application is configured as single-tenant but is trying to use the /common authority.");
+                    logger.LogInformation("This should be automatically handled by using tenant-specific authority URLs.");
+                    logger.LogInformation("");
+                    logger.LogInformation("If this error persists:");
+                    logger.LogInformation("1. Verify your app registration is configured correctly in Azure Portal");
+                    logger.LogInformation("2. Check that tenantId in a365.config.json matches your app's home tenant");
+                    logger.LogInformation("3. Ensure the app's 'Supported account types' setting matches your use case");
+                    logger.LogInformation("");
+                    return;
+                }
+                catch (MsalServiceException ex) when (ex.ErrorCode == "invalid_grant")
+                {
+                    logger.LogError("MOS token acquisition failed: Invalid or expired credentials (Error: {ErrorCode})", ex.ErrorCode);
+                    logger.LogInformation("");
+                    logger.LogInformation("The authentication failed due to invalid credentials or expired tokens.");
+                    logger.LogInformation("Try clearing the token cache and re-authenticating:");
+                    logger.LogInformation("  - Delete: ~/.a365/mos-token-cache.json");
+                    logger.LogInformation("  - Run: a365 publish");
+                    logger.LogInformation("");
+                    return;
+                }
+                catch (MsalServiceException ex)
+                {
+                    // Log all MSAL-specific errors with full context for debugging
+                    logger.LogError("MOS token acquisition failed with MSAL error");
+                    logger.LogError("Error Code: {ErrorCode}", ex.ErrorCode);
+                    logger.LogError("Error Message: {Message}", ex.Message);
+                    logger.LogDebug("Stack Trace: {StackTrace}", ex.StackTrace);
+                    
+                    logger.LogInformation("");
+                    logger.LogInformation("Authentication failed. Common issues:");
+                    logger.LogInformation("1. Missing admin consent - Grant at:");
+                    logger.LogInformation("   {PortalUrl}",
+                        MosConstants.GetApiPermissionsPortalUrl(config.ClientAppId));
+                    logger.LogInformation("2. Insufficient permissions - Verify required API permissions are configured");
+                    logger.LogInformation("3. Tenant configuration - Ensure app registration matches your tenant setup");
+                    logger.LogInformation("");
+                    logger.LogInformation("For detailed troubleshooting, search for error code: {ErrorCode}", ex.ErrorCode);
+                    logger.LogInformation("");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to acquire MOS token: {Message}", ex.Message);
+                    return;
+                }
+
                 if (string.IsNullOrWhiteSpace(mosToken))
                 {
                     logger.LogError("Unable to acquire MOS token. Aborting publish.");
@@ -282,9 +397,20 @@ public class PublishCommand
                 http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", mosToken);
                 http.DefaultRequestHeaders.UserAgent.ParseAdd($"Agent365Publish/{Assembly.GetExecutingAssembly().GetName().Version}");
 
+                // Log token info for debugging (first/last chars only for security)
+                if (mosToken.Length >= 20)
+                {
+                    var prefixLen = Math.Min(10, mosToken.Length / 2);
+                    var suffixLen = Math.Min(10, mosToken.Length / 2);
+                    logger.LogDebug("Using MOS token: {TokenStart}...{TokenEnd} (length: {Length})", 
+                        mosToken[..prefixLen], mosToken[^suffixLen..], mosToken.Length);
+                }
+
                 // Step 2: POST packages (multipart form) - using tenant-specific URL
                 logger.LogInformation("Uploading package to Titles service...");
                 var packagesUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/packages";
+                logger.LogDebug("Upload URL: {Url}", packagesUrl);
+                logger.LogDebug("Package file: {ZipPath}", zipPath);
                 using var form = new MultipartFormDataContent();
                 await using (var zipFs = File.OpenRead(zipPath))
                 {
@@ -319,6 +445,36 @@ public class PublishCommand
                     if (!uploadResp.IsSuccessStatusCode)
                     {
                         logger.LogError("Package upload failed ({Status}). Body:\n{Body}", uploadResp.StatusCode, uploadBody);
+                        
+                        // Log response headers for additional diagnostic info
+                        logger.LogDebug("Response headers:");
+                        foreach (var header in uploadResp.Headers)
+                        {
+                            logger.LogDebug("  {HeaderName}: {HeaderValue}", header.Key, string.Join(", ", header.Value));
+                        }
+                        foreach (var header in uploadResp.Content.Headers)
+                        {
+                            logger.LogDebug("  {HeaderName}: {HeaderValue}", header.Key, string.Join(", ", header.Value));
+                        }
+                        
+                        // Provide helpful troubleshooting info for 401
+                        if (uploadResp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                        {
+                            logger.LogError("");
+                            logger.LogError("TROUBLESHOOTING 401 UNAUTHORIZED:");
+                            logger.LogError("1. Verify MOS API permissions are configured correctly");
+                            logger.LogError("   - Required permission: Title.ReadWrite.All");
+                            logger.LogError("   - Admin consent must be granted");
+                            logger.LogError("2. Check that the token contains the correct scopes");
+                            logger.LogError("   - Run 'a365 publish -v' to see token scopes in debug logs");
+                            logger.LogError("3. Ensure you're signed in with the correct account");
+                            logger.LogError("   - Run 'az account show' to verify current account");
+                            logger.LogError("4. Try clearing the MOS token cache and re-authenticating:");
+                            logger.LogError("   - Delete: .mos-token-cache.json");
+                            logger.LogError("   - Run: a365 publish");
+                            logger.LogError("");
+                        }
+                        
                         return;
                     }
 
@@ -368,8 +524,11 @@ public class PublishCommand
 
                     logger.LogInformation("Upload succeeded. operationId={Op} titleId={Title}", operationId, titleId);
 
+                    logger.LogDebug("Proceeding to title creation step...");
+
                     // POST titles with operationId - using tenant-specific URL
                     var titlesUrl = $"{mosTitlesBaseUrl}/admin/v1/tenants/packages/titles";
+                    logger.LogDebug("Title creation URL: {Url}", titlesUrl);
                     var titlePayload = JsonSerializer.Serialize(new { operationId });
 
                     HttpResponseMessage titlesResp;
@@ -468,6 +627,7 @@ public class PublishCommand
                     return;
                 }
 
+                logger.LogDebug("Configuring Graph API permissions (federated identity and role assignments)...");
                 logger.LogInformation("Executing Graph API operations...");
                 logger.LogInformation("TenantId: {TenantId}, BlueprintId: {BlueprintId}", tenantId, blueprintId);
 
@@ -489,7 +649,7 @@ public class PublishCommand
             {
                 logger.LogError(ex, "Publish command failed: {Message}", ex.Message);
             }
-        }, dryRunOption, skipGraphOption, mosEnvOption, mosPersonalTokenOption);
+        }, dryRunOption, skipGraphOption, mosEnvOption, mosPersonalTokenOption, verboseOption);
 
         return command;
     }

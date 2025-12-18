@@ -332,16 +332,21 @@ internal static class GetTokenSubcommand
         {
             if (result.Success && !string.IsNullOrWhiteSpace(result.Token))
             {
+                // Write metadata to stderr so it doesn't interfere with token parsing on stdout
+                // but remains available for troubleshooting when multiple tokens are returned
                 if (verbose)
                 {
-                    Console.WriteLine($"# {result.ServerName}");
-                    Console.WriteLine($"# Scope: {result.Scope}");
-                    Console.WriteLine($"# Audience: {result.Audience}");
+                    Console.Error.WriteLine($"# {result.ServerName}");
+                    Console.Error.WriteLine($"# Scope: {result.Scope}");
+                    Console.Error.WriteLine($"# Audience: {result.Audience}");
                 }
+                
+                // Write token to stdout for piping to other tools
                 Console.WriteLine(result.Token);
+                
                 if (verbose)
                 {
-                    Console.WriteLine();
+                    Console.Error.WriteLine();
                 }
             }
         }

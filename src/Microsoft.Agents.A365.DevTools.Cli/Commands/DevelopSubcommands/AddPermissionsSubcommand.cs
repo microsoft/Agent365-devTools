@@ -203,10 +203,7 @@ internal static class AddPermissionsSubcommand
                 catch (Exception ex)
                 {
                     logger.LogError("  [ERROR] Exception adding permissions for {ResourceAppId}: {Message}", resourceAppId, ex.Message);
-                    if (verbose)
-                    {
-                        logger.LogError("    {StackTrace}", ex.StackTrace);
-                    }
+                    logger.LogDebug("    {StackTrace}", ex.StackTrace);
                     success = false;
                 }
                 

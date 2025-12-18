@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
 
@@ -13,12 +15,18 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 public class MosTokenService
 {
     private readonly ILogger<MosTokenService> _logger;
+    private readonly IConfigService _configService;
     private readonly string _cacheFilePath;
 
-    public MosTokenService(ILogger<MosTokenService> logger)
+    public MosTokenService(ILogger<MosTokenService> logger, IConfigService configService)
     {
         _logger = logger;
-        _cacheFilePath = Path.Combine(Environment.CurrentDirectory, ".mos-token-cache.json");
+        _configService = configService;
+        
+        // Store token cache in user's home directory for security
+        // Avoid current directory which may have shared/inappropriate permissions
+        var cacheDir = FileHelper.GetSecureCrossOsDirectory();
+        _cacheFilePath = Path.Combine(cacheDir, "mos-token-cache.json");
     }
 
     /// <summary>
@@ -44,8 +52,27 @@ public class MosTokenService
             return cached.Value.Token;
         }
 
+        // Load config to get tenant ID
+        var setupConfig = await _configService.LoadAsync();
+        if (setupConfig == null)
+        {
+            _logger.LogError("Configuration not found. Run 'a365 config init' first.");
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(setupConfig.TenantId))
+        {
+            _logger.LogError("TenantId not configured. Run 'a365 config init' first.");
+            return null;
+        }
+
+        // Use Microsoft first-party client app for MOS token acquisition
+        // This is required because MOS APIs only accept tokens from first-party apps
+        var mosClientAppId = MosConstants.TpsAppServicesClientAppId;
+        _logger.LogDebug("Using Microsoft first-party client app for MOS tokens: {ClientAppId}", mosClientAppId);
+
         // Get environment-specific configuration
-        var config = GetEnvironmentConfig(environment);
+        var config = GetEnvironmentConfig(environment, mosClientAppId, setupConfig.TenantId);
         if (config == null)
         {
             _logger.LogError("Unsupported MOS environment: {Environment}", environment);
@@ -61,7 +88,7 @@ public class MosTokenService
             var app = PublicClientApplicationBuilder
                 .Create(config.ClientId)
                 .WithAuthority(config.Authority)
-                .WithRedirectUri("http://localhost")
+                .WithRedirectUri(MosConstants.RedirectUri)
                 .Build();
 
             var result = await app
@@ -73,6 +100,16 @@ public class MosTokenService
             {
                 _logger.LogError("Failed to acquire MOS token");
                 return null;
+            }
+
+            // Log the scopes in the token for debugging
+            if (result.Scopes != null && result.Scopes.Any())
+            {
+                _logger.LogDebug("Token scopes: {Scopes}", string.Join(", ", result.Scopes));
+            }
+            else
+            {
+                _logger.LogWarning("Token has no scopes property");
             }
 
             // Cache the token
@@ -89,45 +126,49 @@ public class MosTokenService
         }
     }
 
-    private MosEnvironmentConfig? GetEnvironmentConfig(string environment)
+    private MosEnvironmentConfig? GetEnvironmentConfig(string environment, string clientAppId, string tenantId)
     {
+        // Use tenant-specific authority to support single-tenant apps (AADSTS50194 fix)
+        var commercialAuthority = $"https://login.microsoftonline.com/{tenantId}";
+        var governmentAuthority = $"https://login.microsoftonline.us/{tenantId}";
+
         return environment switch
         {
             "prod" => new MosEnvironmentConfig
             {
-                ClientId = "caef0b02-8d39-46ab-b28c-f517033d8a21", // TPS Test Client
-                Authority = "https://login.microsoftonline.com/common",
-                Scope = "https://titles.prod.mos.microsoft.com/.default"
+                ClientId = clientAppId,
+                Authority = commercialAuthority,
+                Scope = MosConstants.Environments.ProdScope
             },
             "sdf" => new MosEnvironmentConfig
             {
-                ClientId = "caef0b02-8d39-46ab-b28c-f517033d8a21",
-                Authority = "https://login.microsoftonline.com/common",
-                Scope = "https://titles.sdf.mos.microsoft.com/.default"
+                ClientId = clientAppId,
+                Authority = commercialAuthority,
+                Scope = MosConstants.Environments.SdfScope
             },
             "test" => new MosEnvironmentConfig
             {
-                ClientId = "caef0b02-8d39-46ab-b28c-f517033d8a21",
-                Authority = "https://login.microsoftonline.com/common",
-                Scope = "https://testappservices.mos.microsoft.com/.default"
+                ClientId = clientAppId,
+                Authority = commercialAuthority,
+                Scope = MosConstants.Environments.TestScope
             },
             "gccm" => new MosEnvironmentConfig
             {
-                ClientId = "caef0b02-8d39-46ab-b28c-f517033d8a21",
-                Authority = "https://login.microsoftonline.com/common",
-                Scope = "https://titles.gccm.mos.microsoft.com/.default"
+                ClientId = clientAppId,
+                Authority = commercialAuthority,
+                Scope = MosConstants.Environments.GccmScope
             },
             "gcch" => new MosEnvironmentConfig
             {
-                ClientId = "90ee8804-635f-435e-9dbf-cafc46ee769f",
-                Authority = "https://login.microsoftonline.us/common",
-                Scope = "https://titles.gcch.mos.svc.usgovcloud.microsoft/.default"
+                ClientId = clientAppId,
+                Authority = governmentAuthority,
+                Scope = MosConstants.Environments.GcchScope
             },
             "dod" => new MosEnvironmentConfig
             {
-                ClientId = "90ee8804-635f-435e-9dbf-cafc46ee769f",
-                Authority = "https://login.microsoftonline.us/common",
-                Scope = "https://titles.dod.mos.svc.usgovcloud.microsoft/.default"
+                ClientId = clientAppId,
+                Authority = governmentAuthority,
+                Scope = MosConstants.Environments.DodScope
             },
             _ => null
         };
@@ -188,7 +229,22 @@ public class MosTokenService
             var updated = System.Text.Json.JsonSerializer.Serialize(cache, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_cacheFilePath, updated);
 
-            _logger.LogDebug("Token cached for environment: {Environment}", environment);
+            // Set file permissions to user-only on Unix systems
+            if (!OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    var fileInfo = new FileInfo(_cacheFilePath);
+                    fileInfo.UnixFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                    _logger.LogDebug("Set secure permissions (0600) on token cache file");
+                }
+                catch (Exception permEx)
+                {
+                    _logger.LogWarning(permEx, "Failed to set Unix file permissions on token cache");
+                }
+            }
+
+            _logger.LogDebug("Token cached for environment: {Environment} at {Path}", environment, _cacheFilePath);
         }
         catch (Exception ex)
         {
