@@ -20,8 +20,6 @@ public static class Server
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
-        Console.WriteLine($"[MockToolingServer.Start] MCP Server starting at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff} UTC");
-
         // MCP services with tools; add both HTTP and SSE transport
         builder.Services
             .AddMcpServer()
@@ -58,7 +56,7 @@ public static class Server
         var app = builder.Build();
 
         // Log startup information
-        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        var logger = app.Services.GetRequiredService<ILogger<Server>>();
         logger.LogInformation("===== MCP SERVER STARTING (Static Method) =====");
         logger.LogInformation("Startup Time: {StartupTime} UTC", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff"));
         logger.LogInformation("Server will be available on: {Url}", app.Configuration["urls"]);
@@ -80,7 +78,7 @@ public static class Server
 
         // ===================== MOCK MCP ENDPOINTS =====================
         // JSON-RPC over HTTP for mock tools at /mcp-mock
-        app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, HttpRequest httpRequest, IMockToolExecutor executor, ILogger<Program> log) =>
+        app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, HttpRequest httpRequest, IMockToolExecutor executor, ILogger<Server> log) =>
         {
             try
             {
@@ -201,7 +199,7 @@ public static class Server
             }
         });
 
-        logger.LogInformation("[MockToolingServer.Start] Starting MCP server... Watch for tool calls in the logs!");
+        logger.LogInformation("Starting MCP server... Watch for tool calls in the logs!");
 
         await app.RunAsync();
     }

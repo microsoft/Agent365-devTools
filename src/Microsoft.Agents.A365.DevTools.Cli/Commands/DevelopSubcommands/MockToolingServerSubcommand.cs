@@ -86,9 +86,9 @@ internal static class MockToolingServerSubcommand
 
             if (background)
             {
-                var arguments = $"develop mts --port {serverPort} --foreground";
-                if (verbose) arguments += " --verbose";
-                logger.LogInformation("[DRY RUN] Would start in new terminal: a365 {Arguments}", arguments);
+                var dryRunArguments = $"develop mts --port {serverPort}";
+                if (verbose) dryRunArguments += " --verbose";
+                logger.LogInformation("[DRY RUN] Would start in new terminal: a365 {Arguments}", dryRunArguments);
                 return;
             }
 
@@ -121,10 +121,6 @@ internal static class MockToolingServerSubcommand
             if (verbose)
             {
                 arguments = [.. arguments, "--verbose"];
-            }
-
-            if (verbose)
-            {
                 logger.LogInformation("Starting in new terminal: a365 {Arguments}", arguments);
             }
 
