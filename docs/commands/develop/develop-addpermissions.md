@@ -1,13 +1,13 @@
-# a365 develop addpermissions Command
+# a365 develop add-permissions Command
 
 ## Overview
 
-The `a365 develop addpermissions` command adds MCP (Model Context Protocol) server API permissions to Azure AD applications. This command is designed for **development scenarios** where you need to configure custom applications (not agent blueprints) to access MCP servers.
+The `a365 develop add-permissions` command adds MCP (Model Context Protocol) server API permissions to Azure AD applications. This command is designed for **development scenarios** where you need to configure custom applications (not agent blueprints) to access MCP servers.
 
 ## Usage
 
 ```bash
-a365 develop addpermissions [options]
+a365 develop add-permissions [options]
 ```
 
 ## Options
@@ -43,7 +43,7 @@ The application you're adding permissions to can be the **same application** you
 - The same app needs MCP permissions added to it
 - You can reuse the same `clientAppId` for both purposes
 
-**Example**: If your `a365.config.json` has `clientAppId: "12345678-..."`, running `a365 develop addpermissions` will add MCP permissions to that same application.
+**Example**: If your `a365.config.json` has `clientAppId: "12345678-..."`, running `a365 develop add-permissions` will add MCP permissions to that same application.
 
 > **Note**: The `clientAppId` must be a **client application you create in your Entra ID tenant** with `Application.ReadWrite.All` permission. See the [custom client app registration guide](../../guides/custom-client-app-registration.md) for setup instructions.
 
@@ -81,29 +81,29 @@ The application you're adding permissions to can be the **same application** you
 ### Add all scopes from manifest to the app in config
 ```bash
 # Uses clientAppId from a365.config.json as the target application
-a365 develop addpermissions
+a365 develop add-permissions
 ```
 
 ### Add permissions to a different application
 ```bash
 # Override the config and add permissions to a different app
-a365 develop addpermissions --app-id 87654321-4321-4321-4321-210987654321
+a365 develop add-permissions --app-id 87654321-4321-4321-4321-210987654321
 ```
 
 ### Add specific scopes only
 ```bash
 # Add only specific scopes to the app from config
-a365 develop addpermissions --scopes McpServers.Mail.All McpServers.Calendar.All
+a365 develop add-permissions --scopes McpServers.Mail.All McpServers.Calendar.All
 ```
 
 ### Combine options with dry-run
 ```bash
 # Preview changes to a specific app with specific scopes
-a365 develop addpermissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All --dry-run
+a365 develop add-permissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All --dry-run
 ```
 
 ### Without config file
 ```bash
 # When no config exists, you must provide --app-id
-a365 develop addpermissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All
+a365 develop add-permissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All
 ```

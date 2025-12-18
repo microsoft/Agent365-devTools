@@ -20,7 +20,7 @@ internal static class AddPermissionsSubcommand
         GraphApiService graphApiService)
     {
         var command = new Command(
-            "addpermissions",
+            "add-permissions",
             "Add MCP server API permissions to a custom application");
 
         var configOption = new Option<FileInfo>(

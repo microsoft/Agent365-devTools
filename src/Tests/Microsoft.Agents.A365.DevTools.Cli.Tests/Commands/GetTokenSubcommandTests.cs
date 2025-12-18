@@ -43,7 +43,7 @@ public class GetTokenSubcommandTests
         var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
 
         // Assert
-        command.Name.Should().Be("gettoken");
+        command.Name.Should().Be("get-token");
     }
 
     [Fact]
