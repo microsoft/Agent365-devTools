@@ -45,7 +45,7 @@ public class ProcessServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData(null, null)]
+    [InlineData(null, "")]
     [InlineData("", "")]
     [InlineData("simple", "simple")]
     [InlineData("hello world", "hello world")]

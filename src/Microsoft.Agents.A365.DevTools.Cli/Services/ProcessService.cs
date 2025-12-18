@@ -195,7 +195,7 @@ public class ProcessService : IProcessService
     private static string EscapeAppleScriptString(string input)
     {
         if (string.IsNullOrEmpty(input))
-            return input;
+            return String.Empty;
 
         return input
             .Replace("\\", "\\\\")  // Escape backslashes first
