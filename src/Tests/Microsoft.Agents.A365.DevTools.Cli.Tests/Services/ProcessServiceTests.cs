@@ -45,78 +45,6 @@ public class ProcessServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("", new string[0])]
-    [InlineData("   ", new string[0])]
-    [InlineData("arg1", new[] { "arg1" })]
-    [InlineData("arg1 arg2", new[] { "arg1", "arg2" })]
-    [InlineData("arg1   arg2", new[] { "arg1", "arg2" })]
-    [InlineData("  arg1   arg2  ", new[] { "arg1", "arg2" })]
-    public void SplitArguments_WithBasicArguments_SplitsCorrectly(string input, string[] expected)
-    {
-        // Act
-        var result = InvokeSplitArguments(input);
-
-        // Assert
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
-    [InlineData("\"quoted string\"", new[] { "quoted string" })]
-    [InlineData("\"quoted string\" normal", new[] { "quoted string", "normal" })]
-    [InlineData("normal \"quoted string\"", new[] { "normal", "quoted string" })]
-    [InlineData("\"first quoted\" \"second quoted\"", new[] { "first quoted", "second quoted" })]
-    [InlineData("\"quotes with spaces\" arg", new[] { "quotes with spaces", "arg" })]
-    public void SplitArguments_WithQuotedStrings_RemovesQuotesAndPreservesContent(string input, string[] expected)
-    {
-        // Act
-        var result = InvokeSplitArguments(input);
-
-        // Assert
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
-    [InlineData("\\\"escaped\\\"", new[] { "\\\"escaped\\\"" })]
-    [InlineData("\"string with \\\"inner quotes\\\"\"", new[] { "string with \\\"inner quotes\\\"" })]
-    [InlineData("\\\"start normal \\\"end", new[] { "\\\"start", "normal", "\\\"end" })]
-    [InlineData("\"quoted \\\"escaped\\\" content\"", new[] { "quoted \\\"escaped\\\" content" })]
-    public void SplitArguments_WithEscapedQuotes_PreservesEscapeSequences(string input, string[] expected)
-    {
-        // Act
-        var result = InvokeSplitArguments(input);
-
-        // Assert
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
-    [InlineData("\\\\path", new[] { "\\\\path" })]
-    [InlineData("\"C:\\\\Program Files\\\\Test\"", new[] { "C:\\\\Program Files\\\\Test" })]
-    [InlineData("\\n\\t\\r", new[] { "\\n\\t\\r" })]
-    public void SplitArguments_WithBackslashes_PreservesBackslashes(string input, string[] expected)
-    {
-        // Act
-        var result = InvokeSplitArguments(input);
-
-        // Assert
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
-    [InlineData("--port 5309", new[] { "--port", "5309" })]
-    [InlineData("--message \"hello world\"", new[] { "--message", "hello world" })]
-    [InlineData("--path \"C:\\Program Files\\Test\"", new[] { "--path", "C:\\Program Files\\Test" })]
-    [InlineData("--config \"{\\\"key\\\": \\\"value\\\"}\"", new[] { "--config", "{\\\"key\\\": \\\"value\\\"}" })]
-    public void SplitArguments_WithRealWorldExamples_HandlesCorrectly(string input, string[] expected)
-    {
-        // Act
-        var result = InvokeSplitArguments(input);
-
-        // Assert
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
     [InlineData(null, null)]
     [InlineData("", "")]
     [InlineData("simple", "simple")]
@@ -186,7 +114,7 @@ public class ProcessServiceTests : IDisposable
     public void StartInNewTerminal_WithNullCommand_HandlesGracefully()
     {
         // Act & Assert - Should not throw
-        var result = _processService.StartInNewTerminal(null!, "args", "C:\\", _testLogger);
+        var result = _processService.StartInNewTerminal(null!, new string[] { "args" }, "C:\\", _testLogger);
         Assert.False(result);
     }
 
@@ -196,14 +124,6 @@ public class ProcessServiceTests : IDisposable
         // Act & Assert - Should not throw
         var result = _processService.StartInNewTerminal("cmd", null!, "C:\\", _testLogger);
         Assert.False(result);
-    }
-
-    private string[] InvokeSplitArguments(string arguments)
-    {
-        var method = typeof(ProcessService).GetMethod("SplitArguments", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(method);
-        var result = method.Invoke(null, new object[] { arguments });
-        return (string[])result!;
     }
 
     private string InvokeEscapeAppleScriptString(string? input)

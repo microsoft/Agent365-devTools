@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using Microsoft.Agents.A365.DevTools.MockToolingServer;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
 
@@ -48,9 +49,15 @@ internal static class MockToolingServerSubcommand
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (port, verbose, dryRun) => {
-            await HandleStartServer(port, verbose, dryRun, logger, commandExecutor, processService);
-        }, portOption, verboseOption, dryRunOption);
+        var foregroundOption = new Option<bool>(
+            ["--foreground", "-fg"],
+            description: "Run the server in the foreground (blocks current terminal, default: opens new terminal)"
+        );
+        command.AddOption(foregroundOption);
+
+        command.SetHandler(async (port, verbose, dryRun, foreground) => {
+            await HandleStartServer(port, verbose, dryRun, foreground, logger, commandExecutor, processService);
+        }, portOption, verboseOption, dryRunOption, foregroundOption);
 
         return command;
     }
@@ -64,7 +71,7 @@ internal static class MockToolingServerSubcommand
     /// <param name="logger">Logger for progress reporting</param>
     /// <param name="commandExecutor">Command executor for fallback execution</param>
     /// <param name="processService">Process service for starting processes</param>
-    public static async Task HandleStartServer(int? port, bool verbose, bool dryRun, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
+    public static async Task HandleStartServer(int? port, bool verbose, bool dryRun, bool foreground, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
     {
         var serverPort = port ?? 5309;
         if (serverPort < 1 || serverPort > 65535)
@@ -77,8 +84,18 @@ internal static class MockToolingServerSubcommand
         {
             logger.LogInformation("[DRY RUN] Would start Mock Tooling Server on port {Port}", serverPort);
             logger.LogInformation("[DRY RUN] Would use verbose logging: {Verbose}", verbose);
-            logger.LogInformation("[DRY RUN] Would execute: a365-mock-tooling-server --urls http://localhost:{Port}", serverPort);
-            logger.LogInformation("[DRY RUN] Would start server in new terminal window");
+            logger.LogInformation("[DRY RUN] Foreground mode: {Foreground}", foreground);
+
+            if (foreground)
+            {
+                logger.LogInformation("[DRY RUN] Would run MockToolingServer in foreground (blocking current terminal)");
+                return;
+            }
+
+            var arguments = $"develop mts --port {serverPort} --foreground";
+            if (verbose) arguments += " --verbose";
+            logger.LogInformation("[DRY RUN] Would start in new terminal: a365 {Arguments}", arguments);
+
             return;
         }
 
@@ -91,136 +108,52 @@ internal static class MockToolingServerSubcommand
 
         try
         {
-            // Use the global dotnet tool directly
-            var executableCommand = "a365-mock-tooling-server";
-            var arguments = $"--urls http://localhost:{serverPort}";
+            if (foreground)
+            {
+                // Run in foreground (blocks current terminal) using MockToolingServer.Start()
+                logger.LogInformation("Starting server in foreground mode...");
+                logger.LogInformation("Press Ctrl+C to stop the server.");
+
+                var args = new[] { "--urls", $"http://localhost:{serverPort}" };
+
+                if (verbose)
+                {
+                    logger.LogInformation("Starting MockToolingServer with args: {Args}", string.Join(" ", args));
+                }
+
+                // This will run in foreground and block the current terminal until the server is stopped
+                await MockToolingServer.Server.Start(args);
+                return;
+            }
+
+            // Start in new terminal with same command + --foreground flag
+            var arguments = new[] { "develop", "mts", "--port", serverPort.ToString(), "--foreground" };
+            if (verbose)
+            {
+                arguments = [.. arguments, "--verbose"];
+            }
 
             if (verbose)
             {
-                logger.LogInformation("Command to execute: {Command} {Arguments}", executableCommand, arguments);
+                logger.LogInformation("Starting in new terminal: a365 {Arguments}", arguments);
             }
 
-            logger.LogInformation("Starting server on port {Port} in a new terminal window...", serverPort);
+            logger.LogInformation("Starting server on port {Port} in a new terminal...", serverPort);
 
-            // Check if the tool is installed
-            if (!await IsToolInstalled(logger, commandExecutor, verbose))
+            var success = processService.StartInNewTerminal("a365", arguments, Environment.CurrentDirectory, logger);
+
+            if (!success)
             {
-                logger.LogError("MockToolingServer tool not found. Please install it first:");
-                logger.LogError("Run the install-mts.ps1 script or manually install with:");
-                logger.LogError("dotnet tool install --global Microsoft.Agents.A365.DevTools.MockToolingServer");
+                logger.LogError("Failed to start Mock Tooling Server in new terminal.");
                 return;
             }
 
-            if (!await StartServerWithFallback(executableCommand, arguments, Environment.CurrentDirectory, verbose, logger, commandExecutor, processService))
-            {
-                logger.LogError("Failed to start Mock Tooling Server.");
-                return;
-            }
-
-            logger.LogInformation("The server is running on http://localhost:{Port}", serverPort);
-            logger.LogInformation("Close the terminal window or press Ctrl+C in it to stop the server.");
+            logger.LogInformation("The server is running on http://localhost:{Port} in a new terminal", serverPort);
+            logger.LogInformation("Close the new terminal window to stop the server.");
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to start Mock Tooling Server: {Message}", ex.Message);
         }
-    }
-
-    private static async Task<bool> StartServerWithFallback(string executableCommand, string arguments, string assemblyDir, bool verbose, ILogger logger, CommandExecutor commandExecutor, IProcessService processService)
-    {
-        // Start the mock server in a new terminal window
-        if (verbose)
-        {
-            logger.LogInformation("Attempting to start server in new terminal window...");
-        }
-
-        if (StartServerInNewTerminal(executableCommand, arguments, assemblyDir, logger, processService))
-        {
-            logger.LogInformation("Mock Tooling Server started successfully in a new terminal window.");
-            return true;
-        }
-
-        logger.LogWarning("Failed to start Mock Tooling Server in a new terminal window.");
-
-        // Fallback to running in current terminal using CommandExecutor
-        logger.LogInformation("Falling back to running server in current terminal...");
-
-        if (verbose)
-        {
-            logger.LogInformation("Using CommandExecutor with interactive mode enabled");
-        }
-
-        var result = await commandExecutor.ExecuteWithStreamingAsync(
-            executableCommand,
-            arguments,
-            assemblyDir,
-            "MockServer: ",
-            interactive: true);
-
-        if (result.ExitCode != 0)
-        {
-            logger.LogError("Mock Tooling Server exited with code {ExitCode}", result.ExitCode);
-            logger.LogError("Error output: {ErrorOutput}", result.StandardError);
-            return false;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Checks if the MockToolingServer dotnet tool is installed
-    /// </summary>
-    /// <param name="logger">Logger for output</param>
-    /// <param name="commandExecutor">Command executor for running dotnet tool list</param>
-    /// <param name="verbose">Enable verbose logging</param>
-    /// <returns>True if the tool is installed, false otherwise</returns>
-    private static async Task<bool> IsToolInstalled(ILogger logger, CommandExecutor commandExecutor, bool verbose)
-    {
-        try
-        {
-            if (verbose)
-            {
-                logger.LogInformation("Checking if a365-mock-tooling-server tool is installed...");
-            }
-
-            var result = await commandExecutor.ExecuteAsync("dotnet", "tool list --global");
-
-            if (result.ExitCode == 0 && result.StandardOutput.Contains("a365-mock-tooling-server"))
-            {
-                if (verbose)
-                {
-                    logger.LogInformation("MockToolingServer tool is installed");
-                }
-                return true;
-            }
-
-            if (verbose)
-            {
-                logger.LogWarning("MockToolingServer tool not found in global tools list");
-            }
-            return false;
-        }
-        catch (Exception ex)
-        {
-            if (verbose)
-            {
-                logger.LogError(ex, "Failed to check if MockToolingServer tool is installed");
-            }
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Starts the Mock Tooling Server in a new terminal window
-    /// </summary>
-    /// <param name="command">The executable command to execute</param>
-    /// <param name="arguments">The arguments for the command</param>
-    /// <param name="workingDirectory">Working directory for the process</param>
-    /// <param name="logger">Logger for output</param>
-    /// <param name="processService">Process service for starting processes</param>
-    /// <returns>True if the process was started successfully, false otherwise</returns>
-    private static bool StartServerInNewTerminal(string command, string arguments, string workingDirectory, ILogger logger, IProcessService processService)
-    {
-        return processService.StartInNewTerminal(command, arguments, workingDirectory, logger);
     }
 }

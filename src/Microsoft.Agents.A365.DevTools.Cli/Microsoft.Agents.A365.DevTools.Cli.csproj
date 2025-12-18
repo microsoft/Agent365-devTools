@@ -46,6 +46,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.A365.DevTools.MockToolingServer\Microsoft.Agents.A365.DevTools.MockToolingServer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="ToolingManifest.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

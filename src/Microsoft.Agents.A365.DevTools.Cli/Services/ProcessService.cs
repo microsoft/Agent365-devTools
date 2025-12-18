@@ -17,7 +17,7 @@ public class ProcessService : IProcessService
         return Process.Start(startInfo);
     }
 
-    public bool StartInNewTerminal(string command, string arguments, string workingDirectory, ILogger logger)
+    public bool StartInNewTerminal(string command, string[] arguments, string workingDirectory, ILogger logger)
     {
         try
         {
@@ -62,7 +62,7 @@ public class ProcessService : IProcessService
     /// <param name="command">The command to execute</param>
     /// <param name="arguments">The command arguments</param>
     /// <returns>Configured ProcessStartInfo</returns>
-    private ProcessStartInfo ConfigureWindowsTerminal(string command, string arguments)
+    private ProcessStartInfo ConfigureWindowsTerminal(string command, string[] arguments)
     {
         var processStartInfo = new ProcessStartInfo();
 
@@ -85,9 +85,8 @@ public class ProcessService : IProcessService
             processStartInfo.ArgumentList.Add(command);
         }
 
-        // Add each argument separately by splitting on spaces (handling quoted paths)
-        var argParts = SplitArguments(arguments);
-        foreach (var arg in argParts)
+        // Add each argument separately
+        foreach (var arg in arguments)
         {
             processStartInfo.ArgumentList.Add(arg);
         }
@@ -101,7 +100,7 @@ public class ProcessService : IProcessService
     /// <param name="command">The command to execute</param>
     /// <param name="arguments">The command arguments</param>
     /// <returns>Configured ProcessStartInfo</returns>
-    private ProcessStartInfo ConfigureMacOSTerminal(string command, string arguments)
+    private ProcessStartInfo ConfigureMacOSTerminal(string command, string[] arguments)
     {
         var processStartInfo = new ProcessStartInfo
         {
@@ -111,7 +110,7 @@ public class ProcessService : IProcessService
         // Use ArgumentList for proper escaping of AppleScript command
         processStartInfo.ArgumentList.Add("-e");
         var escapedCommand = EscapeAppleScriptString(command);
-        var escapedArguments = EscapeAppleScriptString(arguments);
+        var escapedArguments = EscapeAppleScriptString(string.Join(" ", arguments));
         processStartInfo.ArgumentList.Add($"tell application \"Terminal\" to do script \"{escapedCommand} {escapedArguments}\"");
 
         return processStartInfo;
@@ -124,7 +123,7 @@ public class ProcessService : IProcessService
     /// <param name="arguments">The command arguments</param>
     /// <param name="logger">Logger for error reporting</param>
     /// <returns>Configured ProcessStartInfo or null if no suitable terminal found</returns>
-    private ProcessStartInfo? ConfigureLinuxTerminal(string command, string arguments, ILogger logger)
+    private ProcessStartInfo? ConfigureLinuxTerminal(string command, string[] arguments, ILogger logger)
     {
         // Try common terminal emulators
         var terminals = new[] { "gnome-terminal", "xterm", "konsole", "x-terminal-emulator" };
@@ -179,74 +178,13 @@ public class ProcessService : IProcessService
             processStartInfo.ArgumentList.Add(command);
         }
 
-        // Add each argument separately by splitting on spaces (handling quoted paths)
-        var argParts = SplitArguments(arguments);
-        foreach (var arg in argParts)
+        // Add each argument separately
+        foreach (var arg in arguments)
         {
             processStartInfo.ArgumentList.Add(arg);
         }
 
         return processStartInfo;
-    }
-
-    /// <summary>
-    /// Splits command arguments while respecting quoted strings
-    /// </summary>
-    /// <param name="arguments">The arguments string to split</param>
-    /// <returns>Array of individual arguments</returns>
-    private static string[] SplitArguments(string arguments)
-    {
-        var result = new List<string>();
-        var current = new System.Text.StringBuilder();
-        bool inQuotes = false;
-
-        for (int i = 0; i < arguments.Length; i++)
-        {
-            char c = arguments[i];
-
-            // Handle escape sequences
-            if (c == '\\' && i + 1 < arguments.Length)
-            {
-                char nextChar = arguments[i + 1];
-                // Check if this is an escaped quote
-                if (nextChar == '"')
-                {
-                    // Add the escaped quote without toggling inQuotes
-                    current.Append('\\');
-                    current.Append('"');
-                    i++; // Skip the next character since we've processed it
-                    continue;
-                }
-                // For other escape sequences, add the backslash and let normal processing handle the next character
-                current.Append(c);
-            }
-            else if (c == '"')
-            {
-                // Only toggle quotes if this is not an escaped quote
-                // Don't append the quote character itself since ProcessStartInfo.ArgumentList handles escaping
-                inQuotes = !inQuotes;
-            }
-            else if (c == ' ' && !inQuotes)
-            {
-                // Split on space only when not inside quotes
-                if (current.Length > 0)
-                {
-                    result.Add(current.ToString());
-                    current.Clear();
-                }
-            }
-            else
-            {
-                current.Append(c);
-            }
-        }
-
-        if (current.Length > 0)
-        {
-            result.Add(current.ToString());
-        }
-
-        return result.ToArray();
     }
 
     /// <summary>

@@ -26,5 +26,5 @@ public interface IProcessService
     /// <param name="workingDirectory">Working directory for the process</param>
     /// <param name="logger">Logger for output</param>
     /// <returns>True if the process was started successfully, false otherwise</returns>
-    bool StartInNewTerminal(string command, string arguments, string workingDirectory, ILogger logger);
+    bool StartInNewTerminal(string command, string[] arguments, string workingDirectory, ILogger logger);
 }
