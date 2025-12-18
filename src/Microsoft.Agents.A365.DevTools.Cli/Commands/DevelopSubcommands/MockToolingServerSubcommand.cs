@@ -47,15 +47,15 @@ internal static class MockToolingServerSubcommand
         );
         command.AddOption(dryRunOption);
 
-        var foregroundOption = new Option<bool>(
-            ["--foreground", "-fg"],
-            description: "Run the server in the foreground (blocks current terminal, default: opens new terminal)"
+        var backgroundOption = new Option<bool>(
+            ["--background", "-bg"],
+            description: "Run the server in the background (opens new terminal to run server)"
         );
-        command.AddOption(foregroundOption);
+        command.AddOption(backgroundOption);
 
-        command.SetHandler(async (port, verbose, dryRun, foreground) => {
-            await HandleStartServer(port, verbose, dryRun, foreground, logger, processService);
-        }, portOption, verboseOption, dryRunOption, foregroundOption);
+        command.SetHandler(async (port, verbose, dryRun, background) => {
+            await HandleStartServer(port, verbose, dryRun, background, logger, processService);
+        }, portOption, verboseOption, dryRunOption, backgroundOption);
 
         return command;
     }
@@ -66,10 +66,10 @@ internal static class MockToolingServerSubcommand
     /// <param name="port">The port number to run the server on</param>
     /// <param name="verbose">Enable verbose logging</param>
     /// <param name="dryRun">Show what would be done without executing</param>
-    /// <param name="foreground">Run the server in the foreground (blocks current terminal)</param>
+    /// <param name="background">Run the server in the background (opens new terminal to run server)</param>
     /// <param name="logger">Logger for progress reporting</param>
     /// <param name="processService">Process service for starting processes</param>
-    public static async Task HandleStartServer(int? port, bool verbose, bool dryRun, bool foreground, ILogger logger, IProcessService processService)
+    public static async Task HandleStartServer(int? port, bool verbose, bool dryRun, bool background, ILogger logger, IProcessService processService)
     {
         var serverPort = port ?? 5309;
         if (serverPort < 1 || serverPort > 65535)
@@ -82,17 +82,17 @@ internal static class MockToolingServerSubcommand
         {
             logger.LogInformation("[DRY RUN] Would start Mock Tooling Server on port {Port}", serverPort);
             logger.LogInformation("[DRY RUN] Would use verbose logging: {Verbose}", verbose);
-            logger.LogInformation("[DRY RUN] Foreground mode: {Foreground}", foreground);
+            logger.LogInformation("[DRY RUN] Background mode: {Background}", background);
 
-            if (foreground)
+            if (background)
             {
-                logger.LogInformation("[DRY RUN] Would run MockToolingServer in foreground (blocking current terminal)");
+                var arguments = $"develop mts --port {serverPort} --foreground";
+                if (verbose) arguments += " --verbose";
+                logger.LogInformation("[DRY RUN] Would start in new terminal: a365 {Arguments}", arguments);
                 return;
             }
 
-            var arguments = $"develop mts --port {serverPort} --foreground";
-            if (verbose) arguments += " --verbose";
-            logger.LogInformation("[DRY RUN] Would start in new terminal: a365 {Arguments}", arguments);
+            logger.LogInformation("[DRY RUN] Would run MockToolingServer in foreground (blocking current terminal)");
 
             return;
         }
@@ -104,7 +104,7 @@ internal static class MockToolingServerSubcommand
 
         try
         {
-            if (foreground)
+            if (!background)
             {
                 // Run in foreground (blocks current terminal) using MockToolingServer.Start()
                 logger.LogInformation("Starting Up MockToolingServer.");
@@ -116,8 +116,8 @@ internal static class MockToolingServerSubcommand
                 return;
             }
 
-            // Start in new terminal with same command + --foreground flag
-            var arguments = new[] { "develop", "mts", "--port", serverPort.ToString(), "--foreground" };
+            // Start in new terminal with same command without background flag
+            var arguments = new[] { "develop", "mts", "--port", serverPort.ToString() };
             if (verbose)
             {
                 arguments = [.. arguments, "--verbose"];
