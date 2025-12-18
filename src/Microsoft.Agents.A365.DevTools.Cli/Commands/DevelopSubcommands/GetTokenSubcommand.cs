@@ -5,6 +5,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.Text.Json;
@@ -22,7 +23,7 @@ internal static class GetTokenSubcommand
         AuthenticationService authService)
     {
         var command = new Command(
-            "gettoken",
+            "get-token",
             "Retrieve bearer tokens for MCP server authentication\n" +
             "Scopes are read from ToolingManifest.json or specified via command line");
 
@@ -197,33 +198,48 @@ internal static class GetTokenSubcommand
                         return;
                     }
 
-                    logger.LogInformation("[SUCCESS] Token acquired successfully with scopes: {Scopes}", 
-                        string.Join(", ", requestedScopes));
+                logger.LogInformation("[SUCCESS] Token acquired successfully with scopes: {Scopes}", 
+                    string.Join(", ", requestedScopes));
+                logger.LogInformation("");
+
+                var tokenCachePath = Path.Combine(
+                    ConfigService.GetGlobalConfigDirectory(),
+                    AuthenticationConstants.TokenCacheFileName);
+
+                // Create a single result representing the consolidated token
+                var tokenResult = new McpServerTokenResult
+                {
+                    ServerName = "Agent 365 Tools (All MCP Servers)",
+                    Url = ConfigConstants.GetDiscoverEndpointUrl(environment),
+                    Scope = string.Join(", ", requestedScopes),
+                    Audience = resourceAppId,
+                    Success = true,
+                    Token = token,
+                    ExpiresOn = DateTime.UtcNow.AddHours(1), // Estimate
+                    CacheFilePath = tokenCachePath
+                };
+
+                var tokenResults = new List<McpServerTokenResult> { tokenResult };
+
+                // Display results based on output format
+                DisplayResults(tokenResults, outputFormat, verbose, logger);
+
+                // Save bearer token to project configuration files
+                if (setupConfig != null)
+                {
+                    await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, logger);
+                }
+                else
+                {
+                    // No config file: user must manually copy the token
                     logger.LogInformation("");
+                    logger.LogInformation("Note: To use this token in your samples, manually add it to:");
+                    logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > BEARER_TOKEN");
+                    logger.LogInformation("  - Python/Node.js projects: .env file as BEARER_TOKEN={Token}", token);
+                    logger.LogInformation("");
+                }
 
-                    var tokenCachePath = Path.Combine(
-                        ConfigService.GetGlobalConfigDirectory(),
-                        AuthenticationConstants.TokenCacheFileName);
-
-                    // Create a single result representing the consolidated token
-                    var tokenResult = new McpServerTokenResult
-                    {
-                        ServerName = "Agent 365 Tools (All MCP Servers)",
-                        Url = ConfigConstants.GetDiscoverEndpointUrl(environment),
-                        Scope = string.Join(", ", requestedScopes),
-                        Audience = resourceAppId,
-                        Success = true,
-                        Token = token,
-                        ExpiresOn = DateTime.UtcNow.AddHours(1), // Estimate
-                        CacheFilePath = tokenCachePath
-                    };
-
-                    var tokenResults = new List<McpServerTokenResult> { tokenResult };
-
-                    // Display results based on output format
-                    DisplayResults(tokenResults, outputFormat, verbose, logger);
-
-                    logger.LogInformation("Token acquired successfully!");
+                logger.LogInformation("Token acquired successfully!");
                 }
                 catch (Exception ex)
                 {
@@ -332,16 +348,21 @@ internal static class GetTokenSubcommand
         {
             if (result.Success && !string.IsNullOrWhiteSpace(result.Token))
             {
+                // Write metadata to stderr so it doesn't interfere with token parsing on stdout
+                // but remains available for troubleshooting when multiple tokens are returned
                 if (verbose)
                 {
-                    Console.WriteLine($"# {result.ServerName}");
-                    Console.WriteLine($"# Scope: {result.Scope}");
-                    Console.WriteLine($"# Audience: {result.Audience}");
+                    Console.Error.WriteLine($"# {result.ServerName}");
+                    Console.Error.WriteLine($"# Scope: {result.Scope}");
+                    Console.Error.WriteLine($"# Audience: {result.Audience}");
                 }
+                
+                // Write token to stdout for piping to other tools
                 Console.WriteLine(result.Token);
+                
                 if (verbose)
                 {
-                    Console.WriteLine();
+                    Console.Error.WriteLine();
                 }
             }
         }

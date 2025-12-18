@@ -20,7 +20,7 @@ internal static class AddPermissionsSubcommand
         GraphApiService graphApiService)
     {
         var command = new Command(
-            "addpermissions",
+            "add-permissions",
             "Add MCP server API permissions to a custom application");
 
         var configOption = new Option<FileInfo>(
@@ -203,10 +203,7 @@ internal static class AddPermissionsSubcommand
                 catch (Exception ex)
                 {
                     logger.LogError("  [ERROR] Exception adding permissions for {ResourceAppId}: {Message}", resourceAppId, ex.Message);
-                    if (verbose)
-                    {
-                        logger.LogError("    {StackTrace}", ex.StackTrace);
-                    }
+                    logger.LogDebug("    {StackTrace}", ex.StackTrace);
                     success = false;
                 }
                 

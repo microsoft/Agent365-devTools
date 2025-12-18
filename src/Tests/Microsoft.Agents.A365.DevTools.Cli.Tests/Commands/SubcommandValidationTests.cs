@@ -17,10 +17,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 public class SubcommandValidationTests
 {
     private readonly IAzureValidator _mockAzureValidator;
+    private readonly IClientAppValidator _mockClientAppValidator;
 
     public SubcommandValidationTests()
     {
         _mockAzureValidator = Substitute.For<IAzureValidator>();
+        _mockClientAppValidator = Substitute.For<IClientAppValidator>();
     }
 
     #region InfrastructureSubcommand Validation Tests
@@ -226,7 +228,7 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await BlueprintSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var errors = await BlueprintSubcommand.ValidateAsync(config, _mockAzureValidator, _mockClientAppValidator);
 
         // Assert
         errors.Should().BeEmpty();
@@ -242,7 +244,7 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await BlueprintSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var errors = await BlueprintSubcommand.ValidateAsync(config, _mockAzureValidator, _mockClientAppValidator);
 
         // Assert
         errors.Should().HaveCountGreaterThan(0);
@@ -379,3 +381,4 @@ public class SubcommandValidationTests
 
     #endregion
 }
+

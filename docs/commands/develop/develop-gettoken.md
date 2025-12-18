@@ -1,15 +1,15 @@
-# a365 develop gettoken Command
+# a365 develop get-token Command
 
 ## Overview
 
-The `a365 develop gettoken` command retrieves bearer tokens for testing MCP servers during development. This command acquires tokens with explicit scopes using interactive browser authentication.
+The `a365 develop get-token` command retrieves bearer tokens for testing MCP servers during development. This command acquires tokens with explicit scopes using interactive browser authentication.
 
 > **Note**: For production agent deployments, authentication is handled automatically through inheritable permissions configured during `a365 setup permissions mcp`. This command is for development testing and debugging.
 
 ## Usage
 
 ```bash
-a365 develop gettoken [options]
+a365 develop get-token [options]
 ```
 
 ## Options
@@ -43,9 +43,9 @@ This command retrieves tokens for a **single application**, which you can specif
 
 The application you're getting a token for should be your **custom client app** that has the required MCP permissions. This is typically the same application you use across development commands.
 
-**Example**: If your `a365.config.json` has `clientAppId: "12345678-..."`, running `a365 develop gettoken` will retrieve a token for that application.
+**Example**: If your `a365.config.json` has `clientAppId: "12345678-..."`, running `a365 develop get-token` will retrieve a token for that application.
 
-> **Note**: For more details about the client application setup and how it's used across development commands, see the [develop addpermissions documentation](./develop-addpermissions.md#understanding-the-application-id).
+> **Note**: For more details about the client application setup and how it's used across development commands, see the [develop add-permissions documentation](./develop-addpermissions.md#understanding-the-application-id).
 
 ## Prerequisites
 
@@ -77,27 +77,27 @@ The application you're getting a token for should be your **custom client app** 
 
 ### Get token with all scopes from manifest
 ```bash
-a365 develop gettoken
+a365 develop get-token
 ```
 
 ### Get token with specific scopes
 ```bash
-a365 develop gettoken --scopes McpServers.Mail.All McpServers.Calendar.All
+a365 develop get-token --scopes McpServers.Mail.All McpServers.Calendar.All
 ```
 
 ### Get token with custom client app
 ```bash
-a365 develop gettoken --app-id 98765432-4321-4321-4321-210987654321
+a365 develop get-token --app-id 98765432-4321-4321-4321-210987654321
 ```
 
 ### Export token to file
 ```bash
-a365 develop gettoken --output raw > token.txt
+a365 develop get-token --output raw > token.txt
 ```
 
 ### Use token in curl request
 ```bash
-TOKEN=$(a365 develop gettoken --output raw)
+TOKEN=$(a365 develop get-token --output raw)
 curl -H "Authorization: Bearer $TOKEN" https://agent365.svc.cloud.microsoft/agents/discoverToolServers
 ```
 
@@ -107,3 +107,24 @@ curl -H "Authorization: Bearer $TOKEN" https://agent365.svc.cloud.microsoft/agen
 2. **Scope Resolution**: Uses `--scopes` or reads from `ToolingManifest.json`
 3. **Token Acquisition**: Opens browser for interactive OAuth2 authentication
 4. **Token Caching**: Cached in local storage for reuse (until expiration or `--force-refresh`)
+
+## Token Storage for Development
+
+When `a365.config.json` exists in your project, the command automatically attempts to save the bearer token to your project's configuration files for convenient local testing:
+
+### .NET Projects
+- **Target File**: `Properties/launchSettings.json`
+- **Behavior**: Updates `BEARER_TOKEN` only in profiles that already have it defined. Shows which profiles were updated.
+- **Setup**: Add `"BEARER_TOKEN": ""` to your profile's `environmentVariables` before running the command.
+
+### Python/Node.js Projects
+- **Target File**: `.env` in project root
+- **Behavior**: Updates `BEARER_TOKEN=<token>` if the file exists. Shows guidance if file is missing.
+- **Setup**: Create a `.env` file with `BEARER_TOKEN=` before running the command.
+
+### Without Config File
+When running `a365 develop get-token` with `--app-id` (no config file), the token is **not** automatically saved to any project files. You must manually copy and paste it into:
+- **.NET projects**: `Properties/launchSettings.json` > `profiles` > `environmentVariables` > `BEARER_TOKEN`
+- **Python/Node.js projects**: `.env` file as `BEARER_TOKEN=<token>`
+
+> **Note**: This token storage is for **development convenience only**. Production agents use inheritable permissions configured through `a365 setup permissions mcp`.

@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Text.Json;
@@ -97,6 +99,262 @@ public static class ProjectSettingsSyncHelper
         }
 
         logger.LogInformation("Stamped TenantId, ServiceConnection, and AgentBluePrint settings into {ProjectPath}", project);
+    }
+
+    /// <summary>
+    /// Saves the bearer token to .env file for Python/Node.js samples or launchSettings.json for .NET samples
+    /// </summary>
+    public static async Task SaveBearerTokenToPlatformConfigAsync(
+        string token,
+        Agent365Config config,
+        ILogger logger)
+    {
+        try
+        {
+            // Determine project directory from config
+            var projectDir = config.DeploymentProjectPath;
+            if (string.IsNullOrWhiteSpace(projectDir))
+            {
+                projectDir = Environment.CurrentDirectory;
+                logger.LogDebug("deploymentProjectPath not configured, using current directory for token update");
+            }
+
+            // Resolve to absolute path
+            if (!Path.IsPathRooted(projectDir))
+            {
+                projectDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, projectDir));
+            }
+
+            if (!Directory.Exists(projectDir))
+            {
+                logger.LogWarning("Project directory does not exist: {Path}. Skipping token update.", projectDir);
+                return;
+            }
+
+            // Detect platform type using PlatformDetector
+            var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+            var platformDetector = new PlatformDetector(
+                cleanLoggerFactory.CreateLogger<PlatformDetector>());
+            var platform = platformDetector.Detect(projectDir);
+
+            // Handle token saving based on platform type
+            if (platform == ProjectPlatform.DotNet)
+            {
+                await SaveBearerTokenToLaunchSettingsAsync(token, projectDir, logger);
+            }
+            else if (platform == ProjectPlatform.Python || platform == ProjectPlatform.NodeJs)
+            {
+                await SaveBearerTokenToDotEnvAsync(token, projectDir, platform, logger);
+            }
+            else
+            {
+                logger.LogDebug("Project type is {Platform}, skipping bearer token update (only applies to .NET/Python/Node.js)", platform);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to save bearer token: {Message}", ex.Message);
+            logger.LogInformation("You can manually add the token to your project configuration");
+        }
+    }
+
+    /// <summary>
+    /// Saves the bearer token to .env file for Python and Node.js projects
+    /// </summary>
+    private static async Task SaveBearerTokenToDotEnvAsync(
+        string token,
+        string projectDir,
+        ProjectPlatform platform,
+        ILogger logger)
+    {
+        var envPath = Path.Combine(projectDir, ".env");
+        
+        if (!File.Exists(envPath))
+        {
+            logger.LogDebug(".env file not found at {Path}, skipping token update for {Platform} project", envPath, platform);
+            logger.LogInformation("To use the bearer token in your {Platform} application, add it to .env file:", platform);
+            logger.LogInformation("  Create .env file in your project directory with: BEARER_TOKEN=<your bearer token>");
+            return;
+        }
+
+        // Read existing .env content
+        var lines = (await File.ReadAllLinesAsync(envPath)).ToList();
+
+        // Update or add BEARER_TOKEN
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={token}";
+        var existingIndex = lines.FindIndex(l => 
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            lines[existingIndex] = bearerTokenLine;
+            logger.LogInformation("Updated BEARER_TOKEN in {Path}", envPath);
+        }
+        else
+        {
+            lines.Add(bearerTokenLine);
+            logger.LogInformation("Added BEARER_TOKEN to {Path}", envPath);
+        }
+
+        // Write back to .env file
+        await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
+        
+        logger.LogInformation("Bearer token saved to .env file for {Platform} sample", platform);
+        logger.LogInformation("  Path: {Path}", envPath);
+        logger.LogInformation("  The token can now be used by your {Platform} application", platform);
+    }
+
+    /// <summary>
+    /// Saves the bearer token to launchSettings.json for .NET projects
+    /// </summary>
+    private static async Task SaveBearerTokenToLaunchSettingsAsync(
+        string token,
+        string projectDir,
+        ILogger logger)
+    {
+        // Check for Properties/launchSettings.json
+        var launchSettingsPath = Path.Combine(projectDir, "Properties", "launchSettings.json");
+        
+        if (!File.Exists(launchSettingsPath))
+        {
+            logger.LogDebug("launchSettings.json not found at {Path}, skipping token update for .NET project", launchSettingsPath);
+            logger.LogInformation("To use the bearer token in your .NET application, add it to launchSettings.json:");
+            logger.LogInformation("  Properties/launchSettings.json > profiles > [profile-name] > environmentVariables > BEARER_TOKEN");
+            return;
+        }
+
+        try
+        {
+            // Read and parse existing launchSettings.json
+            var jsonText = await File.ReadAllTextAsync(launchSettingsPath);
+            var launchSettings = JsonSerializer.Deserialize<JsonElement>(jsonText);
+
+            if (!launchSettings.TryGetProperty("profiles", out var profiles))
+            {
+                logger.LogWarning("No profiles found in launchSettings.json");
+                return;
+            }
+
+            // Check if any profile has BEARER_TOKEN defined
+            var profilesWithBearerToken = new List<string>();
+            foreach (var profile in profiles.EnumerateObject())
+            {
+                if (profile.Value.TryGetProperty("environmentVariables", out var envVars) &&
+                    envVars.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var envVar in envVars.EnumerateObject())
+                    {
+                        if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
+                        {
+                            profilesWithBearerToken.Add(profile.Name);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (profilesWithBearerToken.Count == 0)
+            {
+                logger.LogInformation("No profiles found with BEARER_TOKEN in {Path}", launchSettingsPath);
+                logger.LogInformation("To use the bearer token, add BEARER_TOKEN to a profile's environmentVariables:");
+                logger.LogInformation("  \"environmentVariables\": {{ \"BEARER_TOKEN\": \"\" }}");
+                return;
+            }
+
+            // Build updated JSON with BEARER_TOKEN in environment variables
+            var updatedJson = UpdateLaunchSettingsWithToken(launchSettings, token);
+
+            // Write back to file with indentation
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            var updatedJsonText = JsonSerializer.Serialize(updatedJson, options);
+            await File.WriteAllTextAsync(launchSettingsPath, updatedJsonText, new UTF8Encoding(false));
+
+            logger.LogInformation("Updated BEARER_TOKEN in {Path}", launchSettingsPath);
+            logger.LogInformation("Bearer token saved to launchSettings.json for .NET sample");
+            logger.LogInformation("  Path: {Path}", launchSettingsPath);
+            logger.LogInformation("  Updated {Count} profile(s): {Profiles}", 
+                profilesWithBearerToken.Count, 
+                string.Join(", ", profilesWithBearerToken));
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Failed to parse launchSettings.json: {Message}", ex.Message);
+            logger.LogInformation("You can manually add BEARER_TOKEN to launchSettings.json environmentVariables");
+        }
+    }
+
+    /// <summary>
+    /// Updates the launchSettings JSON structure with the bearer token only in profiles that already have BEARER_TOKEN defined
+    /// </summary>
+    private static JsonElement UpdateLaunchSettingsWithToken(JsonElement launchSettings, string token)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
+        {
+            writer.WriteStartObject();
+
+            foreach (var property in launchSettings.EnumerateObject())
+            {
+                if (property.Name == "profiles" && property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    writer.WritePropertyName("profiles");
+                    writer.WriteStartObject();
+
+                    // only update BEARER_TOKEN if it already exists
+                    foreach (var profile in property.Value.EnumerateObject())
+                    {
+                        writer.WritePropertyName(profile.Name);
+                        writer.WriteStartObject();
+
+                        // Write all properties for this profile
+                        foreach (var profileProp in profile.Value.EnumerateObject())
+                        {
+                            if (profileProp.Name == "environmentVariables" && profileProp.Value.ValueKind == JsonValueKind.Object)
+                            {
+                                writer.WritePropertyName("environmentVariables");
+                                writer.WriteStartObject();
+
+                                // Copy existing environment variables, updating BEARER_TOKEN only if it exists
+                                foreach (var envVar in profileProp.Value.EnumerateObject())
+                                {
+                                    if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
+                                    {
+                                        // Update BEARER_TOKEN with new value
+                                        writer.WriteString(AuthenticationConstants.BearerTokenEnvironmentVariable, token);
+                                    }
+                                    else
+                                    {
+                                        writer.WritePropertyName(envVar.Name);
+                                        envVar.Value.WriteTo(writer);
+                                    }
+                                }
+
+                                writer.WriteEndObject();
+                            }
+                            else
+                            {
+                                writer.WritePropertyName(profileProp.Name);
+                                profileProp.Value.WriteTo(writer);
+                            }
+                        }
+
+                        writer.WriteEndObject();
+                    }
+
+                    writer.WriteEndObject();
+                }
+                else
+                {
+                    writer.WritePropertyName(property.Name);
+                    property.Value.WriteTo(writer);
+                }
+            }
+
+            writer.WriteEndObject();
+        }
+
+        stream.Position = 0;
+        return JsonSerializer.Deserialize<JsonElement>(stream);
     }
 
     // ---------------------------

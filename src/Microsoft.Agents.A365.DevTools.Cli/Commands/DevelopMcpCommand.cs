@@ -72,11 +72,6 @@ public static class DevelopMcpCommand
 
         command.SetHandler(async (configPath, dryRun, verbose) =>
         {
-            if (verbose)
-            {
-                logger.LogInformation("Verbose mode enabled - showing detailed information");
-            }
-            
             logger.LogInformation("Starting list-environments operation...");
 
             if (dryRun)
@@ -90,12 +85,8 @@ public static class DevelopMcpCommand
 
             // Call service
             var environmentsResponse = await toolingService.ListEnvironmentsAsync();
-
-            if (verbose)
-            {
-                logger.LogInformation("API call completed - received response with {Count} environment(s)", 
-                    environmentsResponse?.Environments?.Length ?? 0);
-            }
+            logger.LogDebug("API call completed - received response with {Count} environment(s)", 
+                environmentsResponse?.Environments?.Length ?? 0);
 
             if (environmentsResponse == null || environmentsResponse.Environments.Length == 0)
             {
@@ -126,13 +117,10 @@ public static class DevelopMcpCommand
                     logger.LogInformation("   Region: {Geo}", env.Geo);
                 }
                 
-                // Show additional details in verbose mode
-                if (verbose)
+                // Show additional details in debug mode
+                if (!string.IsNullOrWhiteSpace(env.TenantId))
                 {
-                    if (!string.IsNullOrWhiteSpace(env.TenantId))
-                    {
-                        logger.LogInformation("   Tenant ID: {TenantId}", env.TenantId);
-                    }
+                    logger.LogDebug("   Tenant ID: {TenantId}", env.TenantId);
                 }
             }
 
@@ -180,11 +168,6 @@ public static class DevelopMcpCommand
 
         command.SetHandler(async (envId, configPath, dryRun, verbose) =>
         {
-            if (verbose)
-            {
-                logger.LogInformation("Verbose mode enabled - showing detailed information");
-            }
-            
             try
             {
                 // Validate and prompt for missing required argument with security checks

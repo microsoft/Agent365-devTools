@@ -22,5 +22,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants
         public const string RetryExhausted = "RETRY_EXHAUSTED";
         public const string SetupValidationFailed = "SETUP_VALIDATION_FAILED";
         public const string ClientAppValidationFailed = "CLIENT_APP_VALIDATION_FAILED";
+        public const string MosTokenAcquisitionFailed = "MOS_TOKEN_ACQUISITION_FAILED";
+        public const string MosPrerequisitesFailed = "MOS_PREREQUISITES_FAILED";
+        public const string MosAdminConsentRequired = "MOS_ADMIN_CONSENT_REQUIRED";
+        public const string MosServicePrincipalCreationFailed = "MOS_SERVICE_PRINCIPAL_CREATION_FAILED";
+        public const string MosInsufficientPrivileges = "MOS_INSUFFICIENT_PRIVILEGES";
+        public const string MosPermissionUpdateFailed = "MOS_PERMISSION_UPDATE_FAILED";
     }
 }

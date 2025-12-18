@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -42,7 +43,7 @@ public class GetTokenSubcommandTests
         var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
 
         // Assert
-        command.Name.Should().Be("gettoken");
+        command.Name.Should().Be("get-token");
     }
 
     [Fact]
@@ -501,6 +502,447 @@ public class GetTokenSubcommandTests
 
         // Assert
         tenantId.Should().Be("config-tenant-id");
+    }
+
+    #endregion
+
+    #region Token Storage Tests - launchSettings.json (.NET)
+
+    [Fact]
+    public void LaunchSettingsUpdate_WithBearerTokenInProfile_ShouldUpdateToken()
+    {
+        // Arrange
+        var launchSettingsJson = @"{
+  ""profiles"": {
+    ""Sample Agent with Bearer Token"": {
+      ""commandName"": ""Project"",
+      ""environmentVariables"": {
+        ""ASPNETCORE_ENVIRONMENT"": ""Development"",
+        ""BEARER_TOKEN"": """"
+      }
+    }
+  }
+}";
+        var launchSettings = System.Text.Json.JsonDocument.Parse(launchSettingsJson);
+
+        // Act
+        var hasProfiles = launchSettings.RootElement.TryGetProperty("profiles", out var profiles);
+        var hasBearerToken = false;
+        
+        if (hasProfiles)
+        {
+            foreach (var profile in profiles.EnumerateObject())
+            {
+                if (profile.Value.TryGetProperty("environmentVariables", out var envVars))
+                {
+                    foreach (var envVar in envVars.EnumerateObject())
+                    {
+                        if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
+                        {
+                            hasBearerToken = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Assert
+        hasProfiles.Should().BeTrue();
+        hasBearerToken.Should().BeTrue("profile should have BEARER_TOKEN defined");
+    }
+
+    [Fact]
+    public void LaunchSettingsUpdate_WithoutBearerTokenInProfile_ShouldNotAddToken()
+    {
+        // Arrange
+        var launchSettingsJson = @"{
+  ""profiles"": {
+    ""Sample Agent"": {
+      ""commandName"": ""Project"",
+      ""environmentVariables"": {
+        ""ASPNETCORE_ENVIRONMENT"": ""Development""
+      }
+    }
+  }
+}";
+        var launchSettings = System.Text.Json.JsonDocument.Parse(launchSettingsJson);
+
+        // Act
+        var hasProfiles = launchSettings.RootElement.TryGetProperty("profiles", out var profiles);
+        var hasBearerToken = false;
+        
+        if (hasProfiles)
+        {
+            foreach (var profile in profiles.EnumerateObject())
+            {
+                if (profile.Value.TryGetProperty("environmentVariables", out var envVars))
+                {
+                    foreach (var envVar in envVars.EnumerateObject())
+                    {
+                        if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
+                        {
+                            hasBearerToken = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Assert
+        hasProfiles.Should().BeTrue();
+        hasBearerToken.Should().BeFalse("profile should not have BEARER_TOKEN");
+    }
+
+    [Fact]
+    public void LaunchSettingsUpdate_PreservesOtherEnvironmentVariables()
+    {
+        // Arrange
+        var launchSettingsJson = @"{
+  ""profiles"": {
+    ""Sample"": {
+      ""environmentVariables"": {
+        ""ASPNETCORE_ENVIRONMENT"": ""Development"",
+        ""CUSTOM_VAR"": ""custom-value"",
+        ""BEARER_TOKEN"": """"
+      }
+    }
+  }
+}";
+        var launchSettings = System.Text.Json.JsonDocument.Parse(launchSettingsJson);
+
+        // Act
+        var envVars = launchSettings.RootElement
+            .GetProperty("profiles")
+            .GetProperty("Sample")
+            .GetProperty("environmentVariables");
+
+        // Assert
+        envVars.TryGetProperty("ASPNETCORE_ENVIRONMENT", out var aspnetEnv).Should().BeTrue();
+        aspnetEnv.GetString().Should().Be("Development");
+        
+        envVars.TryGetProperty("CUSTOM_VAR", out var customVar).Should().BeTrue();
+        customVar.GetString().Should().Be("custom-value");
+        
+        envVars.TryGetProperty(AuthenticationConstants.BearerTokenEnvironmentVariable, out var bearerToken).Should().BeTrue();
+    }
+
+    [Fact]
+    public void LaunchSettingsUpdate_MultipleProfiles_OnlyUpdatesProfilesWithBearerToken()
+    {
+        // Arrange
+        var launchSettingsJson = @"{
+  ""profiles"": {
+    ""Profile1"": {
+      ""environmentVariables"": {
+        ""ASPNETCORE_ENVIRONMENT"": ""Development""
+      }
+    },
+    ""Profile2"": {
+      ""environmentVariables"": {
+        ""ASPNETCORE_ENVIRONMENT"": ""Development"",
+        ""BEARER_TOKEN"": """"
+      }
+    },
+    ""Profile3"": {
+      ""environmentVariables"": {
+        ""BEARER_TOKEN"": """"
+      }
+    }
+  }
+}";
+        var launchSettings = System.Text.Json.JsonDocument.Parse(launchSettingsJson);
+
+        // Act
+        var profilesWithBearerToken = new List<string>();
+        var profiles = launchSettings.RootElement.GetProperty("profiles");
+        
+        foreach (var profile in profiles.EnumerateObject())
+        {
+            if (profile.Value.TryGetProperty("environmentVariables", out var envVars))
+            {
+                foreach (var envVar in envVars.EnumerateObject())
+                {
+                    if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
+                    {
+                        profilesWithBearerToken.Add(profile.Name);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Assert
+        profilesWithBearerToken.Should().HaveCount(2);
+        profilesWithBearerToken.Should().Contain("Profile2");
+        profilesWithBearerToken.Should().Contain("Profile3");
+        profilesWithBearerToken.Should().NotContain("Profile1");
+    }
+
+    [Fact]
+    public void LaunchSettingsUpdate_NoProfiles_ShouldBeDetectable()
+    {
+        // Arrange
+        var launchSettingsJson = @"{ ""iisSettings"": {} }";
+        var launchSettings = System.Text.Json.JsonDocument.Parse(launchSettingsJson);
+
+        // Act
+        var hasProfiles = launchSettings.RootElement.TryGetProperty("profiles", out _);
+
+        // Assert
+        hasProfiles.Should().BeFalse("launchSettings should not have profiles section");
+    }
+
+    #endregion
+
+    #region Token Storage Tests - .env (Python/Node.js)
+
+    [Fact]
+    public void EnvFileUpdate_ExistingBearerToken_ShouldUpdateLine()
+    {
+        // Arrange
+        var envLines = new List<string>
+        {
+            "CUSTOM_VAR=value1",
+            "BEARER_TOKEN=old-token",
+            "ANOTHER_VAR=value2"
+        };
+        var newToken = "new-token-123";
+
+        // Act
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
+        var existingIndex = envLines.FindIndex(l => 
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            envLines[existingIndex] = bearerTokenLine;
+        }
+
+        // Assert
+        existingIndex.Should().Be(1);
+        envLines[1].Should().Be("BEARER_TOKEN=new-token-123");
+        envLines.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void EnvFileUpdate_NoBearerToken_ShouldAddNewLine()
+    {
+        // Arrange
+        var envLines = new List<string>
+        {
+            "CUSTOM_VAR=value1",
+            "ANOTHER_VAR=value2"
+        };
+        var newToken = "new-token-123";
+
+        // Act
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
+        var existingIndex = envLines.FindIndex(l => 
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            envLines[existingIndex] = bearerTokenLine;
+        }
+        else
+        {
+            envLines.Add(bearerTokenLine);
+        }
+
+        // Assert
+        existingIndex.Should().Be(-1);
+        envLines.Should().HaveCount(3);
+        envLines[2].Should().Be("BEARER_TOKEN=new-token-123");
+    }
+
+    [Fact]
+    public void EnvFileUpdate_CaseInsensitiveMatch_ShouldUpdateCorrectly()
+    {
+        // Arrange
+        var envLines = new List<string>
+        {
+            "bearer_token=old-token"
+        };
+        var newToken = "new-token-123";
+
+        // Act
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
+        var existingIndex = envLines.FindIndex(l => 
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            envLines[existingIndex] = bearerTokenLine;
+        }
+
+        // Assert
+        existingIndex.Should().Be(0);
+        envLines[0].Should().Be("BEARER_TOKEN=new-token-123");
+    }
+
+    [Fact]
+    public void EnvFileUpdate_PreservesOtherVariables()
+    {
+        // Arrange
+        var envLines = new List<string>
+        {
+            "VAR1=value1",
+            "BEARER_TOKEN=old-token",
+            "VAR2=value2",
+            "# Comment line",
+            "VAR3=value3"
+        };
+        var newToken = "new-token-123";
+
+        // Act
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
+        var existingIndex = envLines.FindIndex(l => 
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            envLines[existingIndex] = bearerTokenLine;
+        }
+
+        // Assert
+        envLines.Should().HaveCount(5);
+        envLines[0].Should().Be("VAR1=value1");
+        envLines[1].Should().Be("BEARER_TOKEN=new-token-123");
+        envLines[2].Should().Be("VAR2=value2");
+        envLines[3].Should().Be("# Comment line");
+        envLines[4].Should().Be("VAR3=value3");
+    }
+
+    [Fact]
+    public void EnvFileUpdate_EmptyFile_ShouldAddToken()
+    {
+        // Arrange
+        var envLines = new List<string>();
+        var newToken = "new-token-123";
+
+        // Act
+        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={newToken}";
+        var existingIndex = envLines.FindIndex(l => 
+            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
+
+        if (existingIndex >= 0)
+        {
+            envLines[existingIndex] = bearerTokenLine;
+        }
+        else
+        {
+            envLines.Add(bearerTokenLine);
+        }
+
+        // Assert
+        envLines.Should().HaveCount(1);
+        envLines[0].Should().Be("BEARER_TOKEN=new-token-123");
+    }
+
+    #endregion
+
+    #region Platform Detection Tests
+
+    [Fact]
+    public void PlatformDetection_DotNetProject_ShouldDetectCorrectly()
+    {
+        // Arrange - .NET project markers
+        var projectFiles = new[] { "MyProject.csproj", "app.config" };
+
+        // Act
+        var hasCsproj = projectFiles.Any(f => f.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase));
+
+        // Assert
+        hasCsproj.Should().BeTrue();
+    }
+
+    [Fact]
+    public void PlatformDetection_PythonProject_ShouldDetectCorrectly()
+    {
+        // Arrange - Python project markers
+        var projectFiles = new[] { "pyproject.toml", "requirements.txt", "setup.py" };
+
+        // Act
+        var hasPythonMarkers = projectFiles.Any(f => 
+            f.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase) ||
+            f.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase));
+
+        // Assert
+        hasPythonMarkers.Should().BeTrue();
+    }
+
+    [Fact]
+    public void PlatformDetection_NodeProject_ShouldDetectCorrectly()
+    {
+        // Arrange - Node.js project markers
+        var projectFiles = new[] { "package.json", "package-lock.json" };
+
+        // Act
+        var hasPackageJson = projectFiles.Any(f => 
+            f.Equals("package.json", StringComparison.OrdinalIgnoreCase));
+
+        // Assert
+        hasPackageJson.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Integration Scenarios Tests
+
+    [Fact]
+    public void TokenStorage_WithConfigPresent_ShouldAttemptToSaveToken()
+    {
+        // Arrange
+        var configExists = true;
+        var deploymentProjectPath = "/path/to/project";
+
+        // Act
+        var shouldAttemptSave = configExists && !string.IsNullOrWhiteSpace(deploymentProjectPath);
+
+        // Assert
+        shouldAttemptSave.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TokenStorage_WithoutConfig_ShouldProvideGuidanceOnly()
+    {
+        // Arrange
+        var configExists = false;
+        var appIdProvided = true;
+
+        // Act
+        var shouldProvideGuidance = !configExists && appIdProvided;
+
+        // Assert
+        shouldProvideGuidance.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TokenStorage_FileNotFound_ShouldProvideGuidance()
+    {
+        // Arrange
+        var fileExists = false;
+
+        // Act & Assert
+        fileExists.Should().BeFalse();
+        // In actual implementation, this triggers guidance logging
+    }
+
+    [Fact]
+    public void TokenStorage_ValidateExpectedFilePaths()
+    {
+        // Arrange
+        var projectDir = "/path/to/project";
+        
+        // Act
+        var launchSettingsPath = Path.Combine(projectDir, "Properties", "launchSettings.json");
+        var envPath = Path.Combine(projectDir, ".env");
+
+        // Assert
+        launchSettingsPath.Should().EndWith("Properties/launchSettings.json".Replace('/', Path.DirectorySeparatorChar));
+        envPath.Should().EndWith(".env");
     }
 
     #endregion

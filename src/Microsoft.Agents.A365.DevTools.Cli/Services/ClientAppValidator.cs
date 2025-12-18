@@ -12,7 +12,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// <summary>
 /// Validates that a client app exists and has the required permissions for a365 CLI operations.
 /// </summary>
-public sealed class ClientAppValidator
+public sealed class ClientAppValidator : IClientAppValidator
 {
     private readonly ILogger<ClientAppValidator> _logger;
     private readonly CommandExecutor _executor;
@@ -29,7 +29,7 @@ public sealed class ClientAppValidator
     /// <summary>
     /// Ensures the client app exists and has required permissions granted.
     /// Throws ClientAppValidationException if validation fails.
-    /// Logs validation progress and results automatically.
+    /// Does not log - caller is responsible for error presentation.
     /// </summary>
     /// <param name="clientAppId">The client app ID to validate</param>
     /// <param name="tenantId">The tenant ID where the app should exist</param>
@@ -43,46 +43,21 @@ public sealed class ClientAppValidator
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
-        _logger.LogInformation("");
-        _logger.LogInformation("==> Validating Client App Configuration");
-        
-        var result = await ValidateClientAppAsync(clientAppId, tenantId, ct);
-        
-        if (!result.IsValid)
-        {
-            ThrowAppropriateException(result, clientAppId, tenantId);
-        }
-    }
-
-    /// <summary>
-    /// Validates that the client app exists and has required permissions granted.
-    /// Returns validation result with error details for programmatic handling.
-    /// </summary>
-    /// <param name="clientAppId">The client app ID to validate</param>
-    /// <param name="tenantId">The tenant ID where the app should exist</param>
-    /// <param name="ct">Cancellation token</param>
-    /// <returns>Validation result with structured error information</returns>
-    public async Task<ValidationResult> ValidateClientAppAsync(
-        string clientAppId,
-        string tenantId,
-        CancellationToken ct = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-
         // Step 1: Validate GUID format
         if (!Guid.TryParse(clientAppId, out _))
         {
-            return ValidationResult.Failure(
-                ValidationFailureType.InvalidFormat,
-                $"clientAppId must be a valid GUID format (received: {clientAppId})");
+            throw ClientAppValidationException.ValidationFailed(
+                $"clientAppId must be a valid GUID format (received: {clientAppId})",
+                new List<string>(),
+                clientAppId);
         }
 
         if (!Guid.TryParse(tenantId, out _))
         {
-            return ValidationResult.Failure(
-                ValidationFailureType.InvalidFormat,
-                $"tenantId must be a valid GUID format (received: {tenantId})");
+            throw ClientAppValidationException.ValidationFailed(
+                $"tenantId must be a valid GUID format (received: {tenantId})",
+                new List<string>(),
+                clientAppId);
         }
 
         try
@@ -91,22 +66,20 @@ public sealed class ClientAppValidator
             var graphToken = await AcquireGraphTokenAsync(ct);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
-                return ValidationResult.Failure(
-                    ValidationFailureType.AuthenticationFailed,
-                    "Failed to acquire Microsoft Graph access token. Ensure you are logged in with 'az login'");
+                throw ClientAppValidationException.ValidationFailed(
+                    "Failed to acquire Microsoft Graph access token",
+                    new List<string> { "Ensure you are logged in with 'az login'" },
+                    clientAppId);
             }
 
             // Step 3: Verify app exists
             var appInfo = await GetClientAppInfoAsync(clientAppId, graphToken, ct);
             if (appInfo == null)
             {
-                return ValidationResult.Failure(
-                    ValidationFailureType.AppNotFound,
-                    $"Client app with ID '{clientAppId}' not found in tenant '{tenantId}'",
-                    "Please create the app registration in Azure Portal and ensure the app ID is correct");
+                throw ClientAppValidationException.AppNotFound(clientAppId, tenantId);
             }
 
-            _logger.LogInformation("Found client app: {DisplayName} ({AppId})", appInfo.DisplayName, clientAppId);
+            _logger.LogDebug("Found client app: {DisplayName} ({AppId})", appInfo.DisplayName, clientAppId);
 
             // Step 4: Validate permissions in manifest
             var missingPermissions = await ValidatePermissionsConfiguredAsync(appInfo, graphToken, ct);
@@ -120,41 +93,43 @@ public sealed class ClientAppValidator
                 
                 if (consentedPermissions.Count > 0)
                 {
-                    _logger.LogInformation("Found {Count} consented permissions via oauth2PermissionGrants (including beta APIs)", consentedPermissions.Count);
+                    _logger.LogDebug("Found {Count} consented permissions via oauth2PermissionGrants (including beta APIs)", consentedPermissions.Count);
                 }
             }
             
             if (missingPermissions.Count > 0)
             {
-                return ValidationResult.Failure(
-                    ValidationFailureType.MissingPermissions,
-                    $"Client app is missing required delegated permissions: {string.Join(", ", missingPermissions)}",
-                    $"Please add these permissions as DELEGATED (not Application) in Azure Portal > App Registrations > API permissions\nSee: {ConfigConstants.Agent365CliDocumentationUrl}");
+                throw ClientAppValidationException.MissingPermissions(clientAppId, missingPermissions);
             }
 
             // Step 5: Verify admin consent
-            var consentResult = await ValidateAdminConsentAsync(clientAppId, graphToken, ct);
-            if (!consentResult.IsValid)
+            if (!await ValidateAdminConsentAsync(clientAppId, graphToken, ct))
             {
-                return consentResult;
+                throw ClientAppValidationException.MissingAdminConsent(clientAppId);
             }
 
-            _logger.LogInformation("Client app validation successful!");
-            return ValidationResult.Success();
+            _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
+        }
+        catch (ClientAppValidationException)
+        {
+            // Re-throw validation exceptions as-is
+            throw;
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "JSON parsing error during validation");
-            return ValidationResult.Failure(
-                ValidationFailureType.InvalidResponse,
-                $"Failed to parse Microsoft Graph response: {ex.Message}");
+            _logger.LogDebug(ex, "JSON parsing error during validation");
+            throw ClientAppValidationException.ValidationFailed(
+                "Failed to parse Microsoft Graph response",
+                new List<string> { ex.Message },
+                clientAppId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Validation error");
-            return ValidationResult.Failure(
-                ValidationFailureType.UnexpectedError,
-                $"Unexpected error during client app validation: {ex.Message}");
+            _logger.LogDebug(ex, "Unexpected error during validation");
+            throw ClientAppValidationException.ValidationFailed(
+                "Unexpected error during client app validation",
+                new List<string> { ex.Message },
+                clientAppId);
         }
     }
 
@@ -162,7 +137,7 @@ public sealed class ClientAppValidator
 
     private async Task<string?> AcquireGraphTokenAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Acquiring Microsoft Graph token for validation...");
+        _logger.LogDebug("Acquiring Microsoft Graph token for validation...");
         
         var tokenResult = await _executor.ExecuteAsync(
             "az",
@@ -171,7 +146,7 @@ public sealed class ClientAppValidator
 
         if (!tokenResult.Success || string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
         {
-            _logger.LogError("Token acquisition failed: {Error}", tokenResult.StandardError);
+            _logger.LogDebug("Token acquisition failed: {Error}", tokenResult.StandardError);
             return null;
         }
 
@@ -180,7 +155,7 @@ public sealed class ClientAppValidator
 
     private async Task<ClientAppInfo?> GetClientAppInfoAsync(string clientAppId, string graphToken, CancellationToken ct)
     {
-        _logger.LogInformation("Checking if client app exists in tenant...");
+        _logger.LogDebug("Checking if client app exists in tenant...");
         
         var appCheckResult = await _executor.ExecuteAsync(
             "az",
@@ -204,7 +179,7 @@ public sealed class ClientAppValidator
                 if (refreshResult.Success && !string.IsNullOrWhiteSpace(refreshResult.StandardOutput))
                 {
                     var freshToken = refreshResult.StandardOutput.Trim();
-                    _logger.LogInformation("Token refreshed successfully, retrying...");
+                    _logger.LogDebug("Token refreshed successfully, retrying...");
                     
                     // Retry with fresh token
                     var retryResult = await _executor.ExecuteAsync(
@@ -218,7 +193,7 @@ public sealed class ClientAppValidator
                     }
                     else
                     {
-                        _logger.LogError("App query failed after token refresh: {Error}", retryResult.StandardError);
+                        _logger.LogDebug("App query failed after token refresh: {Error}", retryResult.StandardError);
                         return null;
                     }
                 }
@@ -226,7 +201,7 @@ public sealed class ClientAppValidator
             
             if (!appCheckResult.Success)
             {
-                _logger.LogError("App query failed: {Error}", appCheckResult.StandardError);
+                _logger.LogDebug("App query failed: {Error}", appCheckResult.StandardError);
                 return null;
             }
         }
@@ -457,9 +432,9 @@ public sealed class ClientAppValidator
         return consentedPermissions;
     }
 
-    private async Task<ValidationResult> ValidateAdminConsentAsync(string clientAppId, string graphToken, CancellationToken ct)
+    private async Task<bool> ValidateAdminConsentAsync(string clientAppId, string graphToken, CancellationToken ct)
     {
-        _logger.LogInformation("Checking admin consent status...");
+        _logger.LogDebug("Checking admin consent status for {ClientAppId}", clientAppId);
 
         // Get service principal for the app
         var spCheckResult = await _executor.ExecuteAsync(
@@ -469,9 +444,8 @@ public sealed class ClientAppValidator
 
         if (!spCheckResult.Success)
         {
-            _logger.LogWarning("Could not verify service principal (may not exist yet): {Error}", spCheckResult.StandardError);
-            _logger.LogWarning("Admin consent will be verified during first interactive authentication");
-            return ValidationResult.Success(); // Best-effort check
+            _logger.LogDebug("Could not verify service principal (may not exist yet): {Error}", spCheckResult.StandardError);
+            return true; // Best-effort check - will be verified during first interactive authentication
         }
 
         var spResponse = JsonNode.Parse(spCheckResult.StandardOutput);
@@ -479,9 +453,8 @@ public sealed class ClientAppValidator
 
         if (servicePrincipals == null || servicePrincipals.Count == 0)
         {
-            _logger.LogWarning("Service principal not created yet for this app");
-            _logger.LogWarning("Admin consent will be verified during first interactive authentication");
-            return ValidationResult.Success(); // Best-effort check
+            _logger.LogDebug("Service principal not created yet for this app");
+            return true; // Best-effort check - will be verified during first interactive authentication
         }
 
         var sp = servicePrincipals[0]!.AsObject();
@@ -495,9 +468,8 @@ public sealed class ClientAppValidator
 
         if (!grantsCheckResult.Success)
         {
-            _logger.LogWarning("Could not verify admin consent status: {Error}", grantsCheckResult.StandardError);
-            _logger.LogWarning("Please ensure admin consent has been granted for the configured permissions");
-            return ValidationResult.Success(); // Best-effort check
+            _logger.LogDebug("Could not verify admin consent status: {Error}", grantsCheckResult.StandardError);
+            return true; // Best-effort check
         }
 
         var grantsResponse = JsonNode.Parse(grantsCheckResult.StandardOutput);
@@ -505,10 +477,7 @@ public sealed class ClientAppValidator
 
         if (grants == null || grants.Count == 0)
         {
-            return ValidationResult.Failure(
-                ValidationFailureType.AdminConsentMissing,
-                "Admin consent has not been granted for this client app",
-                "Please grant admin consent in Azure Portal > App Registrations > API permissions > Grant admin consent");
+            return false; // No grants found - admin consent missing
         }
 
         // Check if there's a grant for Microsoft Graph with required scopes
@@ -525,46 +494,13 @@ public sealed class ClientAppValidator
 
                 if (foundPermissions.Count > 0)
                 {
-                    _logger.LogInformation("Admin consent verified for {Count} permissions", foundPermissions.Count);
+                    _logger.LogDebug("Admin consent verified for {Count} permissions", foundPermissions.Count);
                     return true;
                 }
                 return false;
             });
 
-        if (!hasGraphGrant)
-        {
-            return ValidationResult.Failure(
-                ValidationFailureType.AdminConsentMissing,
-                "Admin consent appears to be missing or incomplete",
-                "Please grant admin consent in Azure Portal > App Registrations > API permissions > Grant admin consent");
-        }
-
-        return ValidationResult.Success();
-    }
-
-    private void ThrowAppropriateException(ValidationResult result, string clientAppId, string tenantId)
-    {
-        switch (result.FailureType)
-        {
-            case ValidationFailureType.AppNotFound:
-                throw ClientAppValidationException.AppNotFound(clientAppId, tenantId);
-
-            case ValidationFailureType.MissingPermissions:
-                var missingPerms = result.Errors[0]
-                    .Replace("Client app is missing required delegated permissions: ", "")
-                    .Split(',', StringSplitOptions.TrimEntries)
-                    .ToList();
-                throw ClientAppValidationException.MissingPermissions(clientAppId, missingPerms);
-
-            case ValidationFailureType.AdminConsentMissing:
-                throw ClientAppValidationException.MissingAdminConsent(clientAppId);
-
-            default:
-                throw ClientAppValidationException.ValidationFailed(
-                    result.Errors[0],
-                    result.Errors.Skip(1).ToList(),
-                    clientAppId);
-        }
+        return hasGraphGrant;
     }
 
     #endregion
@@ -572,30 +508,6 @@ public sealed class ClientAppValidator
     #region Helper Types
 
     private record ClientAppInfo(string ObjectId, string DisplayName, JsonArray? RequiredResourceAccess);
-
-    public record ValidationResult(
-        bool IsValid,
-        ValidationFailureType FailureType,
-        List<string> Errors)
-    {
-        public static ValidationResult Success() =>
-            new(true, ValidationFailureType.None, new List<string>());
-
-        public static ValidationResult Failure(ValidationFailureType type, params string[] errors) =>
-            new(false, type, errors.ToList());
-    }
-
-    public enum ValidationFailureType
-    {
-        None,
-        InvalidFormat,
-        AuthenticationFailed,
-        AppNotFound,
-        MissingPermissions,
-        AdminConsentMissing,
-        InvalidResponse,
-        UnexpectedError
-    }
 
     #endregion
 }

@@ -62,8 +62,8 @@ public class DevelopCommandTests
         Assert.Contains("list-configured", subcommandNames);
         Assert.Contains("add-mcp-servers", subcommandNames);
         Assert.Contains("remove-mcp-servers", subcommandNames);
-        Assert.Contains("gettoken", subcommandNames);
-        Assert.Contains("addpermissions", subcommandNames);
+        Assert.Contains("get-token", subcommandNames);
+        Assert.Contains("add-permissions", subcommandNames);
         Assert.Contains("start-mock-tooling-server", subcommandNames);
     }
 
@@ -133,7 +133,7 @@ public class DevelopCommandTests
     {
         // Act
         var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "gettoken");
+        var subcommand = command.Subcommands.First(sc => sc.Name == "get-token");
 
         // Assert
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
@@ -151,7 +151,7 @@ public class DevelopCommandTests
     {
         // Act
         var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "addpermissions");
+        var subcommand = command.Subcommands.First(sc => sc.Name == "add-permissions");
 
         // Assert
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();

@@ -97,41 +97,32 @@ public abstract class Agent365Exception : Exception
         // Error header - Azure CLI style (no leading blank line, ERROR: prefix)
         sb.AppendLine($"ERROR: {IssueDescription}");
 
-        // Error details (no header, just indented content)
+        // Error details
         if (ErrorDetails.Count > 0)
         {
-            sb.AppendLine();
             foreach (var detail in ErrorDetails)
             {
-                sb.AppendLine($"  {detail}");
+                sb.AppendLine(detail);
             }
         }
 
-        // Mitigation steps - clearer header
+        // Mitigation steps (no header, direct statements like Azure CLI)
         if (MitigationSteps.Count > 0)
         {
-            sb.AppendLine();
-            sb.AppendLine("To resolve this issue:");
-            for (int i = 0; i < MitigationSteps.Count; i++)
+            foreach (var step in MitigationSteps)
             {
-                sb.AppendLine($"  {i + 1}. {MitigationSteps[i]}");
+                sb.AppendLine(step);
             }
         }
 
         // Context information
         if (Context.Count > 0)
         {
-            sb.AppendLine();
-            sb.AppendLine("Additional context:");
             foreach (var kvp in Context)
             {
-                sb.AppendLine($"  {kvp.Key}: {kvp.Value}");
+                sb.AppendLine($"{kvp.Key}: {kvp.Value}");
             }
         }
-
-        // Error code at the end (Azure CLI style)
-        sb.AppendLine();
-        sb.AppendLine($"Error code: {ErrorCode}");
 
         return sb.ToString();
     }

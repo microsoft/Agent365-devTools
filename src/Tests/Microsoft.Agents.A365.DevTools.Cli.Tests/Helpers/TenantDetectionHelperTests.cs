@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using static Microsoft.Agents.A365.DevTools.Cli.Tests.TestConstants;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Helpers;
 
@@ -42,7 +43,7 @@ public class TenantDetectionHelperTests
         result.Should().Be("config-tenant-123");
     }
 
-    [Fact]
+    [Fact(Skip = "Integration test - fails when Azure CLI is authenticated. Depends on external az CLI state.")]
     public async Task DetectTenantIdAsync_WithNullConfig_ReturnsNull()
     {
         // Act
@@ -52,7 +53,7 @@ public class TenantDetectionHelperTests
         result.Should().BeNull();
     }
 
-    [Fact]
+    [Fact(Skip = SkipReasons.RequiresAzureCliIntegration)]
     public async Task DetectTenantIdAsync_WithConfigHavingEmptyTenantId_ReturnsNull()
     {
         // Arrange
@@ -70,7 +71,7 @@ public class TenantDetectionHelperTests
         result.Should().BeNull();
     }
 
-    [Fact]
+    [Fact(Skip = SkipReasons.RequiresAzureCliIntegration)]
     public async Task DetectTenantIdAsync_WithConfigHavingWhitespaceTenantId_ReturnsNull()
     {
         // Arrange
@@ -103,7 +104,7 @@ public class TenantDetectionHelperTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
-    [Fact]
+    [Fact(Skip = SkipReasons.RequiresAzureCliIntegration)]
     public async Task DetectTenantIdAsync_WhenAzureCliNotAvailable_LogsWarningAndReturnsNull()
     {
         // Arrange
@@ -128,7 +129,7 @@ public class TenantDetectionHelperTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
-    [Fact]
+    [Fact(Skip = SkipReasons.RequiresAzureCliIntegration)]
     public async Task DetectTenantIdAsync_WhenDetectionFails_LogsGuidanceMessages()
     {
         // Arrange

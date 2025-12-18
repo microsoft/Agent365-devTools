@@ -68,4 +68,11 @@ public static class AuthenticationConstants
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All"
     };
+
+    /// <summary>
+    /// Environment variable name for bearer token used in local development.
+    /// This token is stored in .env files (Python/Node.js) or launchSettings.json (.NET)
+    /// for testing purposes only. It should NOT be deployed to production Azure environments.
+    /// </summary>
+    public const string BearerTokenEnvironmentVariable = "BEARER_TOKEN";
 }
