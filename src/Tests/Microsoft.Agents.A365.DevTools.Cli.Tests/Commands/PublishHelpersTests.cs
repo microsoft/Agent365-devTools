@@ -110,9 +110,21 @@ public class PublishHelpersTests
             }}]
         }}");
         
-        var consentGrantDoc = JsonDocument.Parse(@"{
+        var tpsConsentGrantDoc = JsonDocument.Parse(@"{
             ""value"": [{
                 ""scope"": ""AuthConfig.Read""
+            }]
+        }");
+        
+        var powerPlatformConsentGrantDoc = JsonDocument.Parse(@"{
+            ""value"": [{
+                ""scope"": ""EnvironmentManagement.Environments.Read""
+            }]
+        }");
+        
+        var mosTitlesConsentGrantDoc = JsonDocument.Parse(@"{
+            ""value"": [{
+                ""scope"": ""Title.ReadWrite.All""
             }]
         }");
         
@@ -123,12 +135,25 @@ public class PublishHelpersTests
             It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync(appWithMosPermissions);
 
+        // Mock consent grants - since all SP lookups return "sp-object-id", 
+        // the consent grant query filter will always contain "sp-object-id" for both client and resource
+        // We need to mock based on the actual filter pattern used in CheckMosPrerequisitesAsync
         _mockGraphService.Setup(x => x.GraphGetAsync(
             It.IsAny<string>(), 
             It.Is<string>(s => s.Contains("oauth2PermissionGrants")), 
             It.IsAny<CancellationToken>(),
             It.IsAny<IEnumerable<string>?>()))
-            .ReturnsAsync(consentGrantDoc);
+            .ReturnsAsync((string tenant, string path, CancellationToken ct, IEnumerable<string>? headers) =>
+            {
+                // Return appropriate consent based on which check is being done
+                // Since we can't differentiate between resources (all return same SP ID),
+                // return a combined consent that satisfies all checks
+                return JsonDocument.Parse(@"{
+                    ""value"": [{
+                        ""scope"": ""AuthConfig.Read EnvironmentManagement.Environments.Read Title.ReadWrite.All""
+                    }]
+                }");
+            });
 
         _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

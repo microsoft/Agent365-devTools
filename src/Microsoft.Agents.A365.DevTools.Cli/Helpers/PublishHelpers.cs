@@ -30,9 +30,12 @@ public static class PublishHelpers
             MosConstants.TpsAppServicesClientAppId, ct);
         if (string.IsNullOrWhiteSpace(firstPartyClientSpId))
         {
-            logger.LogDebug("First-party client app service principal not found - configuration needed");
+            logger.LogDebug("Service principal for {ConstantName} ({AppId}) not found - configuration needed", 
+                nameof(MosConstants.TpsAppServicesClientAppId), MosConstants.TpsAppServicesClientAppId);
             return false;
         }
+        logger.LogDebug("Verified service principal for {ConstantName} ({AppId})", 
+            nameof(MosConstants.TpsAppServicesClientAppId), MosConstants.TpsAppServicesClientAppId);
 
         foreach (var resourceAppId in MosConstants.AllResourceAppIds)
         {
@@ -42,6 +45,7 @@ public static class PublishHelpers
                 logger.LogDebug("Service principal for {ResourceAppId} not found - configuration needed", resourceAppId);
                 return false;
             }
+            logger.LogDebug("Verified service principal for resource app ({ResourceAppId})", resourceAppId);
         }
 
         // Check 2: Verify all MOS permissions are in requiredResourceAccess with correct scopes
@@ -86,6 +90,9 @@ public static class PublishHelpers
                     resourceAppId, scopeName);
                 return false;
             }
+            
+            logger.LogDebug("Verified permission {ScopeName} ({ScopeId}) for resource app ({ResourceAppId})", 
+                scopeName, scopeId, resourceAppId);
         }
 
         // Check 3: Verify admin consent is granted for all MOS resources
@@ -127,9 +134,14 @@ public static class PublishHelpers
                     resourceAppId, scopeName);
                 return false;
             }
+            
+            logger.LogDebug("Verified admin consent for resource app ({ResourceAppId}) with scope {ScopeName}", 
+                resourceAppId, scopeName);
         }
 
         // All checks passed
+        logger.LogDebug("All MOS prerequisites verified: {Count} service principals, {Count} permissions, {Count} admin consents", 
+            MosConstants.AllResourceAppIds.Length + 1, MosConstants.AllResourceAppIds.Length, MosConstants.AllResourceAppIds.Length);
         return true;
     }
 
@@ -515,6 +527,8 @@ public static class PublishHelpers
 
         logger.LogInformation("Granting admin consent for {Count} MOS resources", resourcesToConsent.Count);
 
+        var failedGrants = new List<string>();
+        
         foreach (var (resourceAppId, scopeName, resourceSpObjectId) in resourcesToConsent)
         {
             logger.LogDebug("Granting admin consent for {ResourceAppId} with scope {ScopeName}", resourceAppId, scopeName);
@@ -528,11 +542,23 @@ public static class PublishHelpers
 
             if (!success)
             {
-                logger.LogWarning("Failed to grant admin consent for {ResourceAppId}", resourceAppId);
+                logger.LogError("Failed to grant admin consent for {ResourceAppId}", resourceAppId);
+                failedGrants.Add(resourceAppId);
             }
         }
 
-        logger.LogInformation("Admin consent configuration complete");
+        if (failedGrants.Count > 0)
+        {
+            var failedList = string.Join(", ", failedGrants);
+            logger.LogError("Failed to grant admin consent for {Count} MOS resource(s): {FailedResources}", 
+                failedGrants.Count, failedList);
+            throw new SetupValidationException(
+                $"Failed to grant admin consent for {failedGrants.Count} MOS resource(s): {failedList}. " +
+                "MOS token acquisition will fail without proper consent.",
+                mitigationSteps: ErrorMessages.GetMosAdminConsentMitigation(config.ClientAppId));
+        }
+
+        logger.LogInformation("Admin consent granted successfully for all {Count} MOS resources", resourcesToConsent.Count);
         
         // Clear cached MOS tokens to force re-acquisition with new scopes
         logger.LogDebug("Clearing cached MOS tokens to force re-acquisition with updated permissions");
