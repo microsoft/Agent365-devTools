@@ -21,7 +21,7 @@ public class AzureAuthenticationException : Agent365Exception
                 "Ensure Azure CLI is installed: https://aka.ms/azure-cli",
                 "Run 'az login' to authenticate",
                 "Verify your account has the required permissions",
-                "Run 'a365 setup' again"
+                "Run 'a365 setup all' again"
             })
     {
     }
