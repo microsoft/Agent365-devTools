@@ -1,15 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text;
-using System.Text.Json;
-using System.Linq;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -38,7 +37,7 @@ public class GraphApiService
     {
         _logger = logger;
         _executor = executor;
-        _httpClient = handler != null ? new HttpClient(handler) : new HttpClient();
+        _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
         _tokenProvider = tokenProvider;
     }
 

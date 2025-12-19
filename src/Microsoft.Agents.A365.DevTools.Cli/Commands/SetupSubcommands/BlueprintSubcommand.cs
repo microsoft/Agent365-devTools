@@ -8,15 +8,14 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 using System.CommandLine;
-using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Threading;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
@@ -569,8 +568,6 @@ internal static class BlueprintSubcommand
                 };
             }
 
-            // Create the application using Microsoft Graph SDK
-            using var httpClient = new HttpClient();
             var graphToken = await GetTokenFromGraphClient(logger, graphClient, tenantId, setupConfig.ClientAppId);
             if (string.IsNullOrEmpty(graphToken))
             {
@@ -578,7 +575,8 @@ internal static class BlueprintSubcommand
                 return (false, null, null, null);
             }
 
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            // Create the application using Microsoft Graph SDK
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
             httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
             httpClient.DefaultRequestHeaders.Add("OData-Version", "4.0"); // Required for @odata.type
 
@@ -992,8 +990,7 @@ internal static class BlueprintSubcommand
                 throw new InvalidOperationException("Cannot create client secret without Graph API token");
             }
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
 
             var secretBody = new JsonObject
             {
@@ -1169,8 +1166,7 @@ internal static class BlueprintSubcommand
                 ["audiences"] = new JsonArray { "api://AzureADTokenExchange" }
             };
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
             httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
 
             var urls = new []
