@@ -208,7 +208,10 @@ public class GraphApiService
             }
 
             _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", graphToken);
-            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("ConsistencyLevel", "eventual");
+            // NOTE: Do NOT add "ConsistencyLevel: eventual" header here.
+            // This header is only required for advanced Graph query capabilities ($count, $search, certain $filter operations).
+            // For simple service principal lookups using basic $filter, this header is not needed and causes HTTP 400 errors.
+            // See: https://learn.microsoft.com/en-us/graph/aad-advanced-queries
 
             // Step 1: Derive federated identity subject using FMI ID logic
             _logger.LogInformation("[STEP 1] Deriving federated identity subject (FMI ID)...");
@@ -739,8 +742,10 @@ public class GraphApiService
         if (string.IsNullOrWhiteSpace(token)) return false;
 
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _httpClient.DefaultRequestHeaders.Remove("ConsistencyLevel");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("ConsistencyLevel", "eventual");
+        // NOTE: Do NOT add "ConsistencyLevel: eventual" header here.
+        // This header is only required for advanced Graph query capabilities ($count, $search, certain $filter operations).
+        // For simple queries like service principal lookups, this header is not needed and causes HTTP 400 errors.
+        // See: https://learn.microsoft.com/en-us/graph/aad-advanced-queries
 
         return true;
     }
