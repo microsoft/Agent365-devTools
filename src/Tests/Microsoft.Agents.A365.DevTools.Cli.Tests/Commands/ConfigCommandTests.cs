@@ -438,6 +438,50 @@ public class ConfigCommandTests
     }
 
     [Fact]
+    public void Display_GeneratedConfig_DecryptsEncryptedSecret()
+    {
+        // This test verifies that encrypted secrets are decrypted when displayed
+        // Arrange
+        var logger = _loggerFactory.CreateLogger("Test");
+        var plaintextSecret = "MyTestSecret123!";
+        var protectedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.ProtectSecret(plaintextSecret, logger);
+        var isProtected = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        // Create a config dictionary with encrypted secret (simulating what GetGeneratedConfig returns)
+        var configDict = new Dictionary<string, object?>
+        {
+            ["agentBlueprintId"] = "blueprint-123",
+            ["agentBlueprintClientSecret"] = protectedSecret,
+            ["agentBlueprintClientSecretProtected"] = isProtected
+        };
+
+        // Act - Apply the decryption logic (same as in ConfigCommand display)
+        if (configDict.TryGetValue("agentBlueprintClientSecret", out var secretObj) && 
+            configDict.TryGetValue("agentBlueprintClientSecretProtected", out var protectedObj) &&
+            secretObj is string encryptedSecret &&
+            protectedObj is bool isSecretProtected &&
+            isSecretProtected)
+        {
+            var decryptedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.UnprotectSecret(
+                encryptedSecret, 
+                isSecretProtected, 
+                logger);
+            configDict["agentBlueprintClientSecret"] = decryptedSecret;
+        }
+
+        // Assert - Secret should be decrypted
+        var resultSecret = configDict["agentBlueprintClientSecret"] as string;
+        Assert.NotNull(resultSecret);
+        Assert.Equal(plaintextSecret, resultSecret);
+        
+        // On Windows, ensure encrypted version is NOT in the result
+        if (isProtected)
+        {
+            Assert.NotEqual(protectedSecret, resultSecret);
+        }
+    }
+
+    [Fact]
     public void GetDefaultConfigDirectory_Windows_ReturnsLocalAppData()
     {
         // Arrange - only run on Windows

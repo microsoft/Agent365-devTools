@@ -143,7 +143,10 @@ public sealed class A365CreateInstanceRunner
         // Decrypt the secret if it was encrypted
         if (!string.IsNullOrWhiteSpace(agentBlueprintClientSecret) && isProtected)
         {
-            agentBlueprintClientSecret = UnprotectSecret(agentBlueprintClientSecret, isProtected);
+            agentBlueprintClientSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.UnprotectSecret(
+                agentBlueprintClientSecret, 
+                isProtected, 
+                _logger);
             _logger.LogInformation("Decrypted agent blueprint client secret");
         }
 
@@ -1132,48 +1135,6 @@ public sealed class A365CreateInstanceRunner
         {
             _logger.LogWarning(ex, "Failed to open browser automatically");
             _logger.LogInformation("Please manually open: {Url}", url);
-        }
-    }
-
-    /// <summary>
-    /// Unprotects (decrypts) a secret string that was encrypted using DPAPI on Windows.
-    /// On non-Windows platforms, returns the input as-is (assumes plaintext).
-    /// </summary>
-    /// <param name="protectedData">The base64-encoded encrypted secret</param>
-    /// <param name="isProtected">Whether the secret was encrypted (from config metadata)</param>
-    /// <returns>The decrypted plaintext secret</returns>
-    private string UnprotectSecret(string protectedData, bool isProtected)
-    {
-        if (string.IsNullOrWhiteSpace(protectedData))
-        {
-            return protectedData;
-        }
-
-        try
-        {
-            if (isProtected && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                // Decrypt using Windows DPAPI
-                var protectedBytes = Convert.FromBase64String(protectedData);
-                var plaintextBytes = ProtectedData.Unprotect(
-                    protectedBytes,
-                    optionalEntropy: null,
-                    scope: DataProtectionScope.CurrentUser);
-                
-                return System.Text.Encoding.UTF8.GetString(plaintextBytes);
-            }
-            else
-            {
-                // Not protected or not on Windows - return as-is
-                return protectedData;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to decrypt secret: {Message}", ex.Message);
-            _logger.LogWarning("Attempting to use the secret as-is (may be plaintext)");
-            // Return the protected data as-is - caller will handle the error
-            return protectedData;
         }
     }
 
