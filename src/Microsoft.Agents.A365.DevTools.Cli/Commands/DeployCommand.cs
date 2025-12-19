@@ -216,6 +216,12 @@ public class DeployCommand
                 var updateConfig = await configService.LoadAsync(config.FullName);
                 if (updateConfig == null) Environment.Exit(1);
 
+                // Configure GraphApiService with custom client app ID if available
+                if (!string.IsNullOrWhiteSpace(updateConfig.ClientAppId))
+                {
+                    graphApiService.CustomClientAppId = updateConfig.ClientAppId;
+                }
+
                 await DeployMcpToolPermissionsAsync(updateConfig, executor, logger, graphApiService);
             }
             catch (DeployMcpException)

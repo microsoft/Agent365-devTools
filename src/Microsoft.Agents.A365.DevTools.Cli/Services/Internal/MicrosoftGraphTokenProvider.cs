@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -27,6 +28,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
         string tenantId,
         IEnumerable<string> scopes,
         bool useDeviceCode = true,
+        string? clientAppId = null,
         CancellationToken ct = default)
     {
         _logger.LogInformation(
@@ -35,8 +37,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
 
         var validatedScopes = ValidateAndPrepareScopes(scopes);
         ValidateTenantId(tenantId);
+        
+        if (!string.IsNullOrWhiteSpace(clientAppId))
+        {
+            ValidateClientAppId(clientAppId);
+        }
 
-        var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode);
+        var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
         var result = await ExecuteWithFallbackAsync(script, useDeviceCode, ct);
 
         return ProcessResult(result);
@@ -57,7 +64,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
 
         foreach (var scope in validScopes)
         {
-            if (ContainsDangerousCharacters(scope))
+            if (CommandStringHelper.ContainsDangerousCharacters(scope))
                 throw new ArgumentException(
                     $"Scope contains invalid characters: {scope}",
                     nameof(scopes));
@@ -77,19 +84,33 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
                 nameof(tenantId));
     }
 
-    private static string BuildPowerShellScript(string tenantId, string[] scopes, bool useDeviceCode)
+    private static void ValidateClientAppId(string clientAppId)
     {
-        var escapedTenantId = EscapePowerShellString(tenantId);
+        if (!Guid.TryParse(clientAppId, out _))
+            throw new ArgumentException(
+                "Client App ID must be a valid GUID format",
+                nameof(clientAppId));
+    }
+
+    private static string BuildPowerShellScript(string tenantId, string[] scopes, bool useDeviceCode, string? clientAppId = null)
+    {
+        var escapedTenantId = CommandStringHelper.EscapePowerShellString(tenantId);
         var scopesArray = BuildScopesArray(scopes);
 
         // Use -UseDeviceCode for CLI-friendly authentication (no browser popup/download)
         var authMethod = useDeviceCode ? "-UseDeviceCode" : "";
+        
+        // Include -ClientId parameter if provided (ensures authentication uses the custom client app)
+        // Add leading space only when parameter is present to avoid double spaces
+        var clientIdParam = !string.IsNullOrWhiteSpace(clientAppId) 
+            ? $" -ClientId '{CommandStringHelper.EscapePowerShellString(clientAppId)}'" 
+            : "";
 
         // Workaround for older Microsoft.Graph versions that don't have Get-MgAccessToken
         // We make a dummy Graph request and extract the token from the Authorization header
         return
             $"Import-Module Microsoft.Graph.Authentication -ErrorAction Stop; " +
-            $"Connect-MgGraph -TenantId '{escapedTenantId}' -Scopes {scopesArray} {authMethod} -NoWelcome -ErrorAction Stop; " +
+            $"Connect-MgGraph -TenantId '{escapedTenantId}'{clientIdParam} -Scopes {scopesArray} {authMethod} -NoWelcome -ErrorAction Stop; " +
             $"$ctx = Get-MgContext; " +
             $"if ($null -eq $ctx) {{ throw 'Failed to establish Graph context' }}; " +
             // Try to get token directly if available (newer versions)
@@ -106,7 +127,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
 
     private static string BuildScopesArray(string[] scopes)
     {
-        var escapedScopes = scopes.Select(s => $"'{EscapePowerShellString(s)}'");
+        var escapedScopes = scopes.Select(s => $"'{CommandStringHelper.EscapePowerShellString(s)}'");
         return $"@({string.Join(",", escapedScopes)})";
     }
 
@@ -218,19 +239,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
         // Domain name format (basic validation)
         return tenantId.Contains('.') &&
                tenantId.Length <= 253 &&
-               !ContainsDangerousCharacters(tenantId);
-    }
-
-    private static bool ContainsDangerousCharacters(string input)
-    {
-        var dangerous = new[] { '\'', '"', ';', '`', '$', '&', '|', '<', '>', '\n', '\r', '\t' };
-        return input.IndexOfAny(dangerous) >= 0;
-    }
-
-    private static string EscapePowerShellString(string input)
-    {
-        // In PowerShell single-quoted strings, only single quotes need escaping
-        return input.Replace("'", "''");
+               !CommandStringHelper.ContainsDangerousCharacters(tenantId);
     }
 
     private static bool IsValidJwtFormat(string token)

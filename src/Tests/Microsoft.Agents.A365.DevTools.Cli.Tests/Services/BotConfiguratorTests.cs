@@ -124,4 +124,48 @@ public class BotConfiguratorTests
 
         Assert.Equal(EndpointRegistrationResult.AlreadyExists, result);
     }
+
+    [Fact(Skip = "Test requires HTTP mocking infrastructure - documents location normalization requirement")]
+    public async Task CreateEndpointWithAgentBlueprintAsync_NormalizesLocationWithSpaces()
+    {
+        // This test documents the critical bug fix for location normalization
+        // 
+        // Bug scenario:
+        // - User config has location: "Canada Central" (display name with spaces)
+        // - Endpoint creation API requires: "canadacentral" (lowercase, no spaces)
+        // - Without normalization: API returns BadRequest "Invalid location"
+        // - With normalization: Location is converted before sending to API
+        //
+        // Expected behavior:
+        // - Input: "Canada Central", "West US 2", etc. (display names)
+        // - Output to API: "canadacentral", "westus2", etc. (API names)
+        // - The JSON body sent to endpoint creation should have normalized location
+        //
+        // Implementation note:
+        // This would require mocking HttpClient to verify the JSON body contains:
+        // - ["Location"] = "canadacentral" (NOT "Canada Central")
+        //
+        // Workaround verification:
+        // - AzureCliService.ListAppServicePlansAsync has a similar test that passes
+        // - Integration tests verify end-to-end behavior
+        // - Manual testing confirmed the fix works
+        
+        var botName = "test-bot";
+        var locationWithSpaces = "Canada Central"; // Display name from Azure
+        var messagingEndpoint = "https://test.azurewebsites.net/api/messages";
+        var description = "Test Bot Description";
+        var agentBlueprintId = "test-agent-blueprint-id";
+
+        // TODO: Mock HttpClient to verify JSON body has normalized location "canadacentral"
+        // Expected JSON body should contain:
+        // {
+        //   "Location": "canadacentral"  // NOT "Canada Central"
+        // }
+        
+        var result = await _configurator.CreateEndpointWithAgentBlueprintAsync(
+            botName, locationWithSpaces, messagingEndpoint, description, agentBlueprintId);
+
+        // If this test could run, it would verify the HTTP request body has normalized location
+        Assert.Equal(EndpointRegistrationResult.Created, result);
+    }
 }

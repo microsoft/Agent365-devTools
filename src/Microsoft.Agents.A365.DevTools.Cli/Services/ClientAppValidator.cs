@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -108,6 +109,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                 throw ClientAppValidationException.MissingAdminConsent(clientAppId);
             }
 
+            // Step 6: Verify and fix redirect URIs
+            await EnsureRedirectUrisAsync(clientAppId, graphToken, ct);
+
             _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
         }
         catch (ClientAppValidationException)
@@ -130,6 +134,103 @@ public sealed class ClientAppValidator : IClientAppValidator
                 "Unexpected error during client app validation",
                 new List<string> { ex.Message },
                 clientAppId);
+        }
+    }
+
+    /// <summary>
+    /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.
+    /// Automatically adds missing redirect URIs if needed (self-healing).
+    /// </summary>
+    /// <param name="clientAppId">The client app ID</param>
+    /// <param name="graphToken">Microsoft Graph access token</param>
+    /// <param name="ct">Cancellation token</param>
+    public async Task EnsureRedirectUrisAsync(
+        string clientAppId,
+        string graphToken,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(graphToken);
+
+        try
+        {
+            _logger.LogDebug("Checking redirect URIs for client app {ClientAppId}", clientAppId);
+
+            // Get current redirect URIs
+            var appCheckResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,publicClient\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
+                cancellationToken: ct);
+
+            if (!appCheckResult.Success)
+            {
+                _logger.LogWarning("Could not verify redirect URIs: {Error}", appCheckResult.StandardError);
+                return;
+            }
+
+            var response = JsonNode.Parse(appCheckResult.StandardOutput);
+            var apps = response?["value"]?.AsArray();
+
+            if (apps == null || apps.Count == 0)
+            {
+                _logger.LogWarning("Client app not found when checking redirect URIs");
+                return;
+            }
+
+            var app = apps[0]!.AsObject();
+            var objectId = app["id"]?.GetValue<string>();
+            
+            if (string.IsNullOrWhiteSpace(objectId))
+            {
+                _logger.LogWarning("Could not get application object ID for redirect URI update");
+                return;
+            }
+            
+            var publicClient = app["publicClient"]?.AsObject();
+            var currentRedirectUris = publicClient?["redirectUris"]?.AsArray()
+                ?.Select(uri => uri?.GetValue<string>())
+                .Where(uri => !string.IsNullOrWhiteSpace(uri))
+                .Select(uri => uri!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Check if required URIs are present
+            var missingUris = AuthenticationConstants.RequiredRedirectUris
+                .Where(uri => !currentRedirectUris.Contains(uri))
+                .ToList();
+
+            if (missingUris.Count == 0)
+            {
+                _logger.LogDebug("All required redirect URIs are configured");
+                return;
+            }
+
+            // Add missing URIs
+            _logger.LogInformation("Adding missing redirect URIs to client app: {MissingUris}",
+                string.Join(", ", missingUris));
+
+            var allUris = currentRedirectUris.Union(missingUris).ToList();
+            var urisJson = string.Join(",", allUris.Select(uri => $"\"{uri}\""));
+
+            var patchBody = $"{{\"publicClient\":{{\"redirectUris\":[{urisJson}]}}}}";
+            // Escape the JSON body for PowerShell: replace " with ""
+            var escapedBody = patchBody.Replace("\"", "\"\"");
+            var patchResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method PATCH --url \"{GraphApiBaseUrl}/applications/{CommandStringHelper.EscapePowerShellString(objectId)}\" --headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" --body \"{escapedBody}\"",
+                cancellationToken: ct);
+
+            if (!patchResult.Success)
+            {
+                _logger.LogWarning("Failed to update redirect URIs: {Error}", patchResult.StandardError);
+                return;
+            }
+
+            _logger.LogInformation("Successfully added redirect URIs: {AddedUris}",
+                string.Join(", ", missingUris));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error ensuring redirect URIs (non-fatal)");
         }
     }
 
@@ -159,7 +260,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         
         var appCheckResult = await _executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{clientAppId}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {graphToken}\"",
+            $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
             cancellationToken: ct);
 
         if (!appCheckResult.Success)
@@ -184,7 +285,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                     // Retry with fresh token
                     var retryResult = await _executor.ExecuteAsync(
                         "az",
-                        $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{clientAppId}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {freshToken}\"",
+                        $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(freshToken)}\"",
                         cancellationToken: ct);
                     
                     if (retryResult.Success)
@@ -299,7 +400,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         {
             var graphSpResult = await _executor.ExecuteAsync(
                 "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id,oauth2PermissionScopes\" --headers \"Authorization=Bearer {graphToken}\"",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(AuthenticationConstants.MicrosoftGraphResourceAppId)}'&$select=id,oauth2PermissionScopes\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
                 cancellationToken: ct);
 
             if (!graphSpResult.Success)
@@ -360,7 +461,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Get service principal for the app
             var spCheckResult = await _executor.ExecuteAsync(
                 "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id\" --headers \"Authorization=Bearer {graphToken}\"",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
                 cancellationToken: ct);
 
             if (!spCheckResult.Success)
@@ -389,7 +490,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Get oauth2PermissionGrants
             var grantsResult = await _executor.ExecuteAsync(
                 "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'\" --headers \"Authorization=Bearer {graphToken}\"",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{CommandStringHelper.EscapePowerShellString(spObjectId)}'\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
                 cancellationToken: ct);
 
             if (!grantsResult.Success)
@@ -439,7 +540,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         // Get service principal for the app
         var spCheckResult = await _executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id,appId\" --headers \"Authorization=Bearer {graphToken}\"",
+            $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
             cancellationToken: ct);
 
         if (!spCheckResult.Success)
@@ -460,10 +561,16 @@ public sealed class ClientAppValidator : IClientAppValidator
         var sp = servicePrincipals[0]!.AsObject();
         var spObjectId = sp["id"]?.GetValue<string>();
 
+        if (string.IsNullOrWhiteSpace(spObjectId))
+        {
+            _logger.LogDebug("Service principal object ID not found");
+            return true; // Best-effort check
+        }
+
         // Check OAuth2 permission grants
         var grantsCheckResult = await _executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'\" --headers \"Authorization=Bearer {graphToken}\"",
+            $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{CommandStringHelper.EscapePowerShellString(spObjectId)}'\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
             cancellationToken: ct);
 
         if (!grantsCheckResult.Success)

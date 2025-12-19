@@ -143,13 +143,21 @@ public class AzureCliService : IAzureCliService
 
             var plansJson = JsonSerializer.Deserialize<JsonElement[]>(cleanedOutput);
             
-            return plansJson?.Select(plan => new AzureAppServicePlan
+            return plansJson?.Select(plan =>
             {
-                Name = plan.GetProperty("name").GetString() ?? string.Empty,
-                ResourceGroup = plan.GetProperty("resourceGroup").GetString() ?? string.Empty,
-                Location = plan.GetProperty("location").GetString() ?? string.Empty,
-                Sku = plan.GetProperty("sku").GetProperty("name").GetString() ?? string.Empty,
-                Id = plan.GetProperty("id").GetString() ?? string.Empty
+                var location = plan.GetProperty("location").GetString() ?? string.Empty;
+                // Normalize location: Azure CLI returns display names with spaces (e.g., "Canada Central")
+                // but APIs require lowercase names without spaces (e.g., "canadacentral")
+                var normalizedLocation = location.Replace(" ", "").ToLowerInvariant();
+                
+                return new AzureAppServicePlan
+                {
+                    Name = plan.GetProperty("name").GetString() ?? string.Empty,
+                    ResourceGroup = plan.GetProperty("resourceGroup").GetString() ?? string.Empty,
+                    Location = normalizedLocation,
+                    Sku = plan.GetProperty("sku").GetProperty("name").GetString() ?? string.Empty,
+                    Id = plan.GetProperty("id").GetString() ?? string.Empty
+                };
             }).OrderBy(plan => plan.Name).ToList() ?? new List<AzureAppServicePlan>();
         }
         catch (Exception ex)

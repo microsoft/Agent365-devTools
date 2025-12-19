@@ -507,5 +507,225 @@ public class ClientAppValidatorTests
     }
 
     #endregion
+
+    #region EnsureRedirectUrisAsync Tests
+
+    [Fact]
+    public async Task EnsureRedirectUrisAsync_WhenAllUrisPresent_DoesNotUpdate()
+    {
+        // Arrange
+        var token = "test-token";
+        var appResponseJson = $$"""
+        {
+            "value": [{
+                "id": "object-id-123",
+                "publicClient": {
+                    "redirectUris": ["http://localhost", "http://localhost:8400/"]
+                }
+            }]
+        }
+        """;
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("publicClient")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+
+        // Act
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
+
+        // Assert - Should not call PATCH
+        await _executor.DidNotReceive().ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureRedirectUrisAsync_WhenUrisMissing_AddsThemSuccessfully()
+    {
+        // Arrange
+        var token = "test-token";
+        var appResponseJson = $$"""
+        {
+            "value": [{
+                "id": "object-id-123",
+                "publicClient": {
+                    "redirectUris": ["http://localhost:8400/"]
+                }
+            }]
+        }
+        """;
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("publicClient")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+
+        // Act
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
+
+        // Assert - Should call PATCH with both URIs
+        await _executor.Received(1).ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH") && 
+                                s.Contains("http://localhost") && 
+                                s.Contains("http://localhost:8400/")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureRedirectUrisAsync_WhenNoRedirectUris_AddsAllRequired()
+    {
+        // Arrange
+        var token = "test-token";
+        var appResponseJson = $$"""
+        {
+            "value": [{
+                "id": "object-id-123",
+                "publicClient": {
+                    "redirectUris": []
+                }
+            }]
+        }
+        """;
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("publicClient")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+
+        // Act
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
+
+        // Assert
+        await _executor.Received(1).ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureRedirectUrisAsync_WhenGetFails_LogsWarningAndContinues()
+    {
+        // Arrange
+        var token = "test-token";
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method GET")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Error getting app" });
+
+        // Act - Should not throw
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
+
+        // Assert - Should not call PATCH
+        await _executor.DidNotReceive().ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureRedirectUrisAsync_WhenPatchFails_LogsWarningButDoesNotThrow()
+    {
+        // Arrange
+        var token = "test-token";
+        var appResponseJson = $$"""
+        {
+            "value": [{
+                "id": "object-id-123",
+                "publicClient": {
+                    "redirectUris": []
+                }
+            }]
+        }
+        """;
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method GET")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Patch failed" });
+
+        // Act - Should not throw
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
+
+        // Assert - Method completes without exception
+        await _executor.Received(1).ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureRedirectUrisAsync_EscapesJsonBodyForPowerShell()
+    {
+        // Arrange
+        var token = "test-token";
+        var appResponseJson = $$"""
+        {
+            "value": [{
+                "id": "object-id-123",
+                "publicClient": {
+                    "redirectUris": ["http://localhost:8400/"]
+                }
+            }]
+        }
+        """;
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method GET")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+
+        // Act
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
+
+        // Assert - Verify JSON body is properly escaped with double quotes for PowerShell
+        await _executor.Received(1).ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => 
+                s.Contains("rest --method PATCH") && 
+                // Should use --body "..." with escaped quotes (not --body '...')
+                s.Contains("--body \"") &&
+                // JSON should have doubled quotes: ""publicClient""
+                s.Contains("\"\"publicClient\"\"") &&
+                s.Contains("\"\"redirectUris\"\"") &&
+                // Should NOT use single quotes around body
+                !s.Contains("--body '")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    #endregion
 }
 

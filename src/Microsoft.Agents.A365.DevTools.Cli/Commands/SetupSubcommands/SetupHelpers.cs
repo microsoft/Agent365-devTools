@@ -465,14 +465,18 @@ internal static class SetupHelpers
             throw new SetupValidationException($"Bot endpoint name '{endpointName}' is too short (must be at least 4 characters)");
         }
 
+        // Normalize location before logging and sending to API
+        var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
+        
         logger.LogInformation("   - Registering blueprint messaging endpoint");
         logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
         logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
+        logger.LogInformation("     * Region: {Location}", normalizedLocation);
         logger.LogInformation("     * Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
         var endpointResult = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
             endpointName: endpointName,
-            location: setupConfig.Location,
+            location: normalizedLocation,
             messagingEndpoint: messagingEndpoint,
             agentDescription: "Agent 365 messaging endpoint for automated interactions",
             agentBlueprintId: setupConfig.AgentBlueprintId);

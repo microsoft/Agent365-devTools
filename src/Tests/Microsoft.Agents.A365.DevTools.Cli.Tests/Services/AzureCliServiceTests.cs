@@ -226,6 +226,45 @@ public class AzureCliServiceTests
     }
 
     [Fact]
+    public async Task ListAppServicePlansAsync_NormalizesLocationWithSpaces()
+    {
+        // Arrange - Azure CLI returns display names with spaces (e.g., "Canada Central", "West US 2")
+        var jsonOutput = """
+            [
+              {
+                "name": "asp-canada",
+                "resourceGroup": "rg-test",
+                "location": "Canada Central",
+                "sku": {
+                  "name": "B1"
+                },
+                "id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/rg-test/providers/Microsoft.Web/serverfarms/asp-canada"
+              },
+              {
+                "name": "asp-westus2",
+                "resourceGroup": "rg-test",
+                "location": "West US 2",
+                "sku": {
+                  "name": "P1v3"
+                },
+                "id": "/subscriptions/12345678-1234-1234-1234-123456789abc/resourceGroups/rg-test/providers/Microsoft.Web/serverfarms/asp-westus2"
+              }
+            ]
+            """;
+        var result = new CommandResult { ExitCode = 0, StandardOutput = jsonOutput };
+        _commandExecutor.ExecuteAsync("az", "appservice plan list --output json")
+            .Returns(Task.FromResult(result));
+
+        // Act
+        var appServicePlans = await _azureCliService.ListAppServicePlansAsync();
+
+        // Assert - Locations should be normalized to lowercase without spaces
+        appServicePlans.Should().HaveCount(2);
+        appServicePlans[0].Location.Should().Be("canadacentral", "Azure APIs require lowercase location names without spaces");
+        appServicePlans[1].Location.Should().Be("westus2", "Azure APIs require lowercase location names without spaces");
+    }
+
+    [Fact]
     public async Task ListLocationsAsync_WhenSuccessful_ReturnsLocations()
     {
         // Arrange
