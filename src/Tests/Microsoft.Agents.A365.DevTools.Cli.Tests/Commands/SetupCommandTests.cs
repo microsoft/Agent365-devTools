@@ -342,7 +342,8 @@ public class SetupCommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockGraphApiService);
+            _mockGraphApiService,
+            _mockClientAppValidator);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -384,7 +385,8 @@ public class SetupCommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockGraphApiService);
+            _mockGraphApiService,
+            _mockClientAppValidator);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
