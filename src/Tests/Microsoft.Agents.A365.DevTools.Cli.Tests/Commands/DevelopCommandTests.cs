@@ -16,6 +16,7 @@ public class DevelopCommandTests
     private readonly AuthenticationService _mockAuthService;
     private readonly GraphApiService _mockGraphApiService;
     private readonly IProcessService _mockProcessService;
+    private readonly IServerService _mockServerService;
 
     public DevelopCommandTests()
     {
@@ -35,13 +36,21 @@ public class DevelopCommandTests
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(mockGraphApiLogger, _mockCommandExecutor);
 
         _mockProcessService = Substitute.For<IProcessService>();
+        _mockServerService = Substitute.For<IServerService>();
     }
 
     [Fact]
     public void CreateCommand_ReturnsCommandWithCorrectName()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
 
         // Assert
         Assert.Equal("develop", command.Name);
@@ -52,7 +61,14 @@ public class DevelopCommandTests
     public void CreateCommand_HasSevenSubcommands()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
 
         // Assert
         Assert.Equal(7, command.Subcommands.Count);
@@ -71,7 +87,15 @@ public class DevelopCommandTests
     public void ListAvailableSubcommand_HasCorrectOptions()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
+
         var subcommand = command.Subcommands.First(sc => sc.Name == "list-available");
 
         // Assert
@@ -85,7 +109,15 @@ public class DevelopCommandTests
     public void ListConfiguredSubcommand_HasCorrectOptions()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
+
         var subcommand = command.Subcommands.First(sc => sc.Name == "list-configured");
 
         // Assert
@@ -98,7 +130,15 @@ public class DevelopCommandTests
     public void AddMcpServersSubcommand_HasCorrectArgumentsAndOptions()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
+
         var subcommand = command.Subcommands.First(sc => sc.Name == "add-mcp-servers");
 
         // Assert
@@ -115,7 +155,15 @@ public class DevelopCommandTests
     public void RemoveMcpServersSubcommand_HasCorrectArgumentsAndOptions()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
+
         var subcommand = command.Subcommands.First(sc => sc.Name == "remove-mcp-servers");
 
         // Assert
@@ -132,7 +180,15 @@ public class DevelopCommandTests
     public void GetTokenSubcommand_HasCorrectOptions()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
+
         var subcommand = command.Subcommands.First(sc => sc.Name == "get-token");
 
         // Assert
@@ -150,7 +206,15 @@ public class DevelopCommandTests
     public void AddPermissionsSubcommand_HasCorrectOptions()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
+
         var subcommand = command.Subcommands.First(sc => sc.Name == "add-permissions");
 
         // Assert
@@ -167,7 +231,15 @@ public class DevelopCommandTests
     public void StartMockToolingServerSubcommand_HasCorrectOptions()
     {
         // Act
-        var command = DevelopCommand.CreateCommand(_mockLogger, _mockConfigService, _mockCommandExecutor, _mockAuthService, _mockGraphApiService, _mockProcessService);
+        var command = DevelopCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockCommandExecutor,
+            _mockAuthService,
+            _mockGraphApiService,
+            _mockProcessService,
+            _mockServerService);
+
         var subcommand = command.Subcommands.First(sc => sc.Name == "start-mock-tooling-server");
 
         // Assert

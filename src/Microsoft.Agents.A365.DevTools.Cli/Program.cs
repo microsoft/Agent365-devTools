@@ -74,9 +74,10 @@ class Program
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
             var processService = serviceProvider.GetRequiredService<IProcessService>();
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
+            var serverService = serviceProvider.GetRequiredService<IServerService>();
 
             // Add commands
-            rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, processService));
+            rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, processService, serverService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, clientAppValidator));
@@ -213,6 +214,9 @@ class Program
 
         // Register ProcessService for cross-platform process launching
         services.AddSingleton<IProcessService, ProcessService>();
+
+        // Register ServerService for starting Mock Tooling Server
+        services.AddSingleton<IServerService, ServerService>();
 
         // Register Azure CLI service and Configuration Wizard
         services.AddSingleton<IAzureCliService, AzureCliService>();
