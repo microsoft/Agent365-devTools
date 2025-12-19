@@ -1027,7 +1027,7 @@ internal static class BlueprintSubcommand
                 throw new InvalidOperationException("Client secret creation returned empty secret");
             }
 
-            var protectedSecret = ProtectSecret(secretTextNode.GetValue<string>(), logger);
+            var protectedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.ProtectSecret(secretTextNode.GetValue<string>(), logger);
 
             var isProtected = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             generatedConfig["agentBlueprintClientSecret"] = protectedSecret;
@@ -1253,38 +1253,6 @@ internal static class BlueprintSubcommand
         {
             logger.LogError(ex, "Exception creating federated identity credential: {Message}", ex.Message);
             return false;
-        }
-    }
-
-    private static string ProtectSecret(string plaintext, ILogger logger)
-    {
-        if (string.IsNullOrWhiteSpace(plaintext))
-        {
-            return plaintext;
-        }
-
-        try
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                var plaintextBytes = System.Text.Encoding.UTF8.GetBytes(plaintext);
-                var protectedBytes = ProtectedData.Protect(
-                    plaintextBytes,
-                    optionalEntropy: null,
-                    scope: DataProtectionScope.CurrentUser);
-
-                return Convert.ToBase64String(protectedBytes);
-            }
-            else
-            {
-                logger.LogWarning("DPAPI encryption not available on this platform. Secret will be stored in plaintext.");
-                return plaintext;
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to encrypt secret, storing in plaintext: {Message}", ex.Message);
-            return plaintext;
         }
     }
 

@@ -284,8 +284,8 @@ public static class ConfigCommand
                         }
                     }
 
-                    // Use the model's method to get only generated configuration fields
-                    var generatedConfig = config.GetGeneratedConfig();
+                    // Use the model's method to get generated config with secrets decrypted for display
+                    var generatedConfig = config.GetGeneratedConfigForDisplay(logger);
                     var displayJson = JsonSerializer.Serialize(generatedConfig, displayOptions);
 
                     // Post-process: Replace escaped backslashes

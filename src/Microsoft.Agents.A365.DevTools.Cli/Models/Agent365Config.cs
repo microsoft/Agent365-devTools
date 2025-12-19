@@ -527,6 +527,34 @@ public class Agent365Config
     }
 
     /// <summary>
+    /// Returns the generated configuration with secrets decrypted for display purposes.
+    /// This method should ONLY be used for user-facing output, never for persistence.
+    /// </summary>
+    /// <param name="logger">Logger for decryption warnings/errors</param>
+    /// <returns>Dictionary with decrypted secrets suitable for display</returns>
+    public Dictionary<string, object?> GetGeneratedConfigForDisplay(Microsoft.Extensions.Logging.ILogger logger)
+    {
+        var config = GetGeneratedConfig() as Dictionary<string, object?> 
+            ?? throw new InvalidOperationException("GetGeneratedConfig must return Dictionary<string, object?>");
+
+        // Decrypt agentBlueprintClientSecret if protected
+        if (config.TryGetValue("agentBlueprintClientSecret", out var secretObj) && 
+            config.TryGetValue("agentBlueprintClientSecretProtected", out var protectedObj) &&
+            secretObj is string encryptedSecret &&
+            protectedObj is bool isProtected &&
+            isProtected)
+        {
+            var decryptedSecret = Helpers.SecretProtectionHelper.UnprotectSecret(
+                encryptedSecret, 
+                isProtected, 
+                logger);
+            config["agentBlueprintClientSecret"] = decryptedSecret;
+        }
+
+        return config;
+    }
+
+    /// <summary>
     /// Returns the full configuration object with all fields (both static and generated).
     /// This represents the complete merged view of the configuration.
     /// </summary>
