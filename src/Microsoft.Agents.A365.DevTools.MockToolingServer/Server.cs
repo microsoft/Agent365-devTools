@@ -56,10 +56,16 @@ public static class Server
         var app = builder.Build();
 
         // Log startup information
-        var logger = app.Services.GetRequiredService<ILogger<Server>>();
-        logger.LogInformation("===== MCP SERVER STARTING (Static Method) =====");
+        var logger = app.Services.GetRequiredService<ILogger>();
+        logger.LogInformation("===== MCP SERVER STARTING =====");
         logger.LogInformation("Startup Time: {StartupTime} UTC", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-        logger.LogInformation("Server will be available on: {Url}", app.Configuration["urls"]);
+
+        var urls = app.Urls;
+        var urlDescription = (urls != null && urls.Count > 0)
+            ? string.Join(", ", urls)
+            : "URL not explicitly configured (using default Kestrel configuration)";
+        logger.LogInformation("Server will be available on: {Url}", urlDescription);
+
         foreach (var serverName in mcpServerNames)
         {
             logger.LogInformation("Mock tools file for '{ServerName}': {File}", serverName, Path.Combine(AppContext.BaseDirectory, "mocks", serverName + ".json"));
@@ -78,7 +84,7 @@ public static class Server
 
         // ===================== MOCK MCP ENDPOINTS =====================
         // JSON-RPC over HTTP for mock tools at /mcp-mock
-        app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, HttpRequest httpRequest, IMockToolExecutor executor, ILogger<Server> log) =>
+        app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, HttpRequest httpRequest, IMockToolExecutor executor, ILogger log) =>
         {
             try
             {

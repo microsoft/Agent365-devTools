@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.MockToolingServer;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using System.CommandLine;
@@ -14,7 +15,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 public class MockToolingServerSubcommandTests : IDisposable
 {
     private readonly ILogger _mockLogger;
-    private readonly CommandExecutor _mockCommandExecutor;
     private readonly TestLogger _testLogger;
     private readonly IProcessService _mockProcessService;
 
@@ -24,13 +24,9 @@ public class MockToolingServerSubcommandTests : IDisposable
         _testLogger = new TestLogger();
         _mockProcessService = Substitute.For<IProcessService>();
 
-        var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockCommandExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
-
         // Clear any previous state - this runs before each test
         _testLogger.LogCalls.Clear();
         _mockProcessService.ClearReceivedCalls();
-        _mockCommandExecutor.ClearReceivedCalls();
     }
 
     public void Dispose()
@@ -99,12 +95,12 @@ public class MockToolingServerSubcommandTests : IDisposable
         Assert.Contains("--dry-run", dryRunOption.Aliases);
         Assert.Equal("Show what would be done without executing", dryRunOption.Description);
 
-        // Foreground option
-        var foregroundOption = command.Options.First(o => o.Name == "foreground");
-        Assert.Equal("foreground", foregroundOption.Name);
-        Assert.Contains("--foreground", foregroundOption.Aliases);
-        Assert.Contains("-fg", foregroundOption.Aliases);
-        Assert.Equal("Run the server in the foreground (blocks current terminal, default: opens new terminal)", foregroundOption.Description);
+        // Background option
+        var backgroundOption = command.Options.First(o => o.Name == "background");
+        Assert.Equal("background", backgroundOption.Name);
+        Assert.Contains("--background", backgroundOption.Aliases);
+        Assert.Contains("-bg", backgroundOption.Aliases);
+        Assert.Equal("Run the server in the background (opens new terminal to run server)", backgroundOption.Description);
     }
 
     [Fact]
@@ -259,22 +255,18 @@ public class MockToolingServerSubcommandTests : IDisposable
     [Fact]
     public async Task HandleStartServer_WithNullPort_UsesDefaultPort()
     {
-        // Arrange - Configure StartInNewTerminal to succeed
-        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
-
-        // Act
+        // Act - Default behavior is foreground (background=false)
         await MockToolingServerSubcommand.HandleStartServer(null, false, false, false, _testLogger, _mockProcessService);
 
-        // Assert - Should log server running message with default port
+        // Assert - Should log foreground startup messages with default port
         Assert.NotEmpty(_testLogger.LogCalls);
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains("The server is running on http://localhost:5309"));
+            call.Message.Contains("Starting Up MockToolingServer."));
 
-        // Verify terminal launch was successful
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains("The server is running on http://localhost:5309 in a new terminal"));
+            call.Message.Contains("Press Ctrl+C to stop the server."));
     }
 
     [Theory]
@@ -284,22 +276,18 @@ public class MockToolingServerSubcommandTests : IDisposable
     [InlineData(65535)]
     public async Task HandleStartServer_WithValidPort_LogsStartingMessage(int validPort)
     {
-        // Arrange - Configure StartInNewTerminal to succeed
-        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
-
-        // Act
+        // Act - Default behavior is foreground (background=false)
         await MockToolingServerSubcommand.HandleStartServer(validPort, false, false, false, _testLogger, _mockProcessService);
 
-        // Assert - Should log server running message with specified port
+        // Assert - Should log foreground startup messages
         Assert.NotEmpty(_testLogger.LogCalls);
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains($"The server is running on http://localhost:{validPort}"));
+            call.Message.Contains("Starting Up MockToolingServer."));
 
-        // Verify terminal launch was successful
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains($"The server is running on http://localhost:{validPort} in a new terminal"));
+            call.Message.Contains("Press Ctrl+C to stop the server."));
     }
 
     [Fact]
@@ -323,18 +311,18 @@ public class MockToolingServerSubcommandTests : IDisposable
         // Arrange - Configure StartInNewTerminal to succeed
         _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
 
-        // Act
-        await MockToolingServerSubcommand.HandleStartServer(5309, false, false, false, _testLogger, _mockProcessService);
+        // Act - Use background=true to test new terminal behavior
+        await MockToolingServerSubcommand.HandleStartServer(5309, false, false, true, _testLogger, _mockProcessService);
 
         // Assert - Verify server running message is logged
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains("The server is running on http://localhost:5309"));
+            call.Message.Contains("The server is running on http://localhost:5309 in a new terminal"));
 
-        // Verify successful terminal launch
+        // Verify close terminal message
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains("The server is running on http://localhost:5309 in a new terminal"));
+            call.Message.Contains("Close the new terminal window to stop the server."));
     }
 
     [Fact]
@@ -343,8 +331,8 @@ public class MockToolingServerSubcommandTests : IDisposable
         // Arrange - Configure StartInNewTerminal to fail
         _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(false);
 
-        // Act
-        await MockToolingServerSubcommand.HandleStartServer(5309, false, false, false, _testLogger, _mockProcessService);
+        // Act - Use background=true to test new terminal behavior
+        await MockToolingServerSubcommand.HandleStartServer(5309, false, false, true, _testLogger, _mockProcessService);
 
         // Assert - Verify error is logged
         Assert.Contains(_testLogger.LogCalls, call =>
@@ -360,8 +348,8 @@ public class MockToolingServerSubcommandTests : IDisposable
         // Arrange - Configure StartInNewTerminal to succeed
         _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
 
-        // Act
-        await MockToolingServerSubcommand.HandleStartServer(5309, true, false, false, _testLogger, _mockProcessService);
+        // Act - Use background=true to test new terminal behavior with verbose
+        await MockToolingServerSubcommand.HandleStartServer(5309, true, false, true, _testLogger, _mockProcessService);
 
         // Assert - Should log verbose enabled message
         Assert.Contains(_testLogger.LogCalls, call =>
@@ -374,10 +362,10 @@ public class MockToolingServerSubcommandTests : IDisposable
     [Fact]
     public async Task HandleStartServer_WithDryRunTrue_LogsDryRunMessagesOnly()
     {
-        // Act
+        // Act - Default foreground behavior (background=false)
         await MockToolingServerSubcommand.HandleStartServer(7000, false, true, false, _testLogger, _mockProcessService);
 
-        // Assert - Should log dry run messages
+        // Assert - Should log dry run messages for foreground mode
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
             call.Message.Contains("[DRY RUN] Would start Mock Tooling Server on port 7000"));
@@ -388,11 +376,11 @@ public class MockToolingServerSubcommandTests : IDisposable
 
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains("[DRY RUN] Foreground mode: False"));
+            call.Message.Contains("[DRY RUN] Background mode: False"));
 
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains("[DRY RUN] Would start in new terminal: a365"));
+            call.Message.Contains("[DRY RUN] Would run MockToolingServer in foreground (blocking current terminal)"));
 
         // Should NOT attempt to start terminal
         _mockProcessService.DidNotReceive().StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>());
@@ -401,7 +389,7 @@ public class MockToolingServerSubcommandTests : IDisposable
     [Fact]
     public async Task HandleStartServer_WithDryRunTrueAndVerboseTrue_LogsBothFlags()
     {
-        // Act
+        // Act - Default foreground behavior (background=false) with verbose
         await MockToolingServerSubcommand.HandleStartServer(6000, true, true, false, _testLogger, _mockProcessService);
 
         // Assert - Should log dry run message with verbose flag shown as True
@@ -415,9 +403,58 @@ public class MockToolingServerSubcommandTests : IDisposable
 
         Assert.Contains(_testLogger.LogCalls, call =>
             call.Level == LogLevel.Information &&
-            call.Message.Contains("[DRY RUN] Foreground mode: False"));
+            call.Message.Contains("[DRY RUN] Background mode: False"));
 
         // Should NOT attempt actual execution
         _mockProcessService.DidNotReceive().StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>());
+    }
+
+    [Fact]
+    public async Task HandleStartServer_WithDryRunTrueAndBackgroundTrue_LogsBackgroundDryRun()
+    {
+        // Act - Background mode (background=true) with dry run
+        await MockToolingServerSubcommand.HandleStartServer(8000, false, true, true, _testLogger, _mockProcessService);
+
+        // Assert - Should log dry run messages for background mode
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would start Mock Tooling Server on port 8000"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would use verbose logging: False"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Background mode: True"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("[DRY RUN] Would start in new terminal: a365"));
+
+        // Should NOT attempt to start terminal
+        _mockProcessService.DidNotReceive().StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>());
+    }
+
+    [Fact]
+    public async Task HandleStartServer_WithBackgroundMode_StartsInNewTerminal()
+    {
+        // Arrange - Configure StartInNewTerminal to succeed
+        _mockProcessService.StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>()).Returns(true);
+
+        // Act - Background mode (background=true)
+        await MockToolingServerSubcommand.HandleStartServer(9000, false, false, true, _testLogger, _mockProcessService);
+
+        // Assert - Should start in new terminal and log success
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("The server is running on http://localhost:9000 in a new terminal"));
+
+        Assert.Contains(_testLogger.LogCalls, call =>
+            call.Level == LogLevel.Information &&
+            call.Message.Contains("Close the new terminal window to stop the server."));
+
+        // Should attempt to start new terminal
+        _mockProcessService.Received(1).StartInNewTerminal(Arg.Any<string>(), Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<ILogger>());
     }
 }
