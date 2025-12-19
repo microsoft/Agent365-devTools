@@ -29,7 +29,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             var command = new Command("setup", 
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
                 "Recommended execution order:\n" +
-                "  1. a365 setup infrastructure  (or skip if infrastructure exists)\n" +
+                "  0. a365 setup requirements           # Check prerequisites (optional)\n" +
+                "  1. a365 setup infrastructure        (or skip if infrastructure exists)\n" +
                 "  2. a365 setup blueprint\n" +
                 "  3. a365 setup permissions mcp\n" +
                 "  4. a365 setup permissions bot\n" +
@@ -38,6 +39,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "  a365 setup all --skip-infrastructure # Skip infrastructure if it already exists");
 
             // Add subcommands
+            command.AddCommand(RequirementsSubcommand.CreateCommand(
+                logger, configService));
+
             command.AddCommand(InfrastructureSubcommand.CreateCommand(
                 logger, configService, azureValidator, webAppCreator, platformDetector, executor));
 

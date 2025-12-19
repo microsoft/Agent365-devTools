@@ -59,17 +59,33 @@ internal static class AllSubcommand
             description: "Skip Azure infrastructure creation (use if infrastructure already exists)\n" +
                         "This will still create: Blueprint + Permissions + Endpoint");
 
+        var skipRequirementsOption = new Option<bool>(
+            "--skip-requirements",
+            description: "Skip requirements validation check\n" +
+                        "Use with caution: setup may fail if prerequisites are not met");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
+        command.AddOption(skipRequirementsOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure) =>
+        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements) =>
         {
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
                 logger.LogInformation("This would execute the following operations:");
+                logger.LogInformation("");
+                
+                if (!skipRequirements)
+                {
+                    logger.LogInformation("  0. Validate prerequisites (PowerShell modules, etc.)");
+                }
+                else
+                {
+                    logger.LogInformation("  0. [SKIPPED] Requirements validation (--skip-requirements flag used)");
+                }
                 
                 if (!skipInfrastructure)
                 {
@@ -91,6 +107,11 @@ internal static class AllSubcommand
             logger.LogInformation("Agent 365 Setup");
             logger.LogInformation("Running all setup steps...");
             
+            if (skipRequirements)
+            {
+                logger.LogInformation("NOTE: Skipping requirements validation (--skip-requirements flag used)");
+            }
+            
             if (skipInfrastructure)
             {
                 logger.LogInformation("NOTE: Skipping infrastructure creation (--skip-infrastructure flag used)");
@@ -104,6 +125,43 @@ internal static class AllSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
+
+                // PHASE 0: CHECK REQUIREMENTS (if not skipped)
+                if (!skipRequirements)
+                {
+                    logger.LogInformation("Step 0: Requirements Check");
+                    logger.LogInformation("Validating system prerequisites...");
+                    logger.LogInformation("");
+
+                    try
+                    {
+                        var result = await RequirementsSubcommand.RunRequirementChecksAsync(
+                            RequirementsSubcommand.GetRequirementChecks(),
+                            setupConfig,
+                            logger,
+                            category: null,
+                            CancellationToken.None);
+
+                        if (!result)
+                        {
+                            logger.LogError("");
+                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
+                            ExceptionHandler.ExitWithCleanup(1);
+                            return;
+                        }
+                    }
+                    catch (Exception reqEx)
+                    {
+                        logger.LogWarning(reqEx, "Requirements check encountered an error: {Message}", reqEx.Message);
+                        logger.LogWarning("Continuing with setup, but some prerequisites may be missing.");
+                        logger.LogWarning("");
+                    }
+                }
+                else
+                {
+                    logger.LogInformation("Skipping requirements validation (--skip-requirements flag used)");
+                    logger.LogInformation("");
+                }
 
                 // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
                 logger.LogInformation("Validating all prerequisites...");
@@ -356,7 +414,7 @@ internal static class AllSubcommand
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption);
+        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption, skipRequirementsOption);
 
         return command;
     }

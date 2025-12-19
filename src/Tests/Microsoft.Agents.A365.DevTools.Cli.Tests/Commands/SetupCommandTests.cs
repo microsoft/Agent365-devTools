@@ -163,6 +163,7 @@ public class SetupCommandTests
         // Assert - Verify all required subcommands exist
         var subcommandNames = command.Subcommands.Select(c => c.Name).ToList();
         
+        subcommandNames.Should().Contain("requirements", "Setup should have requirements subcommand");
         subcommandNames.Should().Contain("infrastructure", "Setup should have infrastructure subcommand");
         subcommandNames.Should().Contain("blueprint", "Setup should have blueprint subcommand");
         subcommandNames.Should().Contain("permissions", "Setup should have permissions subcommand");
@@ -311,6 +312,90 @@ public class SetupCommandTests
         Assert.Equal(0, result);
         
         // Verify config was loaded in dry-run mode
+        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task RequirementsSubcommand_ValidConfig_CompletesSuccessfully()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "eastus", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = "."
+        };
+        
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
+            _mockBotConfigurator,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockGraphApiService);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("requirements", testConsole);
+
+        // Assert
+        Assert.Equal(0, result);
+        
+        // Verify config was loaded for requirements check
+        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task RequirementsSubcommand_WithCategoryFilter_RunsFilteredChecks()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "eastus", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = "."
+        };
+        
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
+            _mockBotConfigurator,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockGraphApiService);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("requirements --category Powershell", testConsole);
+
+        // Assert
+        Assert.Equal(0, result);
+        
+        // Verify config was loaded for requirements check
         await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 }
