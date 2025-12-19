@@ -43,8 +43,8 @@ public class CleanupCommand
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, executor, graphApiService));
-        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, botConfigurator, executor));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, graphApiService));
+        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
         return cleanupCommand;
@@ -53,6 +53,7 @@ public class CleanupCommand
     private static Command CreateBlueprintCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
+        IBotConfigurator botConfigurator,
         CommandExecutor executor,
         GraphApiService graphApiService)
     {
@@ -114,30 +115,52 @@ public class CleanupCommand
                 var deleted = await graphApiService.DeleteAgentBlueprintAsync(
                     config.TenantId,
                     config.AgentBlueprintId);
-
-                // Always clear blueprint data from config, even if deletion failed
-                // User can delete manually using Portal/PowerShell/Graph Explorer
-                logger.LogInformation("");
-                logger.LogInformation("Clearing blueprint data from local configuration...");
                 
-                config.AgentBlueprintId = string.Empty;
-                config.AgentBlueprintClientSecret = string.Empty;
-                config.ResourceConsents.Clear();
-                
-                await configService.SaveStateAsync(config);
-                logger.LogInformation("Local configuration cleared");
-                
-                if (deleted)
+                if (!deleted)
                 {
-                    logger.LogInformation("");
-                    logger.LogInformation("Blueprint cleanup completed successfully!");
+                    logger.LogWarning("");
+                    logger.LogWarning("Blueprint deletion failed.");
+                    return;
+                }
+
+                // Blueprint deleted successfully
+                logger.LogInformation("Agent blueprint application deleted successfully");
+
+                // Handle endpoint deletion if needed
+                if (!string.IsNullOrEmpty(config.BotName))
+                {
+                    // Delete messaging endpoint
+                    logger.LogInformation("Deleting messaging endpoint registration...");
+                    var endpointName = EndpointHelper.GetEndpointName(config.BotName);
+
+                    var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                        endpointName,
+                        config.Location,
+                        config.AgentBlueprintId);
+
+                    if (!endpointDeleted)
+                    {
+                        logger.LogWarning("Failed to delete blueprint messaging endpoint");
+                        return;
+                    }
                 }
                 else
                 {
-                    logger.LogWarning("");
-                    logger.LogWarning("Blueprint deletion failed, but local configuration has been cleared.");
-                    logger.LogWarning("Please manually delete the blueprint application using the Azure Portal, PowerShell, or Microsoft Graph Explorer.");
+                    logger.LogInformation("No blueprint messaging endpoint found in configuration");
                 }
+
+                // Clear configuration after successful blueprint deletion
+                logger.LogInformation("");
+                logger.LogInformation("Clearing blueprint data from local configuration...");
+
+                config.AgentBlueprintId = string.Empty;
+                config.AgentBlueprintClientSecret = string.Empty;
+                config.ResourceConsents.Clear();
+
+                await configService.SaveStateAsync(config);
+                logger.LogInformation("Local configuration cleared");
+                logger.LogInformation("");
+                logger.LogInformation("Blueprint cleanup completed successfully!");
             }
             catch (Exception ex)
             {
@@ -151,7 +174,6 @@ public class CleanupCommand
     private static Command CreateAzureCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
         CommandExecutor executor)
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
@@ -208,30 +230,6 @@ public class CleanupCommand
                     if (!string.IsNullOrWhiteSpace(config.AppServicePlanName))
                     {
                         commandsList.Add(($"az appservice plan delete --name {config.AppServicePlanName} --resource-group {config.ResourceGroup} --subscription {config.SubscriptionId} --yes", "App Service Plan"));
-                    }
-                }
-
-                // Add bot deletion if bot exists
-                if (!string.IsNullOrEmpty(config.BotName))
-                {
-                    logger.LogInformation("Deleting messaging endpoint registration...");
-                    if (string.IsNullOrEmpty(config.AgentBlueprintId))
-                    {
-                        logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for deleting endpoint registration.");
-                    }
-                    else
-                    {
-                        var endpointName = EndpointHelper.GetEndpointName(config.BotName);
-
-                        var endpointRegistered = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-                            endpointName,
-                            config.Location,
-                            config.AgentBlueprintId);
-
-                        if (!endpointRegistered)
-                        {
-                            logger.LogWarning("Failed to delete blueprint messaging endpoint");
-                        }
                     }
                 }
 
