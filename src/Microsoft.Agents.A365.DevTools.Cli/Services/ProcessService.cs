@@ -143,7 +143,7 @@ public class ProcessService : IProcessService
         {
             try
             {
-                var which = Start(new ProcessStartInfo
+                using var which = Start(new ProcessStartInfo
                 {
                     FileName = "which",
                     Arguments = terminal,
@@ -205,7 +205,7 @@ public class ProcessService : IProcessService
     private static string EscapeAppleScriptString(string input)
     {
         if (string.IsNullOrEmpty(input))
-            return input ?? String.Empty;
+            return input ?? string.Empty;
 
         return input
             .Replace("\\", "\\\\")  // Escape backslashes first

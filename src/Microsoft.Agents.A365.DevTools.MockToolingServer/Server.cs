@@ -56,7 +56,7 @@ public static class Server
         var app = builder.Build();
 
         // Log startup information
-        var logger = app.Services.GetRequiredService<ILogger>();
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
         logger.LogInformation("===== MCP SERVER STARTING =====");
         logger.LogInformation("Startup Time: {StartupTime} UTC", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff"));
 
@@ -84,7 +84,7 @@ public static class Server
 
         // ===================== MOCK MCP ENDPOINTS =====================
         // JSON-RPC over HTTP for mock tools at /mcp-mock
-        app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, HttpRequest httpRequest, IMockToolExecutor executor, ILogger log) =>
+        app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, HttpRequest httpRequest, IMockToolExecutor executor, ILogger<Program> log) =>
         {
             try
             {

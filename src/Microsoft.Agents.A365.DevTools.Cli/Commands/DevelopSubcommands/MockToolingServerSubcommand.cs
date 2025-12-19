@@ -109,7 +109,9 @@ internal static class MockToolingServerSubcommand
                 // Run in foreground (blocks current terminal) using MockToolingServer.Start()
                 logger.LogInformation("Starting Up MockToolingServer.");
                 logger.LogInformation("Press Ctrl+C to stop the server.");
-                var args = new[] { "--urls", $"http://localhost:{serverPort}" };
+                var args = verbose ?
+                new[] { "--urls", $"http://localhost:{serverPort}", "--verbose" } :
+                new[] { "--urls", $"http://localhost:{serverPort}" };
 
                 // This will run in foreground and block the current terminal until the server is stopped
                 await Server.Start(args);
