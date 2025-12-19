@@ -18,4 +18,13 @@ public interface IClientAppValidator
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="Exceptions.ClientAppValidationException">Thrown when validation fails</exception>
     Task EnsureValidClientAppAsync(string clientAppId, string tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.
+    /// Automatically adds missing redirect URIs if needed.
+    /// </summary>
+    /// <param name="clientAppId">The client app ID</param>
+    /// <param name="graphToken">Microsoft Graph access token</param>
+    /// <param name="ct">Cancellation token</param>
+    Task EnsureRedirectUrisAsync(string clientAppId, string graphToken, CancellationToken ct = default);
 }

@@ -234,6 +234,7 @@ public class GraphApiServiceTests
             tenantId,
             Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
             false,
+            Arg.Any<string?>(),
             Arg.Any<CancellationToken>())
             .Returns("fake-delegated-token");
 
@@ -249,6 +250,7 @@ public class GraphApiServiceTests
             tenantId,
             Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
             false,
+            Arg.Any<string?>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -266,6 +268,7 @@ public class GraphApiServiceTests
             Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(),
             Arg.Any<bool>(),
+            Arg.Any<string?>(),
             Arg.Any<CancellationToken>())
             .Returns("fake-token");
 
@@ -319,6 +322,7 @@ public class GraphApiServiceTests
             Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(),
             Arg.Any<bool>(),
+            Arg.Any<string?>(),
             Arg.Any<CancellationToken>())
             .Returns("fake-token");
 
@@ -355,6 +359,7 @@ public class GraphApiServiceTests
             Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(),
             Arg.Any<bool>(),
+            Arg.Any<string?>(),
             Arg.Any<CancellationToken>())
             .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 

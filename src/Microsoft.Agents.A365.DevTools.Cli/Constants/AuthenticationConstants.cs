@@ -30,6 +30,16 @@ public static class AuthenticationConstants
     public const string LocalhostRedirectUri = "http://localhost:8400/";
 
     /// <summary>
+    /// Required redirect URIs for Microsoft Graph PowerShell SDK authentication.
+    /// The SDK requires both http://localhost and http://localhost:8400/ for different auth flows.
+    /// </summary>
+    public static readonly string[] RequiredRedirectUris = new[]
+    {
+        "http://localhost",
+        "http://localhost:8400/"
+    };
+
+    /// <summary>
     /// Application name for cache directory
     /// </summary>
     public const string ApplicationName = "Microsoft.Agents.A365.DevTools.Cli";

@@ -108,6 +108,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                 throw ClientAppValidationException.MissingAdminConsent(clientAppId);
             }
 
+            // Step 6: Verify and fix redirect URIs
+            await EnsureRedirectUrisAsync(clientAppId, graphToken, ct);
+
             _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
         }
         catch (ClientAppValidationException)
@@ -130,6 +133,96 @@ public sealed class ClientAppValidator : IClientAppValidator
                 "Unexpected error during client app validation",
                 new List<string> { ex.Message },
                 clientAppId);
+        }
+    }
+
+    /// <summary>
+    /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.
+    /// Automatically adds missing redirect URIs if needed (self-healing).
+    /// </summary>
+    /// <param name="clientAppId">The client app ID</param>
+    /// <param name="graphToken">Microsoft Graph access token</param>
+    /// <param name="ct">Cancellation token</param>
+    public async Task EnsureRedirectUrisAsync(
+        string clientAppId,
+        string graphToken,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(graphToken);
+
+        try
+        {
+            _logger.LogDebug("Checking redirect URIs for client app {ClientAppId}", clientAppId);
+
+            // Get current redirect URIs
+            var appCheckResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient\" --headers \"Authorization=Bearer {graphToken}\"",
+                cancellationToken: ct);
+
+            if (!appCheckResult.Success)
+            {
+                _logger.LogWarning("Could not verify redirect URIs: {Error}", appCheckResult.StandardError);
+                return;
+            }
+
+            var response = JsonNode.Parse(appCheckResult.StandardOutput);
+            var apps = response?["value"]?.AsArray();
+
+            if (apps == null || apps.Count == 0)
+            {
+                _logger.LogWarning("Client app not found when checking redirect URIs");
+                return;
+            }
+
+            var app = apps[0]!.AsObject();
+            var objectId = app["id"]?.GetValue<string>();
+            var publicClient = app["publicClient"]?.AsObject();
+            var currentRedirectUris = publicClient?["redirectUris"]?.AsArray()
+                ?.Select(uri => uri?.GetValue<string>())
+                .Where(uri => !string.IsNullOrWhiteSpace(uri))
+                .Select(uri => uri!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Check if required URIs are present
+            var missingUris = AuthenticationConstants.RequiredRedirectUris
+                .Where(uri => !currentRedirectUris.Contains(uri))
+                .ToList();
+
+            if (missingUris.Count == 0)
+            {
+                _logger.LogDebug("All required redirect URIs are configured");
+                return;
+            }
+
+            // Add missing URIs
+            _logger.LogInformation("Adding missing redirect URIs to client app: {MissingUris}",
+                string.Join(", ", missingUris));
+
+            var allUris = currentRedirectUris.Union(missingUris).ToList();
+            var urisJson = string.Join(",", allUris.Select(uri => $"\"{uri}\""));
+
+            var patchBody = $"{{\"publicClient\":{{\"redirectUris\":[{urisJson}]}}}}";
+            // Escape the JSON body for PowerShell: replace " with ""
+            var escapedBody = patchBody.Replace("\"", "\"\"");
+            var patchResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method PATCH --url \"{GraphApiBaseUrl}/applications/{objectId}\" --headers \"Content-Type=application/json\" \"Authorization=Bearer {graphToken}\" --body \"{escapedBody}\"",
+                cancellationToken: ct);
+
+            if (!patchResult.Success)
+            {
+                _logger.LogWarning("Failed to update redirect URIs: {Error}", patchResult.StandardError);
+                return;
+            }
+
+            _logger.LogInformation("Successfully added redirect URIs: {AddedUris}",
+                string.Join(", ", missingUris));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error ensuring redirect URIs (non-fatal)");
         }
     }
 

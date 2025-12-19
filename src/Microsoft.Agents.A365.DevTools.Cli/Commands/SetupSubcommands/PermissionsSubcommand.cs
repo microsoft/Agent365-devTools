@@ -120,6 +120,12 @@ internal static class PermissionsSubcommand
                 Environment.Exit(1);
             }
 
+            // Configure GraphApiService with custom client app ID if available
+            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+            {
+                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+            }
+
             if (dryRun)
             {
                 // Read scopes from toolingManifest.json
@@ -188,6 +194,12 @@ internal static class PermissionsSubcommand
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
                 Environment.Exit(1);
+            }
+
+            // Configure GraphApiService with custom client app ID if available
+            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+            {
+                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
             if (dryRun)

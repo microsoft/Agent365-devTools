@@ -80,6 +80,12 @@ public class CleanupCommand
                 
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
+                
+                // Configure GraphApiService with custom client app ID if available
+                if (!string.IsNullOrWhiteSpace(config.ClientAppId))
+                {
+                    graphApiService.CustomClientAppId = config.ClientAppId;
+                }
 
                 // Check if there's actually a blueprint to clean up
                 if (string.IsNullOrEmpty(config.AgentBlueprintId))
@@ -401,6 +407,12 @@ public class CleanupCommand
             
             var config = await LoadConfigAsync(configFile, logger, configService);
             if (config == null) return;
+            
+            // Configure GraphApiService with custom client app ID if available
+            if (!string.IsNullOrWhiteSpace(config.ClientAppId))
+            {
+                graphApiService.CustomClientAppId = config.ClientAppId;
+            }
 
             logger.LogInformation("");
             logger.LogInformation("Complete Cleanup Preview:");

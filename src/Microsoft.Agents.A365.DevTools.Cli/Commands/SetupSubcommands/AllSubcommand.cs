@@ -104,6 +104,13 @@ internal static class AllSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
+                
+                // Configure GraphApiService with custom client app ID if available
+                // This ensures inheritable permissions operations use the validated custom app
+                if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+                {
+                    graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+                }
 
                 // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
                 logger.LogInformation("Validating all prerequisites...");

@@ -22,6 +22,12 @@ public class GraphApiService
     private readonly CommandExecutor _executor;
     private readonly HttpClient _httpClient;
     private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
+    
+    /// <summary>
+    /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
+    /// When set, this will be passed to Connect-MgGraph -ClientId parameter.
+    /// </summary>
+    public string? CustomClientAppId { get; set; }
 
     // Lightweight wrapper to surface HTTP status, reason and body to callers
     public record GraphResponse
@@ -724,7 +730,19 @@ public class GraphApiService
 
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        var token = (scopes != null && _tokenProvider != null) ? await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, ct) : await GetGraphAccessTokenAsync(tenantId, ct);
+        string? token;
+        
+        if (scopes != null && _tokenProvider != null)
+        {
+            // When specific scopes are required, use custom client app if configured
+            // CustomClientAppId should be set by callers who have access to config
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct);
+        }
+        else
+        {
+            token = await GetGraphAccessTokenAsync(tenantId, ct);
+        }
+        
         if (string.IsNullOrWhiteSpace(token)) return false;
 
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);

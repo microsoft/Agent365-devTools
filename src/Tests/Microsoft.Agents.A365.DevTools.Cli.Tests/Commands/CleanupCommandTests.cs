@@ -41,6 +41,7 @@ public class CleanupCommandTests
             Arg.Any<string>(), 
             Arg.Any<IEnumerable<string>>(), 
             Arg.Any<bool>(), 
+            Arg.Any<string?>(),
             Arg.Any<CancellationToken>())
             .Returns("test-token");
         
