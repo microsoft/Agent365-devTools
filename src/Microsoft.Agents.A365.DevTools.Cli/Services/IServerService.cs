@@ -1,5 +1,11 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
+/// <summary>
+/// Interface for server operations
+/// </summary>
 public interface IServerService
 {
     /// <summary>
