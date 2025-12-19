@@ -74,13 +74,13 @@ public class SecretProtectionHelperTests
         var plaintext = "MySecretPassword123!@#";
 
         // Act
-        var protected_secret = SecretProtectionHelper.ProtectSecret(plaintext, _logger);
-        var unprotected_secret = SecretProtectionHelper.UnprotectSecret(protected_secret, true, _logger);
+        var protectedSecret = SecretProtectionHelper.ProtectSecret(plaintext, _logger);
+        var unprotectedSecret = SecretProtectionHelper.UnprotectSecret(protectedSecret, true, _logger);
 
         // Assert
-        protected_secret.Should().NotBeNullOrEmpty();
-        protected_secret.Should().NotBe(plaintext, "secret should be encrypted");
-        unprotected_secret.Should().Be(plaintext, "decrypted secret should match original");
+        protectedSecret.Should().NotBeNullOrEmpty();
+        protectedSecret.Should().NotBe(plaintext, "secret should be encrypted");
+        unprotectedSecret.Should().Be(plaintext, "decrypted secret should match original");
     }
 
     [Fact]
@@ -95,13 +95,13 @@ public class SecretProtectionHelperTests
         var plaintext = "TestSecret";
 
         // Act
-        var protected_secret = SecretProtectionHelper.ProtectSecret(plaintext, _logger);
+        var protectedSecret = SecretProtectionHelper.ProtectSecret(plaintext, _logger);
 
         // Assert
-        protected_secret.Should().NotBeNullOrEmpty();
+        protectedSecret.Should().NotBeNullOrEmpty();
         
         // Should be valid Base64
-        var isBase64 = IsBase64String(protected_secret);
+        var isBase64 = IsBase64String(protectedSecret);
         isBase64.Should().BeTrue("protected secret should be Base64 encoded on Windows");
     }
 
@@ -186,18 +186,18 @@ public class SecretProtectionHelperTests
         }
 
         // Act
-        var protected_secret = SecretProtectionHelper.ProtectSecret(input, _logger);
-        var unprotected_secret = SecretProtectionHelper.UnprotectSecret(protected_secret, true, _logger);
+        var protectedSecret = SecretProtectionHelper.ProtectSecret(input, _logger);
+        var unprotectedSecret = SecretProtectionHelper.UnprotectSecret(protectedSecret, true, _logger);
 
         // Assert
         if (string.IsNullOrWhiteSpace(input))
         {
-            unprotected_secret.Should().Be(input);
+            unprotectedSecret.Should().Be(input);
         }
         else
         {
-            protected_secret.Should().NotBe(input, "should be encrypted");
-            unprotected_secret.Should().Be(input, "should decrypt back to original");
+            protectedSecret.Should().NotBe(input, "should be encrypted");
+            unprotectedSecret.Should().Be(input, "should decrypt back to original");
         }
     }
 
