@@ -1,6 +1,6 @@
 # Microsoft Agent 365 DevTools CLI
 
-[![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.A365.DevTools.Cli.svg?label=NuGet&logo=nuget)](https://www.nuget.org/packages?q=Microsoft.Agents.A365.DevTools.Cli)
+[![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.A365.DevTools.Cli.svg?label=NuGet&logo=nuget)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
 [![Downloads](https://img.shields.io/nuget/dt/Microsoft.Agents.A365.DevTools.Cli?label=Downloads&color=green)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-devTools/.github/workflows/ci.yml?branch=main&label=Build&logo=github)](https://github.com/microsoft/Agent365-devTools/actions)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
