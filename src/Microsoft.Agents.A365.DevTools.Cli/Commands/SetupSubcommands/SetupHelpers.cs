@@ -17,7 +17,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 internal static class SetupHelpers
 {
     /// <summary>
-    /// Display verification URLs and next steps after successful setup
+    /// Display verification URLs after successful setup
     /// </summary>
     public static async Task DisplayVerificationInfoAsync(FileInfo setupConfigFile, ILogger logger)
     {
@@ -38,7 +38,7 @@ internal static class SetupHelpers
             var root = doc.RootElement;
 
             logger.LogInformation("");
-            logger.LogInformation("Verification URLs and Next Steps:");
+            logger.LogInformation("Verification URLs:");
             logger.LogInformation("==========================================");
 
             // Azure Web App URL
