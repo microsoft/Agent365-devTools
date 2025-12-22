@@ -11,7 +11,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services.Helpers;
 /// <summary>
 /// Unit tests for DotNetProjectHelper
 /// </summary>
-public class DotNetProjectHelperTests
+public class DotNetProjectHelperTests : IDisposable
 {
     [Fact]
     public void DetectTargetRuntimeVersion_Net8_Returns_8_0()
@@ -107,5 +107,14 @@ public class DotNetProjectHelperTests
         File.WriteAllText(file, content);
 
         return file;
+    }
+
+    public void Dispose()
+    {
+        var testRoot = Path.Combine(Path.GetTempPath(), "A365_CLI_Tests");
+        if (Directory.Exists(testRoot))
+        {
+            Directory.Delete(testRoot, recursive: true);
+        }
     }
 }

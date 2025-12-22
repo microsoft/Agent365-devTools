@@ -23,6 +23,7 @@ public static class DotNetProjectHelper
     /// - No TargetFramework element is found
     /// - The TFM format is not recognized (only supports "netX.Y" format)
     /// When multiple TFMs are specified, returns the first one.
+    /// It does NOT support legacy or library-only TFMs and Unsupported TFMs return null and fall back to default runtime selection.
     /// </returns>
     public static string? DetectTargetRuntimeVersion(string projectFilePath, ILogger logger)
     {
