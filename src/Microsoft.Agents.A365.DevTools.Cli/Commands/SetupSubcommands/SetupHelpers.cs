@@ -169,6 +169,7 @@ internal static class SetupHelpers
     /// Unified method to configure all permissions (OAuth2 grants, required resource access, inheritable permissions) for a resource
     /// </summary>
     /// <param name="graph">Graph API service</param>
+    /// <param name="blueprintService">Agent blueprint service for permissions operations</param>
     /// <param name="config">Agent365 configuration</param>
     /// <param name="resourceAppId">The resource application ID to grant permissions for</param>
     /// <param name="resourceName">Display name of the resource for logging</param>
@@ -180,6 +181,7 @@ internal static class SetupHelpers
     /// <param name="ct">Cancellation token</param>
     public static async Task EnsureResourcePermissionsAsync(
         GraphApiService graph,
+        AgentBlueprintService blueprintService,
         Agent365Config config,
         string resourceAppId,
         string resourceName,
@@ -212,7 +214,7 @@ internal static class SetupHelpers
         if (addToRequiredResourceAccess)
         {
             logger.LogInformation("   - Adding {ResourceName} to blueprint's required resource access", resourceName);
-            var addedResourceAccess = await graph.AddRequiredResourceAccessAsync(
+            var addedResourceAccess = await blueprintService.AddRequiredResourceAccessAsync(
                 config.TenantId,
                 config.AgentBlueprintId,
                 resourceAppId,
@@ -253,7 +255,7 @@ internal static class SetupHelpers
             // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation
             var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
             
-            var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(
+            var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
                 config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
 
             if (!ok && !alreadyExists)
@@ -274,7 +276,7 @@ internal static class SetupHelpers
                 var verificationResult = await retryHelper.ExecuteWithRetryAsync(
                     operation: async (ct) =>
                     {
-                        var (exists, verifiedScopes, verifyError) = await graph.VerifyInheritablePermissionsAsync(
+                        var (exists, verifiedScopes, verifyError) = await blueprintService.VerifyInheritablePermissionsAsync(
                             config.TenantId, config.AgentBlueprintId, resourceAppId, ct, requiredPermissions);
                         return (exists, verifiedScopes, verifyError);
                     },

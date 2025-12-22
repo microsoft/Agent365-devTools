@@ -17,7 +17,7 @@ public class CleanupCommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
-        GraphApiService graphApiService,
+        AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
@@ -40,11 +40,11 @@ public class CleanupCommand
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (configFile, verbose) =>
         {
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, graphApiService, confirmationProvider, configFile);
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, configFile);
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, graphApiService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -56,7 +56,7 @@ public class CleanupCommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        AgentBlueprintService agentBlueprintService)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -83,10 +83,10 @@ public class CleanupCommand
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
                 
-                // Configure GraphApiService with custom client app ID if available
+                // Configure AgentBlueprintService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(config.ClientAppId))
                 {
-                    graphApiService.CustomClientAppId = config.ClientAppId;
+                    agentBlueprintService.CustomClientAppId = config.ClientAppId;
                 }
 
                 // Check if there's actually a blueprint to clean up
@@ -113,7 +113,7 @@ public class CleanupCommand
 
                 // Delete the agent blueprint using the special Graph API endpoint
                 logger.LogInformation("Deleting agent blueprint application...");
-                var deleted = await graphApiService.DeleteAgentBlueprintAsync(
+                var deleted = await agentBlueprintService.DeleteAgentBlueprintAsync(
                     config.TenantId,
                     config.AgentBlueprintId);
                 
@@ -397,7 +397,7 @@ public class CleanupCommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
-        GraphApiService graphApiService,
+        AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FileInfo? configFile)
     {
@@ -410,10 +410,10 @@ public class CleanupCommand
             var config = await LoadConfigAsync(configFile, logger, configService);
             if (config == null) return;
             
-            // Configure GraphApiService with custom client app ID if available
+            // Configure AgentBlueprintService with custom client app ID if available
             if (!string.IsNullOrWhiteSpace(config.ClientAppId))
             {
-                graphApiService.CustomClientAppId = config.ClientAppId;
+                agentBlueprintService.CustomClientAppId = config.ClientAppId;
             }
 
             logger.LogInformation("");
@@ -455,7 +455,7 @@ public class CleanupCommand
             if (!string.IsNullOrEmpty(config.AgentBlueprintId))
             {
                 logger.LogInformation("Deleting agent blueprint application...");
-                var deleted = await graphApiService.DeleteAgentBlueprintAsync(
+                var deleted = await agentBlueprintService.DeleteAgentBlueprintAsync(
                     config.TenantId,
                     config.AgentBlueprintId);
 
@@ -476,7 +476,7 @@ public class CleanupCommand
             {
                 logger.LogInformation("Deleting agent identity application...");
 
-                var deleted = await graphApiService.DeleteAgentIdentityAsync(
+                var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
                     config.TenantId,
                     config.AgenticAppId);
 

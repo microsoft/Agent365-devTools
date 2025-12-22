@@ -17,7 +17,8 @@ internal static class AddPermissionsSubcommand
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var command = new Command(
             "add-permissions",
@@ -184,7 +185,7 @@ internal static class AddPermissionsSubcommand
                 bool success;
                 try
                 {
-                    success = await graphApiService.AddRequiredResourceAccessAsync(
+                    success = await blueprintService.AddRequiredResourceAccessAsync(
                         tenantId,
                         targetAppId,
                         resourceAppId,

@@ -87,7 +87,9 @@ public class PublishCommand
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
+        AgentPublishService agentPublishService,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         ManifestTemplateService manifestTemplateService)
     {
         var command = new Command("publish", "Update manifest.json IDs and publish package; configure federated identity and app role assignments");
@@ -287,7 +289,7 @@ public class PublishCommand
                     logger.LogInformation("");
                     logger.LogDebug("Checking MOS prerequisites (service principals and permissions)...");
                     var mosPrereqsConfigured = await PublishHelpers.EnsureMosPrerequisitesAsync(
-                        graphApiService, config, logger);
+                        graphApiService, blueprintService, config, logger);
                     
                     if (!mosPrereqsConfigured)
                     {
@@ -631,7 +633,7 @@ public class PublishCommand
                 logger.LogInformation("Executing Graph API operations...");
                 logger.LogInformation("TenantId: {TenantId}, BlueprintId: {BlueprintId}", tenantId, blueprintId);
 
-                var graphSuccess = await graphApiService.ExecutePublishGraphStepsAsync(
+                var graphSuccess = await agentPublishService.ExecutePublishGraphStepsAsync(
                     tenantId,
                     blueprintId,
                     blueprintId, // Using blueprintId as manifestId

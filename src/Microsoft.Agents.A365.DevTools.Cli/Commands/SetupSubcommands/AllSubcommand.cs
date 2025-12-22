@@ -31,6 +31,7 @@ internal static class AllSubcommand
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         IClientAppValidator clientAppValidator)
     {
         var command = new Command("all", 
@@ -289,7 +290,8 @@ internal static class AllSubcommand
                         configService,
                         botConfigurator,
                         platformDetector,
-                        graphApiService
+                        graphApiService,
+                        blueprintService
                         );
 
                     setupResults.BlueprintCreated = result.BlueprintCreated;
@@ -363,6 +365,7 @@ internal static class AllSubcommand
                         configService,
                         executor,
                         graphApiService,
+                        blueprintService,
                         setupConfig,
                         true,
                         setupResults);
@@ -395,6 +398,7 @@ internal static class AllSubcommand
                         executor,
                         setupConfig,
                         graphApiService,
+                        blueprintService,
                         true,
                         setupResults);
 

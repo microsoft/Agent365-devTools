@@ -17,6 +17,7 @@ public class CleanupCommandBotEndpointTests
     private readonly IBotConfigurator _mockBotConfigurator;
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _graphApiService;
+    private readonly AgentBlueprintService _agentBlueprintService;
     private readonly IMicrosoftGraphTokenProvider _mockTokenProvider;
     private readonly IConfirmationProvider _mockConfirmationProvider;
 
@@ -61,6 +62,9 @@ public class CleanupCommandBotEndpointTests
         
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
         _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider);
+        
+        var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
+        _agentBlueprintService = new AgentBlueprintService(mockBlueprintLogger, _graphApiService);
 
         // Setup mock confirmation provider to return true by default
         _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
@@ -91,15 +95,12 @@ public class CleanupCommandBotEndpointTests
             Location = "westus",
             AgentBlueprintId = "blueprint-id"
         };
-
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-
         var command = CleanupCommand.CreateCommand(
             _mockLogger, 
             _mockConfigService, 
             _mockBotConfigurator, 
             _mockExecutor, 
-            _graphApiService,
+            _agentBlueprintService,
             _mockConfirmationProvider);
 
         Assert.NotNull(command);

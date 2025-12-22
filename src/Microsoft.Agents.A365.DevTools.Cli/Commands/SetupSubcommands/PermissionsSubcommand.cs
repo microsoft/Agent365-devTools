@@ -67,15 +67,16 @@ internal static class PermissionsSubcommand
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var permissionsCommand = new Command("permissions", 
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
-        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService));
-        permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor, graphApiService));
+        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor, graphApiService, blueprintService));
 
         return permissionsCommand;
     }
@@ -87,7 +88,8 @@ internal static class PermissionsSubcommand
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var command = new Command("mcp", 
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
@@ -146,6 +148,7 @@ internal static class PermissionsSubcommand
                 configService,
                 executor,
                 graphApiService,
+                blueprintService,
                 setupConfig,
                 false);
 
@@ -161,7 +164,8 @@ internal static class PermissionsSubcommand
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var command = new Command("bot", 
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
@@ -218,6 +222,7 @@ internal static class PermissionsSubcommand
                 executor,
                 setupConfig,
                 graphApiService,
+                blueprintService,
                 false);
 
         }, configOption, verboseOption, dryRunOption);
@@ -235,6 +240,7 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         Models.Agent365Config setupConfig,
         bool iSetupAll,
         SetupResults? setupResults = null,
@@ -255,6 +261,7 @@ internal static class PermissionsSubcommand
             // Configure all permissions using unified method
             await SetupHelpers.EnsureResourcePermissionsAsync(
                 graphApiService,
+                blueprintService,
                 setupConfig,
                 resourceAppId,
                 "Agent 365 Tools",
@@ -303,6 +310,7 @@ internal static class PermissionsSubcommand
         CommandExecutor executor,
         Models.Agent365Config setupConfig,
         GraphApiService graphService,
+        AgentBlueprintService blueprintService,
         bool iSetupAll,
         SetupResults? setupResults = null,
         CancellationToken cancellationToken = default)
@@ -320,6 +328,7 @@ internal static class PermissionsSubcommand
             // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
             await SetupHelpers.EnsureResourcePermissionsAsync(
                 graphService,
+                blueprintService,
                 setupConfig,
                 ConfigConstants.MessagingBotApiAppId,
                 "Messaging Bot API",
@@ -334,6 +343,7 @@ internal static class PermissionsSubcommand
             // Note: Observability API is also a first-party Microsoft service
             await SetupHelpers.EnsureResourcePermissionsAsync(
                 graphService,
+                blueprintService,
                 setupConfig,
                 ConfigConstants.ObservabilityApiAppId,
                 "Observability API",

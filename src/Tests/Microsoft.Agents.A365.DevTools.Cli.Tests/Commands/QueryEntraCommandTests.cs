@@ -16,6 +16,7 @@ public class QueryEntraCommandTests
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _mockGraphApiService;
+    private readonly AgentBlueprintService _mockBlueprintService;
 
     public QueryEntraCommandTests()
     {
@@ -25,6 +26,7 @@ public class QueryEntraCommandTests
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = new CommandExecutor(mockExecutorLogger);
         _mockGraphApiService = Substitute.For<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
+        _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
     }
 
     [Fact]
@@ -35,7 +37,7 @@ public class QueryEntraCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         Assert.NotNull(command);
@@ -51,7 +53,7 @@ public class QueryEntraCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         Assert.Equal(2, command.Subcommands.Count);
@@ -67,7 +69,7 @@ public class QueryEntraCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Act
         var blueprintScopesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "blueprint-scopes");
@@ -85,7 +87,7 @@ public class QueryEntraCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Act
         var instanceScopesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "instance-scopes");
@@ -103,7 +105,7 @@ public class QueryEntraCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Act
         var blueprintScopesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "blueprint-scopes");
@@ -123,7 +125,7 @@ public class QueryEntraCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Act
         var instanceScopesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "instance-scopes");
