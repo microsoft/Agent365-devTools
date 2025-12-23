@@ -17,7 +17,8 @@ public class CleanupCommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        AgentBlueprintService agentBlueprintService,
+        IConfirmationProvider confirmationProvider)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
@@ -39,11 +40,11 @@ public class CleanupCommand
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (configFile, verbose) =>
         {
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, graphApiService, configFile);
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, configFile);
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, graphApiService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -55,7 +56,7 @@ public class CleanupCommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        AgentBlueprintService agentBlueprintService)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -82,10 +83,10 @@ public class CleanupCommand
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
                 
-                // Configure GraphApiService with custom client app ID if available
+                // Configure AgentBlueprintService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(config.ClientAppId))
                 {
-                    graphApiService.CustomClientAppId = config.ClientAppId;
+                    agentBlueprintService.CustomClientAppId = config.ClientAppId;
                 }
 
                 // Check if there's actually a blueprint to clean up
@@ -112,7 +113,7 @@ public class CleanupCommand
 
                 // Delete the agent blueprint using the special Graph API endpoint
                 logger.LogInformation("Deleting agent blueprint application...");
-                var deleted = await graphApiService.DeleteAgentBlueprintAsync(
+                var deleted = await agentBlueprintService.DeleteAgentBlueprintAsync(
                     config.TenantId,
                     config.AgentBlueprintId);
                 
@@ -396,9 +397,12 @@ public class CleanupCommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
-        GraphApiService graphApiService,
+        AgentBlueprintService agentBlueprintService,
+        IConfirmationProvider confirmationProvider,
         FileInfo? configFile)
     {
+        var cleanupSucceeded = false;
+        var hasFailures = false;
         try
         {
             logger.LogInformation("Starting complete cleanup...");
@@ -406,10 +410,10 @@ public class CleanupCommand
             var config = await LoadConfigAsync(configFile, logger, configService);
             if (config == null) return;
             
-            // Configure GraphApiService with custom client app ID if available
+            // Configure AgentBlueprintService with custom client app ID if available
             if (!string.IsNullOrWhiteSpace(config.ClientAppId))
             {
-                graphApiService.CustomClientAppId = config.ClientAppId;
+                agentBlueprintService.CustomClientAppId = config.ClientAppId;
             }
 
             logger.LogInformation("");
@@ -428,20 +432,18 @@ public class CleanupCommand
                 logger.LogInformation("    App Service Plan: {PlanName}", config.AppServicePlanName);
             if (!string.IsNullOrEmpty(config.BotName))
                 logger.LogInformation("    Azure Messaging Endpoint: {BotName}", config.BotName);
+            if (!string.IsNullOrEmpty(config.Location))
+                logger.LogInformation("    Location: {Location}", config.Location);
             logger.LogInformation("    Generated configuration file");
             logger.LogInformation("");
 
-            Console.Write("Are you sure you want to DELETE ALL resources? (y/N): ");
-            var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-            if (response != "y" && response != "yes")
+            if (!await confirmationProvider.ConfirmAsync("Are you sure you want to DELETE ALL resources? (y/N): "))
             {
                 logger.LogInformation("Cleanup cancelled by user");
                 return;
             }
             
-            Console.Write("Type 'DELETE' to confirm: ");
-            var confirmResponse = Console.ReadLine()?.Trim();
-            if (confirmResponse != "DELETE")
+            if (!await confirmationProvider.ConfirmWithTypedResponseAsync("Type 'DELETE' to confirm: ", "DELETE"))
             {
                 logger.LogInformation("Cleanup cancelled - confirmation not received");
                 return;
@@ -453,7 +455,7 @@ public class CleanupCommand
             if (!string.IsNullOrEmpty(config.AgentBlueprintId))
             {
                 logger.LogInformation("Deleting agent blueprint application...");
-                var deleted = await graphApiService.DeleteAgentBlueprintAsync(
+                var deleted = await agentBlueprintService.DeleteAgentBlueprintAsync(
                     config.TenantId,
                     config.AgentBlueprintId);
 
@@ -465,6 +467,7 @@ public class CleanupCommand
                 {
                     logger.LogWarning("Failed to delete agent blueprint application (will continue with other resources)");
                     logger.LogWarning("Local configuration will still be cleared at the end");
+                    hasFailures = true;
                 }
             }
 
@@ -473,7 +476,7 @@ public class CleanupCommand
             {
                 logger.LogInformation("Deleting agent identity application...");
 
-                var deleted = await graphApiService.DeleteAgentIdentityAsync(
+                var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
                     config.TenantId,
                     config.AgenticAppId);
 
@@ -485,6 +488,7 @@ public class CleanupCommand
                 {
                     logger.LogWarning("Failed to delete agent identity application (will continue with other resources)");
                     logger.LogWarning("Local configuration will still be cleared at the end");
+                    hasFailures = true;
                 }
             }
 
@@ -496,34 +500,40 @@ public class CleanupCommand
                 logger.LogInformation("Agent user deleted");
             }
 
-            // 4. Delete Azure resources
-            if (!string.IsNullOrEmpty(config.WebAppName) && !string.IsNullOrEmpty(config.ResourceGroup))
+            // 4. Delete bot messaging endpoint
+            if (!string.IsNullOrEmpty(config.BotName))
             {
-                logger.LogInformation("Deleting Azure resources...");
-                
-                // Add bot deletion if bot exists
-                if (!string.IsNullOrEmpty(config.BotName))
+                logger.LogInformation("Deleting messaging endpoint registration...");
+                if (string.IsNullOrEmpty(config.AgentBlueprintId))
                 {
-                    logger.LogInformation("Deleting messaging endpoint registration...");
-                    if (string.IsNullOrEmpty(config.AgentBlueprintId))
+                    logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for deleting endpoint registration.");
+                    hasFailures = true;
+                }
+                else
+                {
+                    var endpointName = EndpointHelper.GetEndpointName(config.BotName);
+
+                    var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                        endpointName,
+                        config.Location,
+                        config.AgentBlueprintId);
+
+                    if (endpointDeleted)
                     {
-                        logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for deleting endpoint registration.");
+                        logger.LogInformation("Messaging endpoint deleted successfully");
                     }
                     else
                     {
-                        var endpointName = EndpointHelper.GetEndpointName(config.BotName);
-
-                        var endpointRegistered = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-                            endpointName,
-                            config.Location,
-                            config.AgentBlueprintId);
-
-                        if (!endpointRegistered)
-                        {
-                            logger.LogWarning("Failed to delete blueprint messaging endpoint");
-                        }
+                        logger.LogWarning("Failed to delete messaging endpoint");
+                        hasFailures = true;
                     }
                 }
+            }
+
+            // 5. Delete Azure resources (Web App and App Service Plan)
+            if (!string.IsNullOrEmpty(config.WebAppName) && !string.IsNullOrEmpty(config.ResourceGroup))
+            {
+                logger.LogInformation("Deleting Azure resources...");
                 
                 // Delete Web App
                 logger.LogInformation("Deleting Web App: {WebAppName}...", config.WebAppName);
@@ -586,26 +596,70 @@ public class CleanupCommand
                 logger.LogInformation("Azure resources deleted");
             }
 
-            // 5. Backup and delete generated config file
-            var generatedConfigPath = "a365.generated.config.json";
-            if (File.Exists(generatedConfigPath))
+            // Mark cleanup as successful only if no failures occurred
+            if (!hasFailures)
             {
-                var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
-                var backupPath = $"a365.generated.config.backup-{timestamp}.json";
-                
-                logger.LogInformation("Backing up generated configuration to: {BackupPath}", backupPath);
-                File.Copy(generatedConfigPath, backupPath);
-                
-                logger.LogInformation("Deleting generated configuration file...");
-                File.Delete(generatedConfigPath);
-                logger.LogInformation("Generated configuration deleted (backup saved)");
+                cleanupSucceeded = true;
+                logger.LogInformation("Complete cleanup finished successfully!");
             }
-
-            logger.LogInformation("Complete cleanup finished successfully!");
+            else
+            {
+                logger.LogWarning("Cleanup completed with some failures. Review warnings above.");
+                logger.LogWarning("Generated configuration preserved. Fix issues and re-run cleanup if needed.");
+            }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Complete cleanup failed: {Message}", ex.Message);
+            logger.LogWarning("Generated configuration file preserved due to cleanup failure. Fix issues and re-run cleanup.");
+        }
+        finally
+        {
+            // Only clean up generated config if all cleanup steps succeeded
+            if (cleanupSucceeded)
+            {
+                try
+                {
+                    var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+                    
+                    // Delete local generated config
+                    var localGeneratedPath = "a365.generated.config.json";
+                    if (File.Exists(localGeneratedPath))
+                    {
+                        var backupPath = $"a365.generated.config.backup-{timestamp}.json";
+                        
+                        logger.LogInformation("Backing up generated configuration to: {BackupPath}", backupPath);
+                        File.Copy(localGeneratedPath, backupPath);
+                        
+                        logger.LogInformation("Deleting local generated configuration file...");
+                        File.Delete(localGeneratedPath);
+                        logger.LogInformation("Local generated configuration deleted (backup saved)");
+                    }
+                    
+                    // Also delete global generated config (uses ConfigService for cross-platform path)
+                    var globalGeneratedPath = Path.Combine(
+                        ConfigService.GetGlobalConfigDirectory(),
+                        "a365.generated.config.json");
+                    
+                    if (File.Exists(globalGeneratedPath))
+                    {
+                        var globalBackupPath = Path.Combine(
+                            ConfigService.GetGlobalConfigDirectory(),
+                            $"a365.generated.config.backup-{timestamp}.json");
+                        
+                        logger.LogInformation("Backing up global generated configuration to: {BackupPath}", globalBackupPath);
+                        File.Copy(globalGeneratedPath, globalBackupPath);
+                        
+                        logger.LogInformation("Deleting global generated configuration file...");
+                        File.Delete(globalGeneratedPath);
+                        logger.LogInformation("Global generated configuration deleted (backup saved)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to clean up generated configuration file: {Message}", ex.Message);
+                }
+            }
         }
     }
 

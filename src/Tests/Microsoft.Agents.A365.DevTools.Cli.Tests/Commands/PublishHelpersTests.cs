@@ -21,6 +21,7 @@ public class PublishHelpersTests
 {
     private readonly Mock<ILogger> _mockLogger;
     private readonly Mock<GraphApiService> _mockGraphService;
+    private readonly Mock<AgentBlueprintService> _mockBlueprintService;
     private readonly Agent365Config _testConfig;
 
     public PublishHelpersTests()
@@ -43,6 +44,15 @@ public class PublishHelpersTests
             CallBase = false 
         };
         
+        // Create AgentBlueprintService mock
+        var mockBlueprintLogger = new Mock<ILogger<AgentBlueprintService>>();
+        _mockBlueprintService = new Mock<AgentBlueprintService>(
+            mockBlueprintLogger.Object,
+            _mockGraphService.Object)
+        {
+            CallBase = false
+        };
+        
         _testConfig = new Agent365Config
         {
             TenantId = "test-tenant-id",
@@ -58,7 +68,7 @@ public class PublishHelpersTests
 
         // Act
         Func<Task> act = async () => await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, config, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, config, _mockLogger.Object);
 
         // Assert
         await act.Should().ThrowAsync<SetupValidationException>()
@@ -79,7 +89,7 @@ public class PublishHelpersTests
 
         // Act
         Func<Task> act = async () => await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, _testConfig, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, _testConfig, _mockLogger.Object);
 
         // Assert
         await act.Should().ThrowAsync<SetupValidationException>()
@@ -165,7 +175,7 @@ public class PublishHelpersTests
 
         // Act
         var result = await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, _testConfig, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, _testConfig, _mockLogger.Object);
 
         // Assert
         result.Should().BeTrue();
@@ -235,7 +245,7 @@ public class PublishHelpersTests
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync(true);
 
-        _mockGraphService.Setup(x => x.ReplaceOauth2PermissionGrantAsync(
+        _mockBlueprintService.Setup(x => x.ReplaceOauth2PermissionGrantAsync(
             It.IsAny<string>(), 
             It.IsAny<string>(), 
             It.IsAny<string>(), 
@@ -245,7 +255,7 @@ public class PublishHelpersTests
 
         // Act
         var result = await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, _testConfig, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, _testConfig, _mockLogger.Object);
 
         // Assert
         result.Should().BeTrue();
@@ -285,7 +295,7 @@ public class PublishHelpersTests
 
         // Act
         Func<Task> act = async () => await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, _testConfig, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, _testConfig, _mockLogger.Object);
 
         // Assert
         await act.Should().ThrowAsync<SetupValidationException>()
@@ -320,7 +330,7 @@ public class PublishHelpersTests
 
         // Act
         Func<Task> act = async () => await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, _testConfig, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, _testConfig, _mockLogger.Object);
 
         // Assert
         await act.Should().ThrowAsync<SetupValidationException>()
@@ -422,9 +432,9 @@ public class PublishHelpersTests
 
         // Act
         var result1 = await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, _testConfig, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, _testConfig, _mockLogger.Object);
         var result2 = await PublishHelpers.EnsureMosPrerequisitesAsync(
-            _mockGraphService.Object, _testConfig, _mockLogger.Object);
+            _mockGraphService.Object, _mockBlueprintService.Object, _testConfig, _mockLogger.Object);
 
         // Assert
         result1.Should().BeTrue();
@@ -448,7 +458,7 @@ public class PublishHelpersTests
             Times.Never());
         
         // ReplaceOauth2PermissionGrantAsync should never be called since consent already exists
-        _mockGraphService.Verify(x => x.ReplaceOauth2PermissionGrantAsync(
+        _mockBlueprintService.Verify(x => x.ReplaceOauth2PermissionGrantAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), 
             Times.Never());
     }

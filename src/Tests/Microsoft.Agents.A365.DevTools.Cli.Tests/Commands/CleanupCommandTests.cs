@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -18,7 +19,9 @@ public class CleanupCommandTests
     private readonly IBotConfigurator _mockBotConfigurator;
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _graphApiService;
+    private readonly AgentBlueprintService _agentBlueprintService;
     private readonly IMicrosoftGraphTokenProvider _mockTokenProvider;
+    private readonly IConfirmationProvider _mockConfirmationProvider;
 
     public CleanupCommandTests()
     {
@@ -48,6 +51,15 @@ public class CleanupCommandTests
         // Create a real GraphApiService instance with mocked dependencies
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
         _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider);
+        
+        // Create AgentBlueprintService wrapping GraphApiService
+        var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
+        _agentBlueprintService = new AgentBlueprintService(mockBlueprintLogger, _graphApiService);
+        
+        // Mock confirmation provider - default to confirming (for most tests)
+        _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+        _mockConfirmationProvider.ConfirmWithTypedResponseAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
     }
 
     [Fact(Skip = "Test requires interactive confirmation - cleanup commands now enforce user confirmation instead of --force")]
@@ -57,7 +69,7 @@ public class CleanupCommandTests
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "azure", "--config", "test.json" };
 
         // Act
@@ -86,7 +98,7 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(Task.FromResult(true));
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "instance", "--config", "test.json" };
 
         var originalIn = Console.In;
@@ -117,7 +129,7 @@ public class CleanupCommandTests
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
 
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "--config", "test.json" };
 
         // Act
@@ -147,7 +159,7 @@ public class CleanupCommandTests
         var config = CreateConfigWithMissingWebApp(); // Create config without web app name
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
 
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "azure", "--config", "test.json" };
 
         // Act
@@ -174,7 +186,7 @@ public class CleanupCommandTests
         _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
             .Returns(Task.FromResult(false));
 
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "azure", "--config", "invalid.json" };
 
         // Act
@@ -194,7 +206,7 @@ public class CleanupCommandTests
     public void CleanupCommand_ShouldHaveCorrectSubcommands()
     {
         // Arrange & Act
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
 
         // Assert - Verify command structure (what users see)
         Assert.Equal("cleanup", command.Name);
@@ -213,7 +225,7 @@ public class CleanupCommandTests
     public void CleanupCommand_ShouldHaveDefaultHandlerOptions()
     {
         // Arrange & Act
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
 
         // Assert - Verify parent command has options for default handler
         var optionNames = command.Options.Select(opt => opt.Name).ToList();
@@ -226,7 +238,7 @@ public class CleanupCommandTests
     public void CleanupSubcommands_ShouldHaveRequiredOptions()
     {
         // Arrange & Act
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var blueprintCommand = command.Subcommands.First(sc => sc.Name == "blueprint");
 
         // Assert - Verify user-facing options
@@ -243,7 +255,7 @@ public class CleanupCommandTests
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
 
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _graphApiService);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
 
         // Act
@@ -282,5 +294,104 @@ public class CleanupCommandTests
             WebAppName = string.Empty, // Missing web app name
             AppServicePlanName = "test-app-service-plan"
         };
+    }
+
+    /// <summary>
+    /// REGRESSION TEST: Verifies that user must confirm cleanup operations.
+    /// If user declines first confirmation, cleanup should abort without deleting anything.
+    /// </summary>
+    [Fact]
+    public async Task Cleanup_WhenUserDeclinesInitialConfirmation_ShouldAbortWithoutDeletingAnything()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(true);
+        
+        // User declines the initial "Are you sure?" confirmation
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(false);
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0); // Command completes successfully (just doesn't delete anything)
+        
+        // Verify NO delete operations were called - check bot configurator wasn't invoked
+        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    /// <summary>
+    /// REGRESSION TEST: Verifies that user must type "DELETE" to confirm cleanup.
+    /// If user confirms but doesn't type "DELETE" exactly, cleanup should abort.
+    /// </summary>
+    [Fact]
+    public async Task Cleanup_WhenUserConfirmsButDoesNotTypeDelete_ShouldAbortWithoutDeletingAnything()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        
+        // User confirms first prompt but declines the "Type DELETE" confirmation
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+        _mockConfirmationProvider.ConfirmWithTypedResponseAsync(Arg.Any<string>(), "DELETE").Returns(false);
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0);
+        
+        // Verify NO delete operations were called - check bot configurator wasn't invoked
+        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    /// <summary>
+    /// REGRESSION TEST: Verifies confirmation provider is called with correct prompts.
+    /// This ensures the user-facing prompts remain consistent.
+    /// </summary>
+    [Fact]
+    public async Task Cleanup_ShouldCallConfirmationProviderWithCorrectPrompts()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "--config", "test.json" };
+
+        // Act
+        await command.InvokeAsync(args);
+
+        // Assert
+        await _mockConfirmationProvider.Received(1).ConfirmAsync(Arg.Is<string>(s => s.Contains("DELETE ALL resources")));
+        await _mockConfirmationProvider.Received(1).ConfirmWithTypedResponseAsync(Arg.Is<string>(s => s.Contains("Type 'DELETE'")), "DELETE");
+    }
+
+    /// <summary>
+    /// REGRESSION TEST: Verifies that cleanup command properly injects IConfirmationProvider.
+    /// If this test fails after refactoring, it means the DI registration was broken.
+    /// </summary>
+    [Fact]
+    public void CleanupCommand_ShouldAcceptConfirmationProviderParameter()
+    {
+        // Act & Assert - Should not throw
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockBotConfigurator,
+            _mockExecutor,
+            _agentBlueprintService,
+            _mockConfirmationProvider);
+
+        command.Should().NotBeNull();
+        command.Name.Should().Be("cleanup");
     }
 }

@@ -26,6 +26,7 @@ public static class DevelopCommand
         CommandExecutor commandExecutor,
         AuthenticationService authService,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         IProcessService processService)
     {
         var developCommand = new Command("develop", "Manage MCP tool servers for agent development");
@@ -51,7 +52,7 @@ public static class DevelopCommand
 
         // Add new MCP authentication subcommands
         developCommand.AddCommand(GetTokenSubcommand.CreateCommand(logger, configService, authService));
-        developCommand.AddCommand(AddPermissionsSubcommand.CreateCommand(logger, configService, graphApiService));
+        developCommand.AddCommand(AddPermissionsSubcommand.CreateCommand(logger, configService, graphApiService, blueprintService));
 
         // Start Mock Tooling Server subcommand
         developCommand.AddCommand(MockToolingServerSubcommand.CreateCommand(logger, processService));

@@ -11,14 +11,15 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
-public class GraphApiServiceVerifyInheritablePermissionsTests
+public class AgentBlueprintServiceVerifyInheritablePermissionsTests
 {
     [Fact]
     public async Task VerifyInheritablePermissionsAsync_PermissionsExist_ReturnsScopes()
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
         executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -33,7 +34,8 @@ public class GraphApiServiceVerifyInheritablePermissionsTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         var response = new
         {
@@ -50,6 +52,16 @@ public class GraphApiServiceVerifyInheritablePermissionsTests
             }
         };
 
+        // ResolveBlueprintObjectIdAsync: Check if bpAppId is an objectId (returns 404 NotFound)
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        // ResolveBlueprintObjectIdAsync: Resolve appId to objectId
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // VerifyInheritablePermissionsAsync: GET existing permissions
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(response))
@@ -69,7 +81,8 @@ public class GraphApiServiceVerifyInheritablePermissionsTests
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
         executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -84,7 +97,8 @@ public class GraphApiServiceVerifyInheritablePermissionsTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         var response = new
         {
@@ -98,6 +112,16 @@ public class GraphApiServiceVerifyInheritablePermissionsTests
             }
         };
 
+        // ResolveBlueprintObjectIdAsync: Check if bpAppId is an objectId (returns 404 NotFound)
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        // ResolveBlueprintObjectIdAsync: Resolve appId to objectId
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // VerifyInheritablePermissionsAsync: GET existing permissions
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(response))
@@ -117,7 +141,8 @@ public class GraphApiServiceVerifyInheritablePermissionsTests
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
         executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -132,7 +157,8 @@ public class GraphApiServiceVerifyInheritablePermissionsTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Simulate 404 Not Found to trigger API failure path
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));

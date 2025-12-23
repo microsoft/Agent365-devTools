@@ -99,6 +99,7 @@ internal static class BlueprintSubcommand
         PlatformDetector platformDetector,
         IBotConfigurator botConfigurator,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         IClientAppValidator clientAppValidator)
     {
         var command = new Command("blueprint", 
@@ -194,6 +195,7 @@ internal static class BlueprintSubcommand
                 botConfigurator,
                 platformDetector,
                 graphApiService,
+                blueprintService,
                 skipEndpointRegistration
                 );
 
@@ -214,6 +216,7 @@ internal static class BlueprintSubcommand
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         bool skipEndpointRegistration = false,
         CancellationToken cancellationToken = default)
     {
@@ -321,6 +324,7 @@ internal static class BlueprintSubcommand
                 logger,
                 executor,
                 graphService,
+                blueprintService,
                 setupConfig.TenantId,
                 setupConfig.AgentBlueprintDisplayName,
                 setupConfig.AgentIdentityDisplayName,
@@ -520,6 +524,7 @@ internal static class BlueprintSubcommand
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         string tenantId,
         string displayName,
         string? agentIdentityDisplayName,
@@ -832,6 +837,7 @@ internal static class BlueprintSubcommand
 
                     await SetupHelpers.EnsureResourcePermissionsAsync(
                         graph: graphApiService,
+                        blueprintService: blueprintService,
                         config: setupConfig,
                         resourceAppId: AuthenticationConstants.MicrosoftGraphResourceAppId,
                         resourceName: "Microsoft Graph",

@@ -22,6 +22,7 @@ public class PermissionsSubcommandTests
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _mockGraphApiService;
+    private readonly AgentBlueprintService _mockBlueprintService;
 
     public PermissionsSubcommandTests()
     {
@@ -30,6 +31,7 @@ public class PermissionsSubcommandTests
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>();
+        _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
     }
 
     #region Command Structure Tests
@@ -42,7 +44,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var mcpSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "mcp");
@@ -57,7 +59,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
@@ -72,7 +74,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         command.Description.Should().Contain("Global Administrator");
@@ -86,7 +88,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         command.Subcommands.Should().HaveCount(2);
@@ -102,7 +104,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         command.Should().NotBeNull();
@@ -122,7 +124,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -138,7 +140,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -157,7 +159,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -176,7 +178,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -194,7 +196,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -215,7 +217,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -231,7 +233,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -250,7 +252,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -269,7 +271,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -287,7 +289,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -303,7 +305,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -433,6 +435,7 @@ public class PermissionsSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService,
+            _mockBlueprintService,
             config,
             false);
 
@@ -464,6 +467,7 @@ public class PermissionsSubcommandTests
             _mockExecutor,
             config,
             _mockGraphApiService,
+            _mockBlueprintService,
             false);
 
         // Assert
@@ -497,7 +501,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
 
@@ -517,7 +521,7 @@ public class PermissionsSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
 

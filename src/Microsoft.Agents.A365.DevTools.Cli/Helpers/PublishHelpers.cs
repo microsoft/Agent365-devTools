@@ -409,6 +409,7 @@ public static class PublishHelpers
     /// <exception cref="SetupValidationException">Thrown when prerequisites cannot be configured</exception>
     public static async Task<bool> EnsureMosPrerequisitesAsync(
         GraphApiService graph,
+        AgentBlueprintService blueprintService,
         Agent365Config config,
         ILogger logger,
         CancellationToken ct = default)
@@ -449,7 +450,7 @@ public static class PublishHelpers
         await EnsureMosPermissionsConfiguredAsync(graph, config, app, logger, ct);
 
         // Step 3: Ensure admin consent is granted for MOS permissions (idempotent - only grants if missing)
-        await EnsureMosAdminConsentAsync(graph, config, logger, ct);
+        await EnsureMosAdminConsentAsync(graph, blueprintService, config, logger, ct);
 
         return true;
     }
@@ -461,6 +462,7 @@ public static class PublishHelpers
     /// </summary>
     private static async Task EnsureMosAdminConsentAsync(
         GraphApiService graph,
+        AgentBlueprintService blueprintService,
         Agent365Config config,
         ILogger logger,
         CancellationToken ct)
@@ -533,7 +535,7 @@ public static class PublishHelpers
         {
             logger.LogDebug("Granting admin consent for {ResourceAppId} with scope {ScopeName}", resourceAppId, scopeName);
 
-            var success = await graph.ReplaceOauth2PermissionGrantAsync(
+            var success = await blueprintService.ReplaceOauth2PermissionGrantAsync(
                 config.TenantId,
                 clientSpObjectId,
                 resourceSpObjectId,

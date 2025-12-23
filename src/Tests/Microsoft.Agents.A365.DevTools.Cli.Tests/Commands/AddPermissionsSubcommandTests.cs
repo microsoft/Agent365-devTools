@@ -19,12 +19,14 @@ public class AddPermissionsSubcommandTests
     private readonly ILogger _mockLogger;
     private readonly IConfigService _mockConfigService;
     private readonly GraphApiService _mockGraphApiService;
+    private readonly AgentBlueprintService _mockBlueprintService;
 
     public AddPermissionsSubcommandTests()
     {
         _mockLogger = Substitute.For<ILogger>();
         _mockConfigService = Substitute.For<IConfigService>();
         _mockGraphApiService = Substitute.For<GraphApiService>();
+        _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
     }
 
     #region Command Structure Tests
@@ -33,7 +35,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveCorrectName()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         command.Name.Should().Be("add-permissions");
@@ -43,7 +45,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveDescriptiveMessage()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         command.Description.Should().Contain("MCP");
@@ -54,7 +56,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveConfigOption()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
@@ -67,7 +69,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveManifestOption()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var manifestOption = command.Options.FirstOrDefault(o => o.Name == "manifest");
@@ -80,7 +82,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveAppIdOption()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var appIdOption = command.Options.FirstOrDefault(o => o.Name == "app-id");
@@ -92,7 +94,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveScopesOption()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var scopesOption = command.Options.FirstOrDefault(o => o.Name == "scopes");
@@ -104,7 +106,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveVerboseOption()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var verboseOption = command.Options.FirstOrDefault(o => o.Name == "verbose");
@@ -117,7 +119,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveDryRunOption()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         var dryRunOption = command.Options.FirstOrDefault(o => o.Name == "dry-run");
@@ -129,7 +131,7 @@ public class AddPermissionsSubcommandTests
     public void CreateCommand_ShouldHaveAllRequiredOptions()
     {
         // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService);
+        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
         command.Options.Should().HaveCount(6);

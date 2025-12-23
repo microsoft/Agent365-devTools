@@ -7,7 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
-
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
@@ -461,8 +461,44 @@ public class ConfigurationWizardService : IConfigurationWizardService
         }
         else
         {
-            Console.WriteLine($"No existing app service plans found in {resourceGroup}. A new plan will be created.");
-            return (existingConfig?.AppServicePlanName ?? $"{Environment.UserName}-agent365-plan", true);
+            Console.WriteLine($"No existing app service plans found in {resourceGroup}.");
+            while (true)
+            {
+                string? defaultPlanName = existingConfig?.AppServicePlanName;
+                if (string.IsNullOrWhiteSpace(defaultPlanName))
+                {
+                    defaultPlanName = !string.IsNullOrWhiteSpace(resourceGroup)
+                        ? $"{resourceGroup}-plan"
+                        : "agent365-plan";
+                }
+                // Sanitize: only alphanumeric and hyphens, collapse hyphens, trim
+                defaultPlanName = System.Text.RegularExpressions.Regex.Replace(defaultPlanName, "[^a-zA-Z0-9-]", "-");
+                defaultPlanName = System.Text.RegularExpressions.Regex.Replace(defaultPlanName, "-+", "-");
+                defaultPlanName = defaultPlanName.Trim('-');
+                if (string.IsNullOrWhiteSpace(defaultPlanName)) defaultPlanName = "agent365-plan";
+                Console.Write($"Enter a name for the new App Service Plan (default: {defaultPlanName}, or type 'cancel' to abort): ");
+                var input = Console.ReadLine()?.Trim();
+                if (string.IsNullOrWhiteSpace(input))
+                {
+                    input = defaultPlanName;
+                }
+                if (input != null && input.Equals("cancel", StringComparison.OrdinalIgnoreCase))
+                {
+                    return (string.Empty, false);
+                }
+                // Validate using ConfigService logic
+                var errors = new System.Collections.Generic.List<string>();
+                ConfigService.ValidateAppServicePlanName(input, errors);
+                if (!string.IsNullOrWhiteSpace(input) && errors.Count == 0)
+                {
+                    return (input, true);
+                }
+                Console.WriteLine("Please enter a valid plan name (alphanumeric and hyphens only, max 40 chars) or type 'cancel' to abort.");
+                if (errors.Count > 0)
+                {
+                    foreach (var err in errors) Console.WriteLine($"  - {err}");
+                }
+            }
         }
     }
 

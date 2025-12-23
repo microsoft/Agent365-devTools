@@ -19,12 +19,13 @@ public class QueryEntraCommand
         ILogger<QueryEntraCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var command = new Command("query-entra", "Query Microsoft Entra ID for agent information (scopes, permissions, consent status)");
 
         // Add subcommands for different query types
-        command.AddCommand(CreateBlueprintScopesSubcommand(logger, configService, executor, graphApiService));
+        command.AddCommand(CreateBlueprintScopesSubcommand(logger, configService, executor, graphApiService, blueprintService));
         command.AddCommand(CreateInstanceScopesSubcommand(logger, configService, executor));
 
         return command;
@@ -37,7 +38,8 @@ public class QueryEntraCommand
         ILogger<QueryEntraCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var command = new Command("blueprint-scopes", "List configured scopes and consent status for the agent blueprint");
 
@@ -84,7 +86,7 @@ public class QueryEntraCommand
                 // Query Microsoft Graph for inheritable permissions
                 logger.LogInformation("Querying Microsoft Graph API for blueprint inheritable permissions...");
                 
-                var inheritablePermissionsJson = await graphApiService.GetBlueprintInheritablePermissionsAsync(
+                var inheritablePermissionsJson = await blueprintService.GetBlueprintInheritablePermissionsAsync(
                     setupConfig.AgentBlueprintId, 
                     setupConfig.TenantId);
                 

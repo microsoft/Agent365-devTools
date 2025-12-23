@@ -773,7 +773,7 @@ public class ConfigService : IConfigService
         }
     }
 
-    private void ValidateAppServicePlanName(string? value, List<string> errors)
+    public static void ValidateAppServicePlanName(string? value, List<string> errors)
     {
         if (string.IsNullOrWhiteSpace(value)) return;
 
@@ -782,7 +782,7 @@ public class ConfigService : IConfigService
             errors.Add("AppServicePlanName must not exceed 40 characters.");
         }
 
-        if (!Regex.IsMatch(value, @"^[a-zA-Z0-9\-]+$"))
+        if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"^[a-zA-Z0-9\-]+$"))
         {
             errors.Add("AppServicePlanName can only contain alphanumeric characters and hyphens.");
         }

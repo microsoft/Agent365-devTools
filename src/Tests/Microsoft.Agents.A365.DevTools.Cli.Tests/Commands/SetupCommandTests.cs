@@ -28,6 +28,7 @@ public class SetupCommandTests
     private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly GraphApiService _mockGraphApiService;
+    private readonly AgentBlueprintService _mockBlueprintService;
     private readonly IClientAppValidator _mockClientAppValidator;
 
     public SetupCommandTests()
@@ -53,6 +54,7 @@ public class SetupCommandTests
         _mockAzureValidator = Substitute.For<IAzureValidator>();
         _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
         _mockGraphApiService = Substitute.For<GraphApiService>();
+        _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
     }
 
@@ -83,7 +85,7 @@ public class SetupCommandTests
             _mockAzureValidator, 
             _mockWebAppCreator, 
             _mockPlatformDetector,
-            _mockGraphApiService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
         
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -130,7 +132,7 @@ public class SetupCommandTests
             _mockAzureValidator, 
             _mockWebAppCreator, 
             _mockPlatformDetector,
-            _mockGraphApiService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
         
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -158,7 +160,7 @@ public class SetupCommandTests
             _mockAzureValidator, 
             _mockWebAppCreator, 
             _mockPlatformDetector,
-            _mockGraphApiService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
 
         // Assert - Verify all required subcommands exist
         var subcommandNames = command.Subcommands.Select(c => c.Name).ToList();
@@ -183,7 +185,7 @@ public class SetupCommandTests
             _mockAzureValidator, 
             _mockWebAppCreator, 
             _mockPlatformDetector,
-            _mockGraphApiService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
 
         var permissionsCmd = command.Subcommands.FirstOrDefault(c => c.Name == "permissions");
 
@@ -211,7 +213,7 @@ public class SetupCommandTests
             _mockAzureValidator, 
             _mockWebAppCreator, 
             _mockPlatformDetector,
-            _mockGraphApiService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
         
         // Assert - Command structure should support clear error messaging
         command.Should().NotBeNull();
@@ -257,7 +259,7 @@ public class SetupCommandTests
             _mockAzureValidator, 
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -300,7 +302,7 @@ public class SetupCommandTests
             _mockAzureValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -343,6 +345,7 @@ public class SetupCommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockClientAppValidator);
 
         var parser = new CommandLineBuilder(command).Build();
@@ -386,6 +389,7 @@ public class SetupCommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockClientAppValidator);
 
         var parser = new CommandLineBuilder(command).Build();

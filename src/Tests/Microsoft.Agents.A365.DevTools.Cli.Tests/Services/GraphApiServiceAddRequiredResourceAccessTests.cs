@@ -11,7 +11,7 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
-public class GraphApiServiceAddRequiredResourceAccessTests
+public class AgentBlueprintServiceAddRequiredResourceAccessTests
 {
     private const string TenantId = "test-tenant-id";
     private const string AppId = "test-app-id";
@@ -24,9 +24,11 @@ public class GraphApiServiceAddRequiredResourceAccessTests
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue responses
         QueueApplicationLookupResponse(handler, hasId: true);
@@ -50,9 +52,11 @@ public class GraphApiServiceAddRequiredResourceAccessTests
     {
         // Arrange - This test catches the null reference bug
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue responses
         QueueApplicationLookupResponse(handler, hasId: true);
@@ -75,9 +79,11 @@ public class GraphApiServiceAddRequiredResourceAccessTests
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue empty application response
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
@@ -101,9 +107,11 @@ public class GraphApiServiceAddRequiredResourceAccessTests
     {
         // Arrange - Tests the null safety check we just added
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue application response with null id
         QueueApplicationLookupResponse(handler, hasId: false);
@@ -124,9 +132,11 @@ public class GraphApiServiceAddRequiredResourceAccessTests
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue responses
         QueueApplicationLookupResponse(handler, hasId: true);
@@ -164,9 +174,11 @@ public class GraphApiServiceAddRequiredResourceAccessTests
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var service = new GraphApiService(logger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Application with existing requiredResourceAccess
         var existingApp = new
