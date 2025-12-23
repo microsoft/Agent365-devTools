@@ -126,7 +126,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal(cfg.AgentBlueprintClientSecret, svcSettings["ClientSecret"]!.GetValue<string>());
         var svcScopes = svcSettings["Scopes"]!.AsArray();
         Assert.Single(svcScopes);
-        Assert.Equal("https://api.botframework.com/.default", svcScopes[0]!.GetValue<string>());
+        Assert.Equal("5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default", svcScopes[0]!.GetValue<string>());
 
         // ConnectionsMap
         var connectionsMap = j["ConnectionsMap"]!.AsArray();

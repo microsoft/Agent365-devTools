@@ -21,7 +21,7 @@ public static class ProjectSettingsSyncHelper
 {
     private const string DEFAULT_AUTHORITY_ENDPOINT = "https://login.microsoftonline.com";
     private const string DEFAULT_USER_AUTHORIZATION_SCOPE = "https://graph.microsoft.com/.default";
-    private const string DEFAULT_SERVICE_CONNECTION_SCOPE = "https://api.botframework.com/.default";
+    private const string DEFAULT_SERVICE_CONNECTION_SCOPE = "5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default";
 
     public static async Task ExecuteAsync(
         string a365ConfigPath,
