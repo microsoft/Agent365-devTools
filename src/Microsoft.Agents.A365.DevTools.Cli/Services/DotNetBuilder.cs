@@ -46,13 +46,14 @@ public class DotNetBuilder : IPlatformBuilder
         var projectFile = ResolveProjectFile(projectDir);
         if (projectFile == null)
         {
-            throw new FileNotFoundException("No .NET project file found in directory");
+            _logger.LogWarning("No .NET project file found in {Dir} - skipping clean (this is expected for publish folders)", projectDir);
+            return;
         }
 
         var result = await _executor.ExecuteAsync("dotnet", $"clean \"{projectFile}\"", projectDir);
         if (!result.Success)
         {
-            throw new Exception($"dotnet clean failed: {result.StandardError}");
+            _logger.LogWarning("dotnet clean failed: {Error} - continuing anyway", result.StandardError);
         }
     }
 
