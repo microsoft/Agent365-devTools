@@ -76,10 +76,7 @@ public class DotNetSdkValidationTests : IDisposable
     /// </summary>
     [Fact]
     public async Task ResolveDotNetRuntimeVersion_WhenVersionDetectedButValidationFails_ShowsContradictoryError()
-    {
-        // Arrange - Create a test .csproj file targeting .NET 8.0
-        var projectFile = CreateTestProject("net8.0");
-        
+    {       
         // Mock: dotnet --version returns 9.0.308 (which SHOULD work for .NET 8 projects)
         // But the command reports ExitCode != 0 (simulating intermittent failure)
         _commandExecutor.ExecuteAsync("dotnet", "--version", captureOutput: true, cancellationToken: Arg.Any<CancellationToken>())
@@ -113,9 +110,6 @@ public class DotNetSdkValidationTests : IDisposable
     [Fact]
     public async Task ResolveDotNetRuntimeVersion_WhenNewerSdkInstalled_SucceedsWithForwardCompatibility()
     {
-        // Arrange
-        var projectFile = CreateTestProject("net8.0");
-        
         // Mock: dotnet --version returns 9.0.308 (newer than target)
         _commandExecutor.ExecuteAsync("dotnet", "--version", captureOutput: true, cancellationToken: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new CommandResult 
@@ -141,9 +135,6 @@ public class DotNetSdkValidationTests : IDisposable
     [Fact]
     public async Task ResolveDotNetRuntimeVersion_WhenOlderSdkInstalled_ThrowsDotNetSdkVersionMismatchException()
     {
-        // Arrange
-        var projectFile = CreateTestProject("net9.0");
-        
         // Mock: dotnet --version returns 8.0.100 (older than target)
         _commandExecutor.ExecuteAsync("dotnet", "--version", captureOutput: true, cancellationToken: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new CommandResult 
