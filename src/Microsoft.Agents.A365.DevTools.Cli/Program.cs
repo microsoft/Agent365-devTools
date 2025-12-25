@@ -32,7 +32,7 @@ class Program
 
         try
         {
-            // Log startup info (debug level - not shown to users by default)
+            // Log startup info (debug level - not shown to users by default on console, but always in log file)
             startupLogger.LogDebug("==========================================================");
             startupLogger.LogDebug("Agent 365 CLI - Command: {Command}", commandName);
             startupLogger.LogDebug("Version: {Version}", GetDisplayVersion());
@@ -106,7 +106,7 @@ class Program
                 {
                     if (exception is Agent365Exception myEx)
                     {
-                        ExceptionHandler.HandleAgent365Exception(myEx);
+                        ExceptionHandler.HandleAgent365Exception(myEx, logFilePath: logFilePath);
                         context.ExitCode = myEx.ExitCode;
                     }
                     else
@@ -116,6 +116,11 @@ class Program
                         Console.Error.WriteLine("Unexpected error occurred. This may be a bug in the CLI.");
                         Console.Error.WriteLine("Please report this issue at: https://github.com/microsoft/Agent365-devTools/issues");
                         Console.Error.WriteLine();
+                        if (!string.IsNullOrEmpty(logFilePath))
+                        {
+                            Console.Error.WriteLine($"For more details, see the log file at: {logFilePath}");
+                            Console.Error.WriteLine();
+                        }
                         context.ExitCode = 1;
                     }
                 });
@@ -148,8 +153,10 @@ class Program
             // File logging if path provided
             if (!string.IsNullOrEmpty(logFilePath))
             {
+                // Always use Trace level for file logging to capture all diagnostic information
+                // This ensures comprehensive logs for debugging, regardless of console verbosity
                 builder.Services.AddSingleton<ILoggerProvider>(provider =>
-                    new FileLoggerProvider(logFilePath, minimumLevel));
+                    new FileLoggerProvider(logFilePath, LogLevel.Trace));
             }
         });
 
