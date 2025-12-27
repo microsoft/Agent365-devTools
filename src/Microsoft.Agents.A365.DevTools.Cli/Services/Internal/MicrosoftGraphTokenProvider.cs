@@ -1,4 +1,7 @@
-﻿using System;
+﻿// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,7 +17,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// <summary>
 /// Implements Microsoft Graph token acquisition via PowerShell Microsoft.Graph module.
 /// </summary>
-public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
+public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, IDisposable
 {
     private readonly CommandExecutor _executor;
     private readonly ILogger<MicrosoftGraphTokenProvider> _logger;
@@ -24,7 +27,22 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider
     private readonly ConcurrentDictionary<string, CachedToken> _tokenCache = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
-private sealed record CachedToken(string AccessToken, DateTimeOffset ExpiresOnUtc);
+    private sealed record CachedToken(string AccessToken, DateTimeOffset ExpiresOnUtc);
+
+    private bool _disposed;
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        foreach (var kvp in _locks)
+        {
+            try { kvp.Value.Dispose(); }
+            catch { /* no-op */ }
+        }
+
+        _locks.Clear();
+    }
 
     public MicrosoftGraphTokenProvider(
         CommandExecutor executor,
@@ -317,16 +335,17 @@ private sealed record CachedToken(string AccessToken, DateTimeOffset ExpiresOnUt
         return $"{tenantId}::{clientAppId ?? ""}::{scopeKey}";
     }
 
-    private static bool TryGetJwtExpiryUtc(string jwt, out DateTimeOffset expiresOnUtc)
+    private bool TryGetJwtExpiryUtc(string jwt, out DateTimeOffset expiresOnUtc)
     {
         expiresOnUtc = default;
 
         if (string.IsNullOrWhiteSpace(jwt)) return false;
-        var parts = jwt.Split('.');
-        if (parts.Length != 3) return false;
 
         try
         {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return false;
+
             var payloadJson = Encoding.UTF8.GetString(Base64UrlDecode(parts[1]));
             using var doc = JsonDocument.Parse(payloadJson);
 
@@ -338,8 +357,9 @@ private sealed record CachedToken(string AccessToken, DateTimeOffset ExpiresOnUt
             expiresOnUtc = DateTimeOffset.FromUnixTimeSeconds(expSeconds);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "Failed to parse JWT expiry (exp) from access token.");
             return false;
         }
     }
