@@ -174,7 +174,7 @@ internal static class BlueprintSubcommand
                     logger.LogError(ex, "Endpoint registration failed: {Message}", ex.Message);
                     logger.LogError("");
                     logger.LogError("To resolve this issue:");
-                    logger.LogError("  1. If endpoint already exists, delete it: cleanup blueprint --endpoint-only");
+                    logger.LogError("  1. If endpoint already exists, delete it: a365 cleanup blueprint --endpoint-only");
                     logger.LogError("  2. Verify your messaging endpoint configuration in a365.config.json");
                     logger.LogError("  3. Try registration again: a365 setup blueprint --endpoint-only");
                     Environment.Exit(1);

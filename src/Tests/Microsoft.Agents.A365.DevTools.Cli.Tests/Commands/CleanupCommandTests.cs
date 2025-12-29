@@ -431,7 +431,8 @@ public class CleanupCommandTests
         var originalIn = Console.In;
         try
         {
-            Console.SetIn(new StringReader("y\n"));
+            using var stringReader = new StringReader("y\n");
+            Console.SetIn(stringReader);
 
             // Act
             var result = await command.InvokeAsync(args);
@@ -448,7 +449,7 @@ public class CleanupCommandTests
             // Verify blueprint deletion was NOT called (no az ad app delete command)
             await _mockExecutor.DidNotReceive().ExecuteAsync(
                 "az",
-                Arg.Is<string>(args => args.Contains("ad app delete")),
+                Arg.Is<string>(cmdArgs => cmdArgs.Contains("ad app delete")),
                 Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         }
         finally
@@ -529,5 +530,253 @@ public class CleanupCommandTests
         // Verify no deletion operations were called
         await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    /// <summary>
+    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles invalid/empty Location.
+    /// The command should still proceed but may fail when calling the API with invalid location.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithEndpointOnlyAndInvalidLocation_ShouldPassLocationToApi()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            SubscriptionId = "test-subscription-id",
+            ResourceGroup = "test-rg",
+            Location = string.Empty, // Invalid/empty location
+            WebAppName = "test-web-app",
+            AppServicePlanName = "test-app-service-plan",
+            AgentBlueprintId = "test-blueprint-id",
+            AgenticAppId = "test-identity-id",
+            AgenticUserId = "test-user-id",
+            AgentDescription = "test-agent-description"
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(false); // API will likely fail with invalid location
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
+
+        var originalIn = Console.In;
+        try
+        {
+            using var stringReader = new StringReader("y\n");
+            Console.SetIn(stringReader);
+
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            Assert.Equal(0, result);
+            
+            // Verify deletion was attempted with the invalid location
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), 
+                string.Empty, // Should pass the empty location
+                config.AgentBlueprintId!);
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    /// <summary>
+    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles API exceptions gracefully.
+    /// When DeleteEndpointWithAgentBlueprintAsync throws an exception, it should be caught and logged.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithEndpointOnlyAndApiException_ShouldHandleGracefully()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromException<bool>(new InvalidOperationException("API connection failed")));
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
+
+        var originalIn = Console.In;
+        try
+        {
+            using var stringReader = new StringReader("y\n");
+            Console.SetIn(stringReader);
+
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            // Command should complete even if API throws exception (exception should be caught)
+            Assert.Equal(0, result);
+            
+            // Verify deletion was attempted
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), 
+                config.Location, 
+                config.AgentBlueprintId!);
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    /// <summary>
+    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles empty blueprint ID parameter.
+    /// This is a duplicate check since CleanupBlueprint_WithEndpointOnlyAndNoBlueprintId_ShouldLogError exists,
+    /// but this variant tests with whitespace-only string instead of null.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithEndpointOnlyAndWhitespaceBlueprint_ShouldLogError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            SubscriptionId = "test-subscription-id",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            WebAppName = "test-web-app",
+            AppServicePlanName = "test-app-service-plan",
+            AgentBlueprintId = "   ", // Whitespace-only blueprint ID
+            AgenticAppId = "test-identity-id",
+            AgenticUserId = "test-user-id",
+            AgentDescription = "test-agent-description"
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        Assert.Equal(0, result);
+        
+        // Verify no deletion operations were called since blueprint ID is invalid
+        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    /// <summary>
+    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles invalid user input.
+    /// When user enters something other than y/yes/n/no, cleanup should be cancelled.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithEndpointOnlyAndInvalidInput_ShouldCancelCleanup()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(true);
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
+
+        var originalIn = Console.In;
+        try
+        {
+            // User enters invalid input like "maybe" or "123"
+            using var stringReader = new StringReader("maybe\n");
+            Console.SetIn(stringReader);
+
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            Assert.Equal(0, result);
+            
+            // Verify NO deletion was called because invalid input should cancel
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    /// <summary>
+    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles 'n' (no) response.
+    /// When user explicitly declines, cleanup should be cancelled.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithEndpointOnlyAndNoResponse_ShouldCancelCleanup()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(true);
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
+
+        var originalIn = Console.In;
+        try
+        {
+            // User enters 'n' to decline
+            using var stringReader = new StringReader("n\n");
+            Console.SetIn(stringReader);
+
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            Assert.Equal(0, result);
+            
+            // Verify NO deletion was called because user declined
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    /// <summary>
+    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles empty input (just Enter).
+    /// When user presses Enter without typing anything, cleanup should be cancelled (default is No).
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithEndpointOnlyAndEmptyInput_ShouldCancelCleanup()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(true);
+        
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
+
+        var originalIn = Console.In;
+        try
+        {
+            // User just presses Enter (empty input)
+            using var stringReader = new StringReader("\n");
+            Console.SetIn(stringReader);
+
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            Assert.Equal(0, result);
+            
+            // Verify NO deletion was called because empty input defaults to cancel
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
     }
 }
