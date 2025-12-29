@@ -194,29 +194,25 @@ internal static class SetupHelpers
     {
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
             throw new SetupValidationException("AgentBlueprintId (appId) is required.");
-
-        // Use delegated token provider for *all* permission operations to avoid bouncing between Azure CLI auth and MgGraph auth.
-        var requiredScopesForGrants = new[]
-        {
-            "Application.ReadWrite.All",
-            "DelegatedPermissionGrant.ReadWrite.All"
-        };
+        
+        // Use delegated token provider for *all* permission operations to avoid bouncing between Azure CLI auth and Microsoft Graph PowerShell auth.
+        var permissionGrantScopes = AuthenticationConstants.RequiredPermissionGrantScopes;
 
         // Pre-warm the delegated token once
         var org = await graph.GraphGetAsync(
             config.TenantId,
             "/v1.0/organization?$select=id",
             ct,
-            scopes: requiredScopesForGrants);
+            scopes: permissionGrantScopes);
 
         if (org == null)
         {
             throw new SetupValidationException(
                 "Failed to authenticate to Microsoft Graph with delegated permissions. " +
-                "Please sign in when prompted and ensure your account has the required admin roles/scopes.");
+                "Please sign in when prompted and ensure your account has the required roles and permission scopes.");
         }
 
-        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct, requiredScopesForGrants);
+        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct, permissionGrantScopes);
         if (string.IsNullOrWhiteSpace(blueprintSpObjectId))
         {
             throw new SetupValidationException($"Blueprint Service Principal not found for appId {config.AgentBlueprintId}. " +
@@ -224,7 +220,7 @@ internal static class SetupHelpers
         }
 
         // Ensure resource service principal exists
-        var resourceSpObjectId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, resourceAppId, ct, requiredScopesForGrants);
+        var resourceSpObjectId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, resourceAppId, ct, permissionGrantScopes);
         if (string.IsNullOrWhiteSpace(resourceSpObjectId))
         {
             throw new SetupValidationException($"{resourceName} Service Principal not found for appId {resourceAppId}. " +
@@ -254,7 +250,7 @@ internal static class SetupHelpers
             blueprintSpObjectId, resourceSpObjectId, string.Join(' ', scopes));
 
         var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
-            config.TenantId, blueprintSpObjectId, resourceSpObjectId, scopes, ct, requiredScopesForGrants);
+            config.TenantId, blueprintSpObjectId, resourceSpObjectId, scopes, ct, permissionGrantScopes);
 
         if (!response)
         {
