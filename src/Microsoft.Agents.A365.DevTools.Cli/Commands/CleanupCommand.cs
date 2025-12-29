@@ -695,21 +695,6 @@ public class CleanupCommand
         IBotConfigurator botConfigurator)
     {
         logger.LogInformation("Starting endpoint-only cleanup...");
-        
-        // Check if there's actually an endpoint to clean up
-        if (string.IsNullOrWhiteSpace(config.BotName))
-        {
-            logger.LogInformation("No messaging endpoint found to clean up");
-            return;
-        }
-
-        // Check if blueprint ID exists (required for endpoint deletion)
-        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
-        {
-            logger.LogError("Agent Blueprint ID not found. Blueprint ID is required for endpoint deletion.");
-            logger.LogInformation("Please ensure blueprint is configured before attempting endpoint cleanup.");
-            return;
-        }
 
         logger.LogInformation("");
         logger.LogInformation("Endpoint Cleanup Preview:");
