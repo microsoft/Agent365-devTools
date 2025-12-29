@@ -298,7 +298,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// REGRESSION TEST: Verifies that user must confirm cleanup operations.
+    /// Verifies that user must confirm cleanup operations.
     /// If user declines first confirmation, cleanup should abort without deleting anything.
     /// </summary>
     [Fact]
@@ -327,7 +327,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// REGRESSION TEST: Verifies that user must type "DELETE" to confirm cleanup.
+    /// Verifies that user must type "DELETE" to confirm cleanup.
     /// If user confirms but doesn't type "DELETE" exactly, cleanup should abort.
     /// </summary>
     [Fact]
@@ -355,7 +355,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// REGRESSION TEST: Verifies confirmation provider is called with correct prompts.
+    /// Verifies confirmation provider is called with correct prompts.
     /// This ensures the user-facing prompts remain consistent.
     /// </summary>
     [Fact]
@@ -377,7 +377,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// REGRESSION TEST: Verifies that cleanup command properly injects IConfirmationProvider.
+    /// Verifies that cleanup command properly injects IConfirmationProvider.
     /// If this test fails after refactoring, it means the DI registration was broken.
     /// </summary>
     [Fact]
@@ -459,7 +459,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag shows appropriate error
+    /// Verifies that blueprint cleanup with --endpoint-only flag shows appropriate error
     /// when blueprint ID is missing.
     /// </summary>
     [Fact]
@@ -484,19 +484,31 @@ public class CleanupCommandTests
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
 
-        // Act
-        var result = await command.InvokeAsync(args);
+        var originalIn = Console.In;
+        try
+        {
+            // Provide user confirmation (even though validation will fail, command still prompts first)
+            using var stringReader = new StringReader("y\n");
+            Console.SetIn(stringReader);
 
-        // Assert
-        Assert.Equal(0, result); // Command completes but doesn't delete anything
-        
-        // Verify no deletion operations were called
-        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            Assert.Equal(0, result); // Command completes but doesn't delete anything
+            
+            // Verify no deletion operations were called (because blueprint ID is missing)
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag shows appropriate info
+    /// Verifies that blueprint cleanup with --endpoint-only flag shows appropriate info
     /// when no endpoint exists to clean up.
     /// </summary>
     [Fact]
@@ -521,19 +533,31 @@ public class CleanupCommandTests
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
 
-        // Act
-        var result = await command.InvokeAsync(args);
+        var originalIn = Console.In;
+        try
+        {
+            // Provide user confirmation (even though there's nothing to delete, command will still prompt)
+            using var stringReader = new StringReader("y\n");
+            Console.SetIn(stringReader);
 
-        // Assert
-        Assert.Equal(0, result);
-        
-        // Verify no deletion operations were called
-        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            Assert.Equal(0, result);
+            
+            // Verify no deletion operations were called (because BotName is empty)
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles invalid/empty Location.
+    /// Verifies that blueprint cleanup with --endpoint-only flag handles invalid/empty Location.
     /// The command should still proceed but may fail when calling the API with invalid location.
     /// </summary>
     [Fact]
@@ -585,7 +609,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles API exceptions gracefully.
+    /// Verifies that blueprint cleanup with --endpoint-only flag handles API exceptions gracefully.
     /// When DeleteEndpointWithAgentBlueprintAsync throws an exception, it should be caught and logged.
     /// </summary>
     [Fact]
@@ -626,9 +650,9 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles empty blueprint ID parameter.
-    /// This is a duplicate check since CleanupBlueprint_WithEndpointOnlyAndNoBlueprintId_ShouldLogError exists,
-    /// but this variant tests with whitespace-only string instead of null.
+    /// Verifies that blueprint cleanup with --endpoint-only flag handles whitespace-only blueprint ID.
+    /// Complements CleanupBlueprint_WithEndpointOnlyAndNoBlueprintId_ShouldLogError by testing whitespace
+    /// edge case, validating that IsNullOrWhiteSpace correctly rejects whitespace-only strings.
     /// </summary>
     [Fact]
     public async Task CleanupBlueprint_WithEndpointOnlyAndWhitespaceBlueprint_ShouldLogError()
@@ -652,19 +676,31 @@ public class CleanupCommandTests
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider);
         var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
 
-        // Act
-        var result = await command.InvokeAsync(args);
+        var originalIn = Console.In;
+        try
+        {
+            // Provide user confirmation (even though validation will fail, command still prompts first)
+            using var stringReader = new StringReader("y\n");
+            Console.SetIn(stringReader);
 
-        // Assert
-        Assert.Equal(0, result);
-        
-        // Verify no deletion operations were called since blueprint ID is invalid
-        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+            // Act
+            var result = await command.InvokeAsync(args);
+
+            // Assert
+            Assert.Equal(0, result);
+            
+            // Verify no deletion operations were called since blueprint ID is invalid
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles invalid user input.
+    /// Verifies that blueprint cleanup with --endpoint-only flag handles invalid user input.
     /// When user enters something other than y/yes/n/no, cleanup should be cancelled.
     /// </summary>
     [Fact]
@@ -703,7 +739,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles 'n' (no) response.
+    /// Verifies that blueprint cleanup with --endpoint-only flag handles 'n' (no) response.
     /// When user explicitly declines, cleanup should be cancelled.
     /// </summary>
     [Fact]
@@ -742,7 +778,7 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// TEST: Verifies that blueprint cleanup with --endpoint-only flag handles empty input (just Enter).
+    /// Verifies that blueprint cleanup with --endpoint-only flag handles empty input (just Enter).
     /// When user presses Enter without typing anything, cleanup should be cancelled (default is No).
     /// </summary>
     [Fact]
