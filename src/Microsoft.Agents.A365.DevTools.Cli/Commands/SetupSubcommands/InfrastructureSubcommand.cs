@@ -683,7 +683,7 @@ public static class InfrastructureSubcommand
             {
                 var exception = new AzureResourceException(description, string.Empty, result.StandardError, true);
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
-                ExceptionHandler.HandleAgent365Exception(exception);
+                ExceptionHandler.HandleAgent365Exception(exception, logFilePath: logFilePath);
             }
             else
             {
