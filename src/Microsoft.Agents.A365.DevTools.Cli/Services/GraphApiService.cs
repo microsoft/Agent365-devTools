@@ -325,9 +325,10 @@ public class GraphApiService
     /// Looks up a service principal by its application (client) ID.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(string tenantId, string appId, CancellationToken ct = default)
+    public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id", ct);
+        var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id", ct, scopes);
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
         return value[0].GetProperty("id").GetString();
@@ -339,14 +340,14 @@ public class GraphApiService
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
     public virtual async Task<string> EnsureServicePrincipalForAppIdAsync(
-        string tenantId, string appId, CancellationToken ct = default)
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         // Try existing
-        var spId = await LookupServicePrincipalByAppIdAsync(tenantId, appId, ct);
+        var spId = await LookupServicePrincipalByAppIdAsync(tenantId, appId, ct, scopes);
         if (!string.IsNullOrWhiteSpace(spId)) return spId!;
 
         // Create SP for this application
-        var created = await GraphPostAsync(tenantId, "/v1.0/servicePrincipals", new { appId }, ct);
+        var created = await GraphPostAsync(tenantId, "/v1.0/servicePrincipals", new { appId }, ct, scopes);
         if (created == null || !created.RootElement.TryGetProperty("id", out var idProp))
             throw new InvalidOperationException($"Failed to create servicePrincipal for appId {appId}");
 
@@ -358,7 +359,8 @@ public class GraphApiService
         string clientSpObjectId,
         string resourceSpObjectId,
         IEnumerable<string> scopes,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IEnumerable<string>? permissionGrantScopes = null)
     {
         var desiredScopeString = string.Join(' ', scopes);
 
@@ -366,7 +368,8 @@ public class GraphApiService
         var listDoc = await GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
-            ct);
+            ct,
+            permissionGrantScopes);
 
         var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0
             ? arr[0]
@@ -382,7 +385,7 @@ public class GraphApiService
                 resourceId = resourceSpObjectId,
                 scope = desiredScopeString
             };
-            var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
+            var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
             return created != null; // success if response parsed
         }
 
@@ -399,7 +402,7 @@ public class GraphApiService
         var id = existing.Value.GetProperty("id").GetString();
         if (string.IsNullOrWhiteSpace(id)) return false;
 
-        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct);
+        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct, permissionGrantScopes);
     }
 
     /// <summary>

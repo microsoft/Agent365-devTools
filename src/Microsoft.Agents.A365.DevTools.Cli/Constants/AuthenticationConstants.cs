@@ -80,6 +80,17 @@ public static class AuthenticationConstants
     };
 
     /// <summary>
+    /// Required scopes for oauth2 permission grants to service principals.
+    /// These scopes enable the service principals to operate correctly with the necessary permissions.
+    /// All scopes require admin consent.
+    /// </summary>
+    public static readonly string[] RequiredPermissionGrantScopes = new[]
+    {
+        "Application.ReadWrite.All",
+        "DelegatedPermissionGrant.ReadWrite.All"
+    };
+
+    /// <summary>
     /// Environment variable name for bearer token used in local development.
     /// This token is stored in .env files (Python/Node.js) or launchSettings.json (.NET)
     /// for testing purposes only. It should NOT be deployed to production Azure environments.

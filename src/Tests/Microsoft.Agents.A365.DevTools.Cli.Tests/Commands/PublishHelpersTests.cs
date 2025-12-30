@@ -166,7 +166,7 @@ public class PublishHelpersTests
             });
 
         _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync("sp-object-id");
 
         _mockGraphService.Setup(x => x.GraphPatchAsync(
@@ -182,12 +182,12 @@ public class PublishHelpersTests
         
         // When all prerequisites exist, EnsureServicePrincipalForAppIdAsync should NOT be called
         _mockGraphService.Verify(x => x.EnsureServicePrincipalForAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), 
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()), 
             Times.Never());
         
         // Should verify all service principals exist via lookup
         _mockGraphService.Verify(x => x.LookupServicePrincipalByAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), 
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()), 
             Times.AtLeast(1 + MosConstants.AllResourceAppIds.Length));
     }
 
@@ -222,20 +222,20 @@ public class PublishHelpersTests
         // Track which SPs have been created
         var createdSps = new HashSet<string>();
         _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
-            It.IsAny<string>(), It.Is<string>(appId => appId == MosConstants.TpsAppServicesClientAppId), It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), It.Is<string>(appId => appId == MosConstants.TpsAppServicesClientAppId), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync(() => createdSps.Contains(MosConstants.TpsAppServicesClientAppId) ? "sp-object-id" : null);
         
         foreach (var resourceAppId in MosConstants.AllResourceAppIds)
         {
             var capturedAppId = resourceAppId; // Capture for closure
             _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
-                It.IsAny<string>(), It.Is<string>(appId => appId == capturedAppId), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.Is<string>(appId => appId == capturedAppId), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
                 .ReturnsAsync(() => createdSps.Contains(capturedAppId) ? "sp-object-id" : null);
         }
 
         _mockGraphService.Setup(x => x.EnsureServicePrincipalForAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string tenantId, string appId, CancellationToken ct) =>
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
+            .ReturnsAsync((string tenantId, string appId, CancellationToken ct, IEnumerable<string>? authScopes) =>
             {
                 createdSps.Add(appId); // Mark as created
                 return "sp-object-id";
@@ -263,7 +263,7 @@ public class PublishHelpersTests
         // Should create service principals for first-party client app + MOS resource apps
         var expectedServicePrincipalCalls = 1 + MosConstants.AllResourceAppIds.Length;
         _mockGraphService.Verify(x => x.EnsureServicePrincipalForAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), 
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()), 
             Times.Exactly(expectedServicePrincipalCalls));
     }
 
@@ -290,7 +290,7 @@ public class PublishHelpersTests
             .ReturnsAsync((true, new List<string> { "Application Administrator" }));
 
         _mockGraphService.Setup(x => x.EnsureServicePrincipalForAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ThrowsAsync(new InvalidOperationException("Failed to create service principal"));
 
         // Act
@@ -325,7 +325,7 @@ public class PublishHelpersTests
             .ReturnsAsync((false, new List<string>()));
 
         _mockGraphService.Setup(x => x.EnsureServicePrincipalForAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ThrowsAsync(new Exception("403 Forbidden"));
 
         // Act
@@ -411,19 +411,19 @@ public class PublishHelpersTests
 
         // Mock service principal lookups - return unique IDs for each resource app
         _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
-            It.IsAny<string>(), MosConstants.TpsAppServicesClientAppId, It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), MosConstants.TpsAppServicesClientAppId, It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync("sp-first-party-client");
             
         _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
-            It.IsAny<string>(), MosConstants.TpsAppServicesResourceAppId, It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), MosConstants.TpsAppServicesResourceAppId, It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync("sp-tps");
             
         _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
-            It.IsAny<string>(), MosConstants.PowerPlatformApiResourceAppId, It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), MosConstants.PowerPlatformApiResourceAppId, It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync("sp-pp");
             
         _mockGraphService.Setup(x => x.LookupServicePrincipalByAppIdAsync(
-            It.IsAny<string>(), MosConstants.MosTitlesApiResourceAppId, It.IsAny<CancellationToken>()))
+            It.IsAny<string>(), MosConstants.MosTitlesApiResourceAppId, It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()))
             .ReturnsAsync("sp-titles");
 
         _mockGraphService.Setup(x => x.GraphPatchAsync(
@@ -449,7 +449,7 @@ public class PublishHelpersTests
         
         // When all prerequisites exist, EnsureServicePrincipalForAppIdAsync should NEVER be called (truly idempotent)
         _mockGraphService.Verify(x => x.EnsureServicePrincipalForAppIdAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), 
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<IEnumerable<string>?>()), 
             Times.Never());
         
         // GraphPatchAsync should never be called since permissions are already correct
