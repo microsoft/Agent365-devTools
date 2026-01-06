@@ -25,6 +25,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 internal class BlueprintCreationResult
 {
     public bool BlueprintCreated { get; set; }
+    public bool BlueprintAlreadyExisted { get; set; }
     public bool EndpointRegistered { get; set; }
     public bool EndpointAlreadyExisted { get; set; }
     /// <summary>
@@ -99,7 +100,9 @@ internal static class BlueprintSubcommand
         IBotConfigurator botConfigurator,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
-        IClientAppValidator clientAppValidator)
+        IClientAppValidator clientAppValidator,
+        BlueprintLookupService blueprintLookupService,
+        FederatedCredentialService federatedCredentialService)
     {
         var command = new Command("blueprint", 
             "Create agent blueprint (Entra ID application registration)\n" +
@@ -195,6 +198,8 @@ internal static class BlueprintSubcommand
                 platformDetector,
                 graphApiService,
                 blueprintService,
+                blueprintLookupService,
+                federatedCredentialService,
                 skipEndpointRegistration
                 );
 
@@ -216,6 +221,8 @@ internal static class BlueprintSubcommand
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
+        BlueprintLookupService blueprintLookupService,
+        FederatedCredentialService federatedCredentialService,
         bool skipEndpointRegistration = false,
         CancellationToken cancellationToken = default)
     {
@@ -278,14 +285,9 @@ internal static class BlueprintSubcommand
         // Phase 2.1: Delegated Consent
         // ========================================================================
 
-        logger.LogInformation("");
-        logger.LogInformation("==> Creating Agent Blueprint");
-
         // CRITICAL: Grant AgentApplication.Create permission BEFORE creating blueprint
         // This replaces the PowerShell call to DelegatedAgentApplicationCreateConsent.ps1
-        logger.LogInformation("");
-        logger.LogInformation("==> Ensuring AgentApplication.Create Permission");
-        logger.LogInformation("This permission is required to create Agent Blueprints");
+        logger.LogDebug("Ensuring AgentApplication.Create permission");
 
         var consentResult = await EnsureDelegatedConsentWithRetriesAsync(
             delegatedConsentService,
@@ -308,9 +310,6 @@ internal static class BlueprintSubcommand
         // Phase 2.2: Create Blueprint
         // ========================================================================
 
-        logger.LogInformation("");
-        logger.LogInformation("==> Creating Agent Blueprint Application");
-
         // Validate required config
         if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintDisplayName))
         {
@@ -324,6 +323,8 @@ internal static class BlueprintSubcommand
                 executor,
                 graphService,
                 blueprintService,
+                blueprintLookupService,
+                federatedCredentialService,
                 setupConfig.TenantId,
                 setupConfig.AgentBlueprintDisplayName,
                 setupConfig.AgentIdentityDisplayName,
@@ -331,6 +332,8 @@ internal static class BlueprintSubcommand
                 useManagedIdentity,
                 generatedConfig,
                 setupConfig,
+                configService,
+                config,
                 cancellationToken);
 
         if (!blueprintResult.success)
@@ -346,12 +349,10 @@ internal static class BlueprintSubcommand
 
         var blueprintAppId = blueprintResult.appId;
         var blueprintObjectId = blueprintResult.objectId;
+        var blueprintAlreadyExisted = blueprintResult.alreadyExisted;
 
-        logger.LogInformation("Agent Blueprint Details:");
-        logger.LogInformation("  - Display Name: {Name}", setupConfig.AgentBlueprintDisplayName);
-        logger.LogInformation("  - App ID: {Id}", blueprintAppId);
-        logger.LogInformation("  - Object ID: {Id}", blueprintObjectId);
-        logger.LogInformation("  - Identifier URI: api://{Id}", blueprintAppId);
+        logger.LogDebug("Blueprint created: {Name} (Object ID: {ObjectId}, App ID: {AppId})",
+            setupConfig.AgentBlueprintDisplayName, blueprintObjectId, blueprintAppId);
 
         // Convert to camelCase and save
         var camelCaseConfig = new JsonObject
@@ -373,9 +374,6 @@ internal static class BlueprintSubcommand
         // Phase 2.5: Create Client Secret (logging handled by method)
         // ========================================================================
 
-        logger.LogInformation("");
-        logger.LogInformation("==> Creating Client Secret for Agent Blueprint");
-
         await CreateBlueprintClientSecretAsync(
             blueprintObjectId!,
             blueprintAppId!,
@@ -383,10 +381,18 @@ internal static class BlueprintSubcommand
             generatedConfigPath,
             graphService,
             setupConfig,
+            configService,
             logger);
 
         logger.LogInformation("");
-        logger.LogInformation("Agent blueprint created successfully");
+        if (blueprintAlreadyExisted)
+        {
+            logger.LogInformation("Agent blueprint configured successfully");
+        }
+        else
+        {
+            logger.LogInformation("Agent blueprint created successfully");
+        }
         logger.LogInformation("Generated config saved: {Path}", generatedConfigPath);
         logger.LogInformation("");
 
@@ -423,7 +429,7 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Setup will continue to configure Bot API permissions");
                 logger.LogWarning("");
                 logger.LogWarning("To resolve endpoint registration issues:");
-                logger.LogWarning("  1. Delete existing endpoint: a365 cleanup azure");
+                logger.LogWarning("  1. Delete existing endpoint: a365 cleanup blueprint");
                 logger.LogWarning("  2. Register endpoint again: a365 setup blueprint --endpoint-only");
                 logger.LogWarning("  Or rerun full setup: a365 setup blueprint");
                 logger.LogWarning("");
@@ -459,6 +465,7 @@ internal static class BlueprintSubcommand
         return new BlueprintCreationResult
         {
             BlueprintCreated = true,
+            BlueprintAlreadyExisted = blueprintAlreadyExisted,
             EndpointRegistered = endpointRegistered,
             EndpointAlreadyExisted = endpointAlreadyExisted,
             EndpointRegistrationAttempted = !skipEndpointRegistration
@@ -516,14 +523,17 @@ internal static class BlueprintSubcommand
 
     /// <summary>
     /// Creates Agent Blueprint application using Graph API
+    /// Implements dual-path discovery for idempotency: checks objectId from config first, falls back to displayName query.
     /// Used by: BlueprintSubcommand and A365SetupRunner Phase 2.2
-    /// Returns: (success, appId, objectId, servicePrincipalId)
+    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted)
     /// </summary>
-    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId)> CreateAgentBlueprintAsync(
+    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted)> CreateAgentBlueprintAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
+        BlueprintLookupService blueprintLookupService,
+        FederatedCredentialService federatedCredentialService,
         string tenantId,
         string displayName,
         string? agentIdentityDisplayName,
@@ -531,8 +541,92 @@ internal static class BlueprintSubcommand
         bool useManagedIdentity,
         JsonObject generatedConfig,
         Models.Agent365Config setupConfig,
+        IConfigService configService,
+        FileInfo configFile,
         CancellationToken ct)
     {
+        // ========================================================================
+        // Idempotency Check: Dual-Path Discovery
+        // ========================================================================
+        
+        string? existingObjectId = setupConfig.AgentBlueprintObjectId;
+        string? existingAppId = null;
+        string? existingServicePrincipalId = setupConfig.AgentBlueprintServicePrincipalObjectId;
+        bool blueprintAlreadyExists = false;
+        bool requiresPersistence = false;
+
+        // Primary path: Check if we have objectId in config
+        if (!string.IsNullOrWhiteSpace(existingObjectId))
+        {
+            logger.LogDebug("Checking for existing blueprint with objectId: {ObjectId}...", existingObjectId);
+            var lookupResult = await blueprintLookupService.GetApplicationByObjectIdAsync(tenantId, existingObjectId, ct);
+            
+            if (lookupResult.Found)
+            {
+                logger.LogInformation("Blueprint '{DisplayName}' already exists", displayName);
+                
+                existingAppId = lookupResult.AppId;
+                blueprintAlreadyExists = true;
+            }
+            else
+            {
+                logger.LogWarning("ObjectId in config not found in Entra ID - will try discovery by display name");
+                existingObjectId = null;
+            }
+        }
+
+        // Fallback path: Query by displayName for migration scenarios
+        if (!blueprintAlreadyExists && !string.IsNullOrWhiteSpace(displayName))
+        {
+            logger.LogDebug("Searching for existing blueprint by display name: {DisplayName}...", displayName);
+            var lookupResult = await blueprintLookupService.GetApplicationByDisplayNameAsync(tenantId, displayName, cancellationToken: ct);
+            
+            if (lookupResult.Found)
+            {
+                logger.LogDebug("Discovered existing blueprint from previous setup, updating config with objectId for faster lookups");
+                
+                existingObjectId = lookupResult.ObjectId;
+                existingAppId = lookupResult.AppId;
+                blueprintAlreadyExists = true;
+                requiresPersistence = lookupResult.RequiresPersistence;
+            }
+        }
+
+        // If blueprint exists, get service principal if we don't have it
+        if (blueprintAlreadyExists && !string.IsNullOrWhiteSpace(existingAppId))
+        {
+            if (string.IsNullOrWhiteSpace(existingServicePrincipalId))
+            {
+                logger.LogDebug("Looking up service principal for blueprint...");
+                var spLookup = await blueprintLookupService.GetServicePrincipalByAppIdAsync(tenantId, existingAppId, ct);
+                
+                if (spLookup.Found)
+                {
+                    logger.LogDebug("Service principal found: {ObjectId}", spLookup.ObjectId);
+                    existingServicePrincipalId = spLookup.ObjectId;
+                    requiresPersistence = true;
+                }
+            }
+
+            // Persist objectIds if needed (migration scenario or new discovery)
+            if (requiresPersistence)
+            {
+                logger.LogDebug("Persisting blueprint metadata to config for faster future lookups...");
+                setupConfig.AgentBlueprintObjectId = existingObjectId;
+                setupConfig.AgentBlueprintServicePrincipalObjectId = existingServicePrincipalId;
+                setupConfig.AgentBlueprintId = existingAppId;
+                
+                await configService.SaveStateAsync(setupConfig);
+                logger.LogDebug("Config updated with blueprint identifiers");
+            }
+
+            // Blueprint exists, skip creation and move to FIC/secret validation
+            return (true, existingAppId, existingObjectId, existingServicePrincipalId, alreadyExisted: true);
+        }
+
+        // ========================================================================
+        // Blueprint Creation: No existing blueprint found
+        // ========================================================================
         try
         {
             logger.LogInformation("Creating Agent Blueprint using Microsoft Graph SDK...");
@@ -577,7 +671,7 @@ internal static class BlueprintSubcommand
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
-                return (false, null, null, null);
+                return (false, null, null, null, alreadyExisted: false);
             }
 
             // Create the application using Microsoft Graph SDK
@@ -621,13 +715,13 @@ internal static class BlueprintSubcommand
                     {
                         errorContent = await appResponse.Content.ReadAsStringAsync(ct);
                         logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                        return (false, null, null, null);
+                        return (false, null, null, null, alreadyExisted: false);
                     }
                 }
                 else
                 {
                     logger.LogError("Failed to create application: {Status} - {Error}", appResponse.StatusCode, errorContent);
-                    return (false, null, null, null);
+                    return (false, null, null, null, alreadyExisted: false);
                 }
             }
 
@@ -657,7 +751,7 @@ internal static class BlueprintSubcommand
             if (!appAvailable)
             {
                 logger.LogError("Application object not available after creation and retries. Aborting setup.");
-                return (false, null, null, null);
+                return (false, null, null, null, alreadyExisted: false);
             }
             
             logger.LogInformation("Application object verified in directory");
@@ -746,26 +840,71 @@ internal static class BlueprintSubcommand
                 }
             }
 
+            // Persist blueprint identifiers immediately after creation
+            logger.LogInformation("Persisting blueprint metadata to config...");
+            setupConfig.AgentBlueprintObjectId = objectId;
+            setupConfig.AgentBlueprintServicePrincipalObjectId = servicePrincipalId;
+            setupConfig.AgentBlueprintId = appId;
+            
+            logger.LogDebug("About to save config with: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}", 
+                objectId, servicePrincipalId, appId);
+            
+            await configService.SaveStateAsync(setupConfig);
+            logger.LogInformation("Config updated with blueprint identifiers");
+            
+            logger.LogDebug("After save, config has: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}", 
+                setupConfig.AgentBlueprintObjectId, setupConfig.AgentBlueprintServicePrincipalObjectId, setupConfig.AgentBlueprintId);
+
             // Create Federated Identity Credential ONLY when MSI is relevant (if managed identity provided)
             if (useManagedIdentity && !string.IsNullOrWhiteSpace(managedIdentityPrincipalId))
             {
                 logger.LogInformation("Creating Federated Identity Credential for Managed Identity...");
                 var credentialName = $"{displayName.Replace(" ", "")}-MSI";
 
-                var ficSuccess = await CreateFederatedIdentityCredentialAsync(
+                // Check if FIC already exists before creating
+                var ficExistsResult = await federatedCredentialService.CheckFederatedCredentialExistsAsync(
                     tenantId,
                     objectId,
-                    credentialName,
                     managedIdentityPrincipalId,
-                    graphToken,
-                    logger,
+                    $"https://login.microsoftonline.com/{tenantId}/v2.0",
                     ct);
 
-                if (ficSuccess)
+                bool ficSuccess;
+                if (ficExistsResult.Exists)
                 {
-                    logger.LogInformation("Federated Identity Credential created successfully");
+                    logger.LogInformation("Federated credential already exists (skipping)");
+                    logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", managedIdentityPrincipalId);
+                    ficSuccess = true;
                 }
                 else
+                {
+                    logger.LogInformation("Creating new federated credential...");
+                    var ficCreateResult = await federatedCredentialService.CreateFederatedCredentialAsync(
+                        tenantId,
+                        objectId,
+                        credentialName,
+                        $"https://login.microsoftonline.com/{tenantId}/v2.0",
+                        managedIdentityPrincipalId,
+                        new List<string> { "api://AzureADTokenExchange" },
+                        ct);
+
+                    ficSuccess = ficCreateResult.Success;
+
+                    if (ficCreateResult.AlreadyExisted)
+                    {
+                        logger.LogInformation("Federated credential was created by another process (race condition handled)");
+                    }
+                    else if (ficSuccess)
+                    {
+                        logger.LogInformation("Federated Identity Credential created successfully");
+                    }
+                    else
+                    {
+                        logger.LogWarning("Failed to create Federated Identity Credential: {Error}", ficCreateResult.ErrorMessage ?? "Unknown error");
+                    }
+                }
+
+                if (!ficSuccess)
                 {
                     logger.LogWarning("Failed to create Federated Identity Credential");
                 }
@@ -878,12 +1017,12 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Consent URL: {Url}", consentUrlGraph);
             }
 
-            return (true, appId, objectId, servicePrincipalId);
+            return (true, appId, objectId, servicePrincipalId, alreadyExisted: false);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
-            return (false, null, null, null);
+            return (false, null, null, null, alreadyExisted: false);
         }
     }
 
@@ -980,6 +1119,7 @@ internal static class BlueprintSubcommand
         string generatedConfigPath,
         GraphApiService graphService,
         Models.Agent365Config setupConfig,
+        IConfigService configService,
         ILogger logger,
         CancellationToken ct = default)
     {
@@ -1038,10 +1178,8 @@ internal static class BlueprintSubcommand
             setupConfig.AgentBlueprintClientSecret = protectedSecret;
             setupConfig.AgentBlueprintClientSecretProtected = isProtected;
 
-            await File.WriteAllTextAsync(
-                    generatedConfigPath,
-                    generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
-                    ct);
+            // Use SaveStateAsync to preserve all existing dynamic properties (especially agentBlueprintServicePrincipalObjectId)
+            await configService.SaveStateAsync(setupConfig);
 
             logger.LogInformation("Client secret created successfully!");
             logger.LogInformation($"  - Secret stored in generated config (encrypted: {isProtected})");

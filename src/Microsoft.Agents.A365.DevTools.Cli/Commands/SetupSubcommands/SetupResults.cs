@@ -16,6 +16,15 @@ public class SetupResults
     public bool MessagingEndpointRegistered { get; set; }
     public bool InheritablePermissionsConfigured { get; set; }
     
+    // Idempotency tracking flags
+    public bool InfrastructureAlreadyExisted { get; set; }
+    public bool BlueprintAlreadyExisted { get; set; }
+    public bool BlueprintDiscoveredAndPersisted { get; set; }
+    public bool ServicePrincipalDiscovered { get; set; }
+    public bool FicAlreadyExisted { get; set; }
+    public bool SecretReused { get; set; }
+    public bool EndpointAlreadyExisted { get; set; }
+    
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
     

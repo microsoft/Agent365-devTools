@@ -37,7 +37,7 @@ public class AzureValidator : IAzureValidator
     /// <inheritdoc />
     public async Task<bool> ValidateAllAsync(string subscriptionId)
     {
-        _logger.LogInformation("Validating Azure CLI authentication and subscription...");
+        _logger.LogDebug("Validating Azure CLI authentication and subscription...");
         
         // Authentication validation (critical - stops execution if failed)
         if (!await _authValidator.ValidateAuthenticationAsync(subscriptionId))

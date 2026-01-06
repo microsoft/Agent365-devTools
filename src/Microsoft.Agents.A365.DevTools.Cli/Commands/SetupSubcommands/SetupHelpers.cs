@@ -84,11 +84,13 @@ internal static class SetupHelpers
         logger.LogInformation("Completed Steps:");
         if (results.InfrastructureCreated)
         {
-            logger.LogInformation("  [OK] Infrastructure created");
+            var status = results.InfrastructureAlreadyExisted ? "configured (already exists)" : "created";
+            logger.LogInformation("  [OK] Infrastructure {Status}", status);
         }
         if (results.BlueprintCreated)
         {
-            logger.LogInformation("  [OK] Agent blueprint created (Blueprint ID: {BlueprintId})", results.BlueprintId ?? "unknown");
+            var status = results.BlueprintAlreadyExisted ? "configured (already exists)" : "created";
+            logger.LogInformation("  [OK] Agent blueprint {Status} (Blueprint ID: {BlueprintId})", status, results.BlueprintId ?? "unknown");
         }
         if (results.McpPermissionsConfigured)
             logger.LogInformation("  [OK] MCP server permissions configured");
@@ -97,7 +99,10 @@ internal static class SetupHelpers
         if (results.BotApiPermissionsConfigured)
             logger.LogInformation("  [OK] Messaging Bot API permissions configured");
         if (results.MessagingEndpointRegistered)
-            logger.LogInformation("  [OK] Messaging endpoint registered");
+        {
+            var status = results.EndpointAlreadyExisted ? "configured (already exists)" : "created";
+            logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
+        }
         
         // Show what failed
         if (results.Errors.Count > 0)
@@ -148,7 +153,7 @@ internal static class SetupHelpers
             if (!results.MessagingEndpointRegistered)
             {
                 logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
-                logger.LogInformation("    Or delete conflicting endpoint first: a365 cleanup azure");
+                logger.LogInformation("    Or delete conflicting endpoint first: a365 cleanup blueprint");
             }
         }
         else if (results.HasWarnings)

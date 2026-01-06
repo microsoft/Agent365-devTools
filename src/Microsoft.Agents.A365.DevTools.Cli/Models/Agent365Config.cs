@@ -324,6 +324,21 @@ public class Agent365Config
     public string? AgentBlueprintId { get; set; }
 
     /// <summary>
+    /// Azure AD object ID for the agent blueprint application.
+    /// Used as authoritative identifier for all blueprint operations to handle cases
+    /// where multiple blueprints may exist with the same display name.
+    /// </summary>
+    [JsonPropertyName("agentBlueprintObjectId")]
+    public string? AgentBlueprintObjectId { get; set; }
+
+    /// <summary>
+    /// Azure AD object ID for the service principal associated with the agent blueprint.
+    /// Required for OAuth2 permission grants and inheritable permissions configuration.
+    /// </summary>
+    [JsonPropertyName("agentBlueprintServicePrincipalObjectId")]
+    public string? AgentBlueprintServicePrincipalObjectId { get; set; }
+
+    /// <summary>
     /// Azure AD application/identity ID for the agentic app.
     /// </summary>
     [JsonPropertyName("AgenticAppId")]

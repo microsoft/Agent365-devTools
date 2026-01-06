@@ -19,6 +19,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// </summary>
 public class BotConfigurator : IBotConfigurator
 {
+    private const string AlreadyExistsErrorMessage = "already exists";
+
     private readonly ILogger<IBotConfigurator> _logger;
     private readonly CommandExecutor _executor;
 
@@ -127,22 +129,27 @@ public class BotConfigurator : IBotConfigurator
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
-
                     var errorContent = await response.Content.ReadAsStringAsync();
                     
-                    // Only treat HTTP 409 Conflict as "already exists" success case
-                    // InternalServerError (500) with "already exists" message is an actual failure
-                    if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+                    // Check for "already exists" condition in multiple forms:
+                    // 1. HTTP 409 Conflict (standard REST pattern)
+                    // 2. HTTP 500 InternalServerError with "already exists" in message body (Azure Bot Service pattern)
+                    bool isAlreadyExists = response.StatusCode == System.Net.HttpStatusCode.Conflict ||
+                        (errorContent.Contains(AlreadyExistsErrorMessage, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (isAlreadyExists)
                     {
-                        _logger.LogWarning("Endpoint '{EndpointName}' already exists in the resource group", endpointName);
-                        _logger.LogInformation("Endpoint registration completed (already exists)");
+                        _logger.LogWarning("Endpoint '{EndpointName}' {AlreadyExistsMessage} in the resource group", endpointName, AlreadyExistsErrorMessage);
+                        _logger.LogInformation("Endpoint registration completed ({AlreadyExistsMessage})", AlreadyExistsErrorMessage);
                         _logger.LogInformation("");
                         _logger.LogInformation("If you need to update the endpoint:");
-                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup azure");
+                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup blueprint");
                         _logger.LogInformation("  2. Register new endpoint: a365 setup blueprint --endpoint-only");
                         return EndpointRegistrationResult.AlreadyExists;
                     }
+                    
+                    // Log error only for actual failures (not idempotent "already exists" scenarios)
+                    _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
                     
                     if (errorContent.Contains("Failed to provision bot resource via Azure Management API. Status: BadRequest", StringComparison.OrdinalIgnoreCase))
                     {
@@ -154,7 +161,7 @@ public class BotConfigurator : IBotConfigurator
                     _logger.LogError("");
                     _logger.LogError("To resolve this issue:");
                     _logger.LogError("  1. Check if endpoint exists: Review error details above");
-                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup azure");
+                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup blueprint");
                     _logger.LogError("  3. Try registration again: a365 setup blueprint --endpoint-only");
                     return EndpointRegistrationResult.Failed;
                 }
