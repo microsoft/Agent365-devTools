@@ -29,11 +29,11 @@ public class MicrosoftGraphTokenProviderTests
         var clientAppId = "87654321-4321-4321-4321-cba987654321";
         var expectedToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
 
-        _executor.ExecuteAsync(
+        _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(),
             Arg.Is<string>(args => args.Contains($"-ClientId '{clientAppId}'")),
             Arg.Any<string?>(),
-            Arg.Any<bool>(),
+            Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
@@ -45,11 +45,11 @@ public class MicrosoftGraphTokenProviderTests
 
         // Assert
         token.Should().Be(expectedToken);
-        await _executor.Received(1).ExecuteAsync(
+        await _executor.Received(1).ExecuteWithStreamingAsync(
             Arg.Is<string>(cmd => cmd == "pwsh" || cmd == "powershell"),
             Arg.Is<string>(args => args.Contains($"-ClientId '{clientAppId}'")),
             Arg.Any<string?>(),
-            Arg.Any<bool>(),
+            Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
     }
@@ -62,11 +62,11 @@ public class MicrosoftGraphTokenProviderTests
         var scopes = new[] { "User.Read" };
         var expectedToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
 
-        _executor.ExecuteAsync(
+        _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(),
             Arg.Is<string>(args => !args.Contains("-ClientId")),
             Arg.Any<string?>(),
-            Arg.Any<bool>(),
+            Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
@@ -78,11 +78,11 @@ public class MicrosoftGraphTokenProviderTests
 
         // Assert
         token.Should().Be(expectedToken);
-        await _executor.Received(1).ExecuteAsync(
+        await _executor.Received(1).ExecuteWithStreamingAsync(
             Arg.Any<string>(),
             Arg.Is<string>(args => !args.Contains("-ClientId")),
             Arg.Any<string?>(),
-            Arg.Any<bool>(),
+            Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
     }
@@ -152,11 +152,11 @@ public class MicrosoftGraphTokenProviderTests
         var tenantId = "12345678-1234-1234-1234-123456789abc";
         var scopes = new[] { "User.Read" };
 
-        _executor.ExecuteAsync(
+        _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(),
             Arg.Any<string>(),
             Arg.Any<string?>(),
-            Arg.Any<bool>(),
+            Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "PowerShell error" });
@@ -178,11 +178,11 @@ public class MicrosoftGraphTokenProviderTests
         var scopes = new[] { "User.Read" };
         var expectedToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
 
-        _executor.ExecuteAsync(
+        _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(),
             Arg.Any<string>(),
             Arg.Any<string?>(),
-            Arg.Any<bool>(),
+            Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
@@ -223,11 +223,11 @@ public class MicrosoftGraphTokenProviderTests
         var clientAppId = "87654321-4321-4321-4321-cba987654321";
         var expectedToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
 
-        _executor.ExecuteAsync(
+        _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(),
             Arg.Is<string>(args => !args.Contains("''")), // Should not have escaped quotes for valid GUID
             Arg.Any<string?>(),
-            Arg.Any<bool>(),
+            Arg.Any<string>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
