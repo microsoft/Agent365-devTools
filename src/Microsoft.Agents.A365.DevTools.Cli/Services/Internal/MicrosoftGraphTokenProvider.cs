@@ -108,7 +108,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 useDeviceCode);
 
             var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
-            var result = await ExecuteWithFallbackAsync(script, useDeviceCode, ct);
+            var result = await ExecuteWithFallbackAsync(script, ct);
             var token = ProcessResult(result);
 
             if (string.IsNullOrWhiteSpace(token))
@@ -216,17 +216,16 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
     private async Task<CommandResult> ExecuteWithFallbackAsync(
         string script,
-        bool useDeviceCode,
         CancellationToken ct)
     {
         // Try PowerShell Core first (cross-platform)
-        var result = await ExecutePowerShellAsync("pwsh", script, useDeviceCode, ct);
+        var result = await ExecutePowerShellAsync("pwsh", script, ct);
 
         // Fallback to Windows PowerShell if pwsh is not available
         if (!result.Success && IsPowerShellNotFoundError(result))
         {
             _logger.LogDebug("PowerShell Core not found, falling back to Windows PowerShell");
-            result = await ExecutePowerShellAsync("powershell", script, useDeviceCode, ct);
+            result = await ExecutePowerShellAsync("powershell", script, ct);
         }
 
         return result;
@@ -235,33 +234,17 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     private async Task<CommandResult> ExecutePowerShellAsync(
         string shell,
         string script,
-        bool useDeviceCode,
         CancellationToken ct)
     {
         var arguments = BuildPowerShellArguments(shell, script);
 
-        if (useDeviceCode)
-        {
-            // Use streaming for device code flow so user sees the instructions in real-time
-            return await _executor.ExecuteWithStreamingAsync(
-                command: shell,
-                arguments: arguments,
-                workingDirectory: null,
-                outputPrefix: "",
-                interactive: true, // Allow user to see device code instructions
-                cancellationToken: ct);
-        }
-        else
-        {
-            // Use standard execution for browser flow (captures output silently)
-            return await _executor.ExecuteAsync(
-                command: shell,
-                arguments: arguments,
-                workingDirectory: null,
-                captureOutput: true,
-                suppressErrorLogging: true, // We handle logging ourselves
-                cancellationToken: ct);
-        }
+        return await _executor.ExecuteWithStreamingAsync(
+            command: shell,
+            arguments: arguments,
+            workingDirectory: null,
+            outputPrefix: "",
+            interactive: true,
+            cancellationToken: ct);
     }
 
     private static string BuildPowerShellArguments(string shell, string script)
