@@ -18,7 +18,8 @@ public class CleanupCommand
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
-        IConfirmationProvider confirmationProvider)
+        IConfirmationProvider confirmationProvider,
+        FederatedCredentialService federatedCredentialService)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
@@ -40,11 +41,11 @@ public class CleanupCommand
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (configFile, verbose) =>
         {
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, configFile);
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile);
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, federatedCredentialService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -56,7 +57,8 @@ public class CleanupCommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
-        AgentBlueprintService agentBlueprintService)
+        AgentBlueprintService agentBlueprintService,
+        FederatedCredentialService federatedCredentialService)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -124,7 +126,32 @@ public class CleanupCommand
                     return;
                 }
 
+                // Delete federated credentials first before deleting the blueprint
+                logger.LogInformation("");
+                logger.LogInformation("Deleting federated credentials from blueprint...");
+                
+                // Configure FederatedCredentialService with custom client app ID if available
+                if (!string.IsNullOrWhiteSpace(config.ClientAppId))
+                {
+                    federatedCredentialService.CustomClientAppId = config.ClientAppId;
+                }
+                
+                var ficsDeleted = await federatedCredentialService.DeleteAllFederatedCredentialsAsync(
+                    config.TenantId,
+                    config.AgentBlueprintId);
+
+                if (!ficsDeleted)
+                {
+                    logger.LogWarning("Some federated credentials may not have been deleted successfully");
+                    logger.LogWarning("Continuing with blueprint deletion...");
+                }
+                else
+                {
+                    logger.LogInformation("Federated credentials deleted successfully");
+                }
+
                 // Delete the agent blueprint using the special Graph API endpoint
+                logger.LogInformation("");
                 logger.LogInformation("Deleting agent blueprint application...");
                 var deleted = await agentBlueprintService.DeleteAgentBlueprintAsync(
                     config.TenantId,
@@ -395,6 +422,7 @@ public class CleanupCommand
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
+        FederatedCredentialService federatedCredentialService,
         FileInfo? configFile)
     {
         var cleanupSucceeded = false;
@@ -447,7 +475,34 @@ public class CleanupCommand
 
             logger.LogInformation("Starting complete cleanup...");
 
-            // 1. Delete agent blueprint application
+            // 1. Delete federated credentials from agent blueprint (if exists)
+            if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
+            {
+                logger.LogInformation("Deleting federated credentials from blueprint...");
+                
+                // Configure FederatedCredentialService with custom client app ID if available
+                if (!string.IsNullOrWhiteSpace(config.ClientAppId))
+                {
+                    federatedCredentialService.CustomClientAppId = config.ClientAppId;
+                }
+                
+                var ficsDeleted = await federatedCredentialService.DeleteAllFederatedCredentialsAsync(
+                    config.TenantId,
+                    config.AgentBlueprintId);
+
+                if (!ficsDeleted)
+                {
+                    logger.LogWarning("Some federated credentials may not have been deleted successfully");
+                    logger.LogWarning("Continuing with blueprint deletion...");
+                    hasFailures = true;
+                }
+                else
+                {
+                    logger.LogInformation("Federated credentials deleted successfully");
+                }
+            }
+
+            // 2. Delete agent blueprint application
             if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
             {
                 logger.LogInformation("Deleting agent blueprint application...");
@@ -467,7 +522,7 @@ public class CleanupCommand
                 }
             }
 
-            // 2. Delete agent identity application
+            // 3. Delete agent identity application
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
             {
                 logger.LogInformation("Deleting agent identity application...");
@@ -488,7 +543,7 @@ public class CleanupCommand
                 }
             }
 
-            // 3. Delete agent user
+            // 4. Delete agent user
             if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
             {
                 logger.LogInformation("Deleting agent user...");
@@ -496,7 +551,7 @@ public class CleanupCommand
                 logger.LogInformation("Agent user deleted");
             }
 
-            // 4. Delete bot messaging endpoint using shared helper
+            // 5. Delete bot messaging endpoint using shared helper
             if (!string.IsNullOrWhiteSpace(config.BotName))
             {
                 var endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator);
@@ -506,7 +561,7 @@ public class CleanupCommand
                 }
             }
 
-            // 5. Delete Azure resources (Web App and App Service Plan)
+            // 6. Delete Azure resources (Web App and App Service Plan)
             if (!string.IsNullOrWhiteSpace(config.WebAppName) && !string.IsNullOrWhiteSpace(config.ResourceGroup))
             {
                 logger.LogInformation("Deleting Azure resources...");

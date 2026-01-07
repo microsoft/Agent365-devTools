@@ -220,7 +220,7 @@ public class GraphApiService
         return JsonDocument.Parse(json);
     }
 
-    public async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
@@ -237,7 +237,7 @@ public class GraphApiService
     /// <summary>
     /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
     /// </summary>
-    public async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
         {

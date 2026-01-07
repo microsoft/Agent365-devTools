@@ -193,7 +193,7 @@ public static class InfrastructureSubcommand
 
     #region Public Static Methods (Reusable by A365SetupRunner)
 
-    public static async Task<bool> CreateInfrastructureImplementationAsync(
+    public static async Task<(bool success, bool anyAlreadyExisted)> CreateInfrastructureImplementationAsync(
         ILogger logger,
         string configPath,
         string generatedConfigPath,
@@ -206,7 +206,7 @@ public static class InfrastructureSubcommand
         if (!File.Exists(configPath))
         {
             logger.LogError("Config file not found at {Path}", configPath);
-            return false;
+            return (false, false);
         }
 
         JsonObject cfg;
@@ -217,7 +217,7 @@ public static class InfrastructureSubcommand
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to parse config JSON: {Path}", configPath);
-            return false;
+            return (false, false);
         }
 
         string Get(string name) => cfg.TryGetPropertyValue(name, out var node) && node is JsonValue jv && jv.TryGetValue(out string? s) ? s ?? string.Empty : string.Empty;
@@ -244,7 +244,7 @@ public static class InfrastructureSubcommand
                 logger.LogError(
                     "Config missing required properties for Azure hosting. " +
                     "Need subscriptionId, resourceGroup, appServicePlanName, webAppName, location.");
-                return false;
+                return (false, false);
             }
         }
         else
@@ -288,7 +288,7 @@ public static class InfrastructureSubcommand
 
             if (!isValidated)
             {
-                return false;
+                return (false, false);
             }
         }
         else
@@ -296,7 +296,7 @@ public static class InfrastructureSubcommand
             logger.LogInformation("==> Skipping Azure management authentication (--skipInfrastructure or External hosting)");
         }
 
-        await CreateInfrastructureAsync(
+        var (principalId, anyAlreadyExisted) = await CreateInfrastructureAsync(
             commandExecutor,
             subscriptionId,
             tenantId,
@@ -314,7 +314,7 @@ public static class InfrastructureSubcommand
             externalHosting,
             cancellationToken);
 
-        return true;
+        return (true, anyAlreadyExisted);
     }
 
     /// <summary>
@@ -348,11 +348,11 @@ public static class InfrastructureSubcommand
         }
         else
         {
-            logger.LogInformation("Azure CLI already authenticated");
+            logger.LogDebug("Azure CLI already authenticated");
         }
         
         // Verify we have the management scope
-        logger.LogInformation("Verifying access to Azure management resources...");
+        logger.LogDebug("Verifying access to Azure management resources...");
         var tokenCheck = await executor.ExecuteAsync(
             "az", 
             "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
@@ -390,15 +390,13 @@ public static class InfrastructureSubcommand
             }
             else
             {
-                logger.LogInformation("Management scope token acquired successfully!");
+                logger.LogDebug("Management scope token acquired successfully!");
             }
         }
         else
         {
-            logger.LogInformation("Management scope verified successfully");
+            logger.LogDebug("Management scope verified successfully");
         }
-        
-        logger.LogInformation("");
         return true;
     }
 
@@ -406,8 +404,9 @@ public static class InfrastructureSubcommand
     /// Phase 1: Create Azure infrastructure (Resource Group, App Service Plan, Web App, Managed Identity)
     /// Equivalent to A365SetupRunner Phase 1 (lines 223-334)
     /// Returns the Managed Identity Principal ID (or null if not assigned)
+    /// and whether any infrastructure already existed (for idempotent summary reporting)
     /// </summary>
-    public static async Task CreateInfrastructureAsync(
+    public static async Task<(string? principalId, bool anyAlreadyExisted)> CreateInfrastructureAsync(
         CommandExecutor executor,
         string subscriptionId,
         string tenantId,
@@ -425,6 +424,7 @@ public static class InfrastructureSubcommand
         bool externalHosting,
         CancellationToken cancellationToken = default)
     {
+        bool anyAlreadyExisted = false;
         string? principalId = null;
         JsonObject generatedConfig = new JsonObject();
 
@@ -469,6 +469,7 @@ public static class InfrastructureSubcommand
             }
 
             logger.LogInformation("");
+            return (principalId, false); // Skip infra means nothing was created/modified
         }
         else
         {
@@ -489,6 +490,7 @@ public static class InfrastructureSubcommand
             if (rgExists.Success && rgExists.StandardOutput.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogInformation("Resource group already exists: {RG} (skipping creation)", resourceGroup);
+                anyAlreadyExisted = true;
             }
             else
             {
@@ -497,7 +499,11 @@ public static class InfrastructureSubcommand
             }
 
             // App Service plan
-            await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId);
+            bool planAlreadyExisted = await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId);
+            if (planAlreadyExisted)
+            {
+                anyAlreadyExisted = true;
+            }
 
             // Web App
             var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
@@ -559,6 +565,7 @@ public static class InfrastructureSubcommand
             }
             else
             {
+                anyAlreadyExisted = true;
                 var linuxFxVersion = await GetLinuxFxVersionForPlatformAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
                 logger.LogInformation("Web app already exists: {App} (skipping creation)", webAppName);
                 logger.LogInformation("Configuring web app to use {Platform} runtime ({LinuxFxVersion})...", platform, linuxFxVersion);
@@ -637,6 +644,8 @@ public static class InfrastructureSubcommand
                 logger.LogInformation("Generated config updated with MSI principalId: {Id}", principalId);
             }
         }
+        
+        return (principalId, anyAlreadyExisted);
     }
 
     /// <summary>
@@ -699,9 +708,10 @@ public static class InfrastructureSubcommand
     }
 
     /// <summary>
-    /// Ensures that an App Service Plan exists, creating it if necessary and verifying its existence.
+    /// Ensures the App Service plan exists or creates it if missing.
+    /// Returns true if plan already existed, false if newly created.
     /// </summary>
-    internal static async Task EnsureAppServicePlanExistsAsync(
+    internal static async Task<bool> EnsureAppServicePlanExistsAsync(
         CommandExecutor executor, 
         ILogger logger, 
         string resourceGroup, 
@@ -716,6 +726,7 @@ public static class InfrastructureSubcommand
         if (planShow.Success)
         {
             logger.LogInformation("App Service plan already exists: {Plan} (skipping creation)", planName);
+            return true; // Already existed
         }
         else
         {
@@ -819,6 +830,7 @@ public static class InfrastructureSubcommand
                     $"Verification failed after {maxRetries} attempts. The plan may still be propagating in Azure.");
             }
             logger.LogInformation("App Service plan created and verified successfully: {Plan}", planName);
+            return false; // Newly created
         }
     }
 

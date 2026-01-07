@@ -62,25 +62,13 @@ public class AzureEnvironmentValidator : IAzureEnvironmentValidator
         // Check if Azure CLI is using 32-bit Python on 64-bit Windows
         if (result.StandardOutput.Contains("32 bit", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning("Azure CLI Performance Notice");
-            _logger.LogInformation("");
-            _logger.LogInformation("   Azure CLI is using 32-bit Python on your 64-bit Windows system.");
-            _logger.LogInformation("   This may cause performance warnings during Azure operations.");
-            _logger.LogInformation("");
-            _logger.LogInformation("To improve performance and eliminate warnings:");
-            _logger.LogInformation("");
-            _logger.LogInformation("   1. Uninstall current Azure CLI:");
-            _logger.LogInformation("      winget uninstall Microsoft.AzureCLI");
-            _logger.LogInformation("");
-            _logger.LogInformation("   2. Install 64-bit version:");
-            _logger.LogInformation("      winget install --exact --id Microsoft.AzureCLI");
-            _logger.LogInformation("");
-            _logger.LogInformation("   This will not affect functionality, only performance.");
-            _logger.LogInformation("");
+            _logger.LogWarning("Azure CLI is using 32-bit Python on 64-bit Windows (performance may be affected)");
+            _logger.LogWarning("For optimal performance, consider reinstalling Azure CLI with 64-bit Python");
+            _logger.LogWarning("For more information, see: https://learn.microsoft.com/cli/azure/install-azure-cli-windows");
         }
         else if (result.StandardOutput.Contains("64 bit", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogDebug("Azure CLI is using 64-bit Python (optimal)");
+            _logger.LogInformation("Azure CLI is using 64-bit Python (optimal)");
         }
     }
 }

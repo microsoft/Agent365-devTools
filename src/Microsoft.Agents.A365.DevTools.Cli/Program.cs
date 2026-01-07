@@ -72,6 +72,8 @@ class Program
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var agentPublishService = serviceProvider.GetRequiredService<AgentPublishService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
+            var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
+            var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
             var webAppCreator = serviceProvider.GetRequiredService<AzureWebAppCreator>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
             var processService = serviceProvider.GetRequiredService<IProcessService>();
@@ -81,7 +83,7 @@ class Program
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, agentBlueprintService, clientAppValidator));
+                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService, azureValidator));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
@@ -95,7 +97,7 @@ class Program
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentPublishService, graphApiService, agentBlueprintService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
@@ -217,6 +219,8 @@ class Program
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<AgentPublishService>();
         services.AddSingleton<AgentBlueprintService>();
+        services.AddSingleton<BlueprintLookupService>();
+        services.AddSingleton<FederatedCredentialService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
 

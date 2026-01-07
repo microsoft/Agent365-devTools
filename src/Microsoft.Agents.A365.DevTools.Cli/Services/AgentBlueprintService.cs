@@ -620,6 +620,58 @@ public class AgentBlueprintService
         }
     }
 
+    /// <summary>
+    /// Get password credentials (client secrets) for an application.
+    /// Note: This only returns metadata (hint, displayName, expiration), not the actual secret values.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID for authentication</param>
+    /// <param name="applicationObjectId">The application object ID</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>List of password credential metadata</returns>
+    public async Task<List<PasswordCredentialInfo>> GetPasswordCredentialsAsync(
+        string tenantId,
+        string applicationObjectId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogDebug("Retrieving password credentials for application: {ObjectId}", applicationObjectId);
+
+            var doc = await _graphApiService.GraphGetAsync(
+                tenantId,
+                $"/v1.0/applications/{applicationObjectId}",
+                cancellationToken);
+
+            var credentials = new List<PasswordCredentialInfo>();
+
+            if (doc != null && doc.RootElement.TryGetProperty("passwordCredentials", out var credsArray))
+            {
+                foreach (var cred in credsArray.EnumerateArray())
+                {
+                    var displayName = cred.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
+                    var hint = cred.TryGetProperty("hint", out var h) ? h.GetString() : null;
+                    var keyId = cred.TryGetProperty("keyId", out var kid) ? kid.GetString() : null;
+                    var endDateTime = cred.TryGetProperty("endDateTime", out var ed) ? ed.GetDateTime() : (DateTime?)null;
+
+                    credentials.Add(new PasswordCredentialInfo
+                    {
+                        DisplayName = displayName,
+                        Hint = hint,
+                        KeyId = keyId,
+                        EndDateTime = endDateTime
+                    });
+                }
+            }
+
+            return credentials;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retrieve password credentials for application: {ObjectId}", applicationObjectId);
+            return new List<PasswordCredentialInfo>();
+        }
+    }
+
     private async Task<string> ResolveBlueprintObjectIdAsync(
         string tenantId,
         string blueprintAppId,

@@ -18,6 +18,7 @@ public class CleanupCommandBotEndpointTests
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _graphApiService;
     private readonly AgentBlueprintService _agentBlueprintService;
+    private readonly FederatedCredentialService _federatedCredentialService;
     private readonly IMicrosoftGraphTokenProvider _mockTokenProvider;
     private readonly IConfirmationProvider _mockConfirmationProvider;
 
@@ -66,6 +67,10 @@ public class CleanupCommandBotEndpointTests
         var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         _agentBlueprintService = new AgentBlueprintService(mockBlueprintLogger, _graphApiService);
 
+        // Create FederatedCredentialService wrapping GraphApiService
+        var mockFicLogger = Substitute.For<ILogger<FederatedCredentialService>>();
+        _federatedCredentialService = new FederatedCredentialService(mockFicLogger, _graphApiService);
+
         // Setup mock confirmation provider to return true by default
         _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
@@ -101,7 +106,8 @@ public class CleanupCommandBotEndpointTests
             _mockBotConfigurator, 
             _mockExecutor, 
             _agentBlueprintService,
-            _mockConfirmationProvider);
+            _mockConfirmationProvider,
+            _federatedCredentialService);
 
         Assert.NotNull(command);
         Assert.Equal("cleanup", command.Name);

@@ -30,6 +30,8 @@ public class BlueprintSubcommandTests
     private readonly GraphApiService _mockGraphApiService;
     private readonly AgentBlueprintService _mockBlueprintService;
     private readonly IClientAppValidator _mockClientAppValidator;
+    private readonly BlueprintLookupService _mockBlueprintLookupService;
+    private readonly FederatedCredentialService _mockFederatedCredentialService;
 
     public BlueprintSubcommandTests()
     {
@@ -45,6 +47,8 @@ public class BlueprintSubcommandTests
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
+        _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);
+        _mockFederatedCredentialService = Substitute.ForPartsOf<FederatedCredentialService>(Substitute.For<ILogger<FederatedCredentialService>>(), _mockGraphApiService);
     }
 
     [Fact]
@@ -59,7 +63,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         command.Name.Should().Be("blueprint");
@@ -77,7 +81,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         command.Description.Should().NotBeNullOrEmpty();
@@ -96,7 +100,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
@@ -117,7 +121,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         var verboseOption = command.Options.FirstOrDefault(o => o.Name == "verbose");
@@ -138,7 +142,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         var dryRunOption = command.Options.FirstOrDefault(o => o.Name == "dry-run");
@@ -167,7 +171,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -202,7 +206,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -255,7 +259,7 @@ public class BlueprintSubcommandTests
                 _mockConfigService,
                 _mockBotConfigurator,
                 _mockPlatformDetector,
-                _mockGraphApiService, _mockBlueprintService);
+                _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Should return false when consent service fails
         result.Should().NotBeNull();
@@ -292,7 +296,7 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockBotConfigurator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         result.Should().NotBeNull();
@@ -313,7 +317,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         command.Description.Should().Contain("Agent ID Developer");
@@ -341,7 +345,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -377,7 +381,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -405,7 +409,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify all expected options are present
         command.Options.Should().HaveCountGreaterOrEqualTo(3);
@@ -431,7 +435,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -453,7 +457,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify the config option exists and has expected aliases
         var configOption = command.Options.First(o => o.Name == "config");
@@ -490,7 +494,7 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockBotConfigurator,
             _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         result.Should().NotBeNull();
@@ -518,7 +522,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify description provides context and guidance
         command.Description.Should().NotBeNullOrEmpty();
@@ -546,7 +550,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -580,7 +584,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -612,7 +616,7 @@ public class BlueprintSubcommandTests
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator);
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify command can be added to a parser
         var parser = new CommandLineBuilder(command).Build();
