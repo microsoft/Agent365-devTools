@@ -101,12 +101,7 @@ public class BotConfigurator : IBotConfigurator
                 }
                 _logger.LogInformation("Successfully acquired access token");
 
-                // Normalize location: Remove spaces and convert to lowercase (e.g., "Canada Central" -> "canadacentral")
-                // Azure APIs require the API-friendly location name format
-                // TODO: Consider using `az account list-locations` for robust display name → programmatic name mapping
-                // See: https://learn.microsoft.com/en-us/cli/azure/account?view=azure-cli-latest#az-account-list-locations
-                // Current approach works for existing regions but may need updates for new region naming patterns
-                var normalizedLocation = location.Replace(" ", "").ToLowerInvariant();
+                var normalizedLocation = NormalizeLocation(location);
                 var createEndpointBody = new JsonObject
                 {
                     ["AzureBotServiceInstanceName"] = endpointName,
@@ -260,12 +255,13 @@ public class BotConfigurator : IBotConfigurator
                 }
                 _logger.LogInformation("Successfully acquired access token");
 
-                var createEndpointBody = new JsonObject
+                var normalizedLocation = NormalizeLocation(location);
+                var deleteEndpointBody = new JsonObject
                 {
                     ["AzureBotServiceInstanceName"] = endpointName,
                     ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
-                    ["Location"] = location,
+                    ["Location"] = normalizedLocation,
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
@@ -273,10 +269,10 @@ public class BotConfigurator : IBotConfigurator
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
 
                 // Call the endpoint
-                _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", location);
+                _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
 
                 using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
-                request.Content = new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
                 var response = await httpClient.SendAsync(request);
 
 
@@ -363,5 +359,15 @@ public class BotConfigurator : IBotConfigurator
             _logger.LogError(ex, "Unexpected error deleting endpoint with agent blueprint: {Message}", ex.Message);
             return false;
         }
+    }
+
+    private string NormalizeLocation(string location)
+    {
+        // Normalize location: Remove spaces and convert to lowercase (e.g., "Canada Central" -> "canadacentral")
+        // Azure APIs require the API-friendly location name format
+        // TODO: Consider using `az account list-locations` for robust display name → programmatic name mapping
+        // See: https://learn.microsoft.com/en-us/cli/azure/account?view=azure-cli-latest#az-account-list-locations
+        // Current approach works for existing regions but may need updates for new region naming patterns
+        return location.Replace(" ", "").ToLowerInvariant();
     }
 }
