@@ -522,7 +522,8 @@ internal static class BlueprintSubcommand
 
     /// <summary>
     /// Creates Agent Blueprint application using Graph API
-    /// Implements dual-path discovery for idempotency: checks objectId from config first, falls back to displayName query.
+    /// Implements displayName-first discovery for idempotency: always searches by displayName from a365.config.json (the source of truth).
+    /// Cached objectIds are only used for dependent resources (FIC, etc.) after blueprint existence is confirmed.
     /// Used by: BlueprintSubcommand and A365SetupRunner Phase 2.2
     /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted)
     /// </summary>
@@ -545,47 +546,31 @@ internal static class BlueprintSubcommand
         CancellationToken ct)
     {
         // ========================================================================
-        // Idempotency Check: Dual-Path Discovery
+        // Idempotency Check: DisplayName-First Discovery
         // ========================================================================
-        
-        string? existingObjectId = setupConfig.AgentBlueprintObjectId;
+        // IMPORTANT: a365.config.json is the source of truth for displayName.
+        // We always search by displayName first to handle scenarios where the user
+        // changes displayName in a365.config.json. Cached objectIds are only used
+        // for dependent resources (FIC, etc.) after blueprint is confirmed to exist.
+
+        string? existingObjectId = null;
         string? existingAppId = null;
         string? existingServicePrincipalId = setupConfig.AgentBlueprintServicePrincipalObjectId;
         bool blueprintAlreadyExists = false;
         bool requiresPersistence = false;
 
-        // Primary path: Check if we have objectId in config
-        if (!string.IsNullOrWhiteSpace(existingObjectId))
-        {
-            logger.LogDebug("Checking for existing blueprint with objectId: {ObjectId}...", existingObjectId);
-            var lookupResult = await blueprintLookupService.GetApplicationByObjectIdAsync(tenantId, existingObjectId, ct);
-            
-            if (lookupResult.Found)
-            {
-                logger.LogInformation("Blueprint '{DisplayName}' already exists", displayName);
-                
-                existingAppId = lookupResult.AppId;
-                blueprintAlreadyExists = true;
-            }
-            else
-            {
-                logger.LogWarning("ObjectId in config not found in Entra ID - will try discovery by display name");
-                existingObjectId = null;
-            }
-        }
-
-        // Fallback path: Query by displayName for migration scenarios
-        if (!blueprintAlreadyExists && !string.IsNullOrWhiteSpace(displayName))
+        // Always search by displayName from a365.config.json (the master source of truth)
+        if (!string.IsNullOrWhiteSpace(displayName))
         {
             logger.LogDebug("Searching for existing blueprint by display name: {DisplayName}...", displayName);
             var lookupResult = await blueprintLookupService.GetApplicationByDisplayNameAsync(tenantId, displayName, cancellationToken: ct);
-            
+
             if (lookupResult.Found)
             {
-                logger.LogInformation("Found existing blueprint by display name - updating config with current identifiers");
+                logger.LogInformation("Found existing blueprint by display name");
                 logger.LogInformation("  - Object ID: {ObjectId}", lookupResult.ObjectId);
                 logger.LogInformation("  - App ID: {AppId}", lookupResult.AppId);
-                
+
                 existingObjectId = lookupResult.ObjectId;
                 existingAppId = lookupResult.AppId;
                 blueprintAlreadyExists = true;

@@ -280,4 +280,39 @@ public class BlueprintLookupServiceTests
         result.Found.Should().BeTrue();
         result.ObjectId.Should().Be(objectId1); // Should return the first match
     }
+
+    [Fact]
+    public async Task GetApplicationByDisplayNameAsync_WhenDisplayNameMismatch_ReturnsNotFound()
+    {
+        // Arrange - Regression test for idempotency bug
+        // Scenario: User changes displayName in a365.config.json but cached objectId points to old name
+        // Expected: Search by new displayName should return NotFound (not the cached blueprint)
+        //
+        // Bug History:
+        // - Step 1: 'a365 setup all' creates "MyAgent Blueprint" -> saves objectId to config
+        // - Step 2: User edits a365.config.json -> changes displayName to "NewAgent Blueprint"
+        // - Step 3: 'a365 setup all' searches by new displayName -> should NOT find old blueprint
+        //
+        // Fix: BlueprintSubcommand now always uses displayName-first discovery (lines 547-578)
+        // This test verifies the lookup service correctly returns NotFound when displayName doesn't match
+
+        var newDisplayName = "NewAgent Blueprint";
+        var jsonResponse = @"{""value"": []}"; // No blueprints match the new displayName
+        var jsonDoc = JsonDocument.Parse(jsonResponse);
+
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Is<string>(s => s.Contains("/beta/applications?$filter=") && s.Contains("NewAgent")),
+            Arg.Any<CancellationToken>())
+            .Returns(jsonDoc);
+
+        // Act
+        var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, newDisplayName);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Found.Should().BeFalse("searching by new displayName should not find old cached blueprint");
+        result.LookupMethod.Should().Be("displayName");
+        result.RequiresPersistence.Should().BeFalse("no blueprint found means nothing to persist");
+    }
 }

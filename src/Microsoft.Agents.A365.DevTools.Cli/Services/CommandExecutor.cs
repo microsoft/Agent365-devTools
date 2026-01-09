@@ -153,7 +153,15 @@ public class CommandExecutor
             if (args.Data != null)
             {
                 outputBuilder.AppendLine(args.Data);
-                Console.WriteLine($"{outputPrefix}{args.Data}");
+                // Don't print JWT tokens to console (security)
+                if (!IsJwtToken(args.Data))
+                {
+                    Console.WriteLine($"{outputPrefix}{args.Data}");
+                }
+                else
+                {
+                    _logger.LogDebug("JWT token filtered from console output for security");
+                }
             }
         };
 
@@ -224,6 +232,63 @@ public class CommandExecutor
             return trimmed.Substring(8).TrimStart(); // Remove "WARNING:" and trim
         }
         return message;
+    }
+
+    private const string JwtTokenPrefix = "eyJ";
+    private const int JwtTokenDotCount = 2;
+    private const int MinimumJwtTokenLength = 100;
+
+    /// <summary>
+    /// Detects JWT tokens using a heuristic approach to prevent logging sensitive credentials.
+    /// </summary>
+    /// <remarks>
+    /// HEURISTIC DETECTION LIMITATIONS:
+    ///
+    /// This method uses pattern matching rather than full JWT validation for performance reasons.
+    /// Detection criteria:
+    /// - Starts with "eyJ" (Base64url encoding of "{" - typical JWT header start)
+    /// - Contains exactly 2 dots (separating header.payload.signature)
+    /// - Length greater than 100 characters (typical JWT tokens are much longer)
+    ///
+    /// Known Limitations:
+    /// 1. FALSE POSITIVES: May incorrectly flag non-JWT base64 strings that happen to match the pattern
+    ///    - Example: A base64-encoded JSON starting with "{" that contains dots in the payload
+    ///    - Impact: Harmless - such strings are simply hidden from console but still captured in output
+    ///
+    /// 2. FALSE NEGATIVES: Will NOT detect tokens that deviate from standard JWT format
+    ///    - Custom token formats not starting with "eyJ"
+    ///    - Malformed JWTs with incorrect dot count
+    ///    - Very short test tokens (less than 100 chars)
+    ///    - Tokens embedded in log messages (e.g., "Token: eyJ...")
+    ///    - Impact: Such tokens would be displayed in console (security risk)
+    ///    - Rationale: Only filtering standalone tokens (lines that are purely tokens) to avoid
+    ///      accidentally filtering legitimate log messages that happen to contain token-like strings
+    ///
+    /// 3. NO STRUCTURAL VALIDATION: Does not decode or verify JWT structure
+    ///    - Does not validate base64url encoding
+    ///    - Does not verify header/payload are valid JSON
+    ///    - Does not check signature validity
+    ///    - Rationale: Full validation would require decoding overhead for every output line
+    ///
+    /// SECURITY TRADE-OFF:
+    /// This heuristic approach prioritizes performance and simplicity over perfect detection.
+    /// It effectively filters standard Microsoft Graph JWT tokens (the primary security concern)
+    /// while avoiding expensive cryptographic operations on every console output line.
+    ///
+    /// For absolute security, tokens should be transmitted through secure channels (environment
+    /// variables, key vaults) rather than command output. This filter is a defense-in-depth measure.
+    /// </remarks>
+    /// <param name="line">The output line to check for JWT token patterns</param>
+    /// <returns>True if the line appears to contain a JWT token and should be filtered from console</returns>
+    private static bool IsJwtToken(string line)
+    {
+        var trimmed = line?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            return false;
+
+        return trimmed.StartsWith(JwtTokenPrefix, StringComparison.Ordinal) &&
+               trimmed.Count(c => c == '.') == JwtTokenDotCount &&
+               trimmed.Length > MinimumJwtTokenLength;
     }
 }
 
