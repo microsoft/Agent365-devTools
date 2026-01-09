@@ -515,4 +515,44 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         var secretValue = secretLine.Split('=', 2)[1];
         Assert.Equal(plaintextSecret, secretValue);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_DotNet_UnprotectedSecret_WritesAsIs()
+    {
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "dotnet_proj_unprotected");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "MyAgent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var appsettingsPath = WriteFile(projectDir, "appsettings.json", "{}");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var plaintextSecret = "UnprotectedSecret123!";
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgenticAppId = "2321586e-2611-4048-be95-962d0445f8ab",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = plaintextSecret,
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+        var logger = CreateLogger();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var j = ReadJson(appsettingsPath);
+        var svcSettings = j["Connections"]!.AsObject()["ServiceConnection"]!.AsObject()["Settings"]!.AsObject();
+        var clientSecret = svcSettings["ClientSecret"]!.GetValue<string>();
+
+        Assert.Equal(plaintextSecret, clientSecret);
+    }
 }

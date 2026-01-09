@@ -1415,23 +1415,23 @@ internal static class BlueprintSubcommand
         ILogger logger,
         CancellationToken ct = default)
     {
+        // Decrypt the secret if it's protected (do this once outside the loop)
+        var plaintextSecret = SecretProtectionHelper.UnprotectSecret(
+            clientSecret,
+            isProtected,
+            logger);
+
+        // Create HttpClient once outside the retry loop to avoid socket exhaustion
+        using var httpClient = new HttpClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(ClientSecretValidationTimeoutSeconds);
+
+        var tokenUrl = string.Format(MicrosoftLoginOAuthTokenEndpoint, tenantId);
+
         for (int attempt = 1; attempt <= ClientSecretValidationMaxRetries; attempt++)
         {
             try
             {
-                // Decrypt the secret if it's protected
-                var plaintextSecret = SecretProtectionHelper.UnprotectSecret(
-                    clientSecret,
-                    isProtected,
-                    logger);
-
-                // Attempt to acquire a token using client credentials flow
-                var tokenUrl = string.Format(MicrosoftLoginOAuthTokenEndpoint, tenantId);
-
-                using var httpClient = new HttpClient();
-                httpClient.Timeout = TimeSpan.FromSeconds(ClientSecretValidationTimeoutSeconds);
-
-                var requestContent = new FormUrlEncodedContent(new Dictionary<string, string>
+                using var requestContent = new FormUrlEncodedContent(new Dictionary<string, string>
                 {
                     ["client_id"] = clientId,
                     ["client_secret"] = plaintextSecret,
@@ -1439,7 +1439,7 @@ internal static class BlueprintSubcommand
                     ["grant_type"] = "client_credentials"
                 });
 
-                var response = await httpClient.PostAsync(tokenUrl, requestContent, ct);
+                using var response = await httpClient.PostAsync(tokenUrl, requestContent, ct);
 
                 if (response.IsSuccessStatusCode)
                 {
