@@ -1291,11 +1291,6 @@ public class BlueprintSubcommandTests
     }
 
     #endregion
-
-    // NOTE: Regression tests for Blueprint Idempotency (DisplayName-First Discovery) were removed
-    // due to excessive mocking complexity. The core fix is well-documented in the code comments
-    // in BlueprintSubcommand.cs lines 547-578. The behavior is covered by existing integration tests
-    // and the BlueprintLookupServiceTests.
 }
 
 

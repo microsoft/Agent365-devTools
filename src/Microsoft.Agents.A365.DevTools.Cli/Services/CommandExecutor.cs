@@ -259,7 +259,10 @@ public class CommandExecutor
     ///    - Custom token formats not starting with "eyJ"
     ///    - Malformed JWTs with incorrect dot count
     ///    - Very short test tokens (less than 100 chars)
+    ///    - Tokens embedded in log messages (e.g., "Token: eyJ...")
     ///    - Impact: Such tokens would be displayed in console (security risk)
+    ///    - Rationale: Only filtering standalone tokens (lines that are purely tokens) to avoid
+    ///      accidentally filtering legitimate log messages that happen to contain token-like strings
     ///
     /// 3. NO STRUCTURAL VALIDATION: Does not decode or verify JWT structure
     ///    - Does not validate base64url encoding

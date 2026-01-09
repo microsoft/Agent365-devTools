@@ -273,9 +273,9 @@ public class CommandExecutorTests
     }
 
     [Theory]
-    [InlineData("Short token eyJ.abc.xyz", false)] // Too short to be JWT
-    [InlineData("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ", false)] // Only 2 parts
-    public void IsJwtToken_WithInvalidJwtFormat_ShouldNotDetect(string invalidToken, bool expectedResult)
+    [InlineData("Short token eyJ.abc.xyz")] // Too short to be JWT
+    [InlineData("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ")] // Only 2 parts
+    public void IsJwtToken_WithInvalidJwtFormat_ShouldNotDetect(string invalidToken)
     {
         // REGRESSION TEST: Verify invalid JWT formats are not filtered
         // Prevents false positives in filtering
@@ -285,7 +285,7 @@ public class CommandExecutorTests
 
         var result = (bool)method!.Invoke(null, new object[] { invalidToken })!;
 
-        result.Should().Be(expectedResult, "invalid JWT formats should not be filtered");
+        result.Should().BeFalse("invalid JWT formats should not be filtered");
     }
 
     #endregion
