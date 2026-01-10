@@ -274,8 +274,8 @@ public class FederatedCredentialService
                 // Check for HTTP 409 (Conflict) - credential already exists
                 if (response.StatusCode == 409)
                 {
-                    _logger.LogInformation("Federated credential already exists: {Name}", name);
-                    
+                    _logger.LogDebug("Federated credential already exists: {Name}", name);
+
                     return new FederatedCredentialCreateResult
                     {
                         Success = true,

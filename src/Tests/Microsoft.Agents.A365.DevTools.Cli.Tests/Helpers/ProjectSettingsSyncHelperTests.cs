@@ -290,4 +290,269 @@ public class ProjectSettingsSyncHelperTests : IDisposable
             await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, Path.Combine(_tempRoot, "nope.json"),
                 configService, platformDetector, logger));
     }
+
+    [Fact]
+    public async Task ExecuteAsync_Python_DecryptsProtectedSecret()
+    {
+        if (!System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            return;
+        }
+
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "py_proj_encrypted");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "pyproject.toml", "[tool.poetry]");
+        var envPath = WriteFile(projectDir, ".env", "");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var plaintextSecret = "MyPlaintextSecret123!";
+        var logger = CreateLogger();
+        var protectedSecret = SecretProtectionHelper.ProtectSecret(plaintextSecret, logger);
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgenticAppId = "2321586e-2611-4048-be95-962d0445f8ab",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = protectedSecret,
+            AgentBlueprintClientSecretProtected = true
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var lines = File.ReadAllLines(envPath);
+        var secretLine = lines.FirstOrDefault(l => l.StartsWith("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET="));
+
+        Assert.NotNull(secretLine);
+        var secretValue = secretLine.Split('=', 2)[1];
+        Assert.Equal(plaintextSecret, secretValue);
+        Assert.NotEqual(protectedSecret, secretValue);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Node_DecryptsProtectedSecret()
+    {
+        if (!System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            return;
+        }
+
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "node_proj_encrypted");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "package.json", "{ \"name\": \"sample\" }");
+        var envPath = WriteFile(projectDir, ".env", "");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var plaintextSecret = "MyPlaintextSecret123!";
+        var logger = CreateLogger();
+        var protectedSecret = SecretProtectionHelper.ProtectSecret(plaintextSecret, logger);
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgenticAppId = "2321586e-2611-4048-be95-962d0445f8ab",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = protectedSecret,
+            AgentBlueprintClientSecretProtected = true
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var lines = File.ReadAllLines(envPath);
+        var secretLine = lines.FirstOrDefault(l => l.StartsWith("connections__service_connection__settings__clientSecret=", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(secretLine);
+        var secretValue = secretLine.Split('=', 2)[1];
+        Assert.Equal(plaintextSecret, secretValue);
+        Assert.NotEqual(protectedSecret, secretValue);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DotNet_DecryptsProtectedSecret()
+    {
+        if (!System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            return;
+        }
+
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "dotnet_proj_encrypted");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "MyAgent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var appsettingsPath = WriteFile(projectDir, "appsettings.json", "{}");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var plaintextSecret = "MyPlaintextSecret123!";
+        var logger = CreateLogger();
+        var protectedSecret = SecretProtectionHelper.ProtectSecret(plaintextSecret, logger);
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgenticAppId = "2321586e-2611-4048-be95-962d0445f8ab",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = protectedSecret,
+            AgentBlueprintClientSecretProtected = true
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var j = ReadJson(appsettingsPath);
+        var svcSettings = j["Connections"]!.AsObject()["ServiceConnection"]!.AsObject()["Settings"]!.AsObject();
+        var clientSecret = svcSettings["ClientSecret"]!.GetValue<string>();
+
+        Assert.Equal(plaintextSecret, clientSecret);
+        Assert.NotEqual(protectedSecret, clientSecret);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Python_UnprotectedSecret_WritesAsIs()
+    {
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "py_proj_unprotected");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "pyproject.toml", "[tool.poetry]");
+        var envPath = WriteFile(projectDir, ".env", "");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var plaintextSecret = "UnprotectedSecret123!";
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgenticAppId = "2321586e-2611-4048-be95-962d0445f8ab",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = plaintextSecret,
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+        var logger = CreateLogger();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var lines = File.ReadAllLines(envPath);
+        var secretLine = lines.FirstOrDefault(l => l.StartsWith("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET="));
+
+        Assert.NotNull(secretLine);
+        var secretValue = secretLine.Split('=', 2)[1];
+        Assert.Equal(plaintextSecret, secretValue);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Node_UnprotectedSecret_WritesAsIs()
+    {
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "node_proj_unprotected");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "package.json", "{ \"name\": \"sample\" }");
+        var envPath = WriteFile(projectDir, ".env", "");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var plaintextSecret = "UnprotectedSecret123!";
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgenticAppId = "2321586e-2611-4048-be95-962d0445f8ab",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = plaintextSecret,
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+        var logger = CreateLogger();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var lines = File.ReadAllLines(envPath);
+        var secretLine = lines.FirstOrDefault(l => l.StartsWith("connections__service_connection__settings__clientSecret=", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(secretLine);
+        var secretValue = secretLine.Split('=', 2)[1];
+        Assert.Equal(plaintextSecret, secretValue);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DotNet_UnprotectedSecret_WritesAsIs()
+    {
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "dotnet_proj_unprotected");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "MyAgent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var appsettingsPath = WriteFile(projectDir, "appsettings.json", "{}");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var plaintextSecret = "UnprotectedSecret123!";
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgenticAppId = "2321586e-2611-4048-be95-962d0445f8ab",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = plaintextSecret,
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+        var logger = CreateLogger();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var j = ReadJson(appsettingsPath);
+        var svcSettings = j["Connections"]!.AsObject()["ServiceConnection"]!.AsObject()["Settings"]!.AsObject();
+        var clientSecret = svcSettings["ClientSecret"]!.GetValue<string>();
+
+        Assert.Equal(plaintextSecret, clientSecret);
+    }
 }

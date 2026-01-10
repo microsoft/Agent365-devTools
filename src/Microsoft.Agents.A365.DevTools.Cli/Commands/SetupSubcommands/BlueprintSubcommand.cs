@@ -42,6 +42,12 @@ internal class BlueprintCreationResult
 /// </summary>
 internal static class BlueprintSubcommand
 {
+    // Client secret validation constants
+    private const int ClientSecretValidationMaxRetries = 2;
+    private const int ClientSecretValidationRetryDelayMs = 1000;
+    private const int ClientSecretValidationTimeoutSeconds = 10;
+    private const string MicrosoftLoginOAuthTokenEndpoint = "https://login.microsoftonline.com/{0}/oauth2/v2.0/token";
+
     /// <summary>
     /// Validates blueprint prerequisites without performing any actions.
     /// </summary>
@@ -375,13 +381,44 @@ internal static class BlueprintSubcommand
         // Phase 2.5: Create Client Secret (logging handled by method)
         // ========================================================================
 
-        await CreateBlueprintClientSecretAsync(
-            blueprintObjectId!,
-            blueprintAppId!,
-            graphService,
-            setupConfig,
-            configService,
-            logger);
+        // Skip secret creation if blueprint already existed and secret is already configured
+        if (blueprintAlreadyExisted && !string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintClientSecret))
+        {
+            logger.LogInformation("Validating existing client secret...");
+            var isValid = await ValidateClientSecretAsync(
+                blueprintAppId!,
+                setupConfig.AgentBlueprintClientSecret,
+                setupConfig.AgentBlueprintClientSecretProtected,
+                setupConfig.TenantId!,
+                logger,
+                cancellationToken);
+
+            if (isValid)
+            {
+                logger.LogInformation("Client secret is valid, skipping creation");
+            }
+            else
+            {
+                logger.LogInformation("Client secret is invalid or expired, creating new secret...");
+                await CreateBlueprintClientSecretAsync(
+                    blueprintObjectId!,
+                    blueprintAppId!,
+                    graphService,
+                    setupConfig,
+                    configService,
+                    logger);
+            }
+        }
+        else
+        {
+            await CreateBlueprintClientSecretAsync(
+                blueprintObjectId!,
+                blueprintAppId!,
+                graphService,
+                setupConfig,
+                configService,
+                logger);
+        }
 
         logger.LogInformation("");
         if (blueprintAlreadyExisted)
@@ -921,123 +958,46 @@ internal static class BlueprintSubcommand
             // Use a readable name based on the display name, with whitespace removed and "-MSI" suffix.
             var credentialName = $"{displayName.Replace(" ", "")}-MSI";
 
-            // For existing blueprints, check if FIC already exists to provide better UX
-            // For new blueprints, we skip this and go straight to create (avoiding race conditions)
-            bool ficSuccess;
-            if (alreadyExisted)
-            {
-                // Blueprint exists - check if FIC is already configured
-                logger.LogDebug("Checking for existing federated credential with subject: {Subject}", managedIdentityPrincipalId);
-                var ficExistsResult = await federatedCredentialService.CheckFederatedCredentialExistsAsync(
-                    tenantId,
-                    objectId,
-                    managedIdentityPrincipalId,
-                    $"https://login.microsoftonline.com/{tenantId}/v2.0",
-                    ct);
+            // Create FIC with retry logic - handles both new and existing blueprints
+            // The create API returns 409 Conflict if the FIC already exists, which we treat as success
+            var retryHelper = new RetryHelper(logger);
+            FederatedCredentialCreateResult? ficCreateResult = null;
 
-                if (ficExistsResult.Exists)
+            await retryHelper.ExecuteWithRetryAsync(
+                async ct =>
                 {
-                    logger.LogInformation("Federated Identity Credential already configured");
-                    logger.LogInformation("  - Credential Name: {Name}", ficExistsResult.ExistingCredential?.Name ?? "(unknown)");
-                    logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", managedIdentityPrincipalId);
-                    ficSuccess = true;
-                }
-                else
-                {
-                    // FIC doesn't exist on existing blueprint - create it with retry logic
-                    logger.LogInformation("Creating Federated Identity Credential for existing blueprint...");
-                    logger.LogDebug("  - Name: {Name}", credentialName);
-                    logger.LogDebug("  - Subject: {Subject}", managedIdentityPrincipalId);
-                    logger.LogDebug("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-                    
-                    var retryHelper = new RetryHelper(logger);
-                    FederatedCredentialCreateResult? ficCreateResult = null;
-                    
-                    await retryHelper.ExecuteWithRetryAsync(
-                        async ct =>
-                        {
-                            ficCreateResult = await federatedCredentialService.CreateFederatedCredentialAsync(
-                                tenantId,
-                                objectId,
-                                credentialName,
-                                $"https://login.microsoftonline.com/{tenantId}/v2.0",
-                                managedIdentityPrincipalId,
-                                new List<string> { "api://AzureADTokenExchange" },
-                                ct);
-                            
-                            // Return true if successful or already exists
-                            // Return false if should retry (HTTP 404)
-                            return ficCreateResult.Success || ficCreateResult.AlreadyExisted;
-                        },
-                        result => !result, // Retry while result is false
-                        maxRetries: 10,
-                        baseDelaySeconds: 3,
+                    ficCreateResult = await federatedCredentialService.CreateFederatedCredentialAsync(
+                        tenantId,
+                        objectId,
+                        credentialName,
+                        $"https://login.microsoftonline.com/{tenantId}/v2.0",
+                        managedIdentityPrincipalId,
+                        new List<string> { "api://AzureADTokenExchange" },
                         ct);
 
-                    ficSuccess = (ficCreateResult?.Success ?? false) || (ficCreateResult?.AlreadyExisted ?? false);
+                    // Return true if successful or already exists
+                    // Return false if should retry (HTTP 404)
+                    return ficCreateResult.Success || ficCreateResult.AlreadyExisted;
+                },
+                result => !result, // Retry while result is false
+                maxRetries: 10,
+                baseDelaySeconds: 3,
+                ct);
 
-                    if (ficCreateResult?.AlreadyExisted == true)
-                    {
-                        logger.LogInformation("Federated Identity Credential already exists (detected during creation)");
-                    }
-                    else if (ficSuccess)
-                    {
-                        logger.LogInformation("Federated Identity Credential created successfully");
-                    }
-                    else
-                    {
-                        logger.LogError("Failed to create Federated Identity Credential: {Error}", ficCreateResult?.ErrorMessage ?? "Unknown error");
-                        logger.LogError("The agent instance may not be able to authenticate using Managed Identity");
-                    }
-                }
+            bool ficSuccess = (ficCreateResult?.Success ?? false) || (ficCreateResult?.AlreadyExisted ?? false);
+
+            if (ficCreateResult?.AlreadyExisted ?? false)
+            {
+                logger.LogInformation("Federated Identity Credential already configured");
+            }
+            else if (ficCreateResult?.Success ?? false)
+            {
+                logger.LogInformation("Federated Identity Credential created successfully");
             }
             else
             {
-                // Brand new blueprint - create with retry logic for propagation delays
-                logger.LogInformation("Creating Federated Identity Credential for new blueprint...");
-                logger.LogDebug("  - Name: {Name}", credentialName);
-                logger.LogDebug("  - Subject: {Subject}", managedIdentityPrincipalId);
-                logger.LogDebug("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-                
-                var retryHelper = new RetryHelper(logger);
-                FederatedCredentialCreateResult? ficCreateResult = null;
-                
-                await retryHelper.ExecuteWithRetryAsync(
-                    async ct =>
-                    {
-                        ficCreateResult = await federatedCredentialService.CreateFederatedCredentialAsync(
-                            tenantId,
-                            objectId,
-                            credentialName,
-                            $"https://login.microsoftonline.com/{tenantId}/v2.0",
-                            managedIdentityPrincipalId,
-                            new List<string> { "api://AzureADTokenExchange" },
-                            ct);
-                        
-                        // Return true if successful or already exists
-                        // Return false if should retry (HTTP 404)
-                        return ficCreateResult.Success || ficCreateResult.AlreadyExisted;
-                    },
-                    result => !result, // Retry while result is false
-                    maxRetries: 10,
-                    baseDelaySeconds: 3,
-                    ct);
-
-                ficSuccess = (ficCreateResult?.Success ?? false) || (ficCreateResult?.AlreadyExisted ?? false);
-
-                if (ficCreateResult?.AlreadyExisted == true)
-                {
-                    logger.LogInformation("Federated Identity Credential configured (idempotent)");
-                }
-                else if (ficSuccess)
-                {
-                    logger.LogInformation("Federated Identity Credential created successfully");
-                }
-                else
-                {
-                    logger.LogError("Failed to create Federated Identity Credential: {Error}", ficCreateResult?.ErrorMessage ?? "Unknown error");
-                    logger.LogError("The agent instance may not be able to authenticate using Managed Identity");
-                }
+                logger.LogError("Failed to create Federated Identity Credential: {Error}", ficCreateResult?.ErrorMessage ?? "Unknown error");
+                logger.LogError("The agent instance may not be able to authenticate using Managed Identity");
             }
 
             if (!ficSuccess)
@@ -1425,6 +1385,97 @@ internal static class BlueprintSubcommand
             logger.LogInformation("  4. Click 'New client secret' and save the value");
             logger.LogInformation("  5. Add it to a365.generated.config.json as 'agentBlueprintClientSecret'");
         }
+    }
+
+    /// <summary>
+    /// Validates an existing client secret by attempting to authenticate with Microsoft Graph.
+    /// Returns true if the secret is valid and can successfully acquire a token.
+    /// Performs automatic retry for transient network errors.
+    /// </summary>
+    private static async Task<bool> ValidateClientSecretAsync(
+        string clientId,
+        string clientSecret,
+        bool isProtected,
+        string tenantId,
+        ILogger logger,
+        CancellationToken ct = default)
+    {
+        // Decrypt the secret if it's protected (do this once outside the loop)
+        var plaintextSecret = SecretProtectionHelper.UnprotectSecret(
+            clientSecret,
+            isProtected,
+            logger);
+
+        // Create HttpClient once outside the retry loop to avoid socket exhaustion
+        using var httpClient = new HttpClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(ClientSecretValidationTimeoutSeconds);
+
+        var tokenUrl = string.Format(MicrosoftLoginOAuthTokenEndpoint, tenantId);
+
+        for (int attempt = 1; attempt <= ClientSecretValidationMaxRetries; attempt++)
+        {
+            try
+            {
+                using var requestContent = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["client_id"] = clientId,
+                    ["client_secret"] = plaintextSecret,
+                    ["scope"] = "https://graph.microsoft.com/.default",
+                    ["grant_type"] = "client_credentials"
+                });
+
+                using var response = await httpClient.PostAsync(tokenUrl, requestContent, ct);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    logger.LogDebug("Client secret validation successful");
+                    return true;
+                }
+
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
+
+                // Check if this is a transient error that should be retried
+                bool isTransient = response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
+                                  response.StatusCode == System.Net.HttpStatusCode.GatewayTimeout ||
+                                  response.StatusCode == System.Net.HttpStatusCode.TooManyRequests;
+
+                if (isTransient && attempt < ClientSecretValidationMaxRetries)
+                {
+                    logger.LogDebug("Transient error during validation (attempt {Attempt}/{MaxRetries}), retrying...",
+                        attempt, ClientSecretValidationMaxRetries);
+                    await Task.Delay(ClientSecretValidationRetryDelayMs, ct);
+                    continue;
+                }
+
+                // Non-transient error or final retry - log and return false
+                logger.LogDebug("Client secret validation failed: {StatusCode} - {Error}",
+                    response.StatusCode, errorContent);
+
+                return false;
+            }
+            catch (HttpRequestException ex) when (attempt < ClientSecretValidationMaxRetries)
+            {
+                logger.LogDebug(ex, "Network error during validation (attempt {Attempt}/{MaxRetries}), retrying...",
+                    attempt, ClientSecretValidationMaxRetries);
+                await Task.Delay(ClientSecretValidationRetryDelayMs, ct);
+            }
+            catch (TaskCanceledException ex) when (attempt < ClientSecretValidationMaxRetries && !ct.IsCancellationRequested)
+            {
+                // Timeout (not user cancellation)
+                logger.LogDebug(ex, "Timeout during validation (attempt {Attempt}/{MaxRetries}), retrying...",
+                    attempt, ClientSecretValidationMaxRetries);
+                await Task.Delay(ClientSecretValidationRetryDelayMs, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Unexpected exception during client secret validation: {Message}", ex.Message);
+                return false;
+            }
+        }
+
+        // All retries exhausted
+        logger.LogWarning("Client secret validation failed after {MaxRetries} attempts", ClientSecretValidationMaxRetries);
+        return false;
     }
 
     /// <summary>
