@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -47,7 +48,11 @@ public class AgentBlueprintService
         try
         {
             // Make the API call to get inheritable permissions
-            var doc = await _graphApiService.GraphGetAsync(tenantId, $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintId}/inheritablePermissions", cancellationToken);
+            var doc = await _graphApiService.GraphGetAsync(
+                tenantId, 
+                $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintId}/inheritablePermissions", 
+                cancellationToken,
+                AuthenticationConstants.AgentBlueprintAuthScopes);
 
             if (doc == null)
             {
@@ -87,10 +92,9 @@ public class AgentBlueprintService
             _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
             
             // Agent Blueprint deletion requires special delegated permission scope
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            var authScopes = AuthenticationConstants.AgentBlueprintAuthScopes;
             
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
+            _logger.LogInformation("Acquiring access token for agent blueprint operations (device code flow may prompt once)...");
             
             // Use the special agentIdentityBlueprint endpoint for deletion
             var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";
@@ -101,7 +105,7 @@ public class AgentBlueprintService
                 deletePath,
                 cancellationToken,
                 treatNotFoundAsSuccess: true,
-                scopes: requiredScopes);
+                scopes: authScopes);
             
             if (success)
             {
@@ -139,10 +143,9 @@ public class AgentBlueprintService
             _logger.LogInformation("Deleting agent identity application: {applicationId}", applicationId);
 
             // Agent Identity deletion requires special delegated permission scope
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            var authScopes = AuthenticationConstants.AgentBlueprintAuthScopes;
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
+            _logger.LogInformation("Acquiring access token for agent identity operations (device code flow may prompt once)...");
 
             // Use the special servicePrincipals endpoint for deletion
             var deletePath = $"/beta/servicePrincipals/{applicationId}";
@@ -153,7 +156,7 @@ public class AgentBlueprintService
                 deletePath,
                 cancellationToken,
                 treatNotFoundAsSuccess: true,
-                scopes: requiredScopes);
+                scopes: authScopes);
         }
         catch (Exception ex)
         {
@@ -171,7 +174,7 @@ public class AgentBlueprintService
         string blueprintId,
         string resourceAppId,
         IEnumerable<string> scopes,
-        IEnumerable<string>? requiredScopes = null,
+        IEnumerable<string>? authScopes = null,
         CancellationToken ct = default)
     {
         var desiredSet = new HashSet<string>(scopes ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
@@ -182,11 +185,11 @@ public class AgentBlueprintService
         try
         {
             // Resolve blueprintId to object ID if needed
-            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
+            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, authScopes);
 
             // Retrieve existing inheritable permissions
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-            var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, requiredScopes);
+            var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, authScopes);
 
             // Inspect existing entries
             JsonElement? existingEntry = null;
@@ -228,7 +231,7 @@ public class AgentBlueprintService
                     }
                 };
 
-                var patched = await _graphApiService.GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
+                var patched = await _graphApiService.GraphPatchAsync(tenantId, patchPath, patchPayload, ct, authScopes);
                 if (!patched)
                 {
                     return (ok: false, alreadyExists: false, error: "PATCH failed");
@@ -249,7 +252,7 @@ public class AgentBlueprintService
                 }
             };
 
-            var createdResp = await _graphApiService.GraphPostWithResponseAsync(tenantId, postPath, postPayload, ct, requiredScopes);
+            var createdResp = await _graphApiService.GraphPostWithResponseAsync(tenantId, postPath, postPayload, ct, authScopes);
             if (!createdResp.IsSuccess)
             {
                 var err = string.IsNullOrWhiteSpace(createdResp.Body)
@@ -277,16 +280,16 @@ public class AgentBlueprintService
         string blueprintId,
         string resourceAppId,
         CancellationToken ct = default,
-        IEnumerable<string>? requiredScopes = null)
+        IEnumerable<string>? authScopes = null)
     {
         try
         {
             // Resolve blueprintId to object ID if needed
-            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
+            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, authScopes);
 
             // Retrieve inheritable permissions
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-            var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, requiredScopes);
+            var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, authScopes);
 
             if (existingDoc == null)
             {
@@ -340,7 +343,8 @@ public class AgentBlueprintService
         var listDoc = await _graphApiService.GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
-            ct);
+            ct,
+            AuthenticationConstants.PermissionGrantAuthScopes);
 
         var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true ? arr : default;
 
@@ -355,7 +359,12 @@ public class AgentBlueprintService
                     _logger.LogDebug("Deleting existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}", 
                         id, clientSpObjectId, resourceSpObjectId);
 
-                    var ok = await _graphApiService.GraphDeleteAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", ct);
+                    var ok = await _graphApiService.GraphDeleteAsync(
+                        tenantId, 
+                        $"/v1.0/oauth2PermissionGrants/{id}", 
+                        ct, 
+                        true,
+                        AuthenticationConstants.PermissionGrantAuthScopes);
                     if (!ok)
                     {
                         _logger.LogError("Failed to delete existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}. " +
@@ -388,7 +397,13 @@ public class AgentBlueprintService
             scope = desiredScopeString
         };
 
-        var created = await _graphApiService.GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
+        var created = await _graphApiService.GraphPostAsync(
+            tenantId,
+            "/v1.0/oauth2PermissionGrants",
+            payload,
+            ct,
+            AuthenticationConstants.PermissionGrantAuthScopes);
+
         return created != null;
     }
 
@@ -405,7 +420,8 @@ public class AgentBlueprintService
         var listDoc = await _graphApiService.GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
-            ct);
+            ct,
+            AuthenticationConstants.PermissionGrantAuthScopes);
 
         var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0
             ? arr[0]
@@ -421,7 +437,7 @@ public class AgentBlueprintService
                 resourceId = resourceSpObjectId,
                 scope = desiredScopeString
             };
-            var created = await _graphApiService.GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
+            var created = await _graphApiService.GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, AuthenticationConstants.PermissionGrantAuthScopes);
             return created != null; // success if response parsed
         }
 
@@ -438,7 +454,7 @@ public class AgentBlueprintService
         var id = existing.Value.GetProperty("id").GetString();
         if (string.IsNullOrWhiteSpace(id)) return false;
 
-        return await _graphApiService.GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct);
+        return await _graphApiService.GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct, AuthenticationConstants.PermissionGrantAuthScopes);
     }
 
     /// <summary>
@@ -462,8 +478,10 @@ public class AgentBlueprintService
     {
         try
         {
+            var permissionGrantAuthScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
             // Get the application object by appId
-            var appsDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{appId}'&$select=id,requiredResourceAccess", ct);
+            var appsDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{appId}'&$select=id,requiredResourceAccess", ct, permissionGrantAuthScopes);
             if (appsDoc == null)
             {
                 _logger.LogError("Failed to retrieve application with appId {AppId}", appId);
@@ -485,7 +503,7 @@ public class AgentBlueprintService
             var objectId = idProp.GetString()!;
 
             // Get the resource service principal to look up permission IDs
-            var resourceSp = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct);
+            var resourceSp = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct, permissionGrantAuthScopes);
             if (string.IsNullOrEmpty(resourceSp))
             {
                 _logger.LogError("Resource service principal not found for appId {ResourceAppId}", resourceAppId);
@@ -493,7 +511,7 @@ public class AgentBlueprintService
             }
 
             // Get the resource SP's published permissions
-            var resourceSpDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{resourceSp}?$select=oauth2PermissionScopes,appRoles", ct);
+            var resourceSpDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{resourceSp}?$select=oauth2PermissionScopes,appRoles", ct, permissionGrantAuthScopes);
             if (resourceSpDoc == null)
             {
                 _logger.LogError("Failed to retrieve resource service principal {ResourceSp}", resourceSp);
@@ -605,7 +623,7 @@ public class AgentBlueprintService
                 requiredResourceAccess = resourceAccessList
             };
 
-            var updated = await _graphApiService.GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}", patchPayload, ct);
+            var updated = await _graphApiService.GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}", patchPayload, ct, permissionGrantAuthScopes);
             if (updated)
             {
                 _logger.LogInformation("Successfully added required resource access for {ResourceAppId} to application {AppId}", resourceAppId, appId);
@@ -676,11 +694,13 @@ public class AgentBlueprintService
         string tenantId,
         string blueprintAppId,
         CancellationToken ct = default,
-        IEnumerable<string>? requiredScopes = null)
+        IEnumerable<string>? authScopes = null)
     {
+        authScopes ??= AuthenticationConstants.AgentBlueprintAuthScopes;
+
         // First try direct access to inheritable permissions endpoint
         var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintAppId}/inheritablePermissions";
-        var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, requiredScopes);
+        var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, authScopes);
 
         if (existingDoc != null)
         {
@@ -689,7 +709,7 @@ public class AgentBlueprintService
         }
 
         // Attempt to resolve as appId -> application object id
-        var apps = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct, requiredScopes);
+        var apps = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct, authScopes);
         if (apps != null && apps.RootElement.TryGetProperty("value", out var arr) && arr.GetArrayLength() > 0)
         {
             var appObj = arr[0];

@@ -332,17 +332,17 @@ public static class InfrastructureSubcommand
         var accountCheck = await executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true, cancellationToken: cancellationToken);
         if (!accountCheck.Success)
         {
-            logger.LogInformation("Azure CLI not authenticated. Initiating login with management scope...");
-            logger.LogInformation("A browser window will open for authentication.");
-            
-            var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
+            logger.LogInformation("Azure CLI not authenticated. Initiating device code login...");
+            logger.LogInformation("Please follow the device code instructions in your terminal.");
+
+            var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId} --use-device-code --allow-no-subscriptions", cancellationToken: cancellationToken);
+
             if (!loginResult.Success)
             {
-                logger.LogError("Azure CLI login failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                logger.LogError("Azure CLI login failed. Please run manually: az login --tenant {TenantId} --use-device-code --scope https://management.core.windows.net//.default", tenantId);
                 return false;
             }
-            
+
             logger.LogInformation("Azure CLI login successful!");
             await Task.Delay(2000, cancellationToken);
         }
@@ -362,17 +362,17 @@ public static class InfrastructureSubcommand
             
         if (!tokenCheck.Success)
         {
-            logger.LogWarning("Unable to acquire management scope token. Attempting re-authentication...");
-            logger.LogInformation("A browser window will open for authentication.");
-            
-            var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
+            logger.LogWarning("Unable to acquire management scope token. Attempting device code re-authentication...");
+            logger.LogInformation("Please follow the device code instructions in your terminal.");
+
+            var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId} --use-device-code --allow-no-subscriptions", cancellationToken: cancellationToken);
+
             if (!loginResult.Success)
             {
-                logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
+                logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --tenant {TenantId} --use-device-code --scope https://management.core.windows.net//.default", tenantId);
                 return false;
             }
-            
+
             logger.LogInformation("Azure CLI re-authentication successful!");
             await Task.Delay(2000, cancellationToken);
             

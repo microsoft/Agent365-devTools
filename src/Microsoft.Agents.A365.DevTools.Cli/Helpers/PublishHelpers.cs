@@ -25,9 +25,14 @@ public static class PublishHelpers
         ILogger logger,
         CancellationToken ct)
     {
+        var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
         // Check 1: Verify all required service principals exist
-        var firstPartyClientSpId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, 
-            MosConstants.TpsAppServicesClientAppId, ct);
+        var firstPartyClientSpId = await graph.LookupServicePrincipalByAppIdAsync(
+            config.TenantId, 
+            MosConstants.TpsAppServicesClientAppId, 
+            ct,
+            authScopes);
         if (string.IsNullOrWhiteSpace(firstPartyClientSpId))
         {
             logger.LogDebug("Service principal for {ConstantName} ({AppId}) not found - configuration needed", 
@@ -39,7 +44,7 @@ public static class PublishHelpers
 
         foreach (var resourceAppId in MosConstants.AllResourceAppIds)
         {
-            var spId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct);
+            var spId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct, authScopes);
             if (string.IsNullOrWhiteSpace(spId))
             {
                 logger.LogDebug("Service principal for {ResourceAppId} not found - configuration needed", resourceAppId);
@@ -109,9 +114,11 @@ public static class PublishHelpers
             }
 
             // Check if OAuth2 permission grant exists
-            var grantDoc = await graph.GraphGetAsync(config.TenantId,
+            var grantDoc = await graph.GraphGetAsync(
+                config.TenantId,
                 $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{firstPartyClientSpId}' and resourceId eq '{resourceSpId}'",
-                ct);
+                ct,
+                authScopes);
 
             if (grantDoc == null || !grantDoc.RootElement.TryGetProperty("value", out var grants) || grants.GetArrayLength() == 0)
             {
@@ -155,9 +162,14 @@ public static class PublishHelpers
         ILogger logger,
         CancellationToken ct)
     {
+        var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
         // Check 1: First-party client app service principal
-        var firstPartySpId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, 
-            MosConstants.TpsAppServicesClientAppId, ct);
+        var firstPartySpId = await graph.LookupServicePrincipalByAppIdAsync(
+            config.TenantId, 
+            MosConstants.TpsAppServicesClientAppId, 
+            ct,
+            authScopes);
         
         if (string.IsNullOrWhiteSpace(firstPartySpId))
         {
@@ -165,8 +177,11 @@ public static class PublishHelpers
             
             try
             {
-                firstPartySpId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, 
-                    MosConstants.TpsAppServicesClientAppId, ct);
+                firstPartySpId = await graph.EnsureServicePrincipalForAppIdAsync(
+                    config.TenantId, 
+                    MosConstants.TpsAppServicesClientAppId, 
+                    ct,
+                    authScopes);
                 
                 if (string.IsNullOrWhiteSpace(firstPartySpId))
                 {
@@ -201,7 +216,7 @@ public static class PublishHelpers
         var missingResourceApps = new List<string>();
         foreach (var resourceAppId in MosConstants.AllResourceAppIds)
         {
-            var spId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct);
+            var spId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct, authScopes);
             if (string.IsNullOrWhiteSpace(spId))
             {
                 missingResourceApps.Add(resourceAppId);
@@ -216,7 +231,7 @@ public static class PublishHelpers
             {
                 try
                 {
-                    var spId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, resourceAppId, ct);
+                    var spId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, resourceAppId, ct, authScopes);
                     
                     if (string.IsNullOrWhiteSpace(spId))
                     {
@@ -260,6 +275,8 @@ public static class PublishHelpers
         ILogger logger,
         CancellationToken ct)
     {
+        var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
         if (!app.TryGetProperty("id", out var appObjectIdElement))
         {
             throw new SetupValidationException($"Application {config.ClientAppId} missing id property");
@@ -382,7 +399,7 @@ public static class PublishHelpers
             logger.LogDebug("Updating application {AppObjectId} with {Count} resource access entries", 
                 appObjectId, updatedResourceAccess.Count);
 
-            var updated = await graph.GraphPatchAsync(config.TenantId, $"/v1.0/applications/{appObjectId}", patchPayload, ct);
+            var updated = await graph.GraphPatchAsync(config.TenantId, $"/v1.0/applications/{appObjectId}", patchPayload, ct, authScopes);
             if (!updated)
             {
                 throw new SetupValidationException("Failed to update application with MOS API permissions.");
@@ -414,6 +431,8 @@ public static class PublishHelpers
         ILogger logger,
         CancellationToken ct = default)
     {
+        var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
         if (string.IsNullOrWhiteSpace(config.ClientAppId))
         {
             logger.LogError("Custom client app ID not found in configuration. Run 'a365 config init' first.");
@@ -422,8 +441,11 @@ public static class PublishHelpers
 
         // Load custom client app
         logger.LogDebug("Checking MOS prerequisites for custom client app {ClientAppId}", config.ClientAppId);
-        var appDoc = await graph.GraphGetAsync(config.TenantId, 
-            $"/v1.0/applications?$filter=appId eq '{config.ClientAppId}'&$select=id,requiredResourceAccess", ct);
+        var appDoc = await graph.GraphGetAsync(
+            config.TenantId, 
+            $"/v1.0/applications?$filter=appId eq '{config.ClientAppId}'&$select=id,requiredResourceAccess", 
+            ct,
+            authScopes);
         
         if (appDoc == null || !appDoc.RootElement.TryGetProperty("value", out var appsArray) || appsArray.GetArrayLength() == 0)
         {
@@ -467,9 +489,14 @@ public static class PublishHelpers
         ILogger logger,
         CancellationToken ct)
     {
+        var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
         // Look up the first-party client app's service principal
-        var clientSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, 
-            MosConstants.TpsAppServicesClientAppId, ct);
+        var clientSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(
+            config.TenantId, 
+            MosConstants.TpsAppServicesClientAppId, 
+            ct,
+            authScopes);
         
         if (string.IsNullOrWhiteSpace(clientSpObjectId))
         {
@@ -487,7 +514,7 @@ public static class PublishHelpers
         // Check which resources need consent
         foreach (var (resourceAppId, scopeName) in mosResourceScopes)
         {
-            var resourceSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct);
+            var resourceSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct, authScopes);
             if (string.IsNullOrWhiteSpace(resourceSpObjectId))
             {
                 logger.LogWarning("Service principal not found for MOS resource app {ResourceAppId} - skipping consent", resourceAppId);
@@ -495,9 +522,11 @@ public static class PublishHelpers
             }
 
             // Check if consent already exists
-            var grantDoc = await graph.GraphGetAsync(config.TenantId,
+            var grantDoc = await graph.GraphGetAsync(
+                config.TenantId,
                 $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
-                ct);
+                ct,
+                authScopes);
 
             var hasConsent = false;
             if (grantDoc != null && grantDoc.RootElement.TryGetProperty("value", out var grants) && grants.GetArrayLength() > 0)

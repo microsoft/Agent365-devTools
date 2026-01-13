@@ -180,13 +180,14 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         var escapedTenantId = CommandStringHelper.EscapePowerShellString(tenantId);
         var scopesArray = BuildScopesArray(scopes);
 
-        // Use -UseDeviceCode for CLI-friendly authentication (no browser popup/download)
-        var authMethod = useDeviceCode ? "-UseDeviceCode" : "";
-        
+        // ALWAYS use -UseDeviceCode for CLI-friendly authentication (no browser popup/download)
+        // This enforces device code flow for the entire CLI workflow
+        var authMethod = "-UseDeviceCode";
+
         // Include -ClientId parameter if provided (ensures authentication uses the custom client app)
         // Add leading space only when parameter is present to avoid double spaces
-        var clientIdParam = !string.IsNullOrWhiteSpace(clientAppId) 
-            ? $" -ClientId '{CommandStringHelper.EscapePowerShellString(clientAppId)}'" 
+        var clientIdParam = !string.IsNullOrWhiteSpace(clientAppId)
+            ? $" -ClientId '{CommandStringHelper.EscapePowerShellString(clientAppId)}'"
             : "";
 
         // Workaround for older Microsoft.Graph versions that don't have Get-MgAccessToken

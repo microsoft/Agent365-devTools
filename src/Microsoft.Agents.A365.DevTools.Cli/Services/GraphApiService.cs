@@ -83,7 +83,7 @@ public class GraphApiService
                 _logger.LogInformation("Azure CLI not authenticated. Initiating login...");
                 var loginResult = await _executor.ExecuteAsync(
                     "az", 
-                    $"login --tenant {tenantId}", 
+                    $"login --tenant {tenantId} --use-device-code --allow-no-subscriptions",
                     cancellationToken: ct);
                 
                 if (!loginResult.Success)
@@ -122,7 +122,7 @@ public class GraphApiService
                 _logger.LogInformation("Initiating fresh login...");
                 var freshLoginResult = await _executor.ExecuteAsync(
                     "az",
-                    $"login --tenant {tenantId}",
+                    $"login --tenant {tenantId} --use-device-code --allow-no-subscriptions",
                     cancellationToken: ct);
                 
                 if (!freshLoginResult.Success)
@@ -179,22 +179,29 @@ public class GraphApiService
 
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        // When specific scopes are required, token provider must be configured
-        if (scopes != null && _tokenProvider == null)
+        // When specific scopes are required AND token provider is configured, use delegated auth
+        // Otherwise fall back to Azure CLI (useful for tests and when token provider is not available)
+        string? token;
+
+        if (scopes != null && _tokenProvider != null)
         {
-            _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes));
-            return false;
+            // Use token provider with delegated scopes (device code flow)
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, useDeviceCode: true, clientAppId: CustomClientAppId, ct: ct);
+        }
+        else
+        {
+            // Fall back to Azure CLI token (for tests or when token provider is not configured)
+            if (scopes != null && _tokenProvider == null)
+            {
+                _logger.LogWarning("Token provider is not configured, falling back to Azure CLI for scopes: {Scopes}", string.Join(", ", scopes));
+            }
+            token = await GetGraphAccessTokenAsync(tenantId, ct);
         }
 
-        // When specific scopes are required, use custom client app if configured
-        // CustomClientAppId should be set by callers who have access to config
-        var token = (scopes != null && _tokenProvider != null)
-            ? await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct)
-            : await GetGraphAccessTokenAsync(tenantId, ct);
-        
         if (string.IsNullOrWhiteSpace(token)) return false;
 
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
         // NOTE: Do NOT add "ConsistencyLevel: eventual" header here.
         // This header is only required for advanced Graph query capabilities ($count, $search, certain $filter operations).
         // For simple queries like service principal lookups, this header is not needed and causes HTTP 400 errors.
@@ -319,6 +326,69 @@ public class GraphApiService
         }
 
         return true;
+    }
+
+    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(
+        string tenantId,
+        string relativePath,
+        object payload,
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null,
+        IDictionary<string, string>? extraHeaders = null)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+        {
+            return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
+        }
+
+        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? relativePath
+            : $"https://graph.microsoft.com{relativePath}";
+
+        using var req = CreateJsonRequest(HttpMethod.Post, url, payload, extraHeaders);
+        using var resp = await _httpClient.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        JsonDocument? json = null;
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            try { json = JsonDocument.Parse(body); } catch { /* ignore */ }
+        }
+
+        return new GraphResponse
+        {
+            IsSuccess = resp.IsSuccessStatusCode,
+            StatusCode = (int)resp.StatusCode,
+            ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
+            Body = body ?? string.Empty,
+            Json = json
+        };
+    }
+
+    public virtual async Task<bool> GraphPatchAsync(
+        string tenantId,
+        string relativePath,
+        object payload,
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null,
+        IDictionary<string, string>? extraHeaders = null)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
+
+        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? relativePath
+            : $"https://graph.microsoft.com{relativePath}";
+
+        using var req = CreateJsonRequest(new HttpMethod("PATCH"), url, payload, extraHeaders);
+        using var resp = await _httpClient.SendAsync(req, ct);
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+        }
+
+        return resp.IsSuccessStatusCode;
     }
 
     /// <summary>
@@ -480,5 +550,34 @@ public class GraphApiService
             _logger.LogWarning(ex, "Failed to check service principal creation privileges: {Message}", ex.Message);
             return (false, new List<string>());
         }
+    }
+
+    private static HttpRequestMessage CreateJsonRequest(
+        HttpMethod method,
+        string url,
+        object? payload = null,
+        IDictionary<string, string>? extraHeaders = null)
+    {
+        var req = new HttpRequestMessage(method, url);
+
+        if (payload != null)
+        {
+            req.Content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                Encoding.UTF8,
+                "application/json");
+        }
+
+        if (extraHeaders != null)
+        {
+            foreach (var kvp in extraHeaders)
+            {
+                // avoid duplicates if caller reuses service instance
+                req.Headers.Remove(kvp.Key);
+                req.Headers.TryAddWithoutValidation(kvp.Key, kvp.Value);
+            }
+        }
+
+        return req;
     }
 }

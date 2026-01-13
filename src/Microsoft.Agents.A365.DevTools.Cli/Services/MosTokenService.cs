@@ -79,11 +79,11 @@ public class MosTokenService
             return null;
         }
 
-        // Acquire new token using MSAL.NET
+        // Acquire new token using MSAL.NET with device code flow (no browser popup)
         try
         {
             _logger.LogInformation("Acquiring MOS token for environment: {Environment}", environment);
-            _logger.LogInformation("A browser window will open for authentication...");
+            _logger.LogInformation("Please follow the device code instructions...");
 
             var app = PublicClientApplicationBuilder
                 .Create(config.ClientId)
@@ -92,8 +92,18 @@ public class MosTokenService
                 .Build();
 
             var result = await app
-                .AcquireTokenInteractive(new[] { config.Scope })
-                .WithPrompt(Prompt.SelectAccount)
+                .AcquireTokenWithDeviceCode(new[] { config.Scope }, deviceCodeResult =>
+                {
+                    _logger.LogInformation("");
+                    _logger.LogInformation("========================================================================");
+                    _logger.LogInformation("To sign in, use a web browser to open the page:");
+                    _logger.LogInformation("    {VerificationUri}", deviceCodeResult.VerificationUrl);
+                    _logger.LogInformation("");
+                    _logger.LogInformation("And enter the code: {UserCode}", deviceCodeResult.UserCode);
+                    _logger.LogInformation("========================================================================");
+                    _logger.LogInformation("");
+                    return Task.CompletedTask;
+                })
                 .ExecuteAsync(cancellationToken);
 
             if (result?.AccessToken == null)

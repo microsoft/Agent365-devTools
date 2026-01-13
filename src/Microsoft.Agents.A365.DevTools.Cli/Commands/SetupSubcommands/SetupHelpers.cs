@@ -210,20 +210,20 @@ internal static class SetupHelpers
             throw new SetupValidationException("AgentBlueprintId (appId) is required.");
 
         // Use delegated token provider for *all* permission operations to avoid bouncing between Azure CLI auth and Microsoft Graph PowerShell auth.
-        var permissionGrantScopes = AuthenticationConstants.RequiredPermissionGrantScopes;
+        var permissionGrantScopes = AuthenticationConstants.PermissionGrantAuthScopes;
 
         // Pre-warm the delegated token once
-        var user = await graph.GraphGetAsync(
+        var warmup = await graph.GraphGetAsync(
             config.TenantId,
             "/v1.0/me?$select=id",
             ct,
             scopes: permissionGrantScopes);
-        
-        if (user == null)
+
+        if (warmup == null)
         {
             throw new SetupValidationException(
-                "Failed to authenticate to Microsoft Graph with delegated permissions. " +
-                "Please sign in when prompted and ensure your account has the required roles and permission scopes.");
+                "Failed to authenticate to Microsoft Graph with delegated permissions required for permission grants. " +
+                "Please sign in when prompted and ensure your account has the required roles and the custom client app has admin-consented scopes.");
         }
 
         var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct, permissionGrantScopes);
@@ -287,7 +287,7 @@ internal static class SetupHelpers
             var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
             
             var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
-                config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
+                config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredPermissions, ct);
 
             if (!ok && !alreadyExists)
             {

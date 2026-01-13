@@ -5,22 +5,23 @@ using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 /// <summary>
-/// Helper methods for admin consent flows that use az cli to poll Graph resources.
+/// Helper methods for admin consent flows and verification.
 /// Kept intentionally small and focused so it can be reused across commands/runners.
 /// </summary>
 public static class AdminConsentHelper
 {
     /// <summary>
-    /// Polls Azure AD/Graph (via az rest) to detect an oauth2 permission grant for the provided appId.
-    /// Mirrors the behavior previously implemented in A365SetupRunner.PollAdminConsentAsync.
+    /// Polls Microsoft Graph API for admin consent by checking for existence of oauth2PermissionGrants
     /// </summary>
     public static async Task<bool> PollAdminConsentAsync(
-        CommandExecutor executor,
+        Services.GraphApiService graphApiService,
+        string tenantId,
         ILogger logger,
         string appId,
         string scopeDescriptor,
@@ -31,55 +32,43 @@ public static class AdminConsentHelper
         var start = DateTime.UtcNow;
         string? spId = null;
 
+        // Use delegated scopes so this polling doesn't rely on Azure CLI.
+        var scopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
         try
         {
             while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
             {
                 if (spId == null)
                 {
-                    var spResult = await executor.ExecuteAsync("az",
-                        $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
-                        captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+                    // Find SP by appId
+                    spId = await graphApiService.LookupServicePrincipalByAppIdAsync(
+                        tenantId,
+                        appId,
+                        ct,
+                        scopes);
 
-                    if (spResult.Success)
-                    {
-                        try
-                        {
-                            using var doc = JsonDocument.Parse(spResult.StandardOutput);
-                            var value = doc.RootElement.GetProperty("value");
-                            if (value.GetArrayLength() > 0)
-                            {
-                                spId = value[0].GetProperty("id").GetString();
-                            }
-                        }
-                        catch { }
-                    }
+                    // Note: SP propagation can lag; keep polling.
                 }
 
-                if (spId != null)
+                if (!string.IsNullOrWhiteSpace(spId))
                 {
-                    var grants = await executor.ExecuteAsync("az",
-                        $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
-                        captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+                    // Check if ANY oauth2PermissionGrants exist for that clientId
+                    var grantsDoc = await graphApiService.GraphGetAsync(
+                        tenantId,
+                        $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'",
+                        ct,
+                        scopes);
 
-                    if (grants.Success)
+                    if (grantsDoc != null &&
+                        grantsDoc.RootElement.TryGetProperty("value", out var arr) &&
+                        arr.GetArrayLength() > 0)
                     {
-                        try
-                        {
-                            using var gdoc = JsonDocument.Parse(grants.StandardOutput);
-                            var arr = gdoc.RootElement.GetProperty("value");
-                            if (arr.GetArrayLength() > 0)
-                            {
-                                logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
-                                return true;
-                            }
-                        }
-                        catch { }
+                        logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
+                        return true;
                     }
                 }
 
-                // Delay between polls. If cancellation is requested this will throw OperationCanceledException,
-                // which we catch below and treat as a graceful cancellation resulting in 'false'.
                 await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
             }
 
@@ -87,8 +76,12 @@ public static class AdminConsentHelper
         }
         catch (OperationCanceledException)
         {
-            // Treat cancellation as a graceful timeout/no-consent scenario
             logger.LogDebug("Polling for admin consent was cancelled or timed out for app {AppId} ({Scope}).", appId, scopeDescriptor);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Polling for admin consent failed for app {AppId} ({Scope}).", appId, scopeDescriptor);
             return false;
         }
     }
@@ -127,7 +120,8 @@ public static class AdminConsentHelper
             var grantDoc = await graphApiService.GraphGetAsync(
                 tenantId,
                 $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpId}' and resourceId eq '{resourceSpId}'",
-                ct);
+                ct,
+                AuthenticationConstants.PermissionGrantAuthScopes);
 
             if (grantDoc == null || !grantDoc.RootElement.TryGetProperty("value", out var grants) || grants.GetArrayLength() == 0)
             {

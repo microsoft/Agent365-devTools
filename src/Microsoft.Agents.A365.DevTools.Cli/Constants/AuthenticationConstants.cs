@@ -84,10 +84,22 @@ public static class AuthenticationConstants
     /// These scopes enable the service principals to operate correctly with the necessary permissions.
     /// All scopes require admin consent.
     /// </summary>
-    public static readonly string[] RequiredPermissionGrantScopes = new[]
+    public static readonly string[] PermissionGrantAuthScopes = new[]
     {
+        "User.Read",
         "Application.ReadWrite.All",
         "DelegatedPermissionGrant.ReadWrite.All"
+    };
+
+    /// <summary>
+    /// Required scopes for agent blueprint operations using delegated authentication.
+    /// These scopes enable creating, updating, and deleting agent blueprints.
+    /// All scopes require admin consent.
+    /// </summary> 
+    public static readonly string[] AgentBlueprintAuthScopes = new[]
+    {
+        "User.Read",
+        "AgentIdentityBlueprint.ReadWrite.All"
     };
 
     /// <summary>

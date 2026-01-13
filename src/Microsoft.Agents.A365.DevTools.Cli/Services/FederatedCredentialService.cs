@@ -3,6 +3,7 @@
 
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -47,11 +48,14 @@ public class FederatedCredentialService
         {
             _logger.LogDebug("Retrieving federated credentials for blueprint: {ObjectId}", blueprintObjectId);
 
+            var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
             // Try standard endpoint first
             var doc = await _graphApiService.GraphGetAsync(
                 tenantId,
                 $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
-                cancellationToken);
+                cancellationToken,
+                authScopes);
 
             // If standard endpoint returns data with credentials, use it
             if (doc != null && doc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
@@ -65,7 +69,8 @@ public class FederatedCredentialService
                 doc = await _graphApiService.GraphGetAsync(
                     tenantId,
                     $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials",
-                    cancellationToken);
+                    cancellationToken,
+                    authScopes);
             }
 
             if (doc == null)
@@ -255,11 +260,14 @@ public class FederatedCredentialService
             {
                 _logger.LogDebug("Attempting federated credential creation with endpoint: {Endpoint}", endpoint);
                 
+                var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
                 var response = await _graphApiService.GraphPostWithResponseAsync(
                     tenantId,
                     endpoint,
                     payload,
-                    cancellationToken);
+                    cancellationToken,
+                    authScopes);
 
                 if (response.IsSuccess)
                 {
@@ -369,13 +377,15 @@ public class FederatedCredentialService
                 credentialId, blueprintObjectId);
 
             // Try the standard endpoint first
-            var endpoint = $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";
-            
+            var endpoint = $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";            
+            var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
+
             var success = await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 endpoint,
                 cancellationToken,
-                treatNotFoundAsSuccess: true);
+                treatNotFoundAsSuccess: true,
+                authScopes);
 
             if (success)
             {
@@ -391,7 +401,8 @@ public class FederatedCredentialService
                 tenantId,
                 endpoint,
                 cancellationToken,
-                treatNotFoundAsSuccess: true);
+                treatNotFoundAsSuccess: true,
+                authScopes);
 
             if (success)
             {

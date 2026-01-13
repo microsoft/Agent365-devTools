@@ -275,9 +275,7 @@ internal static class BlueprintSubcommand
         var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
         var delegatedConsentService = new DelegatedConsentService(
             cleanLoggerFactory.CreateLogger<DelegatedConsentService>(),
-            new GraphApiService(
-                cleanLoggerFactory.CreateLogger<GraphApiService>(),
-                executor));
+            graphApiService);
 
         // Use DI-provided GraphApiService which already has MicrosoftGraphTokenProvider configured
         var graphService = graphApiService;
@@ -655,19 +653,28 @@ internal static class BlueprintSubcommand
         // ========================================================================
         try
         {
-            logger.LogInformation("Creating Agent Blueprint using Microsoft Graph SDK...");
+            logger.LogInformation("Creating Agent Blueprint using Microsoft Graph REST...");
 
-            using GraphServiceClient graphClient = await GetAuthenticatedGraphClientAsync(logger, setupConfig, tenantId, ct);
+            // Use delegated device-code auth scopes for the full flow
+            var authScopes = AuthenticationConstants.PermissionGrantAuthScopes;
 
-            // Get current user for sponsors field (mimics PowerShell script behavior)
+            // 1) Get current user for sponsors (best-effort)
             string? sponsorUserId = null;
             try
             {
-                var me = await graphClient.Me.GetAsync(cancellationToken: ct);
-                if (me != null && !string.IsNullOrEmpty(me.Id))
+                var meDoc = await graphApiService.GraphGetAsync(
+                    tenantId,
+                    "/v1.0/me?$select=id,displayName,userPrincipalName",
+                    ct,
+                    scopes: new[] { "User.Read" });
+
+                if (meDoc?.RootElement.TryGetProperty("id", out var idEl) == true)
                 {
-                    sponsorUserId = me.Id;
-                    logger.LogInformation("Current user: {DisplayName} <{UPN}>", me.DisplayName, me.UserPrincipalName);
+                    sponsorUserId = idEl.GetString();
+                    var displayNameEl = meDoc.RootElement.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
+                    var upnEl = meDoc.RootElement.TryGetProperty("userPrincipalName", out var upn) ? upn.GetString() : null;
+
+                    logger.LogInformation("Current user: {DisplayName} <{UPN}>", displayNameEl ?? "(unknown)", upnEl ?? "(unknown)");
                     logger.LogInformation("Sponsor: https://graph.microsoft.com/v1.0/users/{UserId}", sponsorUserId);
                 }
             }
@@ -676,15 +683,14 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Could not retrieve current user for sponsors field: {Message}", ex.Message);
             }
 
-            // Define the application manifest with @odata.type for Agent Identity Blueprint
+            // 2) Create application in /beta with @odata.type
             var appManifest = new JsonObject
             {
-                ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint", // CRITICAL: Required for Agent Blueprint type
+                ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint",
                 ["displayName"] = displayName,
-                ["signInAudience"] = "AzureADMultipleOrgs" // Multi-tenant
+                ["signInAudience"] = "AzureADMultipleOrgs"
             };
 
-            // Add sponsors field if we have the current user (PowerShell script includes this)
             if (!string.IsNullOrEmpty(sponsorUserId))
             {
                 appManifest["sponsors@odata.bind"] = new JsonArray
@@ -693,81 +699,71 @@ internal static class BlueprintSubcommand
                 };
             }
 
-            var graphToken = await GetTokenFromGraphClient(logger, graphClient, tenantId, setupConfig.ClientAppId);
-            if (string.IsNullOrEmpty(graphToken))
+            var extraHeaders = new Dictionary<string, string>
             {
-                logger.LogError("Failed to extract access token from Graph client");
-                return (false, null, null, null, alreadyExisted: false);
-            }
-
-            // Create the application using Microsoft Graph SDK
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
-            httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
-            httpClient.DefaultRequestHeaders.Add("OData-Version", "4.0"); // Required for @odata.type
-
-            var createAppUrl = "https://graph.microsoft.com/beta/applications";
+                ["ConsistencyLevel"] = "eventual",
+                ["OData-Version"] = "4.0"
+            };
 
             logger.LogInformation("Creating Agent Blueprint application...");
             logger.LogInformation("  - Display Name: {DisplayName}", displayName);
-            if (!string.IsNullOrEmpty(sponsorUserId))
+
+            var createResp = await graphApiService.GraphPostWithResponseAsync(
+                tenantId,
+                "/beta/applications",
+                payload: JsonNode.Parse(appManifest.ToJsonString())!, // preserve JSON exactly
+                ct: ct,
+                scopes: authScopes,
+                extraHeaders: extraHeaders);
+
+            // If sponsor binding fails, retry without sponsors
+            if (!createResp.IsSuccess && !string.IsNullOrEmpty(sponsorUserId) && createResp.StatusCode == 400)
             {
-                logger.LogInformation("  - Sponsor: User ID {UserId}", sponsorUserId);
+                logger.LogWarning("Agent Blueprint creation with sponsors failed (400). Retrying without sponsors...");
+                appManifest.Remove("sponsors@odata.bind");
+
+                createResp = await graphApiService.GraphPostWithResponseAsync(
+                    tenantId,
+                    "/beta/applications",
+                    payload: JsonNode.Parse(appManifest.ToJsonString())!,
+                    ct: ct,
+                    scopes: authScopes,
+                    extraHeaders: extraHeaders);
             }
 
-            var appResponse = await httpClient.PostAsync(
-                createAppUrl,
-                new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
-
-            if (!appResponse.IsSuccessStatusCode)
+            if (!createResp.IsSuccess || createResp.Json == null)
             {
-                var errorContent = await appResponse.Content.ReadAsStringAsync(ct);
-
-                // If sponsors field causes error (Bad Request 400), retry without it
-                if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest &&
-                    !string.IsNullOrEmpty(sponsorUserId))
-                {
-                    logger.LogWarning("Agent Blueprint creation with sponsors failed (Bad Request). Retrying without sponsors...");
-
-                    // Remove sponsors field and retry
-                    appManifest.Remove("sponsors@odata.bind");
-
-                    appResponse = await httpClient.PostAsync(
-                        createAppUrl,
-                        new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                        ct);
-
-                    if (!appResponse.IsSuccessStatusCode)
-                    {
-                        errorContent = await appResponse.Content.ReadAsStringAsync(ct);
-                        logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                        return (false, null, null, null, alreadyExisted: false);
-                    }
-                }
-                else
-                {
-                    logger.LogError("Failed to create application: {Status} - {Error}", appResponse.StatusCode, errorContent);
-                    return (false, null, null, null, alreadyExisted: false);
-                }
+                logger.LogError("Failed to create application: {Status} {Reason} - {Body}", createResp.StatusCode, createResp.ReasonPhrase, createResp.Body);
+                return (false, null, null, null, alreadyExisted: false);
             }
 
-            var appJson = await appResponse.Content.ReadAsStringAsync(ct);
-            var app = JsonNode.Parse(appJson)!.AsObject();
-            var appId = app["appId"]!.GetValue<string>();
-            var objectId = app["id"]!.GetValue<string>();
+            var root = createResp.Json.RootElement;
+
+            var appId = root.GetProperty("appId").GetString();
+            var objectId = root.GetProperty("id").GetString();
+
+            if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(objectId))
+            {
+                logger.LogError("Create application succeeded but response missing appId/id.");
+                return (false, null, null, null, alreadyExisted: false);
+            }
 
             logger.LogInformation("Application created successfully");
             logger.LogInformation("  - App ID: {AppId}", appId);
             logger.LogInformation("  - Object ID: {ObjectId}", objectId);
 
-            // Wait for application propagation using RetryHelper
+            // 3) Wait for application propagation
             var retryHelper = new RetryHelper(logger);
             logger.LogInformation("Waiting for application object to propagate in directory...");
             var appAvailable = await retryHelper.ExecuteWithRetryAsync(
                 async ct =>
                 {
-                    var checkResp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/applications/{objectId}", ct);
-                    return checkResp.IsSuccessStatusCode;
+                    var doc = await graphApiService.GraphGetAsync(
+                        tenantId,
+                        $"/v1.0/applications/{objectId}",
+                        ct,
+                        scopes: authScopes);
+                    return doc != null;
                 },
                 result => !result,
                 maxRetries: 10,
@@ -779,102 +775,53 @@ internal static class BlueprintSubcommand
                 logger.LogError("Application object not available after creation and retries. Aborting setup.");
                 return (false, null, null, null, alreadyExisted: false);
             }
-            
+
             logger.LogInformation("Application object verified in directory");
 
-            // Update application with identifier URI
+            // 4) Patch identifierUris (best-effort; if propagation delay, log and continue)
             var identifierUri = $"api://{appId}";
-            var patchAppUrl = $"https://graph.microsoft.com/v1.0/applications/{objectId}";
-            var patchBody = new JsonObject
-            {
-                ["identifierUris"] = new JsonArray { identifierUri }
-            };
+            var patched = await graphApiService.GraphPatchAsync(
+                tenantId,
+                $"/v1.0/applications/{objectId}",
+                new { identifierUris = new[] { identifierUri } },
+                ct,
+                scopes: authScopes);
 
-            var patchResponse = await httpClient.PatchAsync(
-                patchAppUrl,
-                new StringContent(patchBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
-
-            if (!patchResponse.IsSuccessStatusCode)
-            {
-                var patchError = await patchResponse.Content.ReadAsStringAsync(ct);
-                logger.LogInformation("Waiting for application propagation before setting identifier URI...");
-                logger.LogDebug("Identifier URI update deferred (propagation delay): {Error}", patchError);
-            }
-            else
+            if (patched)
             {
                 logger.LogInformation("Identifier URI set to: {Uri}", identifierUri);
             }
-
-            // Create service principal
-            logger.LogInformation("Creating service principal...");
-
-            var spManifest = new JsonObject
-            {
-                ["appId"] = appId
-            };
-
-            var createSpUrl = "https://graph.microsoft.com/v1.0/servicePrincipals";
-            var spResponse = await httpClient.PostAsync(
-                createSpUrl,
-                new StringContent(spManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
-
-            string? servicePrincipalId = null;
-            if (spResponse.IsSuccessStatusCode)
-            {
-                var spJson = await spResponse.Content.ReadAsStringAsync(ct);
-                var sp = JsonNode.Parse(spJson)!.AsObject();
-                servicePrincipalId = sp["id"]!.GetValue<string>();
-                logger.LogInformation("Service principal created: {SpId}", servicePrincipalId);
-            }
             else
             {
-                var spError = await spResponse.Content.ReadAsStringAsync(ct);
-                logger.LogInformation("Waiting for application propagation before creating service principal...");
-                logger.LogDebug("Service principal creation deferred (propagation delay): {Error}", spError);
+                logger.LogInformation("Identifier URI update deferred (propagation delay).");
             }
 
-            // Wait for service principal propagation using RetryHelper
-            if (!string.IsNullOrWhiteSpace(servicePrincipalId))
+            // 5) Ensure service principal exists (this already handles create + lookup)
+            logger.LogInformation("Ensuring service principal exists...");
+            string? servicePrincipalId = null;
+            try
             {
-                logger.LogInformation("Verifying service principal propagation in directory...");
-                var spPropagated = await retryHelper.ExecuteWithRetryAsync(
-                    async ct =>
-                    {
-                        var checkSp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'", ct);
-                        if (checkSp.IsSuccessStatusCode)
-                        {
-                            var content = await checkSp.Content.ReadAsStringAsync(ct);
-                            var spList = JsonDocument.Parse(content);
-                            return spList.RootElement.GetProperty("value").GetArrayLength() > 0;
-                        }
-                        return false;
-                    },
-                    result => !result,
-                    maxRetries: 10,
-                    baseDelaySeconds: 5,
-                    ct);
-
-                if (spPropagated)
-                {
-                    logger.LogInformation("Service principal verified in directory");
-                }
-                else
-                {
-                    logger.LogWarning("Service principal not fully propagated after retries. This may cause issues with federated credentials.");
-                }
+                servicePrincipalId = await graphApiService.EnsureServicePrincipalForAppIdAsync(
+                    tenantId,
+                    appId,
+                    ct,
+                    scopes: authScopes);
+                logger.LogInformation("Service principal ensured: {SpId}", servicePrincipalId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Service principal creation/lookup failed (may be propagation): {Message}", ex.Message);
             }
 
-            // Store blueprint identifiers in config object (will be persisted after secret creation)
+            // 6) Persist identifiers in config object (same as before)
             setupConfig.AgentBlueprintObjectId = objectId;
             setupConfig.AgentBlueprintServicePrincipalObjectId = servicePrincipalId;
             setupConfig.AgentBlueprintId = appId;
-            
-            logger.LogDebug("Blueprint identifiers staged for persistence: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}", 
+
+            logger.LogDebug("Blueprint identifiers staged for persistence: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}",
                 objectId, servicePrincipalId, appId);
 
-            // Complete configuration (FIC validation + admin consent)
+            // Complete configuration (FIC + admin consent)
             return await CompleteBlueprintConfigurationAsync(
                 logger,
                 executor,
@@ -1222,10 +1169,10 @@ internal static class BlueprintSubcommand
         // Request consent via browser
         logger.LogInformation("Requesting admin consent for application");
         logger.LogInformation("  - Application scopes: {Scopes}", string.Join(", ", applicationScopes));
-        logger.LogInformation("Opening browser for Graph API admin consent...");
-        TryOpenBrowser(consentUrlGraph);
+        logger.LogInformation("Admin consent required. Please open this URL in a browser (as an admin):");
+        logger.LogInformation("{Url}", consentUrlGraph);
 
-        var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
+        var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(graphApiService, tenantId, logger, appId, "Graph API Scopes", 180, 5, ct);
 
         if (consentSuccess)
         {
@@ -1265,88 +1212,6 @@ internal static class BlueprintSubcommand
         }
 
         return (consentSuccess, consentUrlGraph);
-    }
-
-    /// <summary>
-    /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
-    /// This uses InteractiveBrowserCredential directly which is simpler and more reliable.
-    /// </summary>
-    private static async Task<string?> GetTokenFromGraphClient(ILogger logger, GraphServiceClient graphClient, string tenantId, string clientAppId)
-    {
-        try
-        {
-            // Use Azure.Identity to get the token directly
-            // This is cleaner and more reliable than trying to extract it from GraphServiceClient
-            var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
-            {
-                TenantId = tenantId,
-                ClientId = clientAppId
-            });
-
-            var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
-            var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
-
-            return token.Token;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to get access token");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Creates and authenticates a GraphServiceClient using InteractiveGraphAuthService.
-    /// This common method consolidates the authentication logic used across multiple methods.
-    /// </summary>
-    private async static Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(ILogger logger, Models.Agent365Config setupConfig, string tenantId, CancellationToken ct)
-    {
-        logger.LogInformation("Authenticating to Microsoft Graph using interactive browser authentication...");
-        logger.LogInformation("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
-        logger.LogInformation("This will open a browser window for interactive authentication.");
-        logger.LogInformation("Please sign in with a Global Administrator account.");
-        logger.LogInformation("");
-
-        // Use InteractiveGraphAuthService to get proper authentication
-        using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
-        var interactiveAuth = new InteractiveGraphAuthService(
-            cleanLoggerFactory.CreateLogger<InteractiveGraphAuthService>(),
-            setupConfig.ClientAppId);
-
-        try
-        {
-            var graphClient = await interactiveAuth.GetAuthenticatedGraphClientAsync(tenantId, ct);
-            logger.LogInformation("Successfully authenticated to Microsoft Graph");
-            return graphClient;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
-            logger.LogError("");
-            logger.LogError("TROUBLESHOOTING:");
-            logger.LogError("1. Ensure you are a Global Administrator or have Application.ReadWrite.All permission");
-            logger.LogError("2. The account must have already consented to these permissions");
-            logger.LogError("");
-            throw new InvalidOperationException($"Microsoft Graph authentication failed: {ex.Message}", ex);
-        }
-    }
-
-    private static void TryOpenBrowser(string url)
-    {
-        try
-        {
-            using var p = new System.Diagnostics.Process();
-            p.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true
-            };
-            p.Start();
-        }
-        catch
-        {
-            // non-fatal
-        }
     }
 
     /// <summary>

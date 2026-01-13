@@ -175,7 +175,7 @@ public class AgentBlueprintServiceTests
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
             tenantId,
             Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
-            false,
+            true,
             Arg.Any<string?>(),
             Arg.Any<CancellationToken>())
             .Returns("fake-delegated-token");
@@ -191,7 +191,7 @@ public class AgentBlueprintServiceTests
         await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
             tenantId,
             Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
-            false,
+            true,
             Arg.Any<string?>(),
             Arg.Any<CancellationToken>());
     }
@@ -228,24 +228,46 @@ public class AgentBlueprintServiceTests
     }
 
     [Fact]
-    public async Task DeleteAgentIdentityAsync_WhenTokenProviderIsNull_ReturnsFalse()
+    public async Task DeleteAgentIdentityAsync_WhenTokenProviderIsNull_FallsBackToAzureCli()
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, tokenProvider: null);
+
+        // Create a mock executor that returns Azure CLI tokens
+        var mockExecutor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+
+                if (cmd == "az" && args?.StartsWith("account show", StringComparison.OrdinalIgnoreCase) == true)
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+
+                if (cmd == "az" && args?.Contains("get-access-token", StringComparison.OrdinalIgnoreCase) == true)
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-azure-cli-token", StandardError = string.Empty });
+
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, mockExecutor, handler, tokenProvider: null);
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
         const string identityId = "identity-123";
 
+        // Queue successful response for DELETE operation
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+
         // Act
         var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
 
-        // Assert
-        result.Should().BeFalse();
+        // Assert - Should succeed by falling back to Azure CLI auth
+        result.Should().BeTrue();
 
+        // Should log warning about falling back to Azure CLI
         _mockGraphLogger.Received().Log(
-            LogLevel.Error,
+            LogLevel.Warning,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("Token provider is not configured")),
             Arg.Any<Exception>(),

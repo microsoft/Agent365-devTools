@@ -240,4 +240,42 @@ public class MicrosoftGraphTokenProviderTests
         // Assert
         token.Should().Be(expectedToken);
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetMgGraphAccessTokenAsync_AlwaysUsesDeviceCode_RegardlessOfParameter(bool useDeviceCodeParam)
+    {
+        // Arrange
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "User.Read" };
+        var expectedToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
+
+        _executor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(args => args.Contains("-UseDeviceCode")),  // Must ALWAYS be present
+            Arg.Any<string?>(),
+            Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger);
+
+        // Act
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, useDeviceCodeParam);
+
+        // Assert
+        token.Should().Be(expectedToken);
+
+        // Verify -UseDeviceCode is ALWAYS in the PowerShell command, regardless of parameter value
+        // This ensures device code flow is enforced across the entire CLI
+        await _executor.Received(1).ExecuteWithStreamingAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(args => args.Contains("-UseDeviceCode")),  // CRITICAL: Must always be present
+            Arg.Any<string?>(),
+            Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
 }

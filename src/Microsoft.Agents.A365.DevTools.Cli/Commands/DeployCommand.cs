@@ -418,7 +418,7 @@ public class DeployCommand
         var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
 
         var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
-            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
+            config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredPermissions, ct);
 
         if (!ok && !alreadyExists)
         {

@@ -57,7 +57,12 @@ public class GraphApiServiceTests
         });
 
         // Act
-        var resp = await service.GraphPostWithResponseAsync("tid", "/v1.0/some/path", new { a = 1 });
+        var resp = await service.GraphPostWithResponseAsync(
+            "tid",
+            "/v1.0/some/path",
+            new { a = 1 },
+            CancellationToken.None,
+            scopes: null);
 
         // Assert
         resp.IsSuccess.Should().BeTrue();
@@ -98,7 +103,12 @@ public class GraphApiServiceTests
         });
 
         // Act
-        var resp = await service.GraphPostWithResponseAsync("tid", "/v1.0/some/path", new { a = 1 });
+        var resp = await service.GraphPostWithResponseAsync(
+            "tid",
+            "/v1.0/some/path",
+            new { a = 1 },
+            CancellationToken.None,
+            scopes: null);
 
         // Assert
         resp.IsSuccess.Should().BeFalse();
@@ -235,6 +245,122 @@ internal class CapturingHttpMessageHandler : HttpMessageHandler
 
         var resp = _responses.Dequeue();
         return Task.FromResult(resp);
+    }
+}
+
+public class GraphApiServiceScopeTests
+{
+    [Fact]
+    public async Task GraphGetAsync_WhenScopesProvidedButTokenProviderNull_FallsBackToAzureCli()
+    {
+        // Arrange
+        var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        // Mock Azure CLI to return token
+        executor.ExecuteAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string?>(),
+            Arg.Any<bool>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+
+                if (cmd == "az" && args?.StartsWith("account show", StringComparison.OrdinalIgnoreCase) == true)
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+
+                if (cmd == "az" && args?.Contains("get-access-token", StringComparison.OrdinalIgnoreCase) == true)
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "azure-cli-token", StandardError = string.Empty });
+
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        // Create GraphApiService WITHOUT token provider (null)
+        var service = new GraphApiService(logger, executor, handler, tokenProvider: null);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
+        });
+
+        // Act - Call with scopes even though token provider is null
+        var scopes = new[] { "User.Read", "Mail.Read" };
+        var result = await service.GraphGetAsync("tenant-123", "/v1.0/users", CancellationToken.None, scopes);
+
+        // Assert
+        result.Should().NotBeNull("should successfully fall back to Azure CLI authentication");
+
+        // Verify warning was logged about falling back to Azure CLI
+        logger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Token provider is not configured")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        // Verify Azure CLI was called to get token
+        await executor.Received().ExecuteAsync(
+            "az",
+            Arg.Is<string>(args => args.Contains("get-access-token")),
+            Arg.Any<string?>(),
+            Arg.Any<bool>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GraphGetAsync_WhenScopesAndTokenProviderProvided_UsesDeviceCodeFlow()
+    {
+        // Arrange
+        var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+
+        var scopes = new[] { "User.Read", "Mail.Read" };
+
+        // Mock token provider to return delegated token with device code
+        tokenProvider.GetMgGraphAccessTokenAsync(
+            "tenant-123",
+            scopes,
+            true,  // Must use device code = true
+            Arg.Any<string?>(),
+            Arg.Any<CancellationToken>())
+            .Returns("delegated-token-with-device-code");
+
+        var service = new GraphApiService(logger, executor, handler, tokenProvider);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
+        });
+
+        // Act
+        var result = await service.GraphGetAsync("tenant-123", "/v1.0/users", CancellationToken.None, scopes);
+
+        // Assert
+        result.Should().NotBeNull();
+
+        // Verify device code flow was used (useDeviceCode: true, not false)
+        await tokenProvider.Received(1).GetMgGraphAccessTokenAsync(
+            "tenant-123",
+            scopes,
+            true,  // CRITICAL: Must be true for device code enforcement
+            Arg.Any<string?>(),
+            Arg.Any<CancellationToken>());
+
+        // Verify NO warning was logged (token provider is available)
+        logger.DidNotReceive().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Token provider is not configured")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
     }
 }
 

@@ -35,18 +35,24 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
                 ArmClient armClient;
                 if (!string.IsNullOrWhiteSpace(tenantId))
                 {
+                    // Exclude interactive browser credential to force CLI-friendly authentication (device code via Azure CLI)
                     var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
                     {
                         VisualStudioTenantId = tenantId,
                         SharedTokenCacheTenantId = tenantId,
                         InteractiveBrowserTenantId = tenantId,
-                        ExcludeInteractiveBrowserCredential = false
+                        ExcludeInteractiveBrowserCredential = true
                     });
                     armClient = new ArmClient(credential, subscriptionId);
                 }
                 else
                 {
-                    armClient = new ArmClient(new DefaultAzureCredential(), subscriptionId);
+                    // Exclude interactive browser credential for CLI-friendly authentication
+                    var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+                    {
+                        ExcludeInteractiveBrowserCredential = true
+                    });
+                    armClient = new ArmClient(credential, subscriptionId);
                 }
 
                 var subscription = armClient.GetSubscriptionResource(new ResourceIdentifier($"/subscriptions/{subscriptionId}"));

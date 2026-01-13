@@ -189,58 +189,32 @@ public class AuthenticationService
                 ? AuthenticationConstants.PowershellClientId 
                 : clientId;
 
-            TokenCredential credential;
+            // ALWAYS use device code flow for CLI-friendly authentication (no browser popups)
+            _logger.LogInformation("Using device code authentication...");
+            _logger.LogInformation("Please sign in with your Microsoft account");
 
-            if (useInteractiveBrowser)
+            TokenCredential credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
             {
-                // Use InteractiveBrowserCredential with redirect URI for better public client support
-                _logger.LogInformation("Using interactive browser authentication...");
-                _logger.LogInformation("IMPORTANT: A browser window will open for authentication.");
-                _logger.LogInformation("Please sign in with your Microsoft account and grant consent for the requested permissions.");
-                _logger.LogInformation("");
-
-                credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
+                TenantId = effectiveTenantId,
+                ClientId = effectiveClientId,
+                AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+                TokenCachePersistenceOptions = new TokenCachePersistenceOptions
                 {
-                    TenantId = effectiveTenantId,
-                    ClientId = effectiveClientId,
-                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                    RedirectUri = new Uri(AuthenticationConstants.LocalhostRedirectUri),
-                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-                    {
-                        Name = AuthenticationConstants.ApplicationName
-                    }
-                });
-            }
-            else
-            {
-                // For Power Platform API authentication, use device code flow to avoid URL length issues
-                // InteractiveBrowserCredential with Power Platform scopes can create URLs that exceed browser limits
-                _logger.LogInformation("Using device code authentication...");
-                _logger.LogInformation("Please sign in with your Microsoft account");
-
-                credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
+                    Name = AuthenticationConstants.ApplicationName
+                },
+                DeviceCodeCallback = (code, cancellation) =>
                 {
-                    TenantId = effectiveTenantId,
-                    ClientId = effectiveClientId,
-                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-                    {
-                        Name = AuthenticationConstants.ApplicationName
-                    },
-                    DeviceCodeCallback = (code, cancellation) =>
-                    {
-                        Console.WriteLine();
-                        Console.WriteLine("==========================================================================");
-                        Console.WriteLine($"To sign in, use a web browser to open the page:");
-                        Console.WriteLine($"    {code.VerificationUri}");
-                        Console.WriteLine();
-                        Console.WriteLine($"And enter the code: {code.UserCode}");
-                        Console.WriteLine("==========================================================================");
-                        Console.WriteLine();
-                        return Task.CompletedTask;
-                    }
-                });
-            }
+                    Console.WriteLine();
+                    Console.WriteLine("==========================================================================");
+                    Console.WriteLine($"To sign in, use a web browser to open the page:");
+                    Console.WriteLine($"    {code.VerificationUri}");
+                    Console.WriteLine();
+                    Console.WriteLine($"And enter the code: {code.UserCode}");
+                    Console.WriteLine("==========================================================================");
+                    Console.WriteLine();
+                    return Task.CompletedTask;
+                }
+            });
 
             var tokenRequestContext = new TokenRequestContext(scopes);
             var tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);

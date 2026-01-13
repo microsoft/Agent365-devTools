@@ -16,21 +16,40 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
         [Fact]
         public async Task PollAdminConsentAsync_ReturnsTrue_WhenGrantExists()
         {
-            var executor = Substitute.For<CommandExecutor>(Substitute.For<Microsoft.Extensions.Logging.ILogger<CommandExecutor>>());
+            var graph = Substitute.For<GraphApiService>(
+                Substitute.For<ILogger<GraphApiService>>(),
+                Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()));
+
             var logger = Substitute.For<ILogger>();
 
-            // Mock service principal lookup
-            var spJson = JsonDocument.Parse("{\"value\":[{\"id\":\"sp-123\"}]}", new JsonDocumentOptions()).RootElement.GetRawText();
-            executor.ExecuteAsync("az", Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-                .Returns(ci => Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = spJson }));
+            // 1) LookupServicePrincipalByAppIdAsync returns sp id
+            graph.LookupServicePrincipalByAppIdAsync(
+                    "tenant-1",
+                    "appId-1",
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>())
+                .Returns("sp-123");
 
-            // On the grants call, return a grant
-            var grantsJson = JsonDocument.Parse("{\"value\":[{\"id\":\"grant-1\"}]}", new JsonDocumentOptions()).RootElement.GetRawText();
-            executor.ExecuteAsync("az", Arg.Is<string>(s => s.Contains("oauth2PermissionGrants")), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-                .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = grantsJson }));
+            // 2) oauth2PermissionGrants?$filter=clientId eq 'sp-123' -> returns a grant
+            var grantsDoc = JsonDocument.Parse("{\"value\":[{\"id\":\"grant-1\"}]}");
+            graph.GraphGetAsync(
+                    Arg.Any<string>(),
+                    Arg.Is<string>(p => p.Contains("/v1.0/oauth2PermissionGrants?$filter=clientId eq 'sp-123'")),
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>())
+                .Returns(Task.FromResult<JsonDocument?>(grantsDoc));
 
             var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var result = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 10, 1, cts.Token);
+
+            var result = await AdminConsentHelper.PollAdminConsentAsync(
+                graph,
+                tenantId: "tenant-1",
+                logger,
+                appId: "appId-1",
+                scopeDescriptor: "Test",
+                timeoutSeconds: 10,
+                intervalSeconds: 1,
+                ct: cts.Token);
 
             result.Should().BeTrue();
         }
@@ -38,15 +57,31 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
         [Fact]
         public async Task PollAdminConsentAsync_ReturnsFalse_WhenNoGrant()
         {
-            var executor = Substitute.For<CommandExecutor>(Substitute.For<Microsoft.Extensions.Logging.ILogger<CommandExecutor>>());
+            var graph = Substitute.For<GraphApiService>(
+                Substitute.For<ILogger<GraphApiService>>(),
+                Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()));
+
             var logger = Substitute.For<ILogger>();
 
-            // service principal not found
-            executor.ExecuteAsync("az", Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-                .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}" }));
+            // service principal not found - LookupServicePrincipalByAppIdAsync returns null
+            graph.LookupServicePrincipalByAppIdAsync(
+                    "tenant-1",
+                    "appId-1",
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>())
+                .Returns((string?)null);
 
             var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            var result = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 3, 1, cts.Token);
+
+            var result = await AdminConsentHelper.PollAdminConsentAsync(
+                graph,
+                tenantId: "tenant-1",
+                logger,
+                appId: "appId-1",
+                scopeDescriptor: "Test",
+                timeoutSeconds: 3,
+                intervalSeconds: 1,
+                ct: cts.Token);
 
             result.Should().BeFalse();
         }
@@ -69,7 +104,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read", "Mail.Send" };
@@ -98,7 +133,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read", "Mail.Send" };
@@ -127,7 +162,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read", "Mail.Send" };
@@ -151,7 +186,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read" };
@@ -207,7 +242,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read" };
