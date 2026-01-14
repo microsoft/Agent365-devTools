@@ -516,6 +516,89 @@ public class ConfigService : IConfigService
         _logger?.LogInformation("Initialized empty state file at: {StatePath}", targetPath);
     }
 
+    #region Team Configuration Methods
+
+    /// <summary>
+    /// Loads and deserializes a team configuration file.
+    /// </summary>
+    /// <param name="teamConfigPath">Path to the team configuration file (e.g., team.config.json)</param>
+    /// <returns>The deserialized team configuration</returns>
+    /// <exception cref="FileNotFoundException">If the team config file doesn't exist</exception>
+    /// <exception cref="JsonException">If the team config file is malformed</exception>
+    public async Task<TeamConfig> LoadTeamConfigAsync(string teamConfigPath = "team.config.json")
+    {
+        // Resolve team config file path
+        var resolvedPath = FindConfigFile(teamConfigPath) ?? teamConfigPath;
+
+        // Validate team config file exists
+        if (!File.Exists(resolvedPath))
+        {
+            _logger?.LogError("Team configuration file not found: {ConfigPath}", resolvedPath);
+            throw new FileNotFoundException($"Team configuration file not found. (Path: {resolvedPath})");
+        }
+
+        // Load team configuration
+        var teamJson = await File.ReadAllTextAsync(resolvedPath);
+        var teamConfig = JsonSerializer.Deserialize<TeamConfig>(teamJson, DefaultJsonOptions)
+            ?? throw new JsonException($"Failed to deserialize team configuration from {resolvedPath}");
+
+        _logger?.LogDebug("Loaded team configuration from: {ConfigPath}", resolvedPath);
+
+        return teamConfig;
+    }
+
+    /// <summary>
+    /// Validates a team configuration and returns validation errors.
+    /// </summary>
+    /// <param name="teamConfig">The team configuration to validate</param>
+    /// <returns>List of validation errors (empty if valid)</returns>
+    public Task<List<string>> ValidateTeamConfigAsync(TeamConfig teamConfig)
+    {
+        var errors = teamConfig.Validate();
+        
+        if (errors.Count > 0)
+        {
+            _logger?.LogWarning("Team configuration validation failed with {ErrorCount} errors", errors.Count);
+            foreach (var error in errors)
+            {
+                _logger?.LogWarning("  * {Error}", error);
+            }
+        }
+        else
+        {
+            _logger?.LogDebug("Team configuration validation succeeded");
+        }
+
+        return Task.FromResult(errors);
+    }
+
+    /// <summary>
+    /// Merges team agent configuration with shared resources to create a complete Agent365Config.
+    /// </summary>
+    /// <param name="teamConfig">The team configuration containing shared resources</param>
+    /// <param name="agentConfig">The individual agent configuration</param>
+    /// <returns>A complete Agent365Config ready for deployment</returns>
+    public Task<Agent365Config> MergeTeamAgentConfigAsync(TeamConfig teamConfig, TeamAgentConfig agentConfig)
+    {
+        if (teamConfig.SharedResources == null)
+        {
+            throw new ArgumentException("Team configuration must have shared resources defined", nameof(teamConfig));
+        }
+
+        var mergedConfig = agentConfig.ToAgent365Config(
+            teamConfig.Name,
+            teamConfig.SharedResources,
+            teamConfig.ManagerEmail
+        );
+
+        _logger?.LogDebug("Merged agent '{AgentName}' config with team '{TeamName}' shared resources", 
+            agentConfig.Name, teamConfig.Name);
+
+        return Task.FromResult(mergedConfig);
+    }
+
+    #endregion
+
     #region Config File Resolution
 
     /// <summary>

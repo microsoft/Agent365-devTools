@@ -340,4 +340,212 @@ public class Agent365ConfigServiceTests : IDisposable
     }
 
     #endregion
+
+    #region Team Configuration Tests
+
+    [Fact]
+    public async Task LoadTeamConfigAsync_ThrowsFileNotFoundException_WhenTeamConfigDoesNotExist()
+    {
+        // Arrange
+        var teamConfigPath = Path.Combine(_testDirectory, "nonexistent-team.json");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<FileNotFoundException>(
+            () => _service.LoadTeamConfigAsync(teamConfigPath));
+    }
+
+    [Fact]
+    public async Task LoadTeamConfigAsync_LoadsTeamConfiguration_WhenFileExists()
+    {
+        // Arrange
+        var teamConfigPath = Path.Combine(_testDirectory, "team.config.json");
+        var teamConfigJson = @"{
+            ""name"": ""customer-support"",
+            ""displayName"": ""Customer Support Team"",
+            ""description"": ""Multi-agent customer support team"",
+            ""managerEmail"": ""manager@contoso.com"",
+            ""sharedResources"": {
+                ""tenantId"": ""12345678-1234-1234-1234-123456789012"",
+                ""clientAppId"": ""87654321-4321-4321-4321-210987654321"",
+                ""subscriptionId"": ""abcdef12-3456-7890-abcd-ef1234567890"",
+                ""resourceGroup"": ""rg-customer-support"",
+                ""location"": ""eastus"",
+                ""appServicePlanName"": ""asp-customer-support"",
+                ""appServicePlanSku"": ""B1"",
+                ""environment"": ""prod""
+            },
+            ""agents"": [
+                {
+                    ""name"": ""triage"",
+                    ""displayName"": ""Triage Agent"",
+                    ""agentIdentityDisplayName"": ""Customer Support Triage"",
+                    ""agentUserPrincipalName"": ""triage@contoso.com"",
+                    ""agentUserDisplayName"": ""Triage Bot"",
+                    ""deploymentProjectPath"": ""./agents/triage""
+                }
+            ]
+        }";
+        await File.WriteAllTextAsync(teamConfigPath, teamConfigJson);
+
+        // Act
+        var teamConfig = await _service.LoadTeamConfigAsync(teamConfigPath);
+
+        // Assert
+        Assert.NotNull(teamConfig);
+        Assert.Equal("customer-support", teamConfig.Name);
+        Assert.Equal("Customer Support Team", teamConfig.DisplayName);
+        Assert.Equal("manager@contoso.com", teamConfig.ManagerEmail);
+        Assert.NotNull(teamConfig.SharedResources);
+        Assert.Equal("12345678-1234-1234-1234-123456789012", teamConfig.SharedResources.TenantId);
+        Assert.Equal("rg-customer-support", teamConfig.SharedResources.ResourceGroup);
+        Assert.NotNull(teamConfig.Agents);
+        Assert.Single(teamConfig.Agents);
+        Assert.Equal("triage", teamConfig.Agents[0].Name);
+    }
+
+    [Fact]
+    public async Task ValidateTeamConfigAsync_ReturnsErrors_WhenTeamConfigIsInvalid()
+    {
+        // Arrange
+        var invalidTeamConfig = new TeamConfig
+        {
+            Name = "", // Invalid: empty name
+            DisplayName = "Test Team",
+            SharedResources = null, // Invalid: no shared resources
+            Agents = null // Invalid: no agents
+        };
+
+        // Act
+        var errors = await _service.ValidateTeamConfigAsync(invalidTeamConfig);
+
+        // Assert
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("Team name is required"));
+        Assert.Contains(errors, e => e.Contains("Shared resources are required"));
+        Assert.Contains(errors, e => e.Contains("At least one agent is required"));
+    }
+
+    [Fact]
+    public async Task ValidateTeamConfigAsync_ReturnsNoErrors_WhenTeamConfigIsValid()
+    {
+        // Arrange
+        var validTeamConfig = new TeamConfig
+        {
+            Name = "test-team",
+            DisplayName = "Test Team",
+            ManagerEmail = "manager@contoso.com",
+            SharedResources = new TeamSharedResources
+            {
+                TenantId = "12345678-1234-1234-1234-123456789012",
+                ClientAppId = "87654321-4321-4321-4321-210987654321",
+                SubscriptionId = "abcdef12-3456-7890-abcd-ef1234567890",
+                ResourceGroup = "rg-test",
+                Location = "eastus",
+                AppServicePlanName = "asp-test"
+            },
+            Agents = new List<TeamAgentConfig>
+            {
+                new TeamAgentConfig
+                {
+                    Name = "agent1",
+                    DisplayName = "Agent 1",
+                    AgentIdentityDisplayName = "Agent 1 Identity",
+                    AgentUserPrincipalName = "agent1@contoso.com",
+                    AgentUserDisplayName = "Agent 1 User",
+                    DeploymentProjectPath = _testDirectory // Use test directory as valid path
+                }
+            }
+        };
+
+        // Act
+        var errors = await _service.ValidateTeamConfigAsync(validTeamConfig);
+
+        // Assert
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public async Task MergeTeamAgentConfigAsync_MergesAgentWithSharedResources()
+    {
+        // Arrange
+        var teamConfig = new TeamConfig
+        {
+            Name = "support-team",
+            DisplayName = "Support Team",
+            ManagerEmail = "manager@contoso.com",
+            SharedResources = new TeamSharedResources
+            {
+                TenantId = "12345678-1234-1234-1234-123456789012",
+                ClientAppId = "87654321-4321-4321-4321-210987654321",
+                SubscriptionId = "abcdef12-3456-7890-abcd-ef1234567890",
+                ResourceGroup = "rg-support",
+                Location = "westus",
+                AppServicePlanName = "asp-support",
+                AppServicePlanSku = "B2",
+                Environment = "dev"
+            }
+        };
+
+        var agentConfig = new TeamAgentConfig
+        {
+            Name = "billing",
+            DisplayName = "Billing Agent",
+            AgentIdentityDisplayName = "Billing Support",
+            AgentUserPrincipalName = "billing@contoso.com",
+            AgentUserDisplayName = "Billing Bot",
+            DeploymentProjectPath = "./agents/billing"
+        };
+
+        // Act
+        var mergedConfig = await _service.MergeTeamAgentConfigAsync(teamConfig, agentConfig);
+
+        // Assert
+        Assert.NotNull(mergedConfig);
+        
+        // Verify shared resources were applied
+        Assert.Equal("12345678-1234-1234-1234-123456789012", mergedConfig.TenantId);
+        Assert.Equal("87654321-4321-4321-4321-210987654321", mergedConfig.ClientAppId);
+        Assert.Equal("abcdef12-3456-7890-abcd-ef1234567890", mergedConfig.SubscriptionId);
+        Assert.Equal("rg-support", mergedConfig.ResourceGroup);
+        Assert.Equal("westus", mergedConfig.Location);
+        Assert.Equal("asp-support", mergedConfig.AppServicePlanName);
+        Assert.Equal("B2", mergedConfig.AppServicePlanSku);
+        Assert.Equal("dev", mergedConfig.Environment);
+        
+        // Verify agent-specific properties
+        Assert.Equal("support-team-billing-webapp", mergedConfig.WebAppName);
+        Assert.Equal("Billing Support", mergedConfig.AgentIdentityDisplayName);
+        Assert.Equal("billing@contoso.com", mergedConfig.AgentUserPrincipalName);
+        Assert.Equal("Billing Bot", mergedConfig.AgentUserDisplayName);
+        Assert.Equal("./agents/billing", mergedConfig.DeploymentProjectPath);
+        Assert.Equal("manager@contoso.com", mergedConfig.ManagerEmail);
+    }
+
+    [Fact]
+    public async Task MergeTeamAgentConfigAsync_ThrowsArgumentException_WhenSharedResourcesIsNull()
+    {
+        // Arrange
+        var teamConfig = new TeamConfig
+        {
+            Name = "test-team",
+            DisplayName = "Test Team",
+            SharedResources = null // Invalid
+        };
+
+        var agentConfig = new TeamAgentConfig
+        {
+            Name = "agent1",
+            DisplayName = "Agent 1",
+            AgentIdentityDisplayName = "Agent 1 Identity",
+            AgentUserPrincipalName = "agent1@contoso.com",
+            AgentUserDisplayName = "Agent 1 User",
+            DeploymentProjectPath = "./agent1"
+        };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => _service.MergeTeamAgentConfigAsync(teamConfig, agentConfig));
+    }
+
+    #endregion
 }
