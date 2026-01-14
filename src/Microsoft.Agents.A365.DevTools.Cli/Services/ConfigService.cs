@@ -489,11 +489,28 @@ public class ConfigService : IConfigService
         var staticData = ExtractStaticProperties(config);
         var json = JsonSerializer.Serialize(staticData, DefaultJsonOptions);
 
-        var currentDirPath = Path.Combine(Environment.CurrentDirectory, configPath);
-        if (File.Exists(currentDirPath))
+        // If an absolute path is provided (e.g., for team configs), use it directly and always create the file
+        // Otherwise, only update in current directory if it already exists (original behavior)
+        var targetPath = Path.IsPathRooted(configPath) 
+            ? configPath 
+            : Path.Combine(Environment.CurrentDirectory, configPath);
+        
+        if (Path.IsPathRooted(configPath))
         {
-            await File.WriteAllTextAsync(currentDirPath, json);
-            _logger?.LogInformation("Updated configuration at: {ConfigPath}", currentDirPath);
+            // For absolute paths (team configs), always create/overwrite the file
+            var directory = Path.GetDirectoryName(targetPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+            await File.WriteAllTextAsync(targetPath, json);
+            _logger?.LogInformation("Created configuration at: {ConfigPath}", targetPath);
+        }
+        else if (File.Exists(targetPath))
+        {
+            // For relative paths, only update if file already exists
+            await File.WriteAllTextAsync(targetPath, json);
+            _logger?.LogInformation("Updated configuration at: {ConfigPath}", targetPath);
         }
     }
 
