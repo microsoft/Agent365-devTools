@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "customer-support",
+  "displayName": "Customer Support Team",
+  "description": "Multi-agent team handling customer support inquiries with specialization in triage, technical issues, and billing",
+  "managerEmail": "support-manager@contoso.com",
+  "sharedResources": {
+    "tenantId": "12345678-1234-1234-1234-123456789012",
+    "clientAppId": "87654321-4321-4321-4321-210987654321",
+    "subscriptionId": "abcdef12-3456-7890-abcd-ef1234567890",
+    "resourceGroup": "rg-customer-support-prod",
+    "location": "eastus",
+    "appServicePlanName": "asp-customer-support-prod",
+    "appServicePlanSku": "B1",
+    "environment": "prod",
+    "agentUserUsageLocation": "US"
+  },
+  "agents": [
+    {
+      "name": "triage",
+      "displayName": "Triage Agent",
+      "description": "Routes customer inquiries to appropriate specialized agents based on issue category",
+      "agentIdentityDisplayName": "Customer Support Triage Agent",
+      "agentUserPrincipalName": "triage-agent@contoso.com",
+      "agentUserDisplayName": "Support Triage Bot",
+      "deploymentProjectPath": "./agents/triage",
+      "agentBlueprintDisplayName": "Customer Support Triage"
+    },
+    {
+      "name": "technical",
+      "displayName": "Technical Support Agent",
+      "description": "Handles technical troubleshooting and product-related issues",
+      "agentIdentityDisplayName": "Technical Support Agent",
+      "agentUserPrincipalName": "technical-agent@contoso.com",
+      "agentUserDisplayName": "Technical Support Bot",
+      "deploymentProjectPath": "./agents/technical",
+      "agentBlueprintDisplayName": "Technical Support Assistant"
+    },
+    {
+      "name": "billing",
+      "displayName": "Billing Agent",
+      "description": "Manages billing inquiries, subscription changes, and payment issues",
+      "agentIdentityDisplayName": "Billing Support Agent",
+      "agentUserPrincipalName": "billing-agent@contoso.com",
+      "agentUserDisplayName": "Billing Support Bot",
+      "deploymentProjectPath": "./agents/billing",
+      "agentBlueprintDisplayName": "Billing Support Assistant"
+    }
+  ]
+}
