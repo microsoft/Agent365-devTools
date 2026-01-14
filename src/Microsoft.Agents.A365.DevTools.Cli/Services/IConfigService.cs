@@ -80,6 +80,30 @@ public interface IConfigService
     /// <param name="statePath">Path where the state file should be created</param>
     /// <exception cref="IOException">Thrown when file write fails</exception>
     Task InitializeStateAsync(string statePath = "a365.generated.config.json");
+
+    /// <summary>
+    /// Loads and deserializes a team configuration file.
+    /// </summary>
+    /// <param name="teamConfigPath">Path to the team configuration file (e.g., team.config.json)</param>
+    /// <returns>The deserialized team configuration</returns>
+    /// <exception cref="FileNotFoundException">If the team config file doesn't exist</exception>
+    /// <exception cref="JsonException">If the team config file is malformed</exception>
+    Task<TeamConfig> LoadTeamConfigAsync(string teamConfigPath = "team.config.json");
+
+    /// <summary>
+    /// Validates a team configuration and returns validation errors.
+    /// </summary>
+    /// <param name="teamConfig">The team configuration to validate</param>
+    /// <returns>List of validation errors (empty if valid)</returns>
+    Task<List<string>> ValidateTeamConfigAsync(TeamConfig teamConfig);
+
+    /// <summary>
+    /// Merges team agent configuration with shared resources to create a complete Agent365Config.
+    /// </summary>
+    /// <param name="teamConfig">The team configuration containing shared resources</param>
+    /// <param name="agentConfig">The individual agent configuration</param>
+    /// <returns>A complete Agent365Config ready for deployment</returns>
+    Task<Agent365Config> MergeTeamAgentConfigAsync(TeamConfig teamConfig, TeamAgentConfig agentConfig);
 }
 
 /// <summary>

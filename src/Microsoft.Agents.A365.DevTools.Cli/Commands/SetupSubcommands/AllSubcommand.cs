@@ -64,14 +64,44 @@ internal static class AllSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
+        var teamOption = new Option<FileInfo?>(
+            "--team",
+            description: "Team configuration file path for multi-agent setup\n" +
+                        "When specified, sets up all agents defined in the team configuration");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
+        command.AddOption(teamOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements) =>
+        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements, team) =>
         {
+            // If team option is specified, delegate to team setup
+            if (team != null)
+            {
+                await RunTeamSetupAsync(
+                    team,
+                    verbose,
+                    dryRun,
+                    skipInfrastructure,
+                    skipRequirements,
+                    logger,
+                    configService,
+                    executor,
+                    botConfigurator,
+                    azureValidator,
+                    webAppCreator,
+                    platformDetector,
+                    graphApiService,
+                    blueprintService,
+                    clientAppValidator,
+                    blueprintLookupService,
+                    federatedCredentialService);
+                return;
+            }
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
@@ -409,8 +439,334 @@ internal static class AllSubcommand
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption, skipRequirementsOption);
+        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption, skipRequirementsOption, teamOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Runs setup for a team of agents by orchestrating individual agent setups.
+    /// </summary>
+    private static async Task RunTeamSetupAsync(
+        FileInfo teamConfigFile,
+        bool verbose,
+        bool dryRun,
+        bool skipInfrastructure,
+        bool skipRequirements,
+        ILogger logger,
+        IConfigService configService,
+        CommandExecutor executor,
+        IBotConfigurator botConfigurator,
+        IAzureValidator azureValidator,
+        AzureWebAppCreator webAppCreator,
+        PlatformDetector platformDetector,
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
+        IClientAppValidator clientAppValidator,
+        BlueprintLookupService blueprintLookupService,
+        FederatedCredentialService federatedCredentialService)
+    {
+        try
+        {
+            logger.LogInformation("Agent 365 Team Setup");
+            logger.LogInformation("Loading team configuration from: {Path}", teamConfigFile.FullName);
+            logger.LogInformation("");
+
+            // Load and validate team configuration
+            var teamConfig = await configService.LoadTeamConfigAsync(teamConfigFile.FullName);
+            var validationErrors = await configService.ValidateTeamConfigAsync(teamConfig);
+
+            if (validationErrors.Count > 0)
+            {
+                logger.LogError("Team configuration validation failed:");
+                foreach (var error in validationErrors)
+                {
+                    logger.LogError("  * {Error}", error);
+                }
+                Environment.Exit(1);
+                return;
+            }
+
+            logger.LogInformation("Team: {DisplayName} ({Name})", teamConfig.DisplayName, teamConfig.Name);
+            logger.LogInformation("Agents: {Count}", teamConfig.Agents?.Count ?? 0);
+            logger.LogInformation("");
+
+            if (dryRun)
+            {
+                logger.LogInformation("DRY RUN: Team Setup");
+                logger.LogInformation("This would execute setup for {Count} agents:", teamConfig.Agents?.Count ?? 0);
+                
+                if (teamConfig.Agents != null)
+                {
+                    foreach (var agent in teamConfig.Agents)
+                    {
+                        logger.LogInformation("  - {DisplayName} ({Name})", agent.DisplayName, agent.Name);
+                    }
+                }
+                
+                logger.LogInformation("");
+                logger.LogInformation("Each agent setup would include:");
+                
+                if (!skipRequirements)
+                {
+                    logger.LogInformation("  0. Validate prerequisites");
+                }
+                
+                if (!skipInfrastructure)
+                {
+                    logger.LogInformation("  1. Create Azure infrastructure");
+                }
+                
+                logger.LogInformation("  2. Create agent blueprint");
+                logger.LogInformation("  3. Configure MCP permissions");
+                logger.LogInformation("  4. Configure Bot API permissions");
+                logger.LogInformation("  5. Register messaging endpoint");
+                logger.LogInformation("");
+                logger.LogInformation("No actual changes will be made.");
+                return;
+            }
+
+            // Track overall results
+            var teamResults = new List<(string AgentName, bool Success, string? Error)>();
+            int successCount = 0;
+            int failureCount = 0;
+
+            // Process each agent
+            if (teamConfig.Agents != null)
+            {
+                for (int i = 0; i < teamConfig.Agents.Count; i++)
+                {
+                    var agent = teamConfig.Agents[i];
+                    logger.LogInformation("========================================");
+                    logger.LogInformation("Setting up agent {Current}/{Total}: {DisplayName} ({Name})",
+                        i + 1, teamConfig.Agents.Count, agent.DisplayName, agent.Name);
+                    logger.LogInformation("========================================");
+                    logger.LogInformation("");
+
+                    try
+                    {
+                        // Merge agent config with shared resources
+                        var agentConfig = await configService.MergeTeamAgentConfigAsync(teamConfig, agent);
+
+                        // Create temporary config file for this agent
+                        var tempConfigDir = Path.Combine(Path.GetTempPath(), $"a365-team-{teamConfig.Name}-{agent.Name}");
+                        Directory.CreateDirectory(tempConfigDir);
+                        var tempConfigPath = Path.Combine(tempConfigDir, "a365.config.json");
+                        var tempStatePath = Path.Combine(tempConfigDir, "a365.generated.config.json");
+
+                        // Save merged config to temp file
+                        await configService.CreateDefaultConfigAsync(tempConfigPath, agentConfig);
+                        await configService.InitializeStateAsync(tempStatePath);
+
+                        // Run setup for this agent using the merged config
+                        var tempConfigFile = new FileInfo(tempConfigPath);
+                        var setupConfig = await configService.LoadAsync(tempConfigPath, tempStatePath);
+
+                        // Configure GraphApiService with custom client app ID
+                        if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+                        {
+                            graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+                        }
+
+                        var setupResults = new SetupResults();
+
+                        // PHASE 0: Requirements (if not skipped)
+                        if (!skipRequirements && i == 0) // Only check requirements once for the first agent
+                        {
+                            logger.LogDebug("Validating system prerequisites...");
+                            var reqResult = await RequirementsSubcommand.RunRequirementChecksAsync(
+                                RequirementsSubcommand.GetRequirementChecks(),
+                                setupConfig,
+                                logger,
+                                category: null,
+                                CancellationToken.None);
+
+                            if (!reqResult)
+                            {
+                                throw new SetupValidationException("Requirements check failed. Use --skip-requirements to bypass (not recommended).");
+                            }
+                        }
+
+                        // PHASE 1: Infrastructure (if not skipped and first agent only - shared resources)
+                        if (!skipInfrastructure && i == 0) // Only create shared infrastructure once
+                        {
+                            logger.LogInformation("Creating shared Azure infrastructure for team...");
+                            var (infraCreated, infraAlreadyExisted) = await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
+                                logger,
+                                tempConfigPath,
+                                tempStatePath,
+                                executor,
+                                platformDetector,
+                                setupConfig.NeedDeployment,
+                                false,
+                                CancellationToken.None);
+
+                            setupResults.InfrastructureCreated = infraCreated;
+                            setupResults.InfrastructureAlreadyExisted = infraAlreadyExisted;
+
+                            // Reload config after infrastructure creation
+                            setupConfig = await configService.LoadAsync(tempConfigPath, tempStatePath);
+                        }
+                        else if (i > 0)
+                        {
+                            logger.LogInformation("Skipping infrastructure creation (using shared team resources)");
+                            setupResults.InfrastructureCreated = false;
+                            setupResults.InfrastructureAlreadyExisted = true;
+                        }
+
+                        // PHASE 2: Blueprint
+                        var blueprintResult = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
+                            setupConfig,
+                            tempConfigFile,
+                            executor,
+                            azureValidator,
+                            logger,
+                            skipInfrastructure || i > 0, // Skip infra validation for agents after first
+                            true,
+                            configService,
+                            botConfigurator,
+                            platformDetector,
+                            graphApiService,
+                            blueprintService,
+                            blueprintLookupService,
+                            federatedCredentialService);
+
+                        setupResults.BlueprintCreated = blueprintResult.BlueprintCreated;
+                        setupResults.BlueprintAlreadyExisted = blueprintResult.BlueprintAlreadyExisted;
+                        setupResults.MessagingEndpointRegistered = blueprintResult.EndpointRegistered;
+                        setupResults.EndpointAlreadyExisted = blueprintResult.EndpointAlreadyExisted;
+
+                        if (!blueprintResult.BlueprintCreated)
+                        {
+                            throw new GraphApiException(
+                                operation: "Create Agent Blueprint",
+                                reason: "Blueprint creation failed",
+                                isPermissionIssue: true);
+                        }
+
+                        // Wait for file system sync
+                        await Task.Delay(2000);
+
+                        // Reload config to get blueprint ID
+                        setupConfig = await configService.LoadAsync(tempConfigPath, tempStatePath);
+                        setupResults.BlueprintId = setupConfig.AgentBlueprintId;
+
+                        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+                        {
+                            throw new SetupValidationException("Blueprint ID was not saved to configuration");
+                        }
+
+                        // PHASE 3: MCP Permissions
+                        try
+                        {
+                            bool mcpSetup = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
+                                tempConfigPath,
+                                logger,
+                                configService,
+                                executor,
+                                graphApiService,
+                                blueprintService,
+                                setupConfig,
+                                true,
+                                setupResults);
+
+                            setupResults.McpPermissionsConfigured = mcpSetup;
+                            if (mcpSetup)
+                            {
+                                setupResults.InheritablePermissionsConfigured = setupConfig.IsInheritanceConfigured();
+                            }
+                        }
+                        catch (Exception mcpEx)
+                        {
+                            logger.LogWarning("MCP permissions failed: {Message}", mcpEx.Message);
+                            setupResults.McpPermissionsConfigured = false;
+                        }
+
+                        // PHASE 4: Bot API Permissions
+                        try
+                        {
+                            bool botSetup = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+                                tempConfigPath,
+                                logger,
+                                configService,
+                                executor,
+                                setupConfig,
+                                graphApiService,
+                                blueprintService,
+                                true,
+                                setupResults);
+
+                            setupResults.BotApiPermissionsConfigured = botSetup;
+                        }
+                        catch (Exception botEx)
+                        {
+                            logger.LogWarning("Bot permissions failed: {Message}", botEx.Message);
+                            setupResults.BotApiPermissionsConfigured = false;
+                        }
+
+                        // Display agent setup summary
+                        logger.LogInformation("");
+                        SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                        logger.LogInformation("");
+
+                        teamResults.Add((agent.Name, true, null));
+                        successCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError("Failed to set up agent {AgentName}: {Message}", agent.Name, ex.Message);
+                        teamResults.Add((agent.Name, false, ex.Message));
+                        failureCount++;
+                        
+                        // Continue with next agent instead of failing entire team setup
+                        logger.LogInformation("");
+                        logger.LogWarning("Continuing with next agent...");
+                        logger.LogInformation("");
+                    }
+                }
+            }
+
+            // Display overall team setup summary
+            logger.LogInformation("========================================");
+            logger.LogInformation("Team Setup Complete");
+            logger.LogInformation("========================================");
+            logger.LogInformation("Team: {DisplayName} ({Name})", teamConfig.DisplayName, teamConfig.Name);
+            logger.LogInformation("Total agents: {Total}", teamResults.Count);
+            logger.LogInformation("Successful: {Success}", successCount);
+            logger.LogInformation("Failed: {Failed}", failureCount);
+            logger.LogInformation("");
+
+            if (teamResults.Count > 0)
+            {
+                logger.LogInformation("Agent Results:");
+                foreach (var (agentName, success, error) in teamResults)
+                {
+                    if (success)
+                    {
+                        logger.LogInformation("  ✓ {AgentName}", agentName);
+                    }
+                    else
+                    {
+                        logger.LogError("  ✗ {AgentName}: {Error}", agentName, error ?? "Unknown error");
+                    }
+                }
+            }
+
+            if (failureCount > 0)
+            {
+                Environment.Exit(1);
+            }
+        }
+        catch (Agent365Exception ex)
+        {
+            var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
+            ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
+            Environment.Exit(1);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Team setup failed: {Message}", ex.Message);
+            Environment.Exit(1);
+        }
     }
 }
