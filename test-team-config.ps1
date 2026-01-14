@@ -97,6 +97,7 @@ $testTeamConfig = @{
             agentUserPrincipalName = "triage@contoso.com"
             agentUserDisplayName = "Triage Bot"
             deploymentProjectPath = (Join-Path $testConfigDir "agents\triage")
+            webAppName = "app-test-support-triage"
         },
         @{
             name = "technical"
@@ -105,6 +106,7 @@ $testTeamConfig = @{
             agentUserPrincipalName = "technical@contoso.com"
             agentUserDisplayName = "Technical Bot"
             deploymentProjectPath = (Join-Path $testConfigDir "agents\technical")
+            webAppName = "app-test-support-technical"
         },
         @{
             name = "billing"
@@ -113,6 +115,7 @@ $testTeamConfig = @{
             agentUserPrincipalName = "billing@contoso.com"
             agentUserDisplayName = "Billing Bot"
             deploymentProjectPath = (Join-Path $testConfigDir "agents\billing")
+            webAppName = "app-test-support-billing"
         }
     )
 }
@@ -137,6 +140,35 @@ if (Test-Path $cliPath) {
     } else {
         Write-Host ""
         Write-Host "  ✗ Dry-run failed with exit code $LASTEXITCODE" -ForegroundColor Red
+        
+        # Cleanup
+        Remove-Item $testConfigDir -Recurse -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+} else {
+    Write-Host "  ✗ CLI executable not found at: $cliPath" -ForegroundColor Red
+    
+    # Cleanup
+    Remove-Item $testConfigDir -Recurse -Force -ErrorAction SilentlyContinue
+    exit 1
+}
+
+# Test 5: Test dry-run of deploy command with team config
+Write-Host ""
+Write-Host "Test 5: Testing deploy --team --dry-run..." -ForegroundColor Yellow
+
+if (Test-Path $cliPath) {
+    Write-Host "  Running: a365 deploy --team $testTeamConfigPath --dry-run" -ForegroundColor Gray
+    Write-Host ""
+    
+    dotnet $cliPath deploy --team $testTeamConfigPath --dry-run
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ""
+        Write-Host "  ✓ Deploy dry-run completed successfully" -ForegroundColor Green
+    } else {
+        Write-Host ""
+        Write-Host "  ✗ Deploy dry-run failed with exit code $LASTEXITCODE" -ForegroundColor Red
         
         # Cleanup
         Remove-Item $testConfigDir -Recurse -Force -ErrorAction SilentlyContinue
