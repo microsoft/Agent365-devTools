@@ -71,3 +71,4 @@ nunit-*.xml
 # OS-specific files
 .DS_Store
 Thumbs.db
+a365.config.json
