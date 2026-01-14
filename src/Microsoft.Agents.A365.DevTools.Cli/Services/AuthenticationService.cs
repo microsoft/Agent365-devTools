@@ -246,12 +246,12 @@ public class AuthenticationService
                 TenantId = effectiveTenantId
             };
         }
-        catch (AuthenticationFailedException ex) when (ex.Message.Contains("code_expired") || ex.InnerException?.Message.Contains("code_expired") == true)
+        catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("code_expired") || ex.InnerException?.Message.Contains("code_expired") == true)
         {
             _logger.LogError("Device code expired - authentication not completed in time");
             throw new AzureAuthenticationException("Device code authentication timed out - please complete authentication promptly when retrying");
         }
-        catch (AuthenticationFailedException ex)
+        catch (MsalAuthenticationFailedException ex)
         {
             _logger.LogError("Interactive authentication failed: {Message}", ex.Message);
             _logger.LogError("Exception type: {Type}", ex.GetType().FullName);

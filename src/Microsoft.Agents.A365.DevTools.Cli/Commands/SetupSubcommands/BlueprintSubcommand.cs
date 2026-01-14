@@ -1214,7 +1214,7 @@ internal static class BlueprintSubcommand
 
     /// <summary>
     /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
-    /// This uses MSAL directly with .WithUseEmbeddedWebView(false) to force system browser.
+    /// This uses MsalBrowserCredential, which performs platform-appropriate interactive authentication (WAM on Windows, browser-based flow on other platforms).
     /// </summary>
     private static async Task<string?> GetTokenFromGraphClient(ILogger logger, GraphServiceClient graphClient, string tenantId, string clientAppId)
     {

@@ -1,4 +1,4 @@
-# GitHub Copilot Instructions for Agent365-dotnet
+# GitHub Copilot Instructions for Agent365-devTools
 
 ## Agent365 CLI Development Guidelines
 

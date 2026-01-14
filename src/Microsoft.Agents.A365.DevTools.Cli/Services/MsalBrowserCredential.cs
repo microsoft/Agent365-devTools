@@ -6,7 +6,9 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Client.Broker;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -26,16 +28,21 @@ public sealed class MsalBrowserCredential : TokenCredential
     private readonly bool _useWam;
     private readonly IntPtr _windowHandle;
 
-    // P/Invoke to get window handles for WAM on Windows
+    // P/Invoke is required for WAM window handle in console applications.
+    // There is no managed .NET API for console/desktop window handles - these are Windows-specific.
+    // This is the standard approach documented by Microsoft for WAM integration:
+    // https://learn.microsoft.com/en-us/entra/msal/dotnet/acquiring-tokens/desktop-mobile/wam
+    [SupportedOSPlatform("windows")]
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetConsoleWindow();
     
+    [SupportedOSPlatform("windows")]
     [DllImport("user32.dll")]
     private static extern IntPtr GetDesktopWindow();
-    
+
+    [SupportedOSPlatform("windows")]
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
-
     /// <summary>
     /// Creates a new instance of MsalBrowserCredential.
     /// </summary>
@@ -67,27 +74,13 @@ public sealed class MsalBrowserCredential : TokenCredential
         // Get window handle for WAM on Windows
         // Try multiple sources: console window, foreground window, or desktop window
         _windowHandle = IntPtr.Zero;
-        _useWam = useWam && RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        _useWam = useWam && OperatingSystem.IsWindows();
         
-        if (_useWam)
+        if (OperatingSystem.IsWindows() && _useWam)
         {
             try
             {
-                // Try console window first (works for cmd.exe, PowerShell)
-                _windowHandle = GetConsoleWindow();
-                
-                // If no console window, try foreground window (works for Windows Terminal)
-                if (_windowHandle == IntPtr.Zero)
-                {
-                    _windowHandle = GetForegroundWindow();
-                }
-                
-                // Last resort: use desktop window (always valid)
-                if (_windowHandle == IntPtr.Zero)
-                {
-                    _windowHandle = GetDesktopWindow();
-                }
-                
+                _windowHandle = GetWindowHandleForWam();
                 _logger?.LogDebug("Window handle for WAM: {Handle}", _windowHandle);
             }
             catch (Exception ex)
@@ -132,6 +125,32 @@ public sealed class MsalBrowserCredential : TokenCredential
     public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
     {
         return GetTokenAsync(requestContext, cancellationToken).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Gets a window handle for WAM authentication on Windows.
+    /// For CLI apps, uses GetConsoleWindow() with GetDesktopWindow() as fallback.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static IntPtr GetWindowHandleForWam()
+    {
+        // Try console window first (works for cmd.exe, PowerShell)
+        var handle = GetConsoleWindow();
+
+        // If no console window, try foreground window (works for Windows Terminal)
+        if (handle == IntPtr.Zero)
+        {
+            handle = GetForegroundWindow();
+        }
+
+        // Last resort: use desktop window (always valid)
+        if (handle == IntPtr.Zero)
+        {
+            handle = GetDesktopWindow();
+        }
+
+
+        return handle;
     }
 
     /// <inheritdoc/>
@@ -192,16 +211,16 @@ public sealed class MsalBrowserCredential : TokenCredential
         catch (MsalException ex)
         {
             _logger?.LogError(ex, "MSAL authentication failed: {Message}", ex.Message);
-            throw new AuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
+            throw new MsalAuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
         }
     }
 }
 
 /// <summary>
-/// Exception thrown when authentication fails.
+/// Exception thrown when MSAL-based authentication fails.
 /// </summary>
-public class AuthenticationFailedException : Exception
+public class MsalAuthenticationFailedException : Exception
 {
-    public AuthenticationFailedException(string message) : base(message) { }
-    public AuthenticationFailedException(string message, Exception innerException) : base(message, innerException) { }
+    public MsalAuthenticationFailedException(string message) : base(message) { }
+    public MsalAuthenticationFailedException(string message, Exception innerException) : base(message, innerException) { }
 }

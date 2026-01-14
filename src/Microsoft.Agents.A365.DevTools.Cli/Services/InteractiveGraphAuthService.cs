@@ -115,13 +115,13 @@ public sealed class InteractiveGraphAuthService
             
             return Task.FromResult(graphClient);
         }
-        catch (AuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
+        catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
         {
             // Most specific: permissions issue - don't try fallback
             ThrowInsufficientPermissionsException(ex);
             throw; // Unreachable but required for compiler
         }
-        catch (AuthenticationFailedException ex) when (
+        catch (MsalAuthenticationFailedException ex) when (
             ex.Message.Contains("localhost") || 
             ex.Message.Contains("connection") ||
             ex.Message.Contains("redirect_uri"))

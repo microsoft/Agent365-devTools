@@ -103,47 +103,6 @@ public class InteractiveGraphAuthServiceTests
     #region WAM Configuration Tests (GitHub Issues #146 and #151)
 
     /// <summary>
-    /// Documents the expected behavior for WAM (Windows Authentication Broker) configuration.
-    /// 
-    /// GitHub Issue #146: Users receive AADSTS50011 error because WAM uses the broker redirect URI
-    /// (ms-appx-web://Microsoft.AAD.BrokerPlugin/{guid}) which is not configured in app registration.
-    /// 
-    /// GitHub Issue #151: Users receive "A window handle must be configured" error because WAM
-    /// requires a parent window handle which console applications don't provide.
-    /// 
-    /// The fix is to use MSAL directly with .WithUseEmbeddedWebView(false) via the MsalBrowserCredential
-    /// class to force the system browser flow and bypass WAM entirely.
-    /// 
-    /// This test cannot verify the actual credential options since they are created inside private
-    /// methods, but it documents the expected behavior and can be manually verified by:
-    /// 1. Running `a365 setup all` on Windows 10/11
-    /// 2. Confirming the system browser opens (not an embedded webview)
-    /// 3. Confirming no "window handle" or redirect URI mismatch errors occur
-    /// </summary>
-    [Fact]
-    [Trait("Category", "Documentation")]
-    public void MsalBrowserCredential_ShouldBeConfiguredToDisableWAM()
-    {
-        // This test documents that MsalBrowserCredential uses MSAL's PublicClientApplicationBuilder
-        // with .WithUseEmbeddedWebView(false) which:
-        //
-        // 1. Forces the system browser to be used instead of WAM
-        // 2. Avoids the "window handle" error (Issue #151)
-        // 3. Uses the http://localhost:8400/ redirect URI instead of broker URI (Issue #146)
-        // 4. Works consistently across Windows 10, Windows 11, and non-Windows platforms
-        // 5. Uses the non-deprecated MSAL API instead of Azure.Identity's obsolete BrowserCustomizationOptions
-        //
-        // See: https://learn.microsoft.com/en-us/entra/msal/dotnet/acquiring-tokens/desktop-mobile/wam
-        
-        // Note: MsalBrowserCredential is used in:
-        // - InteractiveGraphAuthService.GetAuthenticatedGraphClientAsync()
-        // - AuthenticationService.GetAccessTokenAsync()
-        // - BlueprintSubcommand.GetTokenFromGraphClient()
-        
-        Assert.True(true, "WAM configuration is documented. Manual verification required.");
-    }
-
-    /// <summary>
     /// Verifies that MsalBrowserCredential can be constructed with valid parameters.
     /// </summary>
     [Fact]
@@ -195,7 +154,7 @@ public class InteractiveGraphAuthServiceTests
     /// </summary>
     [Fact(Skip = "Integration test requires manual verification on Windows 10/11")]
     [Trait("Category", "Integration")]
-    public void MsalBrowserCredential_ManualTest_ShouldOpenSystemBrowser()
+    public void MsalBrowserCredential_ManualTest_ShouldUseWAMOnWindows()
     {
         // This test is marked as Integration and should be skipped in CI/CD pipelines.
         // To verify the WAM fix works:
@@ -203,21 +162,23 @@ public class InteractiveGraphAuthServiceTests
         // 1. Run this command on Windows 10/11:
         //    a365 setup all
         //
-        // 2. Expected behavior:
-        //    - System default browser opens (Chrome, Edge, Firefox, etc.)
-        //    - NOT an embedded webview window
-        //    - Redirect uses http://localhost:8400/
+        // 2. Expected behavior on Windows:
+        //    - Native WAM dialog appears (Windows Account Manager)
+        //    - No browser window opens
+        //    - WAM broker redirect URI auto-configured: ms-appx-web://microsoft.aad.brokerplugin/{clientId}
         //    - No "window handle" error
         //    - No AADSTS50011 redirect URI mismatch error
         //
-        // 3. The fix uses MSAL directly with:
+        // 3. Expected behavior on macOS/Linux:
+        //    - System browser opens for authentication
+        //    - Uses localhost redirect URI
+        //
+        // 4. The implementation uses MSAL with:
         //    PublicClientApplicationBuilder.Create(clientId)
         //        .WithAuthority(...)
-        //        .WithRedirectUri(...)
+        //        .WithBroker(new BrokerOptions(BrokerOptions.OperatingSystems.Windows))  // WAM enabled
+        //        .WithParentActivityOrWindow(() => windowHandle)  // P/Invoke for console apps
         //        .Build()
-        //        .AcquireTokenInteractive(scopes)
-        //        .WithUseEmbeddedWebView(false)  // <-- Key setting
-        //        .ExecuteAsync()
         
         Assert.True(true, "Manual verification required");
     }

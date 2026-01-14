@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../.."
+		}
+	],
+	"settings": {
+		"vscode-nmake-tools.installRazzleSourcesFormatterExtension": false,
+		"vscode-nmake-tools.installOsRepoRustHelperExtension": false
+	}
+}

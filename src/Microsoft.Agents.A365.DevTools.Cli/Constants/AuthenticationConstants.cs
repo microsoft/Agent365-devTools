@@ -48,6 +48,8 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Gets all required redirect URIs including the WAM broker URI for a specific client app.
+    /// Note: This method allocates a new array on each call. Callers should cache the result
+    /// if they need to use it multiple times.
     /// </summary>
     /// <param name="clientAppId">The client application ID</param>
     /// <returns>Array of all required redirect URIs</returns>
