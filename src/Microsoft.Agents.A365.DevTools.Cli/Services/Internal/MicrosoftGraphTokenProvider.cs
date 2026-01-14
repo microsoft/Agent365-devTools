@@ -111,6 +111,22 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             var result = await ExecuteWithFallbackAsync(script, ct);
             var token = ProcessResult(result);
 
+            // If authentication failed with WAM redirect URI error and using custom client app,
+            // automatically retry with device code flow
+            if (string.IsNullOrWhiteSpace(token) && 
+                !useDeviceCode && 
+                !string.IsNullOrWhiteSpace(clientAppId) &&
+                IsWamRedirectUriError(result))
+            {
+                _logger.LogWarning(
+                    "Authentication failed with WAM redirect URI error for custom client app. " +
+                    "Retrying with device code authentication...");
+                
+                var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
+                result = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
+                token = ProcessResult(result);
+            }
+
             if (string.IsNullOrWhiteSpace(token))
             {
                 return null;
@@ -294,6 +310,20 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         return error.Contains("not recognized", StringComparison.OrdinalIgnoreCase) ||
                error.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
                error.Contains("No such file", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWamRedirectUriError(CommandResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.StandardError))
+            return false;
+
+        var error = result.StandardError;
+        // Check for AADSTS50011 error code (redirect URI mismatch)
+        // and WAM broker plugin references
+        return (error.Contains("AADSTS50011", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("redirect URI", StringComparison.OrdinalIgnoreCase)) &&
+               (error.Contains("ms-appx-web://Microsoft.AAD.BrokerPlugin", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("BrokerPlugin", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsValidTenantId(string tenantId)
