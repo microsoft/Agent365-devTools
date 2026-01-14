@@ -318,12 +318,26 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             return false;
 
         var error = result.StandardError;
-        // Check for AADSTS50011 error code (redirect URI mismatch)
-        // and WAM broker plugin references
-        return (error.Contains("AADSTS50011", StringComparison.OrdinalIgnoreCase) ||
-                error.Contains("redirect URI", StringComparison.OrdinalIgnoreCase)) &&
-               (error.Contains("ms-appx-web://Microsoft.AAD.BrokerPlugin", StringComparison.OrdinalIgnoreCase) ||
-                error.Contains("BrokerPlugin", StringComparison.OrdinalIgnoreCase));
+        
+        // Check for specific WAM/redirect URI errors
+        if ((error.Contains("AADSTS50011", StringComparison.OrdinalIgnoreCase) ||
+             error.Contains("redirect URI", StringComparison.OrdinalIgnoreCase)) &&
+            (error.Contains("ms-appx-web://Microsoft.AAD.BrokerPlugin", StringComparison.OrdinalIgnoreCase) ||
+             error.Contains("BrokerPlugin", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+        
+        // Also catch interactive browser authentication failures
+        // (often caused by hidden windows or WAM issues with custom apps)
+        if (error.Contains("InteractiveBrowserCredential authentication failed", StringComparison.OrdinalIgnoreCase) ||
+            (error.Contains("User canceled authentication", StringComparison.OrdinalIgnoreCase) &&
+             error.Contains("Web Account Manager", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+        
+        return false;
     }
 
     private static bool IsValidTenantId(string tenantId)
