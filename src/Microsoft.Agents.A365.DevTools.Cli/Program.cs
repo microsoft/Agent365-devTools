@@ -58,6 +58,7 @@ class Program
             var queryEntraLogger = serviceProvider.GetRequiredService<ILogger<QueryEntraCommand>>();
             var cleanupLogger = serviceProvider.GetRequiredService<ILogger<CleanupCommand>>();
             var publishLogger = serviceProvider.GetRequiredService<ILogger<PublishCommand>>();
+            var runLogger = serviceProvider.GetRequiredService<ILogger<RunCommand>>();
             var developLogger = serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Program>>();
             var configService = serviceProvider.GetRequiredService<IConfigService>();
             var executor = serviceProvider.GetRequiredService<CommandExecutor>();
@@ -99,6 +100,9 @@ class Program
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentPublishService, graphApiService, agentBlueprintService, manifestTemplateService));
+            rootCommand.AddCommand(RunCommand.CreateCommand(runLogger, configService, executor,
+                botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, agentBlueprintService, 
+                blueprintLookupService, federatedCredentialService, clientAppValidator, deploymentService, agentPublishService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling

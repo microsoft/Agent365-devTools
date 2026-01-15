@@ -17,4 +17,5 @@ public static class CommandNames
     public const string Cleanup = "cleanup";
     public const string Develop = "develop";
     public const string CreateInstance = "create-instance";
+    public const string Run = "run";
 }
