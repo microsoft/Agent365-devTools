@@ -3,49 +3,48 @@
   "name": "TripPlanner",
   "displayName": "Trip Planner Team",
   "description": "Multi-agent team handling inquiries related to trip planning",
-  "managerEmail": "bugbashuser11@a365preview001.onmicrosoft.com",
+  "managerEmail": "kalavany@testcsaaa.onmicrosoft.com",
   "sharedResources": {
-    "tenantId": "adfa4542-3e1e-46f5-9c70-3df0b15b3f6c",
-  "subscriptionId": "e09e22f2-9193-4f54-a335-01f59575eefd",
-  "resourceGroup": "a365demorg",
-  "location": "westus",
-  "environment": "prod",
-  "needDeployment": true,
-  "clientAppId": "cb594d5d-3386-46b5-bd65-d24a6cca868a",
-  "appServicePlanName": "a365agent-app-plan2",
+    "tenantId": "5369a35c-46a5-4677-8ff9-2e65587654e7",
+    "clientAppId": "d758ddb4-bf31-4913-b148-045106713c0f",
+    "subscriptionId": "3878eb57-005d-4718-a58a-49242374a1cb",
+    "resourceGroup": "a365-rg",
+    "location": "canadacentral",
+    "appServicePlanName": "a365agent-app-plan",
     "appServicePlanSku": "B1",
+    "environment": "prod",
     "agentUserUsageLocation": "US"
   },
   "agents": [
     {
-      "name": "Researcher",
-      "displayName": "Research Agent",
+      "name": "TeamResearcher",
+      "displayName": "Team Research Agent",
       "description": "Researches the customer questions and prepares a plan",
-      "agentIdentityDisplayName": "Research Agent",
-      "agentUserPrincipalName": "UPN.ResearchAgent@a365preview001.onmicrosoft.com",
-      "agentUserDisplayName": "Researcher Bot",
+      "agentIdentityDisplayName": "Team Research Agent",
+      "agentUserPrincipalName": "UPN.TeamResearchAgent@testcsaaa.onmicrosoft.com",
+      "agentUserDisplayName": "Team Researcher Bot",
       "deploymentProjectPath": "../../agent-samples/Researcher/sample-agent",
-      "agentBlueprintDisplayName": "Research Assistant"
+      "agentBlueprintDisplayName": "Team Research Assistant"
     },
     {
-      "name": "CurrencyConverter",
-      "displayName": "Currency Conversion Agent",
+      "name": "TeamCurrencyConverter",
+      "displayName": "Team Currency Conversion Agent",
       "description": "Handles currency conversion",
-      "agentIdentityDisplayName": "Currency conversion Agent",
-      "agentUserPrincipalName": "UPN.CurrencyConverterAgent@a365preview001.onmicrosoft.com",
-      "agentUserDisplayName": "Currency Converter Bot",
+      "agentIdentityDisplayName": "Team Currency conversion Agent",
+      "agentUserPrincipalName": "UPN.TeamCurrencyConverterAgent@testcsaaa.onmicrosoft.com",
+      "agentUserDisplayName": "Team Currency Converter Bot",
       "deploymentProjectPath": "../../agent-samples/CurrencyConverter/sample-agent",
-      "agentBlueprintDisplayName": "Currency Converter Assistant"
+      "agentBlueprintDisplayName": "Team Currency Converter Assistant"
     },
     {
-      "name": "Billing",
-      "displayName": "Billing Agent",
+      "name": "TeamBilling",
+      "displayName": "Team Billing Agent",
       "description": "Manages billing inquiries, subscription changes, and payment issues",
-      "agentIdentityDisplayName": "Billing Support Agent",
-      "agentUserPrincipalName": "UPN.BillingAgent@a365preview001.onmicrosoft.com",
-      "agentUserDisplayName": "Billing Support Bot",
+      "agentIdentityDisplayName": "Team Billing Support Agent",
+      "agentUserPrincipalName": "UPN.TeamBillingAgent@testcsaaa.onmicrosoft.com",
+      "agentUserDisplayName": "Team Billing Support Bot",
       "deploymentProjectPath": "../../agent-samples/Billing/sample-agent",
-      "agentBlueprintDisplayName": "Billing Support Assistant"
+      "agentBlueprintDisplayName": "Team Billing Support Assistant"
     }
   ]
 }

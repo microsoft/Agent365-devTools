@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "TripPlanner",
+  "displayName": "Trip Planner Team",
+  "description": "Multi-agent team handling inquiries related to trip planning",
+  "managerEmail": "bugbashuser11@a365preview001.onmicrosoft.com",
+  "sharedResources": {
+    "tenantId": "adfa4542-3e1e-46f5-9c70-3df0b15b3f6c",
+  "subscriptionId": "e09e22f2-9193-4f54-a335-01f59575eefd",
+  "resourceGroup": "a365demorg",
+  "location": "westus",
+  "environment": "prod",
+  "needDeployment": true,
+  "clientAppId": "cb594d5d-3386-46b5-bd65-d24a6cca868a",
+  "appServicePlanName": "a365agent-app-plan2",
+    "appServicePlanSku": "B1",
+    "agentUserUsageLocation": "US"
+  },
+  "agents": [
+    {
+      "name": "Researcher",
+      "displayName": "Research Agent",
+      "description": "Researches the customer questions and prepares a plan",
+      "agentIdentityDisplayName": "Research Agent",
+      "agentUserPrincipalName": "UPN.ResearchAgent@a365preview001.onmicrosoft.com",
+      "agentUserDisplayName": "Researcher Bot",
+      "deploymentProjectPath": "./agents/Researcher/sample-agent",
+      "agentBlueprintDisplayName": "Research Assistant"
+    },
+    {
+      "name": "CurrencyConverter",
+      "displayName": "Currency Conversion Agent",
+      "description": "Handles currency conversion",
+      "agentIdentityDisplayName": "Currency conversion Agent",
+      "agentUserPrincipalName": "UPN.CurrencyConverterAgent@a365preview001.onmicrosoft.com",
+      "agentUserDisplayName": "Currency Converter Bot",
+      "deploymentProjectPath": "./agents/CurrencyConverter/sample-agent",
+      "agentBlueprintDisplayName": "Currency Converter Assistant"
+    },
+    {
+      "name": "Billing",
+      "displayName": "Billing Agent",
+      "description": "Manages billing inquiries, subscription changes, and payment issues",
+      "agentIdentityDisplayName": "Billing Support Agent",
+      "agentUserPrincipalName": "UPN.BillingAgent@a365preview001.onmicrosoft.com",
+      "agentUserDisplayName": "Billing Support Bot",
+      "deploymentProjectPath": "./agents/Billing/sample-agent",
+      "agentBlueprintDisplayName": "Billing Support Assistant"
+    }
+  ]
+}

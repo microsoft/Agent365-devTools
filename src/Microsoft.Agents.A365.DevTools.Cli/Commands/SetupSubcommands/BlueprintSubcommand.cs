@@ -294,23 +294,32 @@ internal static class BlueprintSubcommand
 
         // CRITICAL: Grant AgentApplication.Create permission BEFORE creating blueprint
         // This replaces the PowerShell call to DelegatedAgentApplicationCreateConsent.ps1
-        logger.LogDebug("Ensuring AgentApplication.Create permission");
-
-        var consentResult = await EnsureDelegatedConsentWithRetriesAsync(
-            delegatedConsentService,
-            setupConfig.ClientAppId,
-            setupConfig.TenantId,
-            logger);
-
-        if (!consentResult)
+        // Skip if using default Microsoft Graph app (no custom ClientAppId)
+        
+        if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
         {
-            logger.LogError("Failed to ensure AgentApplication.Create permission after multiple attempts");
-            return new BlueprintCreationResult 
-            { 
-                BlueprintCreated = false, 
-                EndpointRegistered = false, 
-                EndpointRegistrationAttempted = false 
-            };
+            logger.LogDebug("Ensuring AgentApplication.Create permission for custom client app");
+
+            var consentResult = await EnsureDelegatedConsentWithRetriesAsync(
+                delegatedConsentService,
+                setupConfig.ClientAppId,
+                setupConfig.TenantId,
+                logger);
+
+            if (!consentResult)
+            {
+                logger.LogError("Failed to ensure AgentApplication.Create permission after multiple attempts");
+                return new BlueprintCreationResult 
+                { 
+                    BlueprintCreated = false, 
+                    EndpointRegistered = false, 
+                    EndpointRegistrationAttempted = false 
+                };
+            }
+        }
+        else
+        {
+            logger.LogDebug("Using default Microsoft Graph app - skipping custom client app consent");
         }
 
         // ========================================================================

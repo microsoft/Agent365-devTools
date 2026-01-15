@@ -320,19 +320,17 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         var error = result.StandardError;
         
         // Check for specific WAM/redirect URI errors
-        if ((error.Contains("AADSTS50011", StringComparison.OrdinalIgnoreCase) ||
-             error.Contains("redirect URI", StringComparison.OrdinalIgnoreCase)) &&
-            (error.Contains("ms-appx-web://Microsoft.AAD.BrokerPlugin", StringComparison.OrdinalIgnoreCase) ||
-             error.Contains("BrokerPlugin", StringComparison.OrdinalIgnoreCase)))
+        if (error.Contains("AADSTS50011", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("BrokerPlugin", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("redirect URI", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
         
-        // Also catch interactive browser authentication failures
-        // (often caused by hidden windows or WAM issues with custom apps)
+        // Catch interactive browser authentication failures
+        // These commonly occur with WAM issues or custom apps
         if (error.Contains("InteractiveBrowserCredential authentication failed", StringComparison.OrdinalIgnoreCase) ||
-            (error.Contains("User canceled authentication", StringComparison.OrdinalIgnoreCase) &&
-             error.Contains("Web Account Manager", StringComparison.OrdinalIgnoreCase)))
+            error.Contains("User canceled authentication", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
