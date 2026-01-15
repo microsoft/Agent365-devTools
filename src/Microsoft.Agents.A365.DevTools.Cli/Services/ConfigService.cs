@@ -469,7 +469,6 @@ public class ConfigService : IConfigService
         string configPath = "a365.config.json",
         Agent365Config? templateConfig = null)
     {
-        // Only update in current directory if it already exists
         var config = templateConfig ?? new Agent365Config
         {
             TenantId = string.Empty,
@@ -489,11 +488,17 @@ public class ConfigService : IConfigService
         var staticData = ExtractStaticProperties(config);
         var json = JsonSerializer.Serialize(staticData, DefaultJsonOptions);
 
-        var currentDirPath = Path.Combine(Environment.CurrentDirectory, configPath);
-        if (File.Exists(currentDirPath))
+        // Handle both absolute and relative paths
+        var targetPath = Path.IsPathRooted(configPath) || configPath.Contains(Path.DirectorySeparatorChar)
+            ? configPath
+            : Path.Combine(Environment.CurrentDirectory, configPath);
+
+        // For relative paths in current directory, only update if file exists
+        // For absolute paths (e.g., team setup temp files), always create/update
+        if (Path.IsPathRooted(configPath) || File.Exists(targetPath))
         {
-            await File.WriteAllTextAsync(currentDirPath, json);
-            _logger?.LogInformation("Updated configuration at: {ConfigPath}", currentDirPath);
+            await File.WriteAllTextAsync(targetPath, json);
+            _logger?.LogInformation("Configuration saved at: {ConfigPath}", targetPath);
         }
     }
 
