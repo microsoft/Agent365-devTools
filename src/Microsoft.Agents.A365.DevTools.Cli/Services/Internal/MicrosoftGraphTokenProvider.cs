@@ -108,7 +108,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 useDeviceCode);
 
             var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
-            var result = await ExecuteWithFallbackAsync(script, ct);
+            var result = await ExecuteWithFallbackAsync(script, useDeviceCode, ct);
             var token = ProcessResult(result);
 
             if (string.IsNullOrWhiteSpace(token))
@@ -216,16 +216,17 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
     private async Task<CommandResult> ExecuteWithFallbackAsync(
         string script,
+        bool useDeviceCode,
         CancellationToken ct)
     {
         // Try PowerShell Core first (cross-platform)
-        var result = await ExecutePowerShellAsync("pwsh", script, ct);
+        var result = await ExecutePowerShellAsync("pwsh", script, useDeviceCode, ct);
 
         // Fallback to Windows PowerShell if pwsh is not available
         if (!result.Success && IsPowerShellNotFoundError(result))
         {
             _logger.LogDebug("PowerShell Core not found, falling back to Windows PowerShell");
-            result = await ExecutePowerShellAsync("powershell", script, ct);
+            result = await ExecutePowerShellAsync("powershell", script, useDeviceCode, ct);
         }
 
         return result;
@@ -234,9 +235,10 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     private async Task<CommandResult> ExecutePowerShellAsync(
         string shell,
         string script,
+        bool useDeviceCode,
         CancellationToken ct)
     {
-        var arguments = BuildPowerShellArguments(shell, script);
+        var arguments = BuildPowerShellArguments(shell, script, useDeviceCode);
 
         return await _executor.ExecuteWithStreamingAsync(
             command: shell,
@@ -247,11 +249,12 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             cancellationToken: ct);
     }
 
-    private static string BuildPowerShellArguments(string shell, string script)
+    private static string BuildPowerShellArguments(string shell, string script, bool useDeviceCode)
     {
-        var baseArgs = shell == "pwsh"
-            ? "-NoProfile -NonInteractive"
-            : "-NoLogo -NoProfile -NonInteractive";
+        // Never use -NonInteractive for Graph authentication as it prevents both:
+        // - Device code prompts from being displayed
+        // - Interactive browser windows from opening (WAM)
+        var baseArgs = shell == "pwsh" ? "-NoProfile" : "-NoLogo -NoProfile";
 
         var wrappedScript = $"try {{ {script} }} catch {{ Write-Error $_.Exception.Message; exit 1 }}";
 
@@ -268,11 +271,21 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             return null;
         }
 
-        var token = result.StandardOutput?.Trim();
+        var output = result.StandardOutput?.Trim();
+
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            _logger.LogWarning("PowerShell succeeded but returned empty output");
+            return null;
+        }
+
+        // Extract the JWT token from output - PowerShell may include WARNING lines
+        // JWT tokens start with "eyJ" (base64 encoded '{"')
+        var token = ExtractJwtFromOutput(output);
 
         if (string.IsNullOrWhiteSpace(token))
         {
-            _logger.LogWarning("PowerShell succeeded but returned empty output");
+            _logger.LogWarning("Could not extract JWT token from PowerShell output");
             return null;
         }
 
@@ -283,6 +296,42 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
         _logger.LogInformation("Microsoft Graph access token acquired successfully");
         return token;
+    }
+
+    private static string? ExtractJwtFromOutput(string output)
+    {
+        // Split output into lines and find the JWT token
+        // JWT tokens start with "eyJ" and contain exactly two dots
+        var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            // Skip WARNING, ERROR, and other PowerShell output lines
+            if (trimmed.StartsWith("WARNING:", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("VERBOSE:", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("DEBUG:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Check if this line looks like a JWT token
+            if (IsValidJwtFormat(trimmed))
+            {
+                return trimmed;
+            }
+        }
+
+        // Fallback: if no line matches, return the trimmed output
+        // (in case the token is on a single line without prefixes)
+        var trimmedOutput = output.Trim();
+        if (IsValidJwtFormat(trimmedOutput))
+        {
+            return trimmedOutput;
+        }
+
+        return null;
     }
 
     private static bool IsPowerShellNotFoundError(CommandResult result)

@@ -188,6 +188,7 @@ public class GraphApiService
 
         // When specific scopes are required, use custom client app if configured
         // CustomClientAppId should be set by callers who have access to config
+        // Use interactive browser flow (false) as device code has module bugs; -NonInteractive removed separately
         var token = (scopes != null && _tokenProvider != null)
             ? await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct)
             : await GetGraphAccessTokenAsync(tenantId, ct);
