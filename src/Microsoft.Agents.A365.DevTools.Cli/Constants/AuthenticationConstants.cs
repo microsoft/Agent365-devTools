@@ -40,6 +40,30 @@ public static class AuthenticationConstants
     };
 
     /// <summary>
+    /// WAM (Windows Authentication Broker) redirect URI format.
+    /// This URI is required for WAM-based authentication on Windows.
+    /// The {0} placeholder should be replaced with the client app ID.
+    /// </summary>
+    public const string WamBrokerRedirectUriFormat = "ms-appx-web://microsoft.aad.brokerplugin/{0}";
+
+    /// <summary>
+    /// Gets all required redirect URIs including the WAM broker URI for a specific client app.
+    /// Note: This method allocates a new array on each call. Callers should cache the result
+    /// if they need to use it multiple times.
+    /// </summary>
+    /// <param name="clientAppId">The client application ID</param>
+    /// <returns>Array of all required redirect URIs</returns>
+    public static string[] GetRequiredRedirectUris(string clientAppId)
+    {
+        var uris = new List<string>(RequiredRedirectUris);
+        if (!string.IsNullOrWhiteSpace(clientAppId))
+        {
+            uris.Add(string.Format(WamBrokerRedirectUriFormat, clientAppId));
+        }
+        return uris.ToArray();
+    }
+
+    /// <summary>
     /// Application name for cache directory
     /// </summary>
     public const string ApplicationName = "Microsoft.Agents.A365.DevTools.Cli";

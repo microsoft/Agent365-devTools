@@ -22,6 +22,7 @@
   <ItemGroup>
     <!-- CLI Framework -->
     <PackageReference Include="Microsoft.Identity.Client" />
+    <PackageReference Include="Microsoft.Identity.Client.Broker" />
     <PackageReference Include="System.CommandLine" />
 
     <!-- Configuration & JSON -->

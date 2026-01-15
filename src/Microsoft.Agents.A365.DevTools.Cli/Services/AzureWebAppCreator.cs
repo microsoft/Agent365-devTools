@@ -33,21 +33,21 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
             try
             {
                 ArmClient armClient;
+                // Use DefaultAzureCredential with InteractiveBrowserCredential excluded to avoid
+                // Windows Authentication Broker (WAM) issues in console apps.
+                // Users should run 'az login' before using this command.
+                // See GitHub issues #146 and #151.
+                var credentialOptions = new DefaultAzureCredentialOptions
+                {
+                    ExcludeInteractiveBrowserCredential = true
+                };
+
                 if (!string.IsNullOrWhiteSpace(tenantId))
                 {
-                    var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
-                    {
-                        VisualStudioTenantId = tenantId,
-                        SharedTokenCacheTenantId = tenantId,
-                        InteractiveBrowserTenantId = tenantId,
-                        ExcludeInteractiveBrowserCredential = false
-                    });
-                    armClient = new ArmClient(credential, subscriptionId);
+                    credentialOptions.TenantId = tenantId;
                 }
-                else
-                {
-                    armClient = new ArmClient(new DefaultAzureCredential(), subscriptionId);
-                }
+
+                armClient = new ArmClient(new DefaultAzureCredential(credentialOptions), subscriptionId);
 
                 var subscription = armClient.GetSubscriptionResource(new ResourceIdentifier($"/subscriptions/{subscriptionId}"));
                 var resourceGroup = await subscription.GetResourceGroups().GetAsync(resourceGroupName);

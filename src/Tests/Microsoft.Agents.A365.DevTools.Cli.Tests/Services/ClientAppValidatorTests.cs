@@ -515,12 +515,14 @@ public class ClientAppValidatorTests
     {
         // Arrange
         var token = "test-token";
+        // Include all required URIs: localhost, localhost:8400, and WAM broker URI
+        var wamBrokerUri = $"ms-appx-web://microsoft.aad.brokerplugin/{ValidClientAppId}";
         var appResponseJson = $$"""
         {
             "value": [{
                 "id": "object-id-123",
                 "publicClient": {
-                    "redirectUris": ["http://localhost", "http://localhost:8400/"]
+                    "redirectUris": ["http://localhost", "http://localhost:8400/", "{{wamBrokerUri}}"]
                 }
             }]
         }

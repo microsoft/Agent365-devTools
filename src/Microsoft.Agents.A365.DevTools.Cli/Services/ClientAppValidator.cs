@@ -195,8 +195,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                 .Select(uri => uri!)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // Check if required URIs are present
-            var missingUris = AuthenticationConstants.RequiredRedirectUris
+            // Check if required URIs are present (including WAM broker URI)
+            var requiredUris = AuthenticationConstants.GetRequiredRedirectUris(clientAppId);
+            var missingUris = requiredUris
                 .Where(uri => !currentRedirectUris.Contains(uri))
                 .ToList();
 

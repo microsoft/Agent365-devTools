@@ -1214,19 +1214,18 @@ internal static class BlueprintSubcommand
 
     /// <summary>
     /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
-    /// This uses InteractiveBrowserCredential directly which is simpler and more reliable.
+    /// This uses MsalBrowserCredential, which performs platform-appropriate interactive authentication (WAM on Windows, browser-based flow on other platforms).
     /// </summary>
     private static async Task<string?> GetTokenFromGraphClient(ILogger logger, GraphServiceClient graphClient, string tenantId, string clientAppId)
     {
         try
         {
-            // Use Azure.Identity to get the token directly
-            // This is cleaner and more reliable than trying to extract it from GraphServiceClient
-            var credential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
-            {
-                TenantId = tenantId,
-                ClientId = clientAppId
-            });
+            // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
+            var credential = new MsalBrowserCredential(
+                clientAppId,
+                tenantId,
+                redirectUri: null,  // Let MsalBrowserCredential use WAM on Windows
+                logger);
 
             var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
             var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
