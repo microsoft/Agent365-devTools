@@ -413,13 +413,13 @@ public class GraphApiService
     /// <param name="ct">Cancellation token</param>
     /// <returns>True if user has required roles, false otherwise</returns>
     public virtual async Task<(bool hasPrivileges, List<string> roles)> CheckServicePrincipalCreationPrivilegesAsync(
-        string tenantId, 
+        string tenantId,
         CancellationToken ct = default)
     {
         try
         {
             _logger.LogDebug("Checking user's directory roles for service principal creation privileges");
-            
+
             var token = await GetGraphAccessTokenAsync(tenantId, ct);
             if (token == null)
             {
@@ -427,7 +427,7 @@ public class GraphApiService
                 return (false, new List<string>());
             }
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, 
+            using var request = new HttpRequestMessage(HttpMethod.Get,
                 "https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -454,22 +454,22 @@ public class GraphApiService
             _logger.LogDebug("User has {Count} directory roles", roles.Count);
 
             // Check for required roles
-            var requiredRoles = new[] 
-            { 
-                "Application Administrator", 
-                "Cloud Application Administrator", 
-                "Global Administrator" 
+            var requiredRoles = new[]
+            {
+                "Application Administrator",
+                "Cloud Application Administrator",
+                "Global Administrator"
             };
 
             var hasRequiredRole = roles.Any(r => requiredRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
-            
+
             if (hasRequiredRole)
             {
                 _logger.LogDebug("User has sufficient privileges for service principal creation");
             }
             else
             {
-                _logger.LogDebug("User does not have required roles for service principal creation. Roles: {Roles}", 
+                _logger.LogDebug("User does not have required roles for service principal creation. Roles: {Roles}",
                     string.Join(", ", roles));
             }
 
@@ -479,6 +479,137 @@ public class GraphApiService
         {
             _logger.LogWarning(ex, "Failed to check service principal creation privileges: {Message}", ex.Message);
             return (false, new List<string>());
+        }
+    }
+
+    /// <summary>
+    /// Ensures the current user is an owner of an application (idempotent operation).
+    /// First checks if the user is already an owner, and only adds if not present.
+    /// This ensures the creator has ownership permissions for setting callback URLs and bot IDs via the Developer Portal.
+    /// See: https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta
+    /// </summary>
+    /// <param name="tenantId">The tenant ID</param>
+    /// <param name="applicationObjectId">The application object ID (not the client/app ID)</param>
+    /// <param name="userObjectId">The user's object ID to add as owner. If null, uses the current authenticated user.</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>True if the user is an owner (either already was or was successfully added), false otherwise</returns>
+    public virtual async Task<bool> AddApplicationOwnerAsync(
+        string tenantId,
+        string applicationObjectId,
+        string? userObjectId = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // Get current user's object ID if not provided
+            if (string.IsNullOrWhiteSpace(userObjectId))
+            {
+                var token = await GetGraphAccessTokenAsync(tenantId, ct);
+                if (token == null)
+                {
+                    _logger.LogWarning("Could not acquire Graph token to add application owner");
+                    return false;
+                }
+
+                using var meRequest = new HttpRequestMessage(HttpMethod.Get,
+                    "https://graph.microsoft.com/v1.0/me?$select=id");
+                meRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                var meResponse = await _httpClient.SendAsync(meRequest, ct);
+                if (!meResponse.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Could not retrieve current user's ID: {Status}", meResponse.StatusCode);
+                    return false;
+                }
+
+                var meJson = await meResponse.Content.ReadAsStringAsync(ct);
+                var meDoc = JsonDocument.Parse(meJson);
+
+                if (!meDoc.RootElement.TryGetProperty("id", out var idElement))
+                {
+                    _logger.LogWarning("Could not extract user ID from Graph response");
+                    return false;
+                }
+
+                userObjectId = idElement.GetString();
+                _logger.LogDebug("Retrieved current user's object ID: {UserId}", userObjectId);
+            }
+
+            if (string.IsNullOrWhiteSpace(userObjectId))
+            {
+                _logger.LogWarning("User object ID is empty, cannot add as owner");
+                return false;
+            }
+
+            // Check if user is already an owner (idempotency check)
+            _logger.LogDebug("Checking if user {UserId} is already an owner of application {AppObjectId}", userObjectId, applicationObjectId);
+
+            var ownersDoc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/owners?$select=id", ct);
+            if (ownersDoc != null && ownersDoc.RootElement.TryGetProperty("value", out var ownersArray))
+            {
+                foreach (var owner in ownersArray.EnumerateArray())
+                {
+                    if (owner.TryGetProperty("id", out var ownerId) &&
+                        string.Equals(ownerId.GetString(), userObjectId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogDebug("User is already an owner of the application");
+                        return true;
+                    }
+                }
+            }
+
+            // User is not an owner, add them
+            // https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta
+            _logger.LogDebug("Adding user {UserId} as owner to application {AppObjectId}", userObjectId, applicationObjectId);
+
+            var payload = new
+            {
+                odataid = $"https://graph.microsoft.com/v1.0/directoryObjects/{userObjectId}"
+            };
+
+            // Use beta endpoint as recommended in the documentation
+            var relativePath = $"/beta/applications/{applicationObjectId}/owners/$ref";
+
+            if (!await EnsureGraphHeadersAsync(tenantId, ct))
+            {
+                _logger.LogWarning("Could not authenticate to Graph API to add application owner");
+                return false;
+            }
+
+            var url = $"https://graph.microsoft.com{relativePath}";
+            var content = new StringContent(
+                JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await _httpClient.PostAsync(url, content, ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("Successfully added user as owner to application");
+                return true;
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+
+            // Check if the user is already an owner (409 Conflict or specific error message)
+            // This handles race conditions where the user was added between our check and the POST
+            if ((int)response.StatusCode == 409 ||
+                errorBody.Contains("already exist", StringComparison.OrdinalIgnoreCase) ||
+                errorBody.Contains("One or more added object references already exist", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug("User is already an owner of the application (detected during add)");
+                return true;
+            }
+
+            _logger.LogWarning("Failed to add user as owner to application: {Status} - {Error}",
+                response.StatusCode, errorBody);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error adding user as owner to application: {Message}", ex.Message);
+            return false;
         }
     }
 }

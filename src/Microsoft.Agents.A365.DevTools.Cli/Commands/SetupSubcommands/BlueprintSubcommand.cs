@@ -892,8 +892,8 @@ internal static class BlueprintSubcommand
             setupConfig.AgentBlueprintObjectId = objectId;
             setupConfig.AgentBlueprintServicePrincipalObjectId = servicePrincipalId;
             setupConfig.AgentBlueprintId = appId;
-            
-            logger.LogDebug("Blueprint identifiers staged for persistence: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}", 
+
+            logger.LogDebug("Blueprint identifiers staged for persistence: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}",
                 objectId, servicePrincipalId, appId);
 
             // Complete configuration (FIC validation + admin consent)
@@ -946,6 +946,27 @@ internal static class BlueprintSubcommand
         bool alreadyExisted,
         CancellationToken ct)
     {
+        // ========================================================================
+        // Application Owner Assignment
+        // ========================================================================
+
+        // Add current user as owner to the application (for both new and existing blueprints)
+        // This ensures the creator can set callback URLs and bot IDs via the Developer Portal
+        logger.LogInformation("Ensuring current user is owner of application...");
+        var ownerAdded = await graphApiService.AddApplicationOwnerAsync(tenantId, objectId, null, ct);
+        if (ownerAdded)
+        {
+            logger.LogInformation("Current user is an owner of the application");
+        }
+        else
+        {
+            logger.LogWarning("Could not verify or add current user as application owner");
+            logger.LogWarning("You may need to manually add yourself as an owner in the Azure Portal:");
+            logger.LogWarning("  1. Go to Azure Portal > App Registrations");
+            logger.LogWarning("  2. Find your Agent Blueprint: {AppId}", appId);
+            logger.LogWarning("  3. Navigate to Owners and add yourself");
+        }
+
         // ========================================================================
         // Federated Identity Credential Validation/Creation
         // ========================================================================
