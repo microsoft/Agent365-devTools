@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -487,26 +488,28 @@ public class GraphApiService
     /// Ensures the current user is an owner of an application (idempotent operation).
     /// First checks if the user is already an owner, and only adds if not present.
     /// This ensures the creator has ownership permissions for setting callback URLs and bot IDs via the Developer Portal.
+    /// Requires Application.ReadWrite.All or Directory.ReadWrite.All permissions.
     /// See: https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta
     /// </summary>
     /// <param name="tenantId">The tenant ID</param>
     /// <param name="applicationObjectId">The application object ID (not the client/app ID)</param>
     /// <param name="userObjectId">The user's object ID to add as owner. If null, uses the current authenticated user.</param>
     /// <param name="ct">Cancellation token</param>
+    /// <param name="scopes">OAuth2 scopes for elevated permissions (e.g., Application.ReadWrite.All, Directory.ReadWrite.All)</param>
     /// <returns>True if the user is an owner (either already was or was successfully added), false otherwise</returns>
     public virtual async Task<bool> AddApplicationOwnerAsync(
         string tenantId,
         string applicationObjectId,
         string? userObjectId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null)
     {
         try
         {
             // Get current user's object ID if not provided
             if (string.IsNullOrWhiteSpace(userObjectId))
             {
-                var token = await GetGraphAccessTokenAsync(tenantId, ct);
-                if (token == null)
+                if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
                 {
                     _logger.LogWarning("Could not acquire Graph token to add application owner");
                     return false;
@@ -514,7 +517,7 @@ public class GraphApiService
 
                 using var meRequest = new HttpRequestMessage(HttpMethod.Get,
                     "https://graph.microsoft.com/v1.0/me?$select=id");
-                meRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                meRequest.Headers.Authorization = _httpClient.DefaultRequestHeaders.Authorization;
 
                 var meResponse = await _httpClient.SendAsync(meRequest, ct);
                 if (!meResponse.IsSuccessStatusCode)
@@ -545,7 +548,7 @@ public class GraphApiService
             // Check if user is already an owner (idempotency check)
             _logger.LogDebug("Checking if user {UserId} is already an owner of application {AppObjectId}", userObjectId, applicationObjectId);
 
-            var ownersDoc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/owners?$select=id", ct);
+            var ownersDoc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/owners?$select=id", ct, scopes);
             if (ownersDoc != null && ownersDoc.RootElement.TryGetProperty("value", out var ownersArray))
             {
                 var isAlreadyOwner = ownersArray.EnumerateArray()
@@ -565,19 +568,19 @@ public class GraphApiService
 
             var payload = new JsonObject
             {
-                ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userObjectId}"
+                ["@odata.id"] = $"{GraphApiConstants.BaseUrl}/{GraphApiConstants.Versions.Beta}/directoryObjects/{userObjectId}"
             };
 
             // Use beta endpoint as recommended in the documentation
             var relativePath = $"/beta/applications/{applicationObjectId}/owners/$ref";
 
-            if (!await EnsureGraphHeadersAsync(tenantId, ct))
+            if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
             {
                 _logger.LogWarning("Could not authenticate to Graph API to add application owner");
                 return false;
             }
 
-            var url = $"https://graph.microsoft.com{relativePath}";
+            var url = $"{GraphApiConstants.BaseUrl}{relativePath}";
             using var content = new StringContent(
                 payload.ToJsonString(),
                 Encoding.UTF8,
@@ -603,8 +606,30 @@ public class GraphApiService
                 return true;
             }
 
-            _logger.LogWarning("Failed to add user as owner to application: {Status} - {Error}",
-                response.StatusCode, errorBody);
+            // Log specific error guidance based on status code
+            _logger.LogWarning("Failed to add user as owner to application. Status: {Status}, URL: {Url}",
+                response.StatusCode, url);
+
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                _logger.LogWarning("Access denied. Ensure the authenticated user has Application.ReadWrite.All or Directory.ReadWrite.All permissions");
+                _logger.LogWarning("To manually add yourself as an owner, make this Graph API call:");
+                _logger.LogWarning("  POST {Url}", url);
+                _logger.LogWarning("  Content-Type: application/json");
+                _logger.LogWarning("  Body: {{\"@odata.id\": \"{ODataId}\"}}", $"{GraphApiConstants.BaseUrl}/{GraphApiConstants.Versions.Beta}/directoryObjects/{userObjectId}");
+            }
+            else if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _logger.LogWarning("Application or user not found. Verify ObjectId: {AppObjectId}, UserId: {UserId}",
+                    applicationObjectId, userObjectId);
+            }
+            else if (response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.LogWarning("Bad request. Verify the payload format and user object ID");
+                _logger.LogWarning("Attempted payload: {{\"@odata.id\": \"{ODataId}\"}}", $"{GraphApiConstants.BaseUrl}/{GraphApiConstants.Versions.Beta}/directoryObjects/{userObjectId}");
+            }
+
+            _logger.LogDebug("Graph API error response: {Error}", errorBody);
             return false;
         }
         catch (Exception ex)

@@ -952,8 +952,15 @@ internal static class BlueprintSubcommand
 
         // Add current user as owner to the application (for both new and existing blueprints)
         // This ensures the creator can set callback URLs and bot IDs via the Developer Portal
+        // Requires Application.ReadWrite.All or Directory.ReadWrite.All permissions
         logger.LogInformation("Ensuring current user is owner of application...");
-        var ownerAdded = await graphApiService.AddApplicationOwnerAsync(tenantId, objectId, null, ct);
+        var ownerScopes = new[] { GraphApiConstants.Scopes.ApplicationReadWriteAll };
+        var ownerAdded = await graphApiService.AddApplicationOwnerAsync(
+            tenantId,
+            objectId,
+            userObjectId: null,
+            ct,
+            scopes: ownerScopes);
         if (ownerAdded)
         {
             logger.LogInformation("Current user is an owner of the application");
@@ -961,10 +968,7 @@ internal static class BlueprintSubcommand
         else
         {
             logger.LogWarning("Could not verify or add current user as application owner");
-            logger.LogWarning("You may need to manually add yourself as an owner in the Azure Portal:");
-            logger.LogWarning("  1. Go to Azure Portal > App Registrations");
-            logger.LogWarning("  2. Find your Agent Blueprint: {AppId}", appId);
-            logger.LogWarning("  3. Navigate to Owners and add yourself");
+            logger.LogWarning("See detailed error above or refer to: https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta");
         }
 
         // ========================================================================

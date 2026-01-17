@@ -324,8 +324,8 @@ public class GraphApiServiceAddApplicationOwnerTests
         // Verify payload structure (uses JsonObject with bracket notation for @odata.id)
         var payload = JsonSerializer.Deserialize<JsonElement>(capturedPayload!);
         payload.TryGetProperty("@odata.id", out var odataId).Should().BeTrue("payload should have @odata.id property");
-        odataId.GetString().Should().Contain($"/directoryObjects/{userObjectId}",
-            "payload should reference the user object");
+        odataId.GetString().Should().Be($"{Cli.Constants.GraphApiConstants.BaseUrl}/{Cli.Constants.GraphApiConstants.Versions.Beta}/directoryObjects/{userObjectId}",
+            "payload should use beta endpoint and reference the user object");
     }
 
     [Fact]
