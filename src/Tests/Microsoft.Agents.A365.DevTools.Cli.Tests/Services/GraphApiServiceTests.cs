@@ -209,6 +209,18 @@ internal class TestHttpMessageHandler : HttpMessageHandler
         var resp = _responses.Dequeue();
         return Task.FromResult(resp);
     }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            while (_responses.Count > 0)
+            {
+                _responses.Dequeue().Dispose();
+            }
+        }
+        base.Dispose(disposing);
+    }
 }
 
 // Capturing handler that captures requests AFTER headers are applied
@@ -235,6 +247,18 @@ internal class CapturingHttpMessageHandler : HttpMessageHandler
 
         var resp = _responses.Dequeue();
         return Task.FromResult(resp);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            while (_responses.Count > 0)
+            {
+                _responses.Dequeue().Dispose();
+            }
+        }
+        base.Dispose(disposing);
     }
 }
 

@@ -892,8 +892,8 @@ internal static class BlueprintSubcommand
             setupConfig.AgentBlueprintObjectId = objectId;
             setupConfig.AgentBlueprintServicePrincipalObjectId = servicePrincipalId;
             setupConfig.AgentBlueprintId = appId;
-            
-            logger.LogDebug("Blueprint identifiers staged for persistence: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}", 
+
+            logger.LogDebug("Blueprint identifiers staged for persistence: ObjectId={ObjectId}, SPObjectId={SPObjectId}, AppId={AppId}",
                 objectId, servicePrincipalId, appId);
 
             // Complete configuration (FIC validation + admin consent)
@@ -946,6 +946,31 @@ internal static class BlueprintSubcommand
         bool alreadyExisted,
         CancellationToken ct)
     {
+        // ========================================================================
+        // Application Owner Assignment
+        // ========================================================================
+
+        // Add current user as owner to the application (for both new and existing blueprints)
+        // This ensures the creator can set callback URLs and bot IDs via the Developer Portal
+        // Requires Application.ReadWrite.All or Directory.ReadWrite.All permissions
+        logger.LogInformation("Ensuring current user is owner of application...");
+        var ownerScopes = new[] { GraphApiConstants.Scopes.ApplicationReadWriteAll };
+        var ownerAdded = await graphApiService.AddApplicationOwnerAsync(
+            tenantId,
+            objectId,
+            userObjectId: null,
+            ct,
+            scopes: ownerScopes);
+        if (ownerAdded)
+        {
+            logger.LogInformation("Current user is an owner of the application");
+        }
+        else
+        {
+            logger.LogWarning("Could not verify or add current user as application owner");
+            logger.LogWarning("See detailed error above or refer to: https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta");
+        }
+
         // ========================================================================
         // Federated Identity Credential Validation/Creation
         // ========================================================================

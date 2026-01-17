@@ -36,6 +36,11 @@
 - Focus on quality over quantity of tests
 - Add regression tests for bug fixes
 - Tests should verify CLI reliability
+- **Dispose IDisposable objects properly**:
+  - `HttpResponseMessage` objects created in tests must be disposed
+  - Even in mock/test handlers, follow proper disposal patterns
+  - Consider using `using` statements or ensure test handlers dispose responses
+  - This applies to all `IDisposable` test objects to avoid analyzer warnings
 
 ### Output and Logging
 - No emojis or special characters in logs, output, or comments
