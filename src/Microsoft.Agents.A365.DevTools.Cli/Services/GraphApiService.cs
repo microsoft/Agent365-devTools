@@ -519,7 +519,7 @@ public class GraphApiService
                     "https://graph.microsoft.com/v1.0/me?$select=id");
                 meRequest.Headers.Authorization = _httpClient.DefaultRequestHeaders.Authorization;
 
-                var meResponse = await _httpClient.SendAsync(meRequest, ct);
+                using var meResponse = await _httpClient.SendAsync(meRequest, ct);
                 if (!meResponse.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("Could not retrieve current user's ID: {Status}", meResponse.StatusCode);
@@ -527,7 +527,7 @@ public class GraphApiService
                 }
 
                 var meJson = await meResponse.Content.ReadAsStringAsync(ct);
-                var meDoc = JsonDocument.Parse(meJson);
+                using var meDoc = JsonDocument.Parse(meJson);
 
                 if (!meDoc.RootElement.TryGetProperty("id", out var idElement))
                 {
@@ -586,7 +586,7 @@ public class GraphApiService
                 Encoding.UTF8,
                 "application/json");
 
-            var response = await _httpClient.PostAsync(url, content, ct);
+            using var response = await _httpClient.PostAsync(url, content, ct);
 
             if (response.IsSuccessStatusCode)
             {

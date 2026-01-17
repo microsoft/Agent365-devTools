@@ -16,6 +16,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// Tests for GraphApiService.AddApplicationOwnerAsync method.
 /// Verifies idempotency, owner checking, and error handling.
 /// </summary>
+/// <remarks>
+/// HttpResponseMessage objects are created inline and queued to test handlers.
+/// The test handlers (TestHttpMessageHandler and CapturingHttpMessageHandler) properly dispose
+/// all queued responses in their Dispose methods. Suppressing CA2000 for this pattern.
+/// </remarks>
+#pragma warning disable CA2000 // Dispose objects before losing scope
 public class GraphApiServiceAddApplicationOwnerTests
 {
     private readonly ILogger<GraphApiService> _mockLogger;
@@ -361,5 +367,6 @@ public class GraphApiServiceAddApplicationOwnerTests
         result.Should().BeTrue("should match user ID case-insensitively");
     }
 }
+#pragma warning restore CA2000 // Dispose objects before losing scope
 
 // Test helper classes are defined in GraphApiServiceTests.cs
