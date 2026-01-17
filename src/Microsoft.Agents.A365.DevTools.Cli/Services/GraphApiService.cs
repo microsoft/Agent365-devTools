@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -547,14 +548,14 @@ public class GraphApiService
             var ownersDoc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/owners?$select=id", ct);
             if (ownersDoc != null && ownersDoc.RootElement.TryGetProperty("value", out var ownersArray))
             {
-                foreach (var owner in ownersArray.EnumerateArray())
+                var isAlreadyOwner = ownersArray.EnumerateArray()
+                    .Where(owner => owner.TryGetProperty("id", out var ownerId))
+                    .Any(owner => string.Equals(owner.GetProperty("id").GetString(), userObjectId, StringComparison.OrdinalIgnoreCase));
+
+                if (isAlreadyOwner)
                 {
-                    if (owner.TryGetProperty("id", out var ownerId) &&
-                        string.Equals(ownerId.GetString(), userObjectId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogDebug("User is already an owner of the application");
-                        return true;
-                    }
+                    _logger.LogDebug("User is already an owner of the application");
+                    return true;
                 }
             }
 
@@ -562,9 +563,9 @@ public class GraphApiService
             // https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta
             _logger.LogDebug("Adding user {UserId} as owner to application {AppObjectId}", userObjectId, applicationObjectId);
 
-            var payload = new
+            var payload = new JsonObject
             {
-                odataid = $"https://graph.microsoft.com/v1.0/directoryObjects/{userObjectId}"
+                ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userObjectId}"
             };
 
             // Use beta endpoint as recommended in the documentation
@@ -577,8 +578,8 @@ public class GraphApiService
             }
 
             var url = $"https://graph.microsoft.com{relativePath}";
-            var content = new StringContent(
-                JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
+            using var content = new StringContent(
+                payload.ToJsonString(),
                 Encoding.UTF8,
                 "application/json");
 

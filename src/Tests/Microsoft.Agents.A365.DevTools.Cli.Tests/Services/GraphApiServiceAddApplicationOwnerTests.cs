@@ -45,7 +45,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     public async Task AddApplicationOwnerAsync_WhenUserNotOwner_AddsOwnerSuccessfully()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
 
         var tenantId = "tenant-123";
@@ -73,7 +73,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     public async Task AddApplicationOwnerAsync_WhenUserAlreadyOwner_ReturnsTrue()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
 
         var tenantId = "tenant-123";
@@ -107,7 +107,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     public async Task AddApplicationOwnerAsync_WhenConflictError_ReturnsTrue()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
 
         var tenantId = "tenant-123";
@@ -147,7 +147,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     {
         // Arrange
         HttpRequestMessage? capturedMeRequest = null;
-        var handler = new CapturingHttpMessageHandler((req) =>
+        using var handler = new CapturingHttpMessageHandler((req) =>
         {
             if (req.RequestUri?.AbsolutePath.Contains("/me") == true)
             {
@@ -189,7 +189,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     public async Task AddApplicationOwnerAsync_WhenGetCurrentUserFails_ReturnsFalse()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
 
         var tenantId = "tenant-123";
@@ -212,7 +212,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     public async Task AddApplicationOwnerAsync_WhenAddFails_ReturnsFalse()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
 
         var tenantId = "tenant-123";
@@ -252,7 +252,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     {
         // Arrange
         HttpRequestMessage? capturedAddRequest = null;
-        var handler = new CapturingHttpMessageHandler((req) =>
+        using var handler = new CapturingHttpMessageHandler((req) =>
         {
             if (req.Method == HttpMethod.Post && req.RequestUri?.AbsolutePath.Contains("/owners/") == true)
             {
@@ -291,7 +291,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     {
         // Arrange
         string? capturedPayload = null;
-        var handler = new CapturingHttpMessageHandler((req) =>
+        using var handler = new CapturingHttpMessageHandler((req) =>
         {
             if (req.Method == HttpMethod.Post && req.RequestUri?.AbsolutePath.Contains("/owners/") == true)
             {
@@ -321,9 +321,9 @@ public class GraphApiServiceAddApplicationOwnerTests
         result.Should().BeTrue();
         capturedPayload.Should().NotBeNullOrWhiteSpace("should have sent payload");
 
-        // Verify payload structure (uses camelCase naming policy, so "@odata.id" becomes "odataid")
+        // Verify payload structure (uses JsonObject with bracket notation for @odata.id)
         var payload = JsonSerializer.Deserialize<JsonElement>(capturedPayload!);
-        payload.TryGetProperty("odataid", out var odataId).Should().BeTrue("payload should have odataid property (camelCase naming)");
+        payload.TryGetProperty("@odata.id", out var odataId).Should().BeTrue("payload should have @odata.id property");
         odataId.GetString().Should().Contain($"/directoryObjects/{userObjectId}",
             "payload should reference the user object");
     }
@@ -332,7 +332,7 @@ public class GraphApiServiceAddApplicationOwnerTests
     public async Task AddApplicationOwnerAsync_IsCaseInsensitiveForUserIdComparison()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
 
         var tenantId = "tenant-123";
