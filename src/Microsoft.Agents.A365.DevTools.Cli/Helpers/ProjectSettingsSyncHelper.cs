@@ -21,7 +21,8 @@ public static class ProjectSettingsSyncHelper
 {
     private const string DEFAULT_AUTHORITY_ENDPOINT = "https://login.microsoftonline.com";
     private const string DEFAULT_USER_AUTHORIZATION_SCOPE = "https://graph.microsoft.com/.default";
-    private const string DEFAULT_SERVICE_CONNECTION_SCOPE = "https://api.botframework.com/.default";
+    // Messaging Bot API Application GUID
+    private const string DEFAULT_SERVICE_CONNECTION_SCOPE = $"{ConfigConstants.MessagingBotApiAppId}/.default";
 
     public static async Task ExecuteAsync(
         string a365ConfigPath,
@@ -73,7 +74,7 @@ public static class ProjectSettingsSyncHelper
                     logger.LogInformation("Created: {Path}", dotenv);
                 }
 
-                await UpdateNodeEnvAsync(dotenv, pkgConfig);
+                await UpdateNodeEnvAsync(dotenv, pkgConfig, logger);
                 logger.LogInformation("Updated: {Path}", dotenv);
                 break;
             }
@@ -86,7 +87,7 @@ public static class ProjectSettingsSyncHelper
                     logger.LogInformation("Created: {Path}", dotenv);
                 }
 
-                await UpdatePythonEnvAsync(dotenv, pkgConfig);
+                await UpdatePythonEnvAsync(dotenv, pkgConfig, logger);
                 logger.LogInformation("Updated: {Path}", dotenv);
                 break;
             }
@@ -464,7 +465,8 @@ public static class ProjectSettingsSyncHelper
 
     private static async Task UpdatePythonEnvAsync(
         string envPath,
-        Agent365Config pkgConfig)
+        Agent365Config pkgConfig,
+        ILogger logger)
     {
         var lines = File.Exists(envPath)
             ? (await File.ReadAllLinesAsync(envPath)).ToList()
@@ -486,7 +488,14 @@ public static class ProjectSettingsSyncHelper
             Set("AGENT_ID", pkgConfig.AgentBlueprintId);
         }
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
-            Set("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET", pkgConfig.AgentBlueprintClientSecret);
+        {
+            // Decrypt the secret before writing to .env file (must be plaintext for runtime use)
+            var plaintextSecret = SecretProtectionHelper.UnprotectSecret(
+                pkgConfig.AgentBlueprintClientSecret,
+                pkgConfig.AgentBlueprintClientSecretProtected,
+                logger);
+            Set("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET", plaintextSecret);
+        }
         if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
             Set("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID", pkgConfig.TenantId);
         Set("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES", DEFAULT_SERVICE_CONNECTION_SCOPE);
@@ -508,7 +517,8 @@ public static class ProjectSettingsSyncHelper
 
     private static async Task UpdateNodeEnvAsync(
         string envPath,
-        Agent365Config pkgConfig)
+        Agent365Config pkgConfig,
+        ILogger logger)
     {
         var lines = File.Exists(envPath)
             ? (await File.ReadAllLinesAsync(envPath)).ToList()
@@ -531,7 +541,14 @@ public static class ProjectSettingsSyncHelper
         }
 
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
-            Set("connections__service_connection__settings__clientSecret", pkgConfig.AgentBlueprintClientSecret);
+        {
+            // Decrypt the secret before writing to .env file (must be plaintext for runtime use)
+            var plaintextSecret = SecretProtectionHelper.UnprotectSecret(
+                pkgConfig.AgentBlueprintClientSecret,
+                pkgConfig.AgentBlueprintClientSecretProtected,
+                logger);
+            Set("connections__service_connection__settings__clientSecret", plaintextSecret);
+        }
 
         if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
             Set("connections__service_connection__settings__tenantId", pkgConfig.TenantId);

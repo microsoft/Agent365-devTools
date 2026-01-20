@@ -100,7 +100,7 @@ public class DotNetBuilder : IPlatformBuilder
         return publishPath;
     }
 
-    public async Task<OryxManifest> CreateManifestAsync(string projectDir, string publishPath)
+    public Task<OryxManifest> CreateManifestAsync(string projectDir, string publishPath)
     {
         _logger.LogInformation("Creating Oryx manifest for .NET...");
         
@@ -115,29 +115,24 @@ public class DotNetBuilder : IPlatformBuilder
         _logger.LogInformation("Detected entry point: {Dll}", entryDll);
 
         // Detect .NET version
-        var dotnetVersion = "8.0"; // Default
+        var dotnetVersion = "8.0"; // Default fallback
         var projectFile = ResolveProjectFile(projectDir);
         if (projectFile != null)
         {
             var projectFilePath = Path.Combine(projectDir, projectFile);
-            var projectContent = await File.ReadAllTextAsync(projectFilePath);
-            var tfmMatch = System.Text.RegularExpressions.Regex.Match(
-                projectContent, 
-                @"<TargetFramework>net(\d+\.\d+)</TargetFramework>");
-            
-            if (tfmMatch.Success)
+            var detected = DotNetProjectHelper.DetectTargetRuntimeVersion(projectFilePath, _logger);
+            if (!string.IsNullOrWhiteSpace(detected))
             {
-                dotnetVersion = tfmMatch.Groups[1].Value;
-                _logger.LogInformation("Detected .NET version: {Version}", dotnetVersion);
+                dotnetVersion = detected;
             }
         }
 
-        return new OryxManifest
+        return Task.FromResult(new OryxManifest
         {
             Platform = "dotnet",
             Version = dotnetVersion,
             Command = $"dotnet {entryDll}"
-        };
+        });
     }
 
     public async Task<bool> ConvertEnvToAzureAppSettingsAsync(string projectDir, string resourceGroup, string webAppName, bool verbose)

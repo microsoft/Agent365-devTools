@@ -57,8 +57,8 @@ public class AzureAuthValidator
             var subscriptionName = root.GetProperty("name").GetString() ?? string.Empty;
             var userName = root.GetProperty("user").GetProperty("name").GetString() ?? string.Empty;
 
-            _logger.LogInformation("Azure CLI authenticated as: {UserName}", userName);
-            _logger.LogInformation("   Active subscription: {SubscriptionName} ({SubscriptionId})", 
+            _logger.LogDebug("Azure CLI authenticated as: {UserName}", userName);
+            _logger.LogDebug("   Active subscription: {SubscriptionName} ({SubscriptionId})", 
                 subscriptionName, subscriptionId);
 
             // Validate subscription if specified
@@ -76,7 +76,7 @@ public class AzureAuthValidator
                     return false;
                 }
                 
-                _logger.LogInformation("Using correct subscription: {SubscriptionId}", expectedSubscriptionId);
+                _logger.LogDebug("Using correct subscription: {SubscriptionId}", expectedSubscriptionId);
             }
 
             return true;

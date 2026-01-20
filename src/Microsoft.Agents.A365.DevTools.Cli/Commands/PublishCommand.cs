@@ -1,20 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.CommandLine;
-using Microsoft.Extensions.Logging;
-using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Extensions.Logging;
+using Microsoft.Identity.Client;
+using System.CommandLine;
+using System.IO.Compression;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Reflection;
-using System.Net.Http.Headers;
-using System.IO.Compression;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
-using Microsoft.Agents.A365.DevTools.Cli.Helpers;
-using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
-using Microsoft.Agents.A365.DevTools.Cli.Constants;
-using Microsoft.Identity.Client;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -87,7 +87,9 @@ public class PublishCommand
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
+        AgentPublishService agentPublishService,
         GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
         ManifestTemplateService manifestTemplateService)
     {
         var command = new Command("publish", "Update manifest.json IDs and publish package; configure federated identity and app role assignments");
@@ -287,7 +289,7 @@ public class PublishCommand
                     logger.LogInformation("");
                     logger.LogDebug("Checking MOS prerequisites (service principals and permissions)...");
                     var mosPrereqsConfigured = await PublishHelpers.EnsureMosPrerequisitesAsync(
-                        graphApiService, config, logger);
+                        graphApiService, blueprintService, config, logger);
                     
                     if (!mosPrereqsConfigured)
                     {
@@ -392,10 +394,8 @@ public class PublishCommand
                     logger.LogError("Unable to acquire MOS token. Aborting publish.");
                     return;
                 }
-
-                using var http = new HttpClient();
-                http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", mosToken);
-                http.DefaultRequestHeaders.UserAgent.ParseAdd($"Agent365Publish/{Assembly.GetExecutingAssembly().GetName().Version}");
+                
+                using var http = HttpClientFactory.CreateAuthenticatedClient(mosToken);
 
                 // Log token info for debugging (first/last chars only for security)
                 if (mosToken.Length >= 20)
@@ -631,7 +631,7 @@ public class PublishCommand
                 logger.LogInformation("Executing Graph API operations...");
                 logger.LogInformation("TenantId: {TenantId}, BlueprintId: {BlueprintId}", tenantId, blueprintId);
 
-                var graphSuccess = await graphApiService.ExecutePublishGraphStepsAsync(
+                var graphSuccess = await agentPublishService.ExecutePublishGraphStepsAsync(
                     tenantId,
                     blueprintId,
                     blueprintId, // Using blueprintId as manifestId

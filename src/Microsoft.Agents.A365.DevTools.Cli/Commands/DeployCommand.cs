@@ -20,7 +20,8 @@ public class DeployCommand
         CommandExecutor executor,
         DeploymentService deploymentService,
         IAzureValidator azureValidator,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var command = new Command("deploy", "Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions");
 
@@ -53,7 +54,7 @@ public class DeployCommand
 
         // Add subcommands
         command.AddCommand(CreateAppSubcommand(logger, configService, executor, deploymentService, azureValidator));
-        command.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService));
+        command.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
 
         // Single handler for the deploy command - runs only the application deployment flow
         command.SetHandler(async (config, verbose, dryRun, inspect, restart) =>
@@ -174,7 +175,8 @@ public class DeployCommand
         ILogger<DeployCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         var command = new Command("mcp", "Update mcp servers scopes and permissions on existing agent blueprint");
 
@@ -222,7 +224,7 @@ public class DeployCommand
                     graphApiService.CustomClientAppId = updateConfig.ClientAppId;
                 }
 
-                await DeployMcpToolPermissionsAsync(updateConfig, executor, logger, graphApiService);
+                await DeployMcpToolPermissionsAsync(updateConfig, executor, logger, graphApiService, blueprintService);
             }
             catch (DeployMcpException)
             {
@@ -332,7 +334,8 @@ public class DeployCommand
         Agent365Config config,
         CommandExecutor executor,
         ILogger logger,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
     {
         // Read scopes from toolingManifest.json (at deploymentProjectPath)
         var manifestPath = Path.Combine(config.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
@@ -342,6 +345,7 @@ public class DeployCommand
         logger.LogInformation("1. Applying MCP OAuth2 permission grants...");
         await EnsureMcpOauth2PermissionGrantsAsync(
             graphApiService,
+            blueprintService,
             config,
             toolingScopes,
             logger
@@ -351,6 +355,7 @@ public class DeployCommand
         logger.LogInformation("2. Consenting to required MCP scopes for the agent identity...");
         await EnsureMcpAdminConsentForAgenticAppAsync(
             graphApiService,
+            blueprintService,
             config,
             toolingScopes,
             logger
@@ -360,6 +365,7 @@ public class DeployCommand
         logger.LogInformation("3. Applying MCP inheritable permissions...");
         await EnsureMcpInheritablePermissionsAsync(
             graphApiService,
+            blueprintService,
             config,
             toolingScopes,
             logger
@@ -370,6 +376,7 @@ public class DeployCommand
 
     private static async Task EnsureMcpOauth2PermissionGrantsAsync(
         GraphApiService graphService,
+        AgentBlueprintService blueprintService,
         Agent365Config config,
         string[] scopes,
         ILogger logger,
@@ -385,7 +392,7 @@ public class DeployCommand
         var mcpPlatformSpObjectId = await graphService.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct)
             ?? throw new InvalidOperationException("MCP Platform Service Principal not found for appId " + resourceAppId);
 
-        var ok = await graphService.ReplaceOauth2PermissionGrantAsync(
+        var ok = await blueprintService.ReplaceOauth2PermissionGrantAsync(
             config.TenantId, blueprintSpObjectId, mcpPlatformSpObjectId, scopes, ct);
 
         if (!ok) throw new InvalidOperationException("Failed to update oauth2PermissionGrant.");
@@ -396,6 +403,7 @@ public class DeployCommand
 
     private static async Task EnsureMcpInheritablePermissionsAsync(
         GraphApiService graphService,
+        AgentBlueprintService blueprintService,
         Agent365Config config,
         string[] scopes,
         ILogger logger,
@@ -409,7 +417,7 @@ public class DeployCommand
         // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation
         var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
 
-        var (ok, alreadyExists, err) = await graphService.SetInheritablePermissionsAsync(
+        var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
             config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
 
         if (!ok && !alreadyExists)
@@ -424,6 +432,7 @@ public class DeployCommand
 
     private static async Task EnsureMcpAdminConsentForAgenticAppAsync(
         GraphApiService graphService,
+        AgentBlueprintService blueprintService,
         Agent365Config config,
         string[] scopes,
         ILogger logger,
@@ -442,7 +451,7 @@ public class DeployCommand
         var mcpPlatformResourceSpObjectId = await graphService.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId)
             ?? throw new InvalidOperationException("MCP Platform Service Principal not found for appId " + resourceAppId);
 
-        var ok = await graphService.ReplaceOauth2PermissionGrantAsync(
+        var ok = await blueprintService.ReplaceOauth2PermissionGrantAsync(
             config.TenantId,
             agenticAppSpObjectId,
             mcpPlatformResourceSpObjectId,

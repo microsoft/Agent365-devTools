@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Runtime.InteropServices;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Extensions.Logging;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -472,8 +472,7 @@ public sealed class A365CreateInstanceRunner
                 return (false, null);
             }
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(accessToken);
 
             // Get current user for sponsor (optional - use delegated token for this)
             string? currentUserId = null;
@@ -483,9 +482,8 @@ public sealed class A365CreateInstanceRunner
                 var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
                 if (!string.IsNullOrWhiteSpace(delegatedToken))
                 {
-                    using var delegatedClient = new HttpClient();
-                    delegatedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", delegatedToken);
-                    
+                    using var delegatedClient = HttpClientFactory.CreateAuthenticatedClient(delegatedToken);
+
                     var meResponse = await delegatedClient.GetAsync("https://graph.microsoft.com/v1.0/me", ct);
                     if (meResponse.IsSuccessStatusCode)
                     {
@@ -599,8 +597,8 @@ public sealed class A365CreateInstanceRunner
         try
         {
             _logger.LogInformation("Acquiring access token using client credentials...");
-            
-            using var httpClient = new HttpClient();
+
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient();
             var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
             
             var requestBody = new FormUrlEncodedContent(new[]
@@ -676,8 +674,7 @@ public sealed class A365CreateInstanceRunner
                 return (false, null);
             }
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
 
             // Check if user already exists
             try
@@ -769,8 +766,7 @@ public sealed class A365CreateInstanceRunner
         {
             _logger.LogInformation("  - Assigning manager");
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
 
             // Look up manager by email
             var managerUrl = $"https://graph.microsoft.com/v1.0/users?$filter=mail eq '{managerEmail}'";
@@ -934,8 +930,7 @@ public sealed class A365CreateInstanceRunner
                 return;
             }
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
 
             // Set usage location if provided
             if (!string.IsNullOrWhiteSpace(usageLocation))
@@ -1161,8 +1156,7 @@ public sealed class A365CreateInstanceRunner
                 return false;
             }
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
 
             // Query for service principal by appId
             var spUrl = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'";

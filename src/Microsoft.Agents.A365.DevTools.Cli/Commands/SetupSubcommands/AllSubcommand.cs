@@ -1,14 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
-using System.Runtime.InteropServices;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Threading;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
@@ -31,7 +28,10 @@ internal static class AllSubcommand
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
-        IClientAppValidator clientAppValidator)
+        AgentBlueprintService blueprintService,
+        IClientAppValidator clientAppValidator,
+        BlueprintLookupService blueprintLookupService,
+        FederatedCredentialService federatedCredentialService)
     {
         var command = new Command("all", 
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -136,9 +136,7 @@ internal static class AllSubcommand
                 // PHASE 0: CHECK REQUIREMENTS (if not skipped)
                 if (!skipRequirements)
                 {
-                    logger.LogInformation("Step 0: Requirements Check");
-                    logger.LogInformation("Validating system prerequisites...");
-                    logger.LogInformation("");
+                    logger.LogDebug("Validating system prerequisites...");
 
                     try
                     {
@@ -166,18 +164,16 @@ internal static class AllSubcommand
                 }
                 else
                 {
-                    logger.LogInformation("Skipping requirements validation (--skip-requirements flag used)");
-                    logger.LogInformation("");
+                    logger.LogDebug("Skipping requirements validation (--skip-requirements flag used)");
                 }
 
                 // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
-                logger.LogInformation("Validating all prerequisites...");
-                logger.LogInformation("");
+                logger.LogDebug("Validating all prerequisites...");
 
                 var allErrors = new List<string>();
 
                 // Validate Azure CLI authentication first
-                logger.LogInformation("Validating Azure CLI authentication...");
+                logger.LogDebug("Validating Azure CLI authentication...");
                 if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
                 {
                     allErrors.Add("Azure CLI authentication failed or subscription not set correctly");
@@ -185,13 +181,13 @@ internal static class AllSubcommand
                 }
                 else
                 {
-                    logger.LogInformation("Azure CLI authentication: OK");
+                    logger.LogDebug("Azure CLI authentication: OK");
                 }
 
                 // Validate Infrastructure prerequisites
                 if (!skipInfrastructure && setupConfig.NeedDeployment)
                 {
-                    logger.LogInformation("Validating Infrastructure prerequisites...");
+                    logger.LogDebug("Validating Infrastructure prerequisites...");
                     var infraErrors = await InfrastructureSubcommand.ValidateAsync(setupConfig, azureValidator, CancellationToken.None);
                     if (infraErrors.Count > 0)
                     {
@@ -199,12 +195,12 @@ internal static class AllSubcommand
                     }
                     else
                     {
-                        logger.LogInformation("Infrastructure prerequisites: OK");
+                        logger.LogDebug("Infrastructure prerequisites: OK");
                     }
                 }
 
                 // Validate Blueprint prerequisites
-                logger.LogInformation("Validating Blueprint prerequisites...");
+                logger.LogDebug("Validating Blueprint prerequisites...");
                 var blueprintErrors = await BlueprintSubcommand.ValidateAsync(setupConfig, azureValidator, clientAppValidator, CancellationToken.None);
                 if (blueprintErrors.Count > 0)
                 {
@@ -212,7 +208,7 @@ internal static class AllSubcommand
                 }
                 else
                 {
-                    logger.LogInformation("Blueprint prerequisites: OK");
+                    logger.LogDebug("Blueprint prerequisites: OK");
                 }
 
                 // Stop if any validation failed
@@ -231,9 +227,7 @@ internal static class AllSubcommand
                     return;
                 }
 
-                logger.LogInformation("");
-                logger.LogInformation("All validations passed. Starting setup execution...");
-                logger.LogInformation("");
+                logger.LogDebug("All validations passed. Starting setup execution...");
 
                 var generatedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -242,10 +236,8 @@ internal static class AllSubcommand
                 // Step 1: Infrastructure (optional)
                 try
                 {
-                    logger.LogInformation("Step 1:");
-                    logger.LogInformation("");
 
-                    bool setupInfra = await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
+                    var (setupInfra, infraAlreadyExisted) = await InfrastructureSubcommand.CreateInfrastructureImplementationAsync(
                         logger,
                         config.FullName,
                         generatedConfigPath,
@@ -256,6 +248,7 @@ internal static class AllSubcommand
                         CancellationToken.None);
 
                     setupResults.InfrastructureCreated = skipInfrastructure ? false : setupInfra;
+                    setupResults.InfrastructureAlreadyExisted = infraAlreadyExisted;
                 }
                 catch (Agent365Exception infraEx)
                 {
@@ -272,10 +265,6 @@ internal static class AllSubcommand
                 }
 
                 // Step 2: Blueprint
-                logger.LogInformation("");
-                logger.LogInformation("Step 2:");
-                logger.LogInformation("");
-
                 try
                 {
                     var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
@@ -289,11 +278,16 @@ internal static class AllSubcommand
                         configService,
                         botConfigurator,
                         platformDetector,
-                        graphApiService
+                        graphApiService,
+                        blueprintService,
+                        blueprintLookupService,
+                        federatedCredentialService
                         );
 
                     setupResults.BlueprintCreated = result.BlueprintCreated;
+                    setupResults.BlueprintAlreadyExisted = result.BlueprintAlreadyExisted;
                     setupResults.MessagingEndpointRegistered = result.EndpointRegistered;
+                    setupResults.EndpointAlreadyExisted = result.EndpointAlreadyExisted;
                     
                     if (result.EndpointAlreadyExisted)
                     {
@@ -351,10 +345,6 @@ internal static class AllSubcommand
                 }
 
                 // Step 3: MCP Permissions
-                logger.LogInformation("");
-                logger.LogInformation("Step 3:");
-                logger.LogInformation("");
-
                 try
                 {
                     bool mcpPermissionSetup = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
@@ -363,6 +353,7 @@ internal static class AllSubcommand
                         configService,
                         executor,
                         graphApiService,
+                        blueprintService,
                         setupConfig,
                         true,
                         setupResults);
@@ -381,11 +372,6 @@ internal static class AllSubcommand
                 }
 
                 // Step 4: Bot API Permissions
-
-                logger.LogInformation("");
-                logger.LogInformation("Step 4:");
-                logger.LogInformation("");
-
                 try
                 {
                     bool botPermissionSetup = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
@@ -395,6 +381,7 @@ internal static class AllSubcommand
                         executor,
                         setupConfig,
                         graphApiService,
+                        blueprintService,
                         true,
                         setupResults);
 
@@ -413,7 +400,8 @@ internal static class AllSubcommand
             }
             catch (Agent365Exception ex)
             {
-                ExceptionHandler.HandleAgent365Exception(ex);
+                var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
+                ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
                 Environment.Exit(1);
             }
             catch (Exception ex)

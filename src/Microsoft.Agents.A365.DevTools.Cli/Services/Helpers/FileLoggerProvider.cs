@@ -9,6 +9,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 /// <summary>
 /// Simple file logger provider for structured log files.
 /// Writes log entries with timestamps and log levels.
+/// Always logs at Trace level for comprehensive debugging information.
 /// </summary>
 public sealed class FileLoggerProvider : ILoggerProvider
 {
@@ -17,10 +18,12 @@ public sealed class FileLoggerProvider : ILoggerProvider
     private readonly ConcurrentDictionary<string, FileLogger> _loggers = new();
     private readonly object _lock = new();
 
-    public FileLoggerProvider(string filePath, LogLevel minimumLevel = LogLevel.Information)
+    public FileLoggerProvider(string filePath)
     {
         _filePath = filePath;
-        _minimumLevel = minimumLevel;
+        // Always use Trace level for file logging to capture all diagnostic information
+        // This ensures comprehensive logs for debugging, regardless of console verbosity
+        _minimumLevel = LogLevel.Trace;
 
         // Ensure directory exists
         var directory = Path.GetDirectoryName(filePath);

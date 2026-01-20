@@ -19,6 +19,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// </summary>
 public class BotConfigurator : IBotConfigurator
 {
+    private const string AlreadyExistsErrorMessage = "already exists";
+
     private readonly ILogger<IBotConfigurator> _logger;
     private readonly CommandExecutor _executor;
 
@@ -99,12 +101,7 @@ public class BotConfigurator : IBotConfigurator
                 }
                 _logger.LogInformation("Successfully acquired access token");
 
-                // Normalize location: Remove spaces and convert to lowercase (e.g., "Canada Central" -> "canadacentral")
-                // Azure APIs require the API-friendly location name format
-                // TODO: Consider using `az account list-locations` for robust display name → programmatic name mapping
-                // See: https://learn.microsoft.com/en-us/cli/azure/account?view=azure-cli-latest#az-account-list-locations
-                // Current approach works for existing regions but may need updates for new region naming patterns
-                var normalizedLocation = location.Replace(" ", "").ToLowerInvariant();
+                var normalizedLocation = NormalizeLocation(location);
                 var createEndpointBody = new JsonObject
                 {
                     ["AzureBotServiceInstanceName"] = endpointName,
@@ -127,22 +124,32 @@ public class BotConfigurator : IBotConfigurator
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
-
                     var errorContent = await response.Content.ReadAsStringAsync();
                     
-                    // Only treat HTTP 409 Conflict as "already exists" success case
-                    // InternalServerError (500) with "already exists" message is an actual failure
-                    if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+                    // Check for "already exists" condition - must be bot/endpoint-specific to avoid false positives
+                    // Valid patterns:
+                    // 1. HTTP 409 Conflict (standard REST pattern for resource conflicts)
+                    // 2. HTTP 500 with bot-specific "already exists" message (Azure Bot Service pattern)
+                    //    - Must contain "already exists" AND at least one bot-specific keyword
+                    bool isBotAlreadyExists = response.StatusCode == System.Net.HttpStatusCode.Conflict ||
+                        (errorContent.Contains(AlreadyExistsErrorMessage, StringComparison.OrdinalIgnoreCase) &&
+                         (errorContent.Contains("bot", StringComparison.OrdinalIgnoreCase) ||
+                          errorContent.Contains("endpoint", StringComparison.OrdinalIgnoreCase) ||
+                          errorContent.Contains(endpointName, StringComparison.OrdinalIgnoreCase)));
+                    
+                    if (isBotAlreadyExists)
                     {
-                        _logger.LogWarning("Endpoint '{EndpointName}' already exists in the resource group", endpointName);
-                        _logger.LogInformation("Endpoint registration completed (already exists)");
+                        _logger.LogWarning("Endpoint '{EndpointName}' {AlreadyExistsMessage} in the resource group", endpointName, AlreadyExistsErrorMessage);
+                        _logger.LogInformation("Endpoint registration completed ({AlreadyExistsMessage})", AlreadyExistsErrorMessage);
                         _logger.LogInformation("");
                         _logger.LogInformation("If you need to update the endpoint:");
-                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup azure");
+                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup blueprint");
                         _logger.LogInformation("  2. Register new endpoint: a365 setup blueprint --endpoint-only");
                         return EndpointRegistrationResult.AlreadyExists;
                     }
+                    
+                    // Log error only for actual failures (not idempotent "already exists" scenarios)
+                    _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
                     
                     if (errorContent.Contains("Failed to provision bot resource via Azure Management API. Status: BadRequest", StringComparison.OrdinalIgnoreCase))
                     {
@@ -154,7 +161,7 @@ public class BotConfigurator : IBotConfigurator
                     _logger.LogError("");
                     _logger.LogError("To resolve this issue:");
                     _logger.LogError("  1. Check if endpoint exists: Review error details above");
-                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup azure");
+                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup blueprint");
                     _logger.LogError("  3. Try registration again: a365 setup blueprint --endpoint-only");
                     return EndpointRegistrationResult.Failed;
                 }
@@ -248,12 +255,13 @@ public class BotConfigurator : IBotConfigurator
                 }
                 _logger.LogInformation("Successfully acquired access token");
 
-                var createEndpointBody = new JsonObject
+                var normalizedLocation = NormalizeLocation(location);
+                var deleteEndpointBody = new JsonObject
                 {
                     ["AzureBotServiceInstanceName"] = endpointName,
                     ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
-                    ["Location"] = location,
+                    ["Location"] = normalizedLocation,
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
@@ -261,55 +269,69 @@ public class BotConfigurator : IBotConfigurator
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
 
                 // Call the endpoint
-                _logger.LogInformation("Making request to delete endpoint.");
+                _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
 
                 using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
-                request.Content = new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
                 var response = await httpClient.SendAsync(request);
 
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    // Read error content ONCE for all error handling
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    
-                    // Parse the error response to provide cleaner user-facing messages
+                    // Check if resource was not found - this is success for deletion (idempotent)
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound || 
+                        response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                    {
+                        // For BadRequest, verify it's actually "not found" scenario
+                        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                        {
+                            try
+                            {
+                                var errorJson = JsonSerializer.Deserialize<JsonElement>(errorContent);
+                                if (errorJson.TryGetProperty("details", out var detailsElement))
+                                {
+                                    var details = detailsElement.GetString();
+                                    if (details?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true)
+                                    {
+                                        _logger.LogInformation("Bot endpoint not found - already deleted or does not exist");
+                                        return true; // Not found is success for deletion
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                // If we can't parse, fall through to error handling
+                            }
+                        }
+                        else // NotFound status
+                        {
+                            _logger.LogInformation("Bot endpoint not found - already deleted or does not exist");
+                            return true; // Not found is success for deletion
+                        }
+                    }
+                    // Real error - log and return false
                     try
                     {
                         var errorJson = JsonSerializer.Deserialize<JsonElement>(errorContent);
                         if (errorJson.TryGetProperty("error", out var errorMessage))
                         {
                             var error = errorMessage.GetString();
-                            if (errorJson.TryGetProperty("details", out var detailsElement))
-                            {
-                                var details = detailsElement.GetString();
-                                
-                                // Check for common error scenarios and provide cleaner messages
-                                if (details?.Contains("not found in any resource group") == true)
-                                {
-                                    _logger.LogError("Failed to delete bot endpoint '{EndpointName}'. Status: {Status}", endpointName, response.StatusCode);
-                                    _logger.LogError("The bot service was not found. It may have already been deleted or may not exist.");
-                                    return false;
-                                }
-                            }
-                            
-                            // Generic error with cleaned up message
                             _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                             _logger.LogError("{Error}", error);
                         }
                         else
                         {
-                            // Couldn't parse error, show raw response
                             _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                             _logger.LogError("Error response: {Error}", errorContent);
                         }
                     }
                     catch
                     {
-                        // JSON parsing failed, show raw error
                         _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                         _logger.LogError("Error response: {Error}", errorContent);
                     }
-
                     return false;
                 }
 
@@ -337,5 +359,15 @@ public class BotConfigurator : IBotConfigurator
             _logger.LogError(ex, "Unexpected error deleting endpoint with agent blueprint: {Message}", ex.Message);
             return false;
         }
+    }
+
+    private string NormalizeLocation(string location)
+    {
+        // Normalize location: Remove spaces and convert to lowercase (e.g., "Canada Central" -> "canadacentral")
+        // Azure APIs require the API-friendly location name format
+        // TODO: Consider using `az account list-locations` for robust display name → programmatic name mapping
+        // See: https://learn.microsoft.com/en-us/cli/azure/account?view=azure-cli-latest#az-account-list-locations
+        // Current approach works for existing regions but may need updates for new region naming patterns
+        return location.Replace(" ", "").ToLowerInvariant();
     }
 }

@@ -28,5 +28,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants
         public const string MosServicePrincipalCreationFailed = "MOS_SERVICE_PRINCIPAL_CREATION_FAILED";
         public const string MosInsufficientPrivileges = "MOS_INSUFFICIENT_PRIVILEGES";
         public const string MosPermissionUpdateFailed = "MOS_PERMISSION_UPDATE_FAILED";
+        public const string DotNetSdkVersionMismatch = "DOTNET_SDK_VERSION_MISMATCH";
     }
 }

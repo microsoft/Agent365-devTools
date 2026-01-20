@@ -24,7 +24,8 @@ public class DeployCommandTests
     private readonly CommandExecutor _mockExecutor;
     private readonly DeploymentService _mockDeploymentService;
     private readonly IAzureValidator _mockAzureValidator;
-    private readonly GraphApiService _mockGraphApiService = Substitute.For<GraphApiService>();
+    private readonly GraphApiService _mockGraphApiService;
+    private readonly AgentBlueprintService _mockBlueprintService;
 
     public DeployCommandTests()
     {
@@ -52,6 +53,8 @@ public class DeployCommandTests
             mockPythonLogger);
         
         _mockAzureValidator = Substitute.For<IAzureValidator>();
+        _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
+        _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
     }
 
     [Fact]
@@ -64,7 +67,7 @@ public class DeployCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockAzureValidator,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Act
         var atgSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "atg");
@@ -83,7 +86,7 @@ public class DeployCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockAzureValidator,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Act
         var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
@@ -103,7 +106,7 @@ public class DeployCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockAzureValidator,
-            _mockGraphApiService);
+            _mockGraphApiService, _mockBlueprintService);
 
         // Act
         var verboseOption = command.Options.FirstOrDefault(o => o.Name == "verbose");

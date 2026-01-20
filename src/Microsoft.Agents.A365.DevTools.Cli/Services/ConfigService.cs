@@ -121,7 +121,7 @@ public class ConfigService : IConfigService
             // Write the config content to the global directory
             await File.WriteAllTextAsync(globalPath, content);
             
-            _logger?.LogInformation("Synced configuration to global directory: {Path}", globalPath);
+            _logger?.LogDebug("Synced configuration to global directory: {Path}", globalPath);
             return true;
         }
         catch (Exception ex)
@@ -249,7 +249,7 @@ public class ConfigService : IConfigService
         var staticConfig = JsonSerializer.Deserialize<Agent365Config>(staticJson, DefaultJsonOptions)
             ?? throw new JsonException($"Failed to deserialize static configuration from {resolvedConfigPath}");
 
-        _logger?.LogInformation("Loaded static configuration from: {ConfigPath}", resolvedConfigPath);
+        _logger?.LogDebug("Loaded static configuration from: {ConfigPath}", resolvedConfigPath);
 
         // Sync static config to global directory if loaded from current directory
         // This ensures portability - user can run CLI commands from any directory
@@ -296,11 +296,11 @@ public class ConfigService : IConfigService
 
             // Merge dynamic properties into static config
             MergeDynamicProperties(staticConfig, stateData);
-            _logger?.LogInformation("Merged dynamic state from: {StatePath}", actualStatePath);
+            _logger?.LogDebug("Merged dynamic state from: {StatePath}", actualStatePath);
         }
         else
         {
-            _logger?.LogInformation("No dynamic state file found at: {StatePath}", resolvedStatePath);
+            _logger?.LogDebug("No dynamic state file found at: {StatePath}", resolvedStatePath);
         }
 
         // Validate the merged configuration
@@ -357,7 +357,7 @@ public class ConfigService : IConfigService
             {
                 // Save the state to the local current directory
                 await File.WriteAllTextAsync(currentDirPath, json);
-                _logger?.LogInformation("Saved dynamic state to: {StatePath}", currentDirPath);
+                _logger?.LogDebug("Saved dynamic state to: {StatePath}", currentDirPath);
             }
             catch (Exception ex)
             {
@@ -773,7 +773,7 @@ public class ConfigService : IConfigService
         }
     }
 
-    private void ValidateAppServicePlanName(string? value, List<string> errors)
+    public static void ValidateAppServicePlanName(string? value, List<string> errors)
     {
         if (string.IsNullOrWhiteSpace(value)) return;
 
@@ -782,7 +782,7 @@ public class ConfigService : IConfigService
             errors.Add("AppServicePlanName must not exceed 40 characters.");
         }
 
-        if (!Regex.IsMatch(value, @"^[a-zA-Z0-9\-]+$"))
+        if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"^[a-zA-Z0-9\-]+$"))
         {
             errors.Add("AppServicePlanName can only contain alphanumeric characters and hyphens.");
         }

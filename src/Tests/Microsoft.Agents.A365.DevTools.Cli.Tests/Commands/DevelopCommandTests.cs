@@ -15,6 +15,7 @@ public class DevelopCommandTests
     private readonly CommandExecutor _mockCommandExecutor;
     private readonly AuthenticationService _mockAuthService;
     private readonly GraphApiService _mockGraphApiService;
+    private readonly AgentBlueprintService _mockBlueprintService;
     private readonly IProcessService _mockProcessService;
     private readonly IServerService _mockServerService;
 
@@ -34,6 +35,7 @@ public class DevelopCommandTests
 
         var mockGraphApiLogger = Substitute.For<ILogger<GraphApiService>>();
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(mockGraphApiLogger, _mockCommandExecutor);
+        _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
 
         _mockProcessService = Substitute.For<IProcessService>();
         _mockServerService = Substitute.For<IServerService>();
@@ -49,6 +51,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -67,6 +70,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -93,6 +97,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -115,6 +120,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -136,6 +142,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -161,6 +168,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -186,6 +194,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -212,6 +221,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 
@@ -237,6 +247,7 @@ public class DevelopCommandTests
             _mockCommandExecutor,
             _mockAuthService,
             _mockGraphApiService,
+            _mockBlueprintService,
             _mockProcessService,
             _mockServerService);
 

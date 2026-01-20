@@ -20,6 +20,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 public static class InfrastructureSubcommand
 {
+    // SDK validation retry configuration
+    private const int MaxSdkValidationAttempts = 3;
+    private const int InitialRetryDelayMs = 500;
+    private const int MaxRetryDelayMs = 5000; // Cap exponential backoff at 5 seconds
+    
     /// <summary>
     /// Validates infrastructure prerequisites without performing any actions.
     /// Includes validation of App Service Plan SKU and provides recommendations.
@@ -141,7 +146,7 @@ public static class InfrastructureSubcommand
                 if (!string.IsNullOrWhiteSpace(dryRunConfig.DeploymentProjectPath))
                 {
                     var detectedPlatform = platformDetector.Detect(dryRunConfig.DeploymentProjectPath);
-                    var detectedRuntime = GetRuntimeForPlatform(detectedPlatform);
+                    var detectedRuntime = await GetRuntimeForPlatformAsync(detectedPlatform, dryRunConfig.DeploymentProjectPath, executor, logger);
                     logger.LogInformation("  - Detected Platform: {Platform}", detectedPlatform);
                     logger.LogInformation("  - Runtime: {Runtime}", detectedRuntime);
                 }
@@ -188,7 +193,7 @@ public static class InfrastructureSubcommand
 
     #region Public Static Methods (Reusable by A365SetupRunner)
 
-    public static async Task<bool> CreateInfrastructureImplementationAsync(
+    public static async Task<(bool success, bool anyAlreadyExisted)> CreateInfrastructureImplementationAsync(
         ILogger logger,
         string configPath,
         string generatedConfigPath,
@@ -201,7 +206,7 @@ public static class InfrastructureSubcommand
         if (!File.Exists(configPath))
         {
             logger.LogError("Config file not found at {Path}", configPath);
-            return false;
+            return (false, false);
         }
 
         JsonObject cfg;
@@ -212,7 +217,7 @@ public static class InfrastructureSubcommand
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to parse config JSON: {Path}", configPath);
-            return false;
+            return (false, false);
         }
 
         string Get(string name) => cfg.TryGetPropertyValue(name, out var node) && node is JsonValue jv && jv.TryGetValue(out string? s) ? s ?? string.Empty : string.Empty;
@@ -239,7 +244,7 @@ public static class InfrastructureSubcommand
                 logger.LogError(
                     "Config missing required properties for Azure hosting. " +
                     "Need subscriptionId, resourceGroup, appServicePlanName, webAppName, location.");
-                return false;
+                return (false, false);
             }
         }
         else
@@ -283,7 +288,7 @@ public static class InfrastructureSubcommand
 
             if (!isValidated)
             {
-                return false;
+                return (false, false);
             }
         }
         else
@@ -291,7 +296,7 @@ public static class InfrastructureSubcommand
             logger.LogInformation("==> Skipping Azure management authentication (--skipInfrastructure or External hosting)");
         }
 
-        await CreateInfrastructureAsync(
+        var (principalId, anyAlreadyExisted) = await CreateInfrastructureAsync(
             commandExecutor,
             subscriptionId,
             tenantId,
@@ -301,6 +306,7 @@ public static class InfrastructureSubcommand
             planSku,
             webAppName,
             generatedConfigPath,
+            deploymentProjectPath,
             platform,
             logger,
             needDeployment,
@@ -308,7 +314,7 @@ public static class InfrastructureSubcommand
             externalHosting,
             cancellationToken);
 
-        return true;
+        return (true, anyAlreadyExisted);
     }
 
     /// <summary>
@@ -342,11 +348,11 @@ public static class InfrastructureSubcommand
         }
         else
         {
-            logger.LogInformation("Azure CLI already authenticated");
+            logger.LogDebug("Azure CLI already authenticated");
         }
         
         // Verify we have the management scope
-        logger.LogInformation("Verifying access to Azure management resources...");
+        logger.LogDebug("Verifying access to Azure management resources...");
         var tokenCheck = await executor.ExecuteAsync(
             "az", 
             "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
@@ -384,15 +390,13 @@ public static class InfrastructureSubcommand
             }
             else
             {
-                logger.LogInformation("Management scope token acquired successfully!");
+                logger.LogDebug("Management scope token acquired successfully!");
             }
         }
         else
         {
-            logger.LogInformation("Management scope verified successfully");
+            logger.LogDebug("Management scope verified successfully");
         }
-        
-        logger.LogInformation("");
         return true;
     }
 
@@ -400,8 +404,9 @@ public static class InfrastructureSubcommand
     /// Phase 1: Create Azure infrastructure (Resource Group, App Service Plan, Web App, Managed Identity)
     /// Equivalent to A365SetupRunner Phase 1 (lines 223-334)
     /// Returns the Managed Identity Principal ID (or null if not assigned)
+    /// and whether any infrastructure already existed (for idempotent summary reporting)
     /// </summary>
-    public static async Task CreateInfrastructureAsync(
+    public static async Task<(string? principalId, bool anyAlreadyExisted)> CreateInfrastructureAsync(
         CommandExecutor executor,
         string subscriptionId,
         string tenantId,
@@ -411,6 +416,7 @@ public static class InfrastructureSubcommand
         string? planSku,
         string webAppName,
         string generatedConfigPath,
+        string deploymentProjectPath,
         Models.ProjectPlatform platform,
         ILogger logger,
         bool needDeployment,
@@ -418,6 +424,7 @@ public static class InfrastructureSubcommand
         bool externalHosting,
         CancellationToken cancellationToken = default)
     {
+        bool anyAlreadyExisted = false;
         string? principalId = null;
         JsonObject generatedConfig = new JsonObject();
 
@@ -462,6 +469,7 @@ public static class InfrastructureSubcommand
             }
 
             logger.LogInformation("");
+            return (principalId, false); // Skip infra means nothing was created/modified
         }
         else
         {
@@ -482,6 +490,7 @@ public static class InfrastructureSubcommand
             if (rgExists.Success && rgExists.StandardOutput.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogInformation("Resource group already exists: {RG} (skipping creation)", resourceGroup);
+                anyAlreadyExisted = true;
             }
             else
             {
@@ -490,13 +499,17 @@ public static class InfrastructureSubcommand
             }
 
             // App Service plan
-            await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId);
+            bool planAlreadyExisted = await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId);
+            if (planAlreadyExisted)
+            {
+                anyAlreadyExisted = true;
+            }
 
             // Web App
             var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
             if (!webShow.Success)
             {
-                var runtime = GetRuntimeForPlatform(platform);
+                var runtime = await GetRuntimeForPlatformAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
                 logger.LogInformation("Creating web app {App} with runtime {Runtime}", webAppName, runtime);
                 var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
@@ -552,7 +565,8 @@ public static class InfrastructureSubcommand
             }
             else
             {
-                var linuxFxVersion = GetLinuxFxVersionForPlatform(platform);
+                anyAlreadyExisted = true;
+                var linuxFxVersion = await GetLinuxFxVersionForPlatformAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
                 logger.LogInformation("Web app already exists: {App} (skipping creation)", webAppName);
                 logger.LogInformation("Configuring web app to use {Platform} runtime ({LinuxFxVersion})...", platform, linuxFxVersion);
                 await AzWarnAsync(executor, logger, $"webapp config set -g {resourceGroup} -n {webAppName} --linux-fx-version \"{linuxFxVersion}\" --subscription {subscriptionId}", "Configure runtime");
@@ -630,6 +644,8 @@ public static class InfrastructureSubcommand
                 logger.LogInformation("Generated config updated with MSI principalId: {Id}", principalId);
             }
         }
+        
+        return (principalId, anyAlreadyExisted);
     }
 
     /// <summary>
@@ -680,7 +696,8 @@ public static class InfrastructureSubcommand
             else if (result.StandardError.Contains("AuthorizationFailed", StringComparison.OrdinalIgnoreCase))
             {
                 var exception = new AzureResourceException(description, string.Empty, result.StandardError, true);
-                ExceptionHandler.HandleAgent365Exception(exception);
+                var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
+                ExceptionHandler.HandleAgent365Exception(exception, logFilePath: logFilePath);
             }
             else
             {
@@ -691,9 +708,10 @@ public static class InfrastructureSubcommand
     }
 
     /// <summary>
-    /// Ensures that an App Service Plan exists, creating it if necessary and verifying its existence.
+    /// Ensures the App Service plan exists or creates it if missing.
+    /// Returns true if plan already existed, false if newly created.
     /// </summary>
-    internal static async Task EnsureAppServicePlanExistsAsync(
+    internal static async Task<bool> EnsureAppServicePlanExistsAsync(
         CommandExecutor executor, 
         ILogger logger, 
         string resourceGroup, 
@@ -708,6 +726,7 @@ public static class InfrastructureSubcommand
         if (planShow.Success)
         {
             logger.LogInformation("App Service plan already exists: {Plan} (skipping creation)", planName);
+            return true; // Already existed
         }
         else
         {
@@ -811,6 +830,7 @@ public static class InfrastructureSubcommand
                     $"Verification failed after {maxRetries} attempts. The plan may still be propagating in Azure.");
             }
             logger.LogInformation("App Service plan created and verified successfully: {Plan}", planName);
+            return false; // Newly created
         }
     }
 
@@ -818,8 +838,19 @@ public static class InfrastructureSubcommand
     /// Get the Azure Web App runtime string based on the detected platform
     /// (from A365SetupRunner GetRuntimeForPlatform method)
     /// </summary>
-    private static string GetRuntimeForPlatform(Models.ProjectPlatform platform)
+    private static async Task<string> GetRuntimeForPlatformAsync(
+        Models.ProjectPlatform platform, 
+        string? deploymentProjectPath, 
+        CommandExecutor executor, 
+        ILogger logger,
+        CancellationToken cancellationToken = default)
     {
+        var dotnetVersion = await ResolveDotNetRuntimeVersionAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(dotnetVersion))
+        {
+            return $"DOTNETCORE:{dotnetVersion}";
+        }
+
         return platform switch
         {
             Models.ProjectPlatform.Python => "PYTHON:3.11",
@@ -833,8 +864,19 @@ public static class InfrastructureSubcommand
     /// Get the Azure Web App Linux FX Version string based on the detected platform
     /// (from A365SetupRunner GetLinuxFxVersionForPlatform method)
     /// </summary>
-    private static string GetLinuxFxVersionForPlatform(Models.ProjectPlatform platform)
+    private static async Task<string> GetLinuxFxVersionForPlatformAsync(
+        Models.ProjectPlatform platform, 
+        string? deploymentProjectPath, 
+        CommandExecutor executor, 
+        ILogger logger,
+        CancellationToken cancellationToken = default)
     {
+        var dotnetVersion = await ResolveDotNetRuntimeVersionAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(dotnetVersion))
+        {
+            return $"DOTNETCORE:{dotnetVersion}";
+        }
+
         return platform switch
         {
             Models.ProjectPlatform.Python => "PYTHON|3.11",
@@ -842,6 +884,121 @@ public static class InfrastructureSubcommand
             Models.ProjectPlatform.DotNet => "DOTNETCORE|8.0",
             _ => "DOTNETCORE|8.0" // Default fallback
         };
+    }
+
+    private static async Task<string?> ResolveDotNetRuntimeVersionAsync(
+        Models.ProjectPlatform platform,
+        string? deploymentProjectPath,
+        CommandExecutor executor,
+        ILogger logger,
+        CancellationToken cancellationToken = default)
+    {
+        if (platform != Models.ProjectPlatform.DotNet ||
+            string.IsNullOrWhiteSpace(deploymentProjectPath))
+        {
+            return null;
+        }
+
+        var csproj = Directory
+            .GetFiles(deploymentProjectPath, "*.csproj", SearchOption.TopDirectoryOnly)
+            .FirstOrDefault();
+        if (csproj == null)
+        {
+            logger.LogWarning("No .csproj file found in deploymentProjectPath: {Path}", deploymentProjectPath);
+            return null;
+        }
+
+        var version = DotNetProjectHelper.DetectTargetRuntimeVersion(csproj, logger);
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            logger.LogWarning("Unable to detect TargetFramework version from {Project}", csproj);
+            return null;
+        }
+
+        // Validate local SDK with retry logic (exponential backoff) to handle intermittent process spawn failures
+        string? installedVersion = null;
+        
+        try
+        {
+            for (int attempt = 1; attempt <= MaxSdkValidationAttempts; attempt++)
+            {
+                var sdkResult = await executor.ExecuteAsync("dotnet", "--version", captureOutput: true, cancellationToken: cancellationToken);
+                
+                if (sdkResult.Success && !string.IsNullOrWhiteSpace(sdkResult.StandardOutput))
+                {
+                    installedVersion = sdkResult.StandardOutput.Trim();
+                    break; // Success!
+                }
+                
+                if (attempt < MaxSdkValidationAttempts)
+                {
+                    // Exponential backoff with cap: 500ms, 1000ms, 2000ms (capped at MaxRetryDelayMs)
+                    var delayMs = Math.Min(InitialRetryDelayMs * (1 << (attempt - 1)), MaxRetryDelayMs);
+                    logger.LogWarning(
+                        "dotnet --version check failed (attempt {Attempt}/{MaxAttempts}). Retrying in {DelayMs}ms...", 
+                        attempt, MaxSdkValidationAttempts, delayMs);
+                    await Task.Delay(delayMs, cancellationToken);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogInformation(".NET SDK validation cancelled by user");
+            throw; // Re-throw to propagate cancellation
+        }
+
+        if (string.IsNullOrWhiteSpace(installedVersion))
+        {
+            throw new DotNetSdkVersionMismatchException(
+                requiredVersion: version,
+                installedVersion: installedVersion,
+                projectFilePath: csproj);
+        }
+
+        // Parse installed SDK version (e.g., "9.0.308" -> major: 9)
+        // Validate format: must have at least major.minor (e.g., "9.0")
+        var installedParts = installedVersion.Split('.');
+        if (installedParts.Length < 2 ||
+            !int.TryParse(installedParts[0], out var installedMajor))
+        {
+            logger.LogWarning("Unable to parse installed SDK version: {Version}. Expected format: major.minor.patch (e.g., 9.0.308)", installedVersion);
+            // Continue anyway - dotnet build will fail if truly incompatible
+            return version;
+        }
+
+        // Parse target framework version (e.g., "8.0" -> major: 8)
+        // Validate format: must have at least major.minor (e.g., "8.0")
+        var targetParts = version.Split('.');
+        if (targetParts.Length < 2 ||
+            !int.TryParse(targetParts[0], out var targetMajor))
+        {
+            logger.LogWarning("Unable to parse target framework version: {Version}. Expected format: major.minor (e.g., net8.0)", version);
+            return version;
+        }
+
+        // Check if installed SDK can build the target framework
+        // .NET SDK supports building projects targeting the same or lower major version
+        // E.g., .NET 9 SDK can build .NET 8, 7, 6 projects (forward compatibility)
+        // Minor versions are not relevant for SDK compatibility
+        if (installedMajor < targetMajor)
+        {
+            // Installed SDK is older than target framework - this is a real problem
+            throw new DotNetSdkVersionMismatchException(
+                requiredVersion: version,
+                installedVersion: installedVersion,
+                projectFilePath: csproj);
+        }
+
+        // Installed SDK is same or newer - this is fine!
+        if (installedMajor > targetMajor)
+        {
+            logger.LogInformation(
+                ".NET {InstalledVersion} SDK detected (project targets .NET {TargetVersion}) - forward compatibility enabled",
+                installedVersion,
+                version);
+        }
+
+        return version; // e.g. "8.0", "9.0"
     }
 
     private static string Short(string? text)

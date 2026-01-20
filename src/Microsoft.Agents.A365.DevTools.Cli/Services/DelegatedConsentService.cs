@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Net.Http.Headers;
-using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
+using System.Net.Http.Headers;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -72,8 +73,7 @@ public sealed class DelegatedConsentService
                 return false;
             }
 
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
 
             // Step 1: Get or create service principal for custom client app
             _logger.LogInformation("    Looking up service principal for client app (ID: {AppId})", callingAppId);

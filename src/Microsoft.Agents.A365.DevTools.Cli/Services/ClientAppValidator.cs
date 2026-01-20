@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -168,7 +169,8 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return;
             }
 
-            var response = JsonNode.Parse(appCheckResult.StandardOutput);
+            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(appCheckResult.StandardOutput);
+            var response = JsonNode.Parse(sanitizedOutput);
             var apps = response?["value"]?.AsArray();
 
             if (apps == null || apps.Count == 0)
@@ -193,8 +195,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                 .Select(uri => uri!)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // Check if required URIs are present
-            var missingUris = AuthenticationConstants.RequiredRedirectUris
+            // Check if required URIs are present (including WAM broker URI)
+            var requiredUris = AuthenticationConstants.GetRequiredRedirectUris(clientAppId);
+            var missingUris = requiredUris
                 .Where(uri => !currentRedirectUris.Contains(uri))
                 .ToList();
 
@@ -307,7 +310,8 @@ public sealed class ClientAppValidator : IClientAppValidator
             }
         }
 
-        var appResponse = JsonNode.Parse(appCheckResult.StandardOutput);
+        var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(appCheckResult.StandardOutput);
+        var appResponse = JsonNode.Parse(sanitizedOutput);
         var apps = appResponse?["value"]?.AsArray();
 
         if (apps == null || apps.Count == 0)
@@ -409,7 +413,8 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return permissionNameToIdMap;
             }
 
-            var graphSpResponse = JsonNode.Parse(graphSpResult.StandardOutput);
+            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(graphSpResult.StandardOutput);
+            var graphSpResponse = JsonNode.Parse(sanitizedOutput);
             var graphSps = graphSpResponse?["value"]?.AsArray();
 
             if (graphSps == null || graphSps.Count == 0)
@@ -470,7 +475,8 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return consentedPermissions;
             }
 
-            var spResponse = JsonNode.Parse(spCheckResult.StandardOutput);
+            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(spCheckResult.StandardOutput);
+            var spResponse = JsonNode.Parse(sanitizedOutput);
             var servicePrincipals = spResponse?["value"]?.AsArray();
 
             if (servicePrincipals == null || servicePrincipals.Count == 0)
@@ -499,7 +505,8 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return consentedPermissions;
             }
 
-            var grantsResponse = JsonNode.Parse(grantsResult.StandardOutput);
+            var sanitizedGrantsOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(grantsResult.StandardOutput);
+            var grantsResponse = JsonNode.Parse(sanitizedGrantsOutput);
             var grants = grantsResponse?["value"]?.AsArray();
 
             if (grants == null || grants.Count == 0)
@@ -549,7 +556,8 @@ public sealed class ClientAppValidator : IClientAppValidator
             return true; // Best-effort check - will be verified during first interactive authentication
         }
 
-        var spResponse = JsonNode.Parse(spCheckResult.StandardOutput);
+        var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(spCheckResult.StandardOutput);
+        var spResponse = JsonNode.Parse(sanitizedOutput);
         var servicePrincipals = spResponse?["value"]?.AsArray();
 
         if (servicePrincipals == null || servicePrincipals.Count == 0)
@@ -579,7 +587,8 @@ public sealed class ClientAppValidator : IClientAppValidator
             return true; // Best-effort check
         }
 
-        var grantsResponse = JsonNode.Parse(grantsCheckResult.StandardOutput);
+        var sanitizedGrantsOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(grantsCheckResult.StandardOutput);
+        var grantsResponse = JsonNode.Parse(sanitizedGrantsOutput);
         var grants = grantsResponse?["value"]?.AsArray();
 
         if (grants == null || grants.Count == 0)

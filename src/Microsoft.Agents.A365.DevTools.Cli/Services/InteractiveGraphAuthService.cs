@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
+using Microsoft.Identity.Client;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -78,7 +79,7 @@ public sealed class InteractiveGraphAuthService
         _logger.LogInformation("Attempting to authenticate to Microsoft Graph interactively...");
         _logger.LogInformation("This requires permissions defined in AuthenticationConstants.RequiredClientAppPermissions for Agent Blueprint operations.");
         _logger.LogInformation("");
-        _logger.LogInformation("IMPORTANT: A browser window will open for authentication.");
+        _logger.LogInformation("IMPORTANT: Interactive authentication is required.");
         _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
         _logger.LogInformation("");
 
@@ -88,19 +89,15 @@ public sealed class InteractiveGraphAuthService
         
         try
         {
-            var browserCredential = new InteractiveBrowserCredential(new InteractiveBrowserCredentialOptions
-            {
-                TenantId = tenantId,
-                ClientId = _clientAppId,
-                AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                RedirectUri = new Uri(AuthenticationConstants.LocalhostRedirectUri),
-                TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-                {
-                    Name = AuthenticationConstants.ApplicationName
-                }
-            });
+            // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
+            // Pass null for redirectUri to let MsalBrowserCredential decide based on platform
+            var browserCredential = new MsalBrowserCredential(
+                _clientAppId,
+                tenantId,
+                redirectUri: null,  // Let MsalBrowserCredential use WAM on Windows
+                _logger);
             
-            _logger.LogInformation("Opening browser for authentication...");
+            _logger.LogInformation("Authenticating to Microsoft Graph...");
             _logger.LogInformation("IMPORTANT: You must grant consent for all required permissions.");
             _logger.LogInformation("Required permissions are defined in AuthenticationConstants.RequiredClientAppPermissions.");
             _logger.LogInformation($"See {ConfigConstants.Agent365CliDocumentationUrl} for the complete list.");
@@ -118,13 +115,13 @@ public sealed class InteractiveGraphAuthService
             
             return Task.FromResult(graphClient);
         }
-        catch (Azure.Identity.AuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
+        catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
         {
             // Most specific: permissions issue - don't try fallback
             ThrowInsufficientPermissionsException(ex);
             throw; // Unreachable but required for compiler
         }
-        catch (Azure.Identity.AuthenticationFailedException ex) when (
+        catch (MsalAuthenticationFailedException ex) when (
             ex.Message.Contains("localhost") || 
             ex.Message.Contains("connection") ||
             ex.Message.Contains("redirect_uri"))
@@ -134,12 +131,12 @@ public sealed class InteractiveGraphAuthService
             _logger.LogInformation("");
             shouldTryDeviceCode = true;
         }
-        catch (Azure.Identity.CredentialUnavailableException)
+        catch (Microsoft.Identity.Client.MsalServiceException ex) when (ex.ErrorCode == "access_denied")
         {
-            _logger.LogError("Interactive browser authentication is not available");
+            _logger.LogError("Authentication was denied or cancelled");
             throw new GraphApiException(
                 "Interactive browser authentication",
-                "Not available in non-interactive environments or when browser is unavailable",
+                "Authentication was denied or cancelled by the user",
                 isPermissionIssue: false);
         }
         catch (Exception ex)
@@ -151,7 +148,12 @@ public sealed class InteractiveGraphAuthService
                 isPermissionIssue: false);
         }
         
-        // Fallback to Device Code Flow if browser authentication had infrastructure issues
+        // DeviceCodeCredential fallback safety net:
+        // If browser authentication fails due to infrastructure issues (localhost connectivity,
+        // redirect URI problems, etc.), this fallback provides an alternative authentication path.
+        // The device code flow displays a code that users can enter at microsoft.com/devicelogin,
+        // which works even in environments where browser-based OAuth redirects fail.
+        // This fallback is preserved even after the WAM fix (GitHub issues #146, #151).
         if (shouldTryDeviceCode)
         {
             try

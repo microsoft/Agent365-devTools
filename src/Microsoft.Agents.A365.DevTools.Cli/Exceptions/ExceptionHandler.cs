@@ -18,7 +18,8 @@ public static class ExceptionHandler
     /// </summary>
     /// <param name="ex">The Agent365Exception to handle</param>
     /// <param name="logger">Optional logger for diagnostics</param>
-    public static void HandleAgent365Exception(Agent365Exception ex, ILogger? logger = null)
+    /// <param name="logFilePath">Optional path to the log file for troubleshooting</param>
+    public static void HandleAgent365Exception(Agent365Exception ex, ILogger? logger = null, string? logFilePath = null)
     {
         // Get the full formatted message
         var message = ex.GetFormattedMessage();
@@ -40,6 +41,13 @@ public static class ExceptionHandler
                 // Rest in default color
                 Console.Error.WriteLine(line);
             }
+        }
+
+        // Include log file path for troubleshooting
+        if (!string.IsNullOrEmpty(logFilePath))
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"For more details, see the log file at: {logFilePath}");
         }
         
         // For system errors (not user errors), suggest reporting as bug

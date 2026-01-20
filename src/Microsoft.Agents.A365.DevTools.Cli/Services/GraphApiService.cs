@@ -1,15 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text;
-using System.Text.Json;
-using System.Linq;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -44,7 +45,7 @@ public class GraphApiService
     {
         _logger = logger;
         _executor = executor;
-        _httpClient = handler != null ? new HttpClient(handler) : new HttpClient();
+        _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
         _tokenProvider = tokenProvider;
     }
 
@@ -178,558 +179,15 @@ public class GraphApiService
     }
 
 
-    #region Publish Operations
-
-    /// <summary>
-    /// Execute all Graph API operations for publish:
-    /// 1. Create federated identity credential
-    /// 2. Lookup service principal
-    /// 3. Assign app role (if supported)
-    /// </summary>
-    public async Task<bool> ExecutePublishGraphStepsAsync(
-        string tenantId,
-        string blueprintId,
-        string manifestId,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            _logger.LogInformation("=== PUBLISH GRAPH STEPS START ===");
-            _logger.LogInformation("TenantId: {TenantId}", tenantId);
-            _logger.LogInformation("BlueprintId: {BlueprintId}", blueprintId);
-            _logger.LogInformation("ManifestId: {ManifestId}", manifestId);
-
-            // Get Graph access token
-            var graphToken = await GetGraphAccessTokenAsync(tenantId, cancellationToken);
-            if (string.IsNullOrWhiteSpace(graphToken))
-            {
-                _logger.LogError("Failed to acquire Graph API access token");
-                return false;
-            }
-
-            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", graphToken);
-            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("ConsistencyLevel", "eventual");
-
-            // Step 1: Derive federated identity subject using FMI ID logic
-            _logger.LogInformation("[STEP 1] Deriving federated identity subject (FMI ID)...");
-            
-            // MOS3 App ID - well-known identifier for MOS (Microsoft Online Services)
-            const string mos3AppId = "e8be65d6-d430-4289-a665-51bf2a194bda";
-            var subjectValue = ConstructFmiId(tenantId, mos3AppId, manifestId);
-            _logger.LogInformation("Subject value (FMI ID): {Subject}", subjectValue);
-
-            // Step 2: Create federated identity credential
-            _logger.LogInformation("[STEP 2] Creating federated identity credential...");
-            await CreateFederatedIdentityCredentialAsync(
-                blueprintId, 
-                subjectValue, 
-                tenantId,
-                manifestId,
-                cancellationToken);
-
-            // Step 3: Lookup Service Principal
-            _logger.LogInformation("[STEP 3] Looking up service principal for blueprint {BlueprintId}...", blueprintId);
-            var spObjectId = await LookupServicePrincipalAsync(blueprintId, cancellationToken);
-            if (string.IsNullOrWhiteSpace(spObjectId))
-            {
-                _logger.LogError("Failed to lookup service principal for blueprint {BlueprintId}", blueprintId);
-                _logger.LogError("The agent blueprint service principal may not have been created yet.");
-                _logger.LogError("Try running 'a365 deploy' or 'a365 setup' to create the agent identity first.");
-                return false;
-            }
-
-            _logger.LogInformation("Service principal objectId: {ObjectId}", spObjectId);
-
-            // Step 4: Lookup Microsoft Graph Service Principal
-            _logger.LogInformation("[STEP 4] Looking up Microsoft Graph service principal...");
-            var msGraphResourceId = await LookupMicrosoftGraphServicePrincipalAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(msGraphResourceId))
-            {
-                _logger.LogError("Failed to lookup Microsoft Graph service principal");
-                return false;
-            }
-
-            _logger.LogInformation("Microsoft Graph service principal objectId: {ObjectId}", msGraphResourceId);
-
-            // Step 5: Assign app role (optional for agent applications)
-            _logger.LogInformation("[STEP 5] Assigning app role...");
-            await AssignAppRoleAsync(spObjectId, msGraphResourceId, cancellationToken);
-
-            _logger.LogInformation("=== PUBLISH GRAPH STEPS COMPLETED SUCCESSFULLY ===");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Publish graph steps failed: {Message}", ex.Message);
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Base64URL encode a byte array (URL-safe Base64 encoding without padding)
-    /// </summary>
-    private static string Base64UrlEncode(byte[] data)
-    {
-        if (data == null || data.Length == 0)
-        {
-            throw new ArgumentException("Data cannot be null or empty", nameof(data));
-        }
-
-        // Convert to Base64
-        var base64 = Convert.ToBase64String(data);
-        
-        // Make URL-safe: Remove padding and replace characters
-        return base64.TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
-    }
-
-    /// <summary>
-    /// Construct an FMI (Federated Member Identifier) ID
-    /// Format: /eid1/c/pub/t/{tenantId}/a/{appId}/{fmiPath}
-    /// Based on the PowerShell create-fmi.ps1 script
-    /// </summary>
-    /// <param name="tenantId">Tenant ID (GUID)</param>
-    /// <param name="rmaId">RMA/App ID (GUID) - typically the MOS3 App ID</param>
-    /// <param name="manifestId">Manifest ID (string) - will be Base64URL encoded as the FMI path</param>
-    private static string ConstructFmiId(string tenantId, string rmaId, string manifestId)
-    {
-        // Parse GUIDs
-        if (!Guid.TryParse(tenantId, out var tenantGuid))
-        {
-            throw new ArgumentException($"Invalid tenant ID format: {tenantId}", nameof(tenantId));
-        }
-
-        if (!Guid.TryParse(rmaId, out var rmaGuid))
-        {
-            throw new ArgumentException($"Invalid RMA/App ID format: {rmaId}", nameof(rmaId));
-        }
-
-        // Encode GUIDs as Base64URL
-        var tenantIdEncoded = Base64UrlEncode(tenantGuid.ToByteArray());
-        var rmaIdEncoded = Base64UrlEncode(rmaGuid.ToByteArray());
-
-        // Construct the FMI namespace
-        var fmiNamespace = $"/eid1/c/pub/t/{tenantIdEncoded}/a/{rmaIdEncoded}";
-
-        if (string.IsNullOrWhiteSpace(manifestId))
-        {
-            return fmiNamespace;
-        }
-
-        // Convert manifestId to Base64URL - this is what MOS will do when impersonating
-        var manifestIdBytes = Encoding.UTF8.GetBytes(manifestId);
-        var fmiPath = Base64UrlEncode(manifestIdBytes);
-
-        return $"{fmiNamespace}/{fmiPath}";
-    }
-
-    private async Task CreateFederatedIdentityCredentialAsync(
-        string blueprintId,
-        string subjectValue,
-        string tenantId,
-        string manifestId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var ficName = $"fic-{manifestId}";
-
-            // Check if FIC already exists
-            var existingUrl = $"https://graph.microsoft.com/beta/applications/{blueprintId}/federatedIdentityCredentials";
-            var existingResponse = await _httpClient.GetAsync(existingUrl, cancellationToken);
-
-            if (existingResponse.IsSuccessStatusCode)
-            {
-                var existingJson = await existingResponse.Content.ReadAsStringAsync(cancellationToken);
-                var existing = System.Text.Json.JsonDocument.Parse(existingJson);
-
-                if (existing.RootElement.TryGetProperty("value", out var fics))
-                {
-                    foreach (var fic in fics.EnumerateArray())
-                    {
-                        if (fic.TryGetProperty("subject", out var subject) && 
-                            subject.GetString() == subjectValue)
-                        {
-                            var name = fic.TryGetProperty("name", out var n) ? n.GetString() : "unknown";
-                            _logger.LogInformation("Federated identity credential already exists: {Name}", name);
-                            return;
-                        }
-                    }
-                }
-            }
-
-            // Create new FIC
-            var payload = new
-            {
-                name = ficName,
-                issuer = $"https://login.microsoftonline.com/{tenantId}/v2.0",
-                subject = subjectValue,
-                audiences = new[] { "api://AzureADTokenExchange" }
-            };
-
-            var createUrl = $"https://graph.microsoft.com/beta/applications/{blueprintId}/federatedIdentityCredentials";
-            var content = new StringContent(
-                System.Text.Json.JsonSerializer.Serialize(payload),
-                System.Text.Encoding.UTF8,
-                "application/json");
-
-            var response = await _httpClient.PostAsync(createUrl, content, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogDebug("Failed to create FIC (expected in some scenarios): {Error}", error);
-                return;
-            }
-
-            _logger.LogInformation("Federated identity credential created: {Name}", ficName);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception creating federated identity credential");
-        }
-    }
-
-    private async Task<string?> LookupServicePrincipalAsync(
-        string blueprintId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            _logger.LogDebug("Looking up service principal for blueprint appId: {BlueprintId}", blueprintId);
-            var url = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{blueprintId}'";
-            _logger.LogDebug("Service principal lookup URL: {Url}", url);
-            var response = await _httpClient.GetAsync(url, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("Failed to lookup service principal for blueprint {BlueprintId}. HTTP {StatusCode}: {ErrorBody}", 
-                    blueprintId, (int)response.StatusCode, errorBody);
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var doc = System.Text.Json.JsonDocument.Parse(json);
-
-            if (doc.RootElement.TryGetProperty("value", out var value) && value.GetArrayLength() > 0)
-            {
-                var sp = value[0];
-                if (sp.TryGetProperty("id", out var id))
-                {
-                    var spObjectId = id.GetString();
-                    _logger.LogDebug("Found service principal with objectId: {SpObjectId}", spObjectId);
-                    return spObjectId;
-                }
-            }
-
-            _logger.LogWarning("No service principal found for blueprint appId {BlueprintId}. The blueprint's service principal must be created before publish. Response: {Json}", 
-                blueprintId, json);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception looking up service principal for blueprint {BlueprintId}", blueprintId);
-            return null;
-        }
-    }
-
-    private async Task<string?> LookupMicrosoftGraphServicePrincipalAsync(
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            string msGraphAppId = AuthenticationConstants.MicrosoftGraphResourceAppId;
-            var url = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{msGraphAppId}'&$select=id,appId,displayName";
-            var response = await _httpClient.GetAsync(url, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogError("Failed to lookup Microsoft Graph service principal");
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var doc = System.Text.Json.JsonDocument.Parse(json);
-
-            if (doc.RootElement.TryGetProperty("value", out var value) && value.GetArrayLength() > 0)
-            {
-                var sp = value[0];
-                if (sp.TryGetProperty("id", out var id))
-                {
-                    return id.GetString();
-                }
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception looking up Microsoft Graph service principal");
-            return null;
-        }
-    }
-
-    private async Task AssignAppRoleAsync(
-        string spObjectId,
-        string msGraphResourceId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            // AgentIdUser.ReadWrite.IdentityParentedBy well-known role ID
-            const string appRoleId = "4aa6e624-eee0-40ab-bdd8-f9639038a614";
-
-            // Check if role assignment already exists
-            var existingUrl = $"https://graph.microsoft.com/v1.0/servicePrincipals/{spObjectId}/appRoleAssignments";
-            var existingResponse = await _httpClient.GetAsync(existingUrl, cancellationToken);
-
-            if (existingResponse.IsSuccessStatusCode)
-            {
-                var existingJson = await existingResponse.Content.ReadAsStringAsync(cancellationToken);
-                var existing = System.Text.Json.JsonDocument.Parse(existingJson);
-
-                if (existing.RootElement.TryGetProperty("value", out var assignments))
-                {
-                    foreach (var assignment in assignments.EnumerateArray())
-                    {
-                        var resourceId = assignment.TryGetProperty("resourceId", out var r) ? r.GetString() : null;
-                        var roleId = assignment.TryGetProperty("appRoleId", out var ar) ? ar.GetString() : null;
-
-                        if (resourceId == msGraphResourceId && roleId == appRoleId)
-                        {
-                            _logger.LogInformation("App role assignment already exists (idempotent check passed)");
-                            return;
-                        }
-                    }
-                }
-            }
-
-            // Create new app role assignment
-            var payload = new
-            {
-                principalId = spObjectId,
-                resourceId = msGraphResourceId,
-                appRoleId = appRoleId
-            };
-
-            var createUrl = $"https://graph.microsoft.com/v1.0/servicePrincipals/{spObjectId}/appRoleAssignments";
-            var content = new StringContent(
-                System.Text.Json.JsonSerializer.Serialize(payload),
-                System.Text.Encoding.UTF8,
-                "application/json");
-
-            var response = await _httpClient.PostAsync(createUrl, content, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadAsStringAsync(cancellationToken);
-
-                // Check if this is the known agent application limitation
-                if (error.Contains("Service principals of agent applications cannot be set as the source type", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning("App role assignment skipped: Agent applications have restrictions");
-                    _logger.LogInformation("Agent application permissions should be configured through admin consent URLs");
-                    return;
-                }
-
-                _logger.LogWarning("App role assignment failed (continuing anyway): {Error}", error);
-                return;
-            }
-
-            _logger.LogInformation("App role assignment succeeded");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Exception assigning app role (continuing anyway)");
-        }
-    }
-
-    /// <summary>
-    /// Get inheritable permissions for an agent blueprint
-    /// </summary>
-    /// <param name="blueprintId">The blueprint ID</param>
-    /// <param name="tenantId">The tenant ID for authentication</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>JSON response from the inheritable permissions endpoint</returns>
-    public async Task<string?> GetBlueprintInheritablePermissionsAsync(
-        string blueprintId,
-        string tenantId,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            // Get access token for Microsoft Graph
-            var accessToken = await GetGraphAccessTokenAsync(tenantId, cancellationToken);
-            if (string.IsNullOrWhiteSpace(accessToken))
-            {
-                _logger.LogError("Failed to acquire Graph API access token");
-                return null;
-            }
-
-            // Set authorization header
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-            // Make the API call to get inheritable permissions
-            var url = $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintId}/inheritablePermissions";
-            _logger.LogInformation("Calling Graph API: {Url}", url);
-
-            var response = await _httpClient.GetAsync(url, cancellationToken);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogError("Graph API call failed. Status: {StatusCode}, Error: {Error}",
-                    response.StatusCode, errorContent);
-                return null;
-            }
-
-            var jsonResponse = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogInformation("Successfully retrieved inheritable permissions from Graph API");
-
-            return jsonResponse;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception calling inheritable permissions endpoint");
-            return null;
-        }
-        finally
-        {
-            // Clear authorization header to avoid issues with other requests
-            _httpClient.DefaultRequestHeaders.Authorization = null;
-        }
-    }
-
-    #endregion
-    
-    /// <summary>
-    /// Delete an Agent Blueprint application using the special agentIdentityBlueprint endpoint.
-    /// 
-    /// SPECIAL AUTHENTICATION REQUIREMENTS:
-    /// Agent Blueprint deletion requires the AgentIdentityBlueprint.ReadWrite.All delegated permission scope.
-    /// This scope is not available through Azure CLI tokens, so we use interactive authentication via
-    /// the token provider (same authentication method used during blueprint creation in the setup command).
-    /// 
-    /// This method uses the GraphDeleteAsync helper but with special scopes - the duplication is intentional
-    /// because blueprint operations require elevated permissions that standard Graph operations don't need.
-    /// </summary>
-    /// <param name="tenantId">The tenant ID for authentication</param>
-    /// <param name="blueprintId">The blueprint application ID (object ID or app ID)</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>True if deletion succeeded or resource not found; false otherwise</returns>
-    public async Task<bool> DeleteAgentBlueprintAsync(
-        string tenantId,
-        string blueprintId,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
-            
-            // Agent Blueprint deletion requires special delegated permission scope
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
-            
-            if (_tokenProvider == null)
-            {
-                _logger.LogError("Token provider is not configured. Agent Blueprint deletion requires interactive authentication.");
-                _logger.LogError("Please ensure the GraphApiService is initialized with a token provider.");
-                return false;
-            }
-            
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
-            
-            // Use the special agentIdentityBlueprint endpoint for deletion
-            var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";
-            
-            // Use GraphDeleteAsync with the special scopes required for blueprint operations
-            var success = await GraphDeleteAsync(
-                tenantId,
-                deletePath,
-                cancellationToken,
-                treatNotFoundAsSuccess: true,
-                scopes: requiredScopes);
-            
-            if (success)
-            {
-                _logger.LogInformation("Agent blueprint application deleted successfully");
-            }
-            else
-            {
-                _logger.LogError("Failed to delete agent blueprint application");
-            }
-            
-            return success;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception deleting agent blueprint application");
-            return false;
-        }
-        finally
-        {
-            // Clear authorization header to avoid issues with other requests
-            _httpClient.DefaultRequestHeaders.Authorization = null;
-        }
-    }
-
-    /// <summary>
-    /// Deletes the specified agent identity application from the tenant using delegated permissions.
-    /// This method deletes the service principal object, not the application registration.
-    /// </summary>
-    /// <param name="tenantId">The unique identifier of the Azure Active Directory tenant containing the agent identity application.</param>
-    /// <param name="applicationId">The unique identifier of the agent identity application to delete.</param>
-    /// <param name="cancellationToken">A cancellation token that can be used to cancel the delete operation.</param>
-    /// <returns>True if deletion succeeded or resource not found; false otherwise</returns>
-    public async Task<bool> DeleteAgentIdentityAsync(
-        string tenantId,
-        string applicationId,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            _logger.LogInformation("Deleting agent identity application: {applicationId}", applicationId);
-
-            // Agent Identity deletion requires special delegated permission scope
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
-
-            if (_tokenProvider == null)
-            {
-                _logger.LogError("Token provider is not configured. Agent Identity deletion requires delegated permissions via interactive authentication.");
-                _logger.LogError("Please ensure the GraphApiService is initialized with a token provider.");
-                return false;
-            }
-
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
-
-            // Use the special servicePrincipals endpoint for deletion
-            var deletePath = $"/beta/servicePrincipals/{applicationId}";
-
-            // Use GraphDeleteAsync with the special scopes required for identity operations
-            return await GraphDeleteAsync(
-                tenantId,
-                deletePath,
-                cancellationToken,
-                treatNotFoundAsSuccess: true,
-                scopes: requiredScopes);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception deleting agent identity application");
-            return false;
-        }
-        finally
-        {
-            // Clear authorization header to avoid issues with other requests
-            _httpClient.DefaultRequestHeaders.Authorization = null;
-        }
-    }
-
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
+        // When specific scopes are required, token provider must be configured
+        if (scopes != null && _tokenProvider == null)
+        {
+            _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes));
+            return false;
+        }
+
         // When specific scopes are required, use custom client app if configured
         // CustomClientAppId should be set by callers who have access to config
         var token = (scopes != null && _tokenProvider != null)
@@ -739,8 +197,10 @@ public class GraphApiService
         if (string.IsNullOrWhiteSpace(token)) return false;
 
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _httpClient.DefaultRequestHeaders.Remove("ConsistencyLevel");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("ConsistencyLevel", "eventual");
+        // NOTE: Do NOT add "ConsistencyLevel: eventual" header here.
+        // This header is only required for advanced Graph query capabilities ($count, $search, certain $filter operations).
+        // For simple queries like service principal lookups, this header is not needed and causes HTTP 400 errors.
+        // See: https://learn.microsoft.com/en-us/graph/aad-advanced-queries
 
         return true;
     }
@@ -762,7 +222,7 @@ public class GraphApiService
         return JsonDocument.Parse(json);
     }
 
-    public async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
@@ -779,7 +239,7 @@ public class GraphApiService
     /// <summary>
     /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
     /// </summary>
-    public async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
         {
@@ -816,7 +276,7 @@ public class GraphApiService
     /// </summary>
     public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct)) return false;
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
@@ -867,9 +327,10 @@ public class GraphApiService
     /// Looks up a service principal by its application (client) ID.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(string tenantId, string appId, CancellationToken ct = default)
+    public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id", ct);
+        var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id", ct, scopes);
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
         return value[0].GetProperty("id").GetString();
@@ -881,14 +342,14 @@ public class GraphApiService
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
     public virtual async Task<string> EnsureServicePrincipalForAppIdAsync(
-        string tenantId, string appId, CancellationToken ct = default)
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         // Try existing
-        var spId = await LookupServicePrincipalByAppIdAsync(tenantId, appId, ct);
+        var spId = await LookupServicePrincipalByAppIdAsync(tenantId, appId, ct, scopes);
         if (!string.IsNullOrWhiteSpace(spId)) return spId!;
 
         // Create SP for this application
-        var created = await GraphPostAsync(tenantId, "/v1.0/servicePrincipals", new { appId }, ct);
+        var created = await GraphPostAsync(tenantId, "/v1.0/servicePrincipals", new { appId }, ct, scopes);
         if (created == null || !created.RootElement.TryGetProperty("id", out var idProp))
             throw new InvalidOperationException($"Failed to create servicePrincipal for appId {appId}");
 
@@ -900,7 +361,8 @@ public class GraphApiService
         string clientSpObjectId,
         string resourceSpObjectId,
         IEnumerable<string> scopes,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IEnumerable<string>? permissionGrantScopes = null)
     {
         var desiredScopeString = string.Join(' ', scopes);
 
@@ -908,7 +370,8 @@ public class GraphApiService
         var listDoc = await GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
-            ct);
+            ct,
+            permissionGrantScopes);
 
         var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0
             ? arr[0]
@@ -924,7 +387,7 @@ public class GraphApiService
                 resourceId = resourceSpObjectId,
                 scope = desiredScopeString
             };
-            var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
+            var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
             return created != null; // success if response parsed
         }
 
@@ -941,467 +404,7 @@ public class GraphApiService
         var id = existing.Value.GetProperty("id").GetString();
         if (string.IsNullOrWhiteSpace(id)) return false;
 
-        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct);
-    }
-
-    /// <summary>
-    /// Sets inheritable permissions for an agent blueprint with proper scope merging.
-    /// Checks if permissions already exist and merges scopes if needed via PATCH.
-    /// </summary>
-    public async Task<(bool ok, bool alreadyExists, string? error)> SetInheritablePermissionsAsync(
-        string tenantId,
-        string blueprintAppId,
-        string resourceAppId,
-        IEnumerable<string> scopes,
-        IEnumerable<string>? requiredScopes = null,
-        CancellationToken ct = default)
-    {
-        var desiredSet = new HashSet<string>(scopes ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-
-        // Normalize into array form expected by Graph (each element is a single scope string)
-        var desiredArray = desiredSet.ToArray();
-
-        try
-        {
-            // First, try to resolve blueprintAppId to an application object id if needed
-            string blueprintObjectId = blueprintAppId;
-
-            // Try GET for inheritablePermissions - if it fails, attempt to lookup application by appId
-            var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-            var existingDoc = await GraphGetAsync(tenantId, getPath, ct, requiredScopes);
-
-            if (existingDoc == null)
-            {
-                // Attempt to resolve as appId -> application object id
-                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct, requiredScopes);
-                if (apps != null && apps.RootElement.TryGetProperty("value", out var arr) && arr.GetArrayLength() > 0)
-                {
-                    var appObj = arr[0];
-                    if (appObj.TryGetProperty("id", out var idEl))
-                    {
-                        blueprintObjectId = idEl.GetString() ?? blueprintAppId;
-                        getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-                        existingDoc = await GraphGetAsync(tenantId, getPath, ct);
-                    }
-                }
-            }
-
-            // Inspect existing entries
-            JsonElement? existingEntry = null;
-            if (existingDoc != null && existingDoc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in value.EnumerateArray())
-                {
-                    var rId = item.TryGetProperty("resourceAppId", out var r) ? r.GetString() : null;
-                    if (string.Equals(rId, resourceAppId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        existingEntry = item;
-                        break;
-                    }
-                }
-            }
-
-            if (existingEntry is not null)
-            {
-                // Merge scopes if necessary
-                var currentScopes = new List<string>();
-                if (existingEntry.Value.TryGetProperty("inheritableScopes", out var inheritable) &&
-                    inheritable.TryGetProperty("scopes", out var scopesEl) && scopesEl.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var s in scopesEl.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String))
-                    {
-                        var raw = s.GetString() ?? string.Empty;
-                        // Some entries may contain space-separated tokens; split defensively
-                        foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                            currentScopes.Add(tok);
-                    }
-                }
-
-                var currentSet = new HashSet<string>(currentScopes, StringComparer.OrdinalIgnoreCase);
-                if (desiredSet.IsSubsetOf(currentSet))
-                {
-                    _logger.LogInformation("Inheritable permissions already exist for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
-                    return (ok: true, alreadyExists: true, error: null);
-                }
-
-                // Union and PATCH
-                currentSet.UnionWith(desiredSet);
-                var mergedArray = currentSet.OrderBy(s => s).ToArray();
-
-                var patchPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions/{resourceAppId}";
-                var patchPayload = new
-                {
-                    inheritableScopes = new EnumeratedScopes
-                    {
-                        Scopes = mergedArray
-                    }
-                };
-
-                var patched = await GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
-                if (!patched)
-                {
-                    return (ok: false, alreadyExists: false, error: "PATCH failed");
-                }
-
-                _logger.LogInformation("Patched inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
-                return (ok: true, alreadyExists: false, error: null);
-            }
-
-            // No existing entry -> create
-            var postPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-            var postPayload = new
-            {
-                resourceAppId = resourceAppId,
-                inheritableScopes = new EnumeratedScopes
-                {
-                    Scopes = desiredArray
-                }
-            };
-
-            var createdResp = await GraphPostWithResponseAsync(tenantId, postPath, postPayload, ct, requiredScopes);
-            if (!createdResp.IsSuccess)
-            {
-                var err = string.IsNullOrWhiteSpace(createdResp.Body)
-                    ? $"HTTP {createdResp.StatusCode} {createdResp.ReasonPhrase}"
-                    : createdResp.Body;
-                _logger.LogError("Failed to create inheritable permissions: {Status} {Reason} Body: {Body}", createdResp.StatusCode, createdResp.ReasonPhrase, createdResp.Body);
-                return (ok: false, alreadyExists: false, error: err);
-            }
-
-            _logger.LogInformation("Created inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
-            return (ok: true, alreadyExists: false, error: null);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError("Failed to set inheritable permissions: {Error}", ex.Message);
-            return (ok: false, alreadyExists: false, error: ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Verifies that inheritable permissions are correctly configured for a resource
-    /// </summary>
-    public async Task<(bool exists, string[] scopes, string? error)> VerifyInheritablePermissionsAsync(
-        string tenantId,
-        string blueprintAppId,
-        string resourceAppId,
-        CancellationToken ct = default,
-        IEnumerable<string>? requiredScopes = null)
-    {
-        try
-        {
-            string blueprintObjectId = blueprintAppId;
-            var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-            var existingDoc = await GraphGetAsync(tenantId, getPath, ct, requiredScopes);
-
-            if (existingDoc == null)
-            {
-                // Try to resolve as appId -> application object id
-                var apps = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{blueprintAppId}'&$select=id", ct, requiredScopes);
-                if (apps != null && apps.RootElement.TryGetProperty("value", out var arr) && arr.GetArrayLength() > 0)
-                {
-                    var appObj = arr[0];
-                    if (appObj.TryGetProperty("id", out var idEl))
-                    {
-                        blueprintObjectId = idEl.GetString() ?? blueprintAppId;
-                        getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
-                        existingDoc = await GraphGetAsync(tenantId, getPath, ct, requiredScopes);
-                    }
-                }
-            }
-
-            if (existingDoc == null)
-            {
-                return (exists: false, scopes: Array.Empty<string>(), error: "Failed to retrieve inheritable permissions");
-            }
-
-            // Find the entry for this resource
-            if (existingDoc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in value.EnumerateArray())
-                {
-                    var rId = item.TryGetProperty("resourceAppId", out var r) ? r.GetString() : null;
-                    if (string.Equals(rId, resourceAppId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Found the resource, extract scopes
-                        var scopesList = new List<string>();
-                        if (item.TryGetProperty("inheritableScopes", out var inheritable) &&
-                            inheritable.TryGetProperty("scopes", out var scopesEl) && scopesEl.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var s in scopesEl.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String))
-                            {
-                                var raw = s.GetString() ?? string.Empty;
-                                foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                                    scopesList.Add(tok);
-                            }
-                        }
-                        return (exists: true, scopes: scopesList.ToArray(), error: null);
-                    }
-                }
-            }
-
-            return (exists: false, scopes: Array.Empty<string>(), error: null);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError("Failed to verify inheritable permissions: {Error}", ex.Message);
-            return (exists: false, scopes: Array.Empty<string>(), error: ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Replaces OAuth2 permission grants for a client/resource pair.
-    /// Deletes all existing grants and creates a new one with the specified scopes.
-    /// Virtual to allow mocking in unit tests using Moq.
-    /// </summary>
-    public virtual async Task<bool> ReplaceOauth2PermissionGrantAsync(
-        string tenantId,
-        string clientSpObjectId,  
-        string resourceSpObjectId,
-        IEnumerable<string> scopes,
-        CancellationToken ct = default)
-    {
-        // Normalize scopes -> single space-delimited string (Graph’s required shape)
-        var desiredSet = new HashSet<string>(
-            (scopes ?? Enumerable.Empty<string>())
-                .SelectMany(s => (s ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
-            StringComparer.OrdinalIgnoreCase);
-
-        var desiredScopeString = string.Join(' ', desiredSet.OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
-
-        // 1) Find existing grant(s) for client resource
-        var listDoc = await GraphGetAsync(
-            tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
-            ct);
-
-        var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true ? arr : default;
-
-        // 2) Delete all existing grants for this pair (rare but possible to have >1)
-        if (existing.ValueKind == JsonValueKind.Array && existing.GetArrayLength() > 0)
-        {
-            foreach (var item in existing.EnumerateArray())
-            {
-                var id = item.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
-                if (!string.IsNullOrWhiteSpace(id))
-                {
-                    _logger.LogDebug("Deleting existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}", 
-                        id, clientSpObjectId, resourceSpObjectId);
-
-                    var ok = await GraphDeleteAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", ct);
-                    if (!ok)
-                    {
-                        _logger.LogError("Failed to delete existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}. " +
-                                       "This may indicate insufficient permissions or the grant is protected. " +
-                                       "Required permissions: DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All", 
-                                       id, clientSpObjectId, resourceSpObjectId);
-                        _logger.LogError("Troubleshooting steps:");
-                        _logger.LogError("  1. Verify your account has sufficient Azure AD permissions");
-                        _logger.LogError("  2. Check if you are a Global Administrator or Application Administrator");
-                        _logger.LogError("  3. Ensure the oauth2PermissionGrant exists and is not system-protected");
-                        _logger.LogError("  4. Try running: az login --tenant {TenantId} with elevated privileges", tenantId);
-                        
-                        throw new InvalidOperationException($"Failed to delete existing oauth2PermissionGrant {id}");
-                    }
-
-                    _logger.LogDebug("Successfully deleted oauth2PermissionGrant {Id}", id);
-                }
-            }
-        }
-
-        // If no scopes desired, we’re done (revoke only)
-        if (desiredSet.Count == 0) return true;
-
-        // 3) Create the new grant with exactly the desired scopes
-        var payload = new
-        {
-            clientId = clientSpObjectId,
-            consentType = "AllPrincipals",
-            resourceId = resourceSpObjectId,
-            scope = desiredScopeString
-        };
-
-        var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
-        return created != null;
-    }
-
-    /// <summary>
-    /// Adds required resource access (API permissions) to an application's manifest.
-    /// This makes the permissions visible in the Entra portal's "API permissions" blade.
-    /// </summary>
-    /// <param name="tenantId">The tenant ID</param>
-    /// <param name="appId">The application (client) ID to update</param>
-    /// <param name="resourceAppId">The resource application ID to add permissions for</param>
-    /// <param name="scopes">The permission scope names to add</param>
-    /// <param name="isDelegated">True for delegated permissions (Scope), false for application permissions (Role)</param>
-    /// <param name="ct">Cancellation token</param>
-    /// <returns>True if successful, false otherwise</returns>
-    public async Task<bool> AddRequiredResourceAccessAsync(
-        string tenantId,
-        string appId,
-        string resourceAppId,
-        IEnumerable<string> scopes,
-        bool isDelegated = true,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            // Get the application object by appId
-            var appsDoc = await GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{appId}'&$select=id,requiredResourceAccess", ct);
-            if (appsDoc == null)
-            {
-                _logger.LogError("Failed to retrieve application with appId {AppId}", appId);
-                return false;
-            }
-
-            if (!appsDoc.RootElement.TryGetProperty("value", out var appsArray) || appsArray.GetArrayLength() == 0)
-            {
-                _logger.LogError("Application not found with appId {AppId}", appId);
-                return false;
-            }
-
-            var app = appsArray[0];
-            if (!app.TryGetProperty("id", out var idProp) || string.IsNullOrEmpty(idProp.GetString()))
-            {
-                _logger.LogError("Application object missing 'id' property or 'id' is null for appId {AppId}", appId);
-                return false;
-            }
-            var objectId = idProp.GetString()!;
-
-            // Get the resource service principal to look up permission IDs
-            var resourceSp = await LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct);
-            if (string.IsNullOrEmpty(resourceSp))
-            {
-                _logger.LogError("Resource service principal not found for appId {ResourceAppId}", resourceAppId);
-                return false;
-            }
-
-            // Get the resource SP's published permissions
-            var resourceSpDoc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{resourceSp}?$select=oauth2PermissionScopes,appRoles", ct);
-            if (resourceSpDoc == null)
-            {
-                _logger.LogError("Failed to retrieve resource service principal {ResourceSp}", resourceSp);
-                return false;
-            }
-
-            // Map scope names to permission IDs
-            var permissionIds = new List<string>();
-            var permissionType = isDelegated ? "Scope" : "Role";
-            var permissionsProperty = isDelegated ? "oauth2PermissionScopes" : "appRoles";
-
-            if (resourceSpDoc.RootElement.TryGetProperty(permissionsProperty, out var permissions))
-            {
-                foreach (var scope in scopes)
-                {
-                    var found = false;
-                    foreach (var permission in permissions.EnumerateArray())
-                    {
-                        if (permission.TryGetProperty("value", out var valueElement) && 
-                            valueElement.GetString()?.Equals(scope, StringComparison.OrdinalIgnoreCase) == true &&
-                            permission.TryGetProperty("id", out var idElement))
-                        {
-                            var idValue = idElement.GetString();
-                            if (!string.IsNullOrEmpty(idValue))
-                            {
-                                permissionIds.Add(idValue);
-                                found = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!found)
-                    {
-                        _logger.LogWarning("Permission scope '{Scope}' not found on resource {ResourceAppId}", scope, resourceAppId);
-                    }
-                }
-            }
-
-            if (permissionIds.Count == 0)
-            {
-                _logger.LogWarning("No valid permission IDs found for scopes: {Scopes}", string.Join(", ", scopes));
-                return false;
-            }
-
-            // Get existing requiredResourceAccess
-            var existingResourceAccess = new List<object>();
-            if (app.TryGetProperty("requiredResourceAccess", out var existingArray))
-            {
-                existingResourceAccess = JsonSerializer.Deserialize<List<object>>(existingArray.GetRawText()) ?? new List<object>();
-            }
-
-            // Check if resource already exists in requiredResourceAccess
-            var resourceAccessList = existingResourceAccess
-                .Select(x => JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(x)))
-                .ToList();
-
-            var existingResource = resourceAccessList.FirstOrDefault(x => 
-                x != null && 
-                x.TryGetValue("resourceAppId", out var resId) && 
-                resId.GetString() == resourceAppId);
-
-            if (existingResource != null)
-            {
-                // Add to existing resource access
-                var existingAccess = existingResource.TryGetValue("resourceAccess", out var accessElement)
-                    ? JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(accessElement.GetRawText()) ?? new List<Dictionary<string, JsonElement>>()
-                    : new List<Dictionary<string, JsonElement>>();
-
-                var existingIds = new HashSet<string>(
-                    existingAccess
-                        .Where(x => x.TryGetValue("id", out var idEl))
-                        .Select(x => x["id"].GetString()!)
-                );
-
-                foreach (var permId in permissionIds)
-                {
-                    if (!existingIds.Contains(permId))
-                    {
-                        existingAccess.Add(new Dictionary<string, JsonElement>
-                        {
-                            ["id"] = JsonDocument.Parse($"\"{permId}\"").RootElement,
-                            ["type"] = JsonDocument.Parse($"\"{permissionType}\"").RootElement
-                        });
-                    }
-                }
-
-                existingResource["resourceAccess"] = JsonDocument.Parse(JsonSerializer.Serialize(existingAccess)).RootElement;
-            }
-            else
-            {
-                // Add new resource access entry
-                var newResourceAccess = new Dictionary<string, object>
-                {
-                    ["resourceAppId"] = resourceAppId,
-                    ["resourceAccess"] = permissionIds.Select(id => new Dictionary<string, string>
-                    {
-                        ["id"] = id,
-                        ["type"] = permissionType
-                    }).ToList()
-                };
-
-                resourceAccessList.Add(JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(newResourceAccess))!);
-            }
-
-            // Update the application with PATCH
-            var patchPayload = new
-            {
-                requiredResourceAccess = resourceAccessList
-            };
-
-            var updated = await GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}", patchPayload, ct);
-            if (updated)
-            {
-                _logger.LogInformation("Successfully added required resource access for {ResourceAppId} to application {AppId}", resourceAppId, appId);
-            }
-
-            return updated;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to add required resource access: {Message}", ex.Message);
-            return false;
-        }
+        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct, permissionGrantScopes);
     }
 
     /// <summary>
@@ -1412,13 +415,13 @@ public class GraphApiService
     /// <param name="ct">Cancellation token</param>
     /// <returns>True if user has required roles, false otherwise</returns>
     public virtual async Task<(bool hasPrivileges, List<string> roles)> CheckServicePrincipalCreationPrivilegesAsync(
-        string tenantId, 
+        string tenantId,
         CancellationToken ct = default)
     {
         try
         {
             _logger.LogDebug("Checking user's directory roles for service principal creation privileges");
-            
+
             var token = await GetGraphAccessTokenAsync(tenantId, ct);
             if (token == null)
             {
@@ -1426,7 +429,7 @@ public class GraphApiService
                 return (false, new List<string>());
             }
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, 
+            using var request = new HttpRequestMessage(HttpMethod.Get,
                 "https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -1453,22 +456,22 @@ public class GraphApiService
             _logger.LogDebug("User has {Count} directory roles", roles.Count);
 
             // Check for required roles
-            var requiredRoles = new[] 
-            { 
-                "Application Administrator", 
-                "Cloud Application Administrator", 
-                "Global Administrator" 
+            var requiredRoles = new[]
+            {
+                "Application Administrator",
+                "Cloud Application Administrator",
+                "Global Administrator"
             };
 
             var hasRequiredRole = roles.Any(r => requiredRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
-            
+
             if (hasRequiredRole)
             {
                 _logger.LogDebug("User has sufficient privileges for service principal creation");
             }
             else
             {
-                _logger.LogDebug("User does not have required roles for service principal creation. Roles: {Roles}", 
+                _logger.LogDebug("User does not have required roles for service principal creation. Roles: {Roles}",
                     string.Join(", ", roles));
             }
 
@@ -1478,6 +481,161 @@ public class GraphApiService
         {
             _logger.LogWarning(ex, "Failed to check service principal creation privileges: {Message}", ex.Message);
             return (false, new List<string>());
+        }
+    }
+
+    /// <summary>
+    /// Ensures the current user is an owner of an application (idempotent operation).
+    /// First checks if the user is already an owner, and only adds if not present.
+    /// This ensures the creator has ownership permissions for setting callback URLs and bot IDs via the Developer Portal.
+    /// Requires Application.ReadWrite.All or Directory.ReadWrite.All permissions.
+    /// See: https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta
+    /// </summary>
+    /// <param name="tenantId">The tenant ID</param>
+    /// <param name="applicationObjectId">The application object ID (not the client/app ID)</param>
+    /// <param name="userObjectId">The user's object ID to add as owner. If null, uses the current authenticated user.</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <param name="scopes">OAuth2 scopes for elevated permissions (e.g., Application.ReadWrite.All, Directory.ReadWrite.All)</param>
+    /// <returns>True if the user is an owner (either already was or was successfully added), false otherwise</returns>
+    public virtual async Task<bool> AddApplicationOwnerAsync(
+        string tenantId,
+        string applicationObjectId,
+        string? userObjectId = null,
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null)
+    {
+        try
+        {
+            // Get current user's object ID if not provided
+            if (string.IsNullOrWhiteSpace(userObjectId))
+            {
+                if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+                {
+                    _logger.LogWarning("Could not acquire Graph token to add application owner");
+                    return false;
+                }
+
+                using var meRequest = new HttpRequestMessage(HttpMethod.Get,
+                    "https://graph.microsoft.com/v1.0/me?$select=id");
+                meRequest.Headers.Authorization = _httpClient.DefaultRequestHeaders.Authorization;
+
+                using var meResponse = await _httpClient.SendAsync(meRequest, ct);
+                if (!meResponse.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Could not retrieve current user's ID: {Status}", meResponse.StatusCode);
+                    return false;
+                }
+
+                var meJson = await meResponse.Content.ReadAsStringAsync(ct);
+                using var meDoc = JsonDocument.Parse(meJson);
+
+                if (!meDoc.RootElement.TryGetProperty("id", out var idElement))
+                {
+                    _logger.LogWarning("Could not extract user ID from Graph response");
+                    return false;
+                }
+
+                userObjectId = idElement.GetString();
+                _logger.LogDebug("Retrieved current user's object ID: {UserId}", userObjectId);
+            }
+
+            if (string.IsNullOrWhiteSpace(userObjectId))
+            {
+                _logger.LogWarning("User object ID is empty, cannot add as owner");
+                return false;
+            }
+
+            // Check if user is already an owner (idempotency check)
+            _logger.LogDebug("Checking if user {UserId} is already an owner of application {AppObjectId}", userObjectId, applicationObjectId);
+
+            var ownersDoc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/owners?$select=id", ct, scopes);
+            if (ownersDoc != null && ownersDoc.RootElement.TryGetProperty("value", out var ownersArray))
+            {
+                var isAlreadyOwner = ownersArray.EnumerateArray()
+                    .Where(owner => owner.TryGetProperty("id", out var ownerId))
+                    .Any(owner => string.Equals(owner.GetProperty("id").GetString(), userObjectId, StringComparison.OrdinalIgnoreCase));
+
+                if (isAlreadyOwner)
+                {
+                    _logger.LogDebug("User is already an owner of the application");
+                    return true;
+                }
+            }
+
+            // User is not an owner, add them
+            // https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta
+            _logger.LogDebug("Adding user {UserId} as owner to application {AppObjectId}", userObjectId, applicationObjectId);
+
+            var payload = new JsonObject
+            {
+                ["@odata.id"] = $"{GraphApiConstants.BaseUrl}/{GraphApiConstants.Versions.Beta}/directoryObjects/{userObjectId}"
+            };
+
+            // Use beta endpoint as recommended in the documentation
+            var relativePath = $"/beta/applications/{applicationObjectId}/owners/$ref";
+
+            if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+            {
+                _logger.LogWarning("Could not authenticate to Graph API to add application owner");
+                return false;
+            }
+
+            var url = $"{GraphApiConstants.BaseUrl}{relativePath}";
+            using var content = new StringContent(
+                payload.ToJsonString(),
+                Encoding.UTF8,
+                "application/json");
+
+            using var response = await _httpClient.PostAsync(url, content, ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("Successfully added user as owner to application");
+                return true;
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+
+            // Check if the user is already an owner (409 Conflict or specific error message)
+            // This handles race conditions where the user was added between our check and the POST
+            if ((int)response.StatusCode == 409 ||
+                errorBody.Contains("already exist", StringComparison.OrdinalIgnoreCase) ||
+                errorBody.Contains("One or more added object references already exist", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug("User is already an owner of the application (detected during add)");
+                return true;
+            }
+
+            // Log specific error guidance based on status code
+            _logger.LogWarning("Failed to add user as owner to application. Status: {Status}, URL: {Url}",
+                response.StatusCode, url);
+
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                _logger.LogWarning("Access denied. Ensure the authenticated user has Application.ReadWrite.All or Directory.ReadWrite.All permissions");
+                _logger.LogWarning("To manually add yourself as an owner, make this Graph API call:");
+                _logger.LogWarning("  POST {Url}", url);
+                _logger.LogWarning("  Content-Type: application/json");
+                _logger.LogWarning("  Body: {{\"@odata.id\": \"{ODataId}\"}}", $"{GraphApiConstants.BaseUrl}/{GraphApiConstants.Versions.Beta}/directoryObjects/{userObjectId}");
+            }
+            else if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _logger.LogWarning("Application or user not found. Verify ObjectId: {AppObjectId}, UserId: {UserId}",
+                    applicationObjectId, userObjectId);
+            }
+            else if (response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.LogWarning("Bad request. Verify the payload format and user object ID");
+                _logger.LogWarning("Attempted payload: {{\"@odata.id\": \"{ODataId}\"}}", $"{GraphApiConstants.BaseUrl}/{GraphApiConstants.Versions.Beta}/directoryObjects/{userObjectId}");
+            }
+
+            _logger.LogDebug("Graph API error response: {Error}", errorBody);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error adding user as owner to application: {Message}", ex.Message);
+            return false;
         }
     }
 }

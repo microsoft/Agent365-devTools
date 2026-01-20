@@ -17,7 +17,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 internal static class SetupHelpers
 {
     /// <summary>
-    /// Display verification URLs and next steps after successful setup
+    /// Display verification URLs after successful setup
     /// </summary>
     public static async Task DisplayVerificationInfoAsync(FileInfo setupConfigFile, ILogger logger)
     {
@@ -38,7 +38,7 @@ internal static class SetupHelpers
             var root = doc.RootElement;
 
             logger.LogInformation("");
-            logger.LogInformation("Verification URLs and Next Steps:");
+            logger.LogInformation("Verification URLs:");
             logger.LogInformation("==========================================");
 
             // Azure Web App URL
@@ -63,14 +63,6 @@ internal static class SetupHelpers
                 logger.LogInformation("Entra ID Application: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{AppId}",
                     blueprintProp.GetString());
             }
-
-            logger.LogInformation("");
-            logger.LogInformation("Next Steps:");
-            logger.LogInformation("   1. Review Azure resources in the portal");
-            logger.LogInformation("   2. View configuration: a365 config display");
-            logger.LogInformation("   3. Create agent instance: a365 create-instance identity");
-            logger.LogInformation("   4. Deploy application: a365 deploy app");
-            logger.LogInformation("");
         }
         catch (Exception ex)
         {
@@ -92,20 +84,34 @@ internal static class SetupHelpers
         logger.LogInformation("Completed Steps:");
         if (results.InfrastructureCreated)
         {
-            logger.LogInformation("  [OK] Infrastructure created");
+            var status = results.InfrastructureAlreadyExisted ? "configured (already exists)" : "created";
+            logger.LogInformation("  [OK] Infrastructure {Status}", status);
         }
         if (results.BlueprintCreated)
         {
-            logger.LogInformation("  [OK] Agent blueprint created (Blueprint ID: {BlueprintId})", results.BlueprintId ?? "unknown");
+            var status = results.BlueprintAlreadyExisted ? "configured (already exists)" : "created";
+            logger.LogInformation("  [OK] Agent blueprint {Status} (Blueprint ID: {BlueprintId})", status, results.BlueprintId ?? "unknown");
         }
         if (results.McpPermissionsConfigured)
-            logger.LogInformation("  [OK] MCP server permissions configured");
+        {
+            var status = results.McpPermissionsAlreadyExisted ? "verified (already configured)" : "configured";
+            logger.LogInformation("  [OK] MCP server permissions {Status}", status);
+        }
         if (results.InheritablePermissionsConfigured)
-            logger.LogInformation("  [OK] Inheritable permissions configured");
+        {
+            var status = results.InheritablePermissionsAlreadyExisted ? "verified (already configured)" : "configured";
+            logger.LogInformation("  [OK] Inheritable permissions {Status}", status);
+        }
         if (results.BotApiPermissionsConfigured)
-            logger.LogInformation("  [OK] Messaging Bot API permissions configured");
+        {
+            var status = results.BotApiPermissionsAlreadyExisted ? "verified (already configured)" : "configured";
+            logger.LogInformation("  [OK] Messaging Bot API permissions {Status}", status);
+        }
         if (results.MessagingEndpointRegistered)
-            logger.LogInformation("  [OK] Messaging endpoint registered");
+        {
+            var status = results.EndpointAlreadyExisted ? "configured (already exists)" : "created";
+            logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
+        }
         
         // Show what failed
         if (results.Errors.Count > 0)
@@ -156,7 +162,7 @@ internal static class SetupHelpers
             if (!results.MessagingEndpointRegistered)
             {
                 logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
-                logger.LogInformation("    Or delete conflicting endpoint first: a365 cleanup azure");
+                logger.LogInformation("    If there's a conflicting endpoint, delete it first: a365 cleanup blueprint --endpoint-only");
             }
         }
         else if (results.HasWarnings)
@@ -177,6 +183,7 @@ internal static class SetupHelpers
     /// Unified method to configure all permissions (OAuth2 grants, required resource access, inheritable permissions) for a resource
     /// </summary>
     /// <param name="graph">Graph API service</param>
+    /// <param name="blueprintService">Agent blueprint service for permissions operations</param>
     /// <param name="config">Agent365 configuration</param>
     /// <param name="resourceAppId">The resource application ID to grant permissions for</param>
     /// <param name="resourceName">Display name of the resource for logging</param>
@@ -188,6 +195,7 @@ internal static class SetupHelpers
     /// <param name="ct">Cancellation token</param>
     public static async Task EnsureResourcePermissionsAsync(
         GraphApiService graph,
+        AgentBlueprintService blueprintService,
         Agent365Config config,
         string resourceAppId,
         string resourceName,
@@ -201,7 +209,24 @@ internal static class SetupHelpers
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
             throw new SetupValidationException("AgentBlueprintId (appId) is required.");
 
-        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct);
+        // Use delegated token provider for *all* permission operations to avoid bouncing between Azure CLI auth and Microsoft Graph PowerShell auth.
+        var permissionGrantScopes = AuthenticationConstants.RequiredPermissionGrantScopes;
+
+        // Pre-warm the delegated token once
+        var user = await graph.GraphGetAsync(
+            config.TenantId,
+            "/v1.0/me?$select=id",
+            ct,
+            scopes: permissionGrantScopes);
+        
+        if (user == null)
+        {
+            throw new SetupValidationException(
+                "Failed to authenticate to Microsoft Graph with delegated permissions. " +
+                "Please sign in when prompted and ensure your account has the required roles and permission scopes.");
+        }
+
+        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct, permissionGrantScopes);
         if (string.IsNullOrWhiteSpace(blueprintSpObjectId))
         {
             throw new SetupValidationException($"Blueprint Service Principal not found for appId {config.AgentBlueprintId}. " +
@@ -209,7 +234,7 @@ internal static class SetupHelpers
         }
 
         // Ensure resource service principal exists
-        var resourceSpObjectId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, resourceAppId, ct);
+        var resourceSpObjectId = await graph.EnsureServicePrincipalForAppIdAsync(config.TenantId, resourceAppId, ct, permissionGrantScopes);
         if (string.IsNullOrWhiteSpace(resourceSpObjectId))
         {
             throw new SetupValidationException($"{resourceName} Service Principal not found for appId {resourceAppId}. " +
@@ -220,7 +245,7 @@ internal static class SetupHelpers
         if (addToRequiredResourceAccess)
         {
             logger.LogInformation("   - Adding {ResourceName} to blueprint's required resource access", resourceName);
-            var addedResourceAccess = await graph.AddRequiredResourceAccessAsync(
+            var addedResourceAccess = await blueprintService.AddRequiredResourceAccessAsync(
                 config.TenantId,
                 config.AgentBlueprintId,
                 resourceAppId,
@@ -239,7 +264,7 @@ internal static class SetupHelpers
             blueprintSpObjectId, resourceSpObjectId, string.Join(' ', scopes));
 
         var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
-            config.TenantId, blueprintSpObjectId, resourceSpObjectId, scopes, ct);
+            config.TenantId, blueprintSpObjectId, resourceSpObjectId, scopes, ct, permissionGrantScopes);
 
         if (!response)
         {
@@ -255,19 +280,28 @@ internal static class SetupHelpers
 
         if (setInheritablePermissions)
         {
-            logger.LogInformation("   - Inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
+            logger.LogInformation("   - Configuring inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
                 config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
             // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation
             var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
             
-            var (ok, alreadyExists, err) = await graph.SetInheritablePermissionsAsync(
+            var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
                 config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
 
             if (!ok && !alreadyExists)
             {
                 throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
                     "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All and Application.ReadWrite.All permissions in your custom client app.");
+            }
+
+            if (alreadyExists)
+            {
+                logger.LogInformation("   - Inheritable permissions already configured for {ResourceName}", resourceName);
+            }
+            else
+            {
+                logger.LogInformation("   - Inheritable permissions created for {ResourceName}", resourceName);
             }
 
             inheritanceConfigured = true;
@@ -282,7 +316,7 @@ internal static class SetupHelpers
                 var verificationResult = await retryHelper.ExecuteWithRetryAsync(
                     operation: async (ct) =>
                     {
-                        var (exists, verifiedScopes, verifyError) = await graph.VerifyInheritablePermissionsAsync(
+                        var (exists, verifiedScopes, verifyError) = await blueprintService.VerifyInheritablePermissionsAsync(
                             config.TenantId, config.AgentBlueprintId, resourceAppId, ct, requiredPermissions);
                         return (exists, verifiedScopes, verifyError);
                     },
@@ -336,6 +370,22 @@ internal static class SetupHelpers
                 // Verification is non-critical - log warning but don't fail setup
                 logger.LogWarning("Failed to verify {ResourceName} inheritable permissions: {Message}. Setup will continue.", resourceName, verifyEx.Message);
                 setupResults?.Warnings.Add($"Could not verify {resourceName} inheritable permissions: {verifyEx.Message}");
+            }
+        }
+
+        // Track if permissions already existed for accurate summary logging
+        if (setupResults != null && inheritanceConfigured)
+        {
+            // Update flags based on resource type
+            if (resourceName.Contains("Tools", StringComparison.OrdinalIgnoreCase) || 
+                resourceName.Contains("MCP", StringComparison.OrdinalIgnoreCase))
+            {
+                setupResults.McpPermissionsAlreadyExisted = inheritanceAlreadyExisted;
+                setupResults.InheritablePermissionsAlreadyExisted = inheritanceAlreadyExisted;
+            }
+            else if (resourceName.Contains("Bot", StringComparison.OrdinalIgnoreCase))
+            {
+                setupResults.BotApiPermissionsAlreadyExisted = inheritanceAlreadyExisted;
             }
         }
 
