@@ -333,8 +333,8 @@ public static class InfrastructureSubcommand
         if (!accountCheck.Success)
         {
             logger.LogInformation("Azure CLI not authenticated. Initiating login with management scope...");
-            logger.LogInformation("A browser window will open for authentication.");
-            
+            logger.LogInformation("A browser window will open for authentication. Please check your taskbar or browser if you don't see it.");
+
             var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
             
             if (!loginResult.Success)

@@ -706,10 +706,16 @@ internal static class BlueprintSubcommand
                 ["signInAudience"] = "AzureADMultipleOrgs" // Multi-tenant
             };
 
-            // Add sponsors field if we have the current user (PowerShell script includes this)
+            // Add sponsors and owners fields if we have the current user
+            // IMPORTANT: Setting owners during creation is required to avoid 2-call pattern that will fail due to Entra bug fix
+            // See: https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/create-blueprint?tabs=microsoft-graph-api#create-an-agent-identity-blueprint-1
             if (!string.IsNullOrEmpty(sponsorUserId))
             {
                 appManifest["sponsors@odata.bind"] = new JsonArray
+                {
+                    $"https://graph.microsoft.com/v1.0/users/{sponsorUserId}"
+                };
+                appManifest["owners@odata.bind"] = new JsonArray
                 {
                     $"https://graph.microsoft.com/v1.0/users/{sponsorUserId}"
                 };
@@ -733,7 +739,7 @@ internal static class BlueprintSubcommand
             logger.LogInformation("  - Display Name: {DisplayName}", displayName);
             if (!string.IsNullOrEmpty(sponsorUserId))
             {
-                logger.LogInformation("  - Sponsor: User ID {UserId}", sponsorUserId);
+                logger.LogInformation("  - Sponsor and Owner: User ID {UserId}", sponsorUserId);
             }
 
             var appResponse = await httpClient.PostAsync(
@@ -745,14 +751,15 @@ internal static class BlueprintSubcommand
             {
                 var errorContent = await appResponse.Content.ReadAsStringAsync(ct);
 
-                // If sponsors field causes error (Bad Request 400), retry without it
+                // If sponsors/owners fields cause error (Bad Request 400), retry without them
                 if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest &&
                     !string.IsNullOrEmpty(sponsorUserId))
                 {
-                    logger.LogWarning("Agent Blueprint creation with sponsors failed (Bad Request). Retrying without sponsors...");
+                    logger.LogWarning("Agent Blueprint creation with sponsors and owners failed (Bad Request). Retrying without sponsors/owners...");
 
-                    // Remove sponsors field and retry
+                    // Remove sponsors and owners fields and retry
                     appManifest.Remove("sponsors@odata.bind");
+                    appManifest.Remove("owners@odata.bind");
 
                     appResponse = await httpClient.PostAsync(
                         createAppUrl,
@@ -947,28 +954,42 @@ internal static class BlueprintSubcommand
         CancellationToken ct)
     {
         // ========================================================================
-        // Application Owner Assignment
+        // Application Owner Validation
         // ========================================================================
 
-        // Add current user as owner to the application (for both new and existing blueprints)
-        // This ensures the creator can set callback URLs and bot IDs via the Developer Portal
-        // Requires Application.ReadWrite.All or Directory.ReadWrite.All permissions
-        logger.LogInformation("Ensuring current user is owner of application...");
-        var ownerScopes = new[] { GraphApiConstants.Scopes.ApplicationReadWriteAll };
-        var ownerAdded = await graphApiService.AddApplicationOwnerAsync(
-            tenantId,
-            objectId,
-            userObjectId: null,
-            ct,
-            scopes: ownerScopes);
-        if (ownerAdded)
+        // Owner assignment is handled during blueprint creation via owners@odata.bind
+        // NOTE: The 2-call pattern (POST blueprint, then POST owner) will fail due to Entra bug fix
+        //       For existing blueprints, owners must be manually managed via Azure Portal or Graph API
+        //       We cannot add owners after blueprint creation
+
+        if (!alreadyExisted)
         {
-            logger.LogInformation("Current user is an owner of the application");
+            // For new blueprints, verify that the owner was set during creation
+            logger.LogInformation("Validating blueprint owner assignment...");
+            var isOwner = await graphApiService.IsApplicationOwnerAsync(
+                tenantId,
+                objectId,
+                userObjectId: null,
+                ct);
+
+            if (isOwner)
+            {
+                logger.LogInformation("Current user is confirmed as blueprint owner");
+            }
+            else
+            {
+                logger.LogWarning("WARNING: Current user is NOT set as blueprint owner");
+                logger.LogWarning("This may have occurred if the owners@odata.bind field was rejected during creation");
+                logger.LogWarning("You may need to manually add yourself as owner via Azure Portal:");
+                logger.LogWarning("  1. Go to Azure Portal -> Entra ID -> App registrations");
+                logger.LogWarning("  2. Find application: {DisplayName}", displayName);
+                logger.LogWarning("  3. Navigate to Owners blade and add yourself");
+                logger.LogWarning("Without owner permissions, you cannot configure callback URLs or bot IDs in Developer Portal");
+            }
         }
         else
         {
-            logger.LogWarning("Could not verify or add current user as application owner");
-            logger.LogWarning("See detailed error above or refer to: https://learn.microsoft.com/en-us/graph/api/application-post-owners?view=graph-rest-beta");
+            logger.LogInformation("Skipping owner validation for existing blueprint (owners@odata.bind not applied to existing blueprints)");
         }
 
         // ========================================================================
