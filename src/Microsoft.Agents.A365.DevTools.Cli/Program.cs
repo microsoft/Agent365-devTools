@@ -48,6 +48,33 @@ class Program
             ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
 
+            // Check for updates (non-blocking, with timeout)
+            try
+            {
+                var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                var result = await versionCheckService.CheckForUpdatesAsync(cts.Token);
+
+                if (result.UpdateAvailable)
+                {
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning("A newer version of the Agent365 CLI is available!");
+                    startupLogger.LogWarning("Current version: {Current}", result.CurrentVersion);
+                    startupLogger.LogWarning("Latest version:  {Latest}", result.LatestVersion);
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning("To update, run: {Command}", result.UpdateCommand);
+                    startupLogger.LogWarning("");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                startupLogger.LogDebug("Version check timed out");
+            }
+            catch (Exception ex)
+            {
+                startupLogger.LogDebug(ex, "Version check failed: {Message}", ex.Message);
+            }
+
             // Create root command
             var rootCommand = new RootCommand($"Agent 365 Developer Tools CLI v{version} – Build, deploy, and manage AI agents for Microsoft 365.");
 
@@ -167,6 +194,7 @@ class Program
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
+        services.AddSingleton<IVersionCheckService, VersionCheckService>();
 
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
