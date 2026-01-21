@@ -107,8 +107,21 @@ public class VersionCheckService : IVersionCheckService
                 return null;
             }
 
-            // Return the last version in the array (latest)
-            return versionResponse.Versions[^1];
+            // Sort versions semantically and return the latest
+            // NuGet API typically returns versions in chronological order, but we sort to be safe
+            var sortedVersions = versionResponse.Versions
+                .Select(v => new { Original = v, Parsed = TryParseVersion(v) })
+                .Where(v => v.Parsed != null)
+                .OrderByDescending(v => v.Parsed)
+                .ToList();
+
+            if (sortedVersions.Count == 0)
+            {
+                _logger.LogDebug("No valid versions found in NuGet response");
+                return null;
+            }
+
+            return sortedVersions[0].Original;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -147,37 +160,58 @@ public class VersionCheckService : IVersionCheckService
     /// </summary>
     private Version ParseVersion(string versionString)
     {
-        // Remove any build metadata (+...) and pre-release tags (-...)
-        var cleanVersion = versionString.Split('+')[0]; // Remove build metadata
-        
-        // For preview versions, extract just the base version number
-        if (cleanVersion.Contains('-'))
+        var parsed = TryParseVersion(versionString);
+        if (parsed == null)
         {
-            var parts = cleanVersion.Split('-');
-            // Use the numeric part before the dash as base version
-            cleanVersion = parts[0];
-            
-            // If there's a preview number, append it as the fourth component
-            if (parts.Length > 1 && parts[1].StartsWith("preview."))
+            throw new FormatException($"Invalid version format: {versionString}");
+        }
+        return parsed;
+    }
+
+    /// <summary>
+    /// Tries to parse a semantic version string into a comparable Version object.
+    /// Returns null if parsing fails.
+    /// </summary>
+    private Version? TryParseVersion(string versionString)
+    {
+        try
+        {
+            // Remove any build metadata (+...) and pre-release tags (-...)
+            var cleanVersion = versionString.Split('+')[0]; // Remove build metadata
+
+            // For preview versions, extract just the base version number
+            if (cleanVersion.Contains('-'))
             {
-                var previewNumber = parts[1].Replace("preview.", "");
-                if (int.TryParse(previewNumber, out var preview))
+                var parts = cleanVersion.Split('-');
+                // Use the numeric part before the dash as base version
+                cleanVersion = parts[0];
+
+                // If there's a preview number, append it as the fourth component
+                if (parts.Length > 1 && parts[1].StartsWith("preview."))
                 {
-                    // Append preview number as revision component
-                    cleanVersion = $"{cleanVersion}.{preview}";
+                    var previewNumber = parts[1].Replace("preview.", "");
+                    if (int.TryParse(previewNumber, out var preview))
+                    {
+                        // Append preview number as revision component
+                        cleanVersion = $"{cleanVersion}.{preview}";
+                    }
                 }
             }
-        }
 
-        // Ensure we have at least 3 components for Version constructor
-        var versionParts = cleanVersion.Split('.');
-        while (versionParts.Length < 3)
+            // Ensure we have at least 3 components for Version constructor
+            var versionParts = cleanVersion.Split('.');
+            while (versionParts.Length < 3)
+            {
+                cleanVersion += ".0";
+                versionParts = cleanVersion.Split('.');
+            }
+
+            return new Version(cleanVersion);
+        }
+        catch
         {
-            cleanVersion += ".0";
-            versionParts = cleanVersion.Split('.');
+            return null;
         }
-
-        return new Version(cleanVersion);
     }
 
     /// <summary>

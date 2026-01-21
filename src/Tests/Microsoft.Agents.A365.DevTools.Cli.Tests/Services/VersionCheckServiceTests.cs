@@ -62,15 +62,10 @@ public class VersionCheckServiceTests
         // Arrange
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
 
-        // Act
-        Func<Task> act = async () => await _versionCheckService.CheckForUpdatesAsync(cts.Token);
-
-        // Assert - Either completes successfully or throws OperationCanceledException
+        // Act & Assert - Should either complete successfully or throw OperationCanceledException
         try
         {
-            await act();
-            // If we get here, the call completed successfully
-            true.Should().BeTrue();
+            await _versionCheckService.CheckForUpdatesAsync(cts.Token);
         }
         catch (OperationCanceledException)
         {
