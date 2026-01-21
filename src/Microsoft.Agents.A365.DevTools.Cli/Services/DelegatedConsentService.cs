@@ -200,6 +200,9 @@ public sealed class DelegatedConsentService
                         return null;
                     }
                     
+                    // Trim token to remove any newline characters that may cause header validation errors
+                    freshToken = freshToken.Trim();
+                    
                     // Update the HTTP client with fresh token
                     httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", freshToken);
                     
