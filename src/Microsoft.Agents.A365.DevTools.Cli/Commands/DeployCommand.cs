@@ -397,7 +397,7 @@ public class DeployCommand
 
         if (!ok) throw new InvalidOperationException("Failed to update oauth2PermissionGrant.");
 
-        logger.LogInformation("   - OAuth2 granted: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
+        logger.LogDebug("   - OAuth2 granted: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
             blueprintSpObjectId, mcpPlatformSpObjectId, string.Join(' ', scopes));
     }
 
