@@ -260,7 +260,7 @@ internal static class SetupHelpers
         }
 
         // 2. Grant OAuth2 permissions (admin consent)
-        logger.LogInformation("   - OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
+        logger.LogDebug("   - OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
             blueprintSpObjectId, resourceSpObjectId, string.Join(' ', scopes));
 
         var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
