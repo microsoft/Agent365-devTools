@@ -196,6 +196,9 @@ public class GraphApiService
         
         if (string.IsNullOrWhiteSpace(token)) return false;
 
+        // Trim token to remove any newline characters that may cause header validation errors
+        token = token.Trim();
+
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         // NOTE: Do NOT add "ConsistencyLevel: eventual" header here.
         // This header is only required for advanced Graph query capabilities ($count, $search, certain $filter operations).
@@ -428,6 +431,9 @@ public class GraphApiService
                 _logger.LogWarning("Could not acquire Graph token to check privileges");
                 return (false, new List<string>());
             }
+
+            // Trim token to remove any newline characters that may cause header validation errors
+            token = token.Trim();
 
             using var request = new HttpRequestMessage(HttpMethod.Get,
                 "https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.directoryRole");
