@@ -15,7 +15,6 @@ public class VersionCheckService : IVersionCheckService
 {
     private const string NuGetApiUrl = "https://api.nuget.org/v3-flatcontainer/microsoft.agents.a365.devtools.cli/index.json";
     private const string PackageId = "Microsoft.Agents.A365.DevTools.Cli";
-    private const string UpdateCommand = "dotnet tool update -g Microsoft.Agents.A365.DevTools.Cli";
 
     private readonly ILogger<VersionCheckService> _logger;
     private readonly string _currentVersion;
@@ -61,7 +60,10 @@ public class VersionCheckService : IVersionCheckService
                 _logger.LogDebug("Running latest version: {CurrentVersion}", _currentVersion);
             }
 
-            return new VersionCheckResult(updateAvailable, _currentVersion, latestVersion, UpdateCommand);
+            // Generate update command based on whether the latest version is a preview
+            var updateCommand = GetUpdateCommand(latestVersion);
+
+            return new VersionCheckResult(updateAvailable, _currentVersion, latestVersion, updateCommand);
         }
         catch (OperationCanceledException)
         {
@@ -176,34 +178,53 @@ public class VersionCheckService : IVersionCheckService
     /// <summary>
     /// Tries to parse a semantic version string into a comparable Version object.
     /// Returns null if parsing fails.
-    /// 
+    ///
     /// Note: This parsing treats preview versions as comparable by their preview number.
-    /// For example, "1.1.0-preview.50" becomes "1.1.0.50" for comparison purposes.
-    /// This is appropriate since we're comparing preview-to-preview versions (the package is in preview).
+    /// Handles two formats:
+    /// - "1.1.52-preview" (version number includes preview iteration)
+    /// - "1.1.0-preview.50" (preview number is separate)
     /// </summary>
     private Version? TryParseVersion(string versionString)
     {
         try
         {
-            // Remove any build metadata (+...) and pre-release tags (-...)
-            var cleanVersion = versionString.Split('+')[0]; // Remove build metadata
+            // Remove any build metadata (+...)
+            var cleanVersion = versionString.Split('+')[0];
 
-            // For preview versions, extract just the base version number
+            // For preview versions, extract the version number
             if (cleanVersion.Contains('-'))
             {
                 var parts = cleanVersion.Split('-');
-                // Use the numeric part before the dash as base version
-                cleanVersion = parts[0];
+                var baseVersion = parts[0]; // e.g., "1.1.52" or "1.1.0"
 
-                // If there's a preview number, append it as the fourth component
-                if (parts.Length > 1 && parts[1].StartsWith("preview."))
+                // Check if there's a preview number after the dash
+                if (parts.Length > 1)
                 {
-                    var previewNumber = parts[1].Replace("preview.", "");
-                    if (int.TryParse(previewNumber, out var preview))
+                    var previewPart = parts[1]; // e.g., "preview" or "preview.50"
+
+                    // Format 1: "1.1.0-preview.50" - append preview number as revision
+                    if (previewPart.StartsWith("preview.") && previewPart.Length > 8)
                     {
-                        // Append preview number as revision component
-                        cleanVersion = $"{cleanVersion}.{preview}";
+                        var previewNumber = previewPart.Substring(8); // Get number after "preview."
+                        if (int.TryParse(previewNumber, out var preview))
+                        {
+                            cleanVersion = $"{baseVersion}.{preview}";
+                        }
+                        else
+                        {
+                            // If parsing fails, just use base version
+                            cleanVersion = baseVersion;
+                        }
                     }
+                    // Format 2: "1.1.52-preview" - version already includes iteration number
+                    else
+                    {
+                        cleanVersion = baseVersion;
+                    }
+                }
+                else
+                {
+                    cleanVersion = baseVersion;
                 }
             }
 
@@ -221,6 +242,24 @@ public class VersionCheckService : IVersionCheckService
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Generates the appropriate update command based on the version type.
+    /// </summary>
+    /// <param name="version">The version string to check for preview status.</param>
+    /// <returns>The dotnet tool update command with or without --prerelease flag.</returns>
+    private static string GetUpdateCommand(string version)
+    {
+        var baseCommand = $"dotnet tool update -g {PackageId}";
+
+        // If the version contains "preview", add the --prerelease flag
+        if (version.Contains("preview", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{baseCommand} --prerelease";
+        }
+
+        return baseCommand;
     }
 
     /// <summary>

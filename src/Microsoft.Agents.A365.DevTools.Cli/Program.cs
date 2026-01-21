@@ -58,10 +58,11 @@ class Program
                 if (result.UpdateAvailable)
                 {
                     startupLogger.LogWarning("");
-                    startupLogger.LogWarning("A newer version of the Agent365 CLI is available!");
-                    startupLogger.LogWarning("Current version: {Current}", result.CurrentVersion);
-                    startupLogger.LogWarning("Latest version:  {Latest}", result.LatestVersion);
+                    startupLogger.LogWarning("A newer version is available with bug fixes and improvements.");
+                    startupLogger.LogWarning("  Current: {Current}", result.CurrentVersion);
+                    startupLogger.LogWarning("  Latest:  {Latest}", result.LatestVersion);
                     startupLogger.LogWarning("");
+                    startupLogger.LogWarning("What's new: https://github.com/microsoft/Agent365-devTools/releases");
                     startupLogger.LogWarning("To update, run: {Command}", result.UpdateCommand);
                     startupLogger.LogWarning("");
                 }
