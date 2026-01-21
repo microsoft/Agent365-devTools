@@ -78,6 +78,11 @@ public class VersionCheckService : IVersionCheckService
     /// <summary>
     /// Queries the NuGet V3 API to get the latest version of the package.
     /// </summary>
+    /// <remarks>
+    /// Uses HttpClientFactory.CreateAuthenticatedClient, which is the established pattern
+    /// in this codebase for creating HTTP clients. This is a static factory method that
+    /// properly configures and returns a new HttpClient instance.
+    /// </remarks>
     private async Task<string?> GetLatestVersionFromNuGetAsync(CancellationToken cancellationToken)
     {
         try
@@ -158,7 +163,7 @@ public class VersionCheckService : IVersionCheckService
     /// Parses a semantic version string into a comparable Version object.
     /// Handles formats like "1.1.0-preview.123+git.hash".
     /// </summary>
-    private Version ParseVersion(string versionString)
+    internal Version ParseVersion(string versionString)
     {
         var parsed = TryParseVersion(versionString);
         if (parsed == null)
@@ -171,6 +176,10 @@ public class VersionCheckService : IVersionCheckService
     /// <summary>
     /// Tries to parse a semantic version string into a comparable Version object.
     /// Returns null if parsing fails.
+    /// 
+    /// Note: This parsing treats preview versions as comparable by their preview number.
+    /// For example, "1.1.0-preview.50" becomes "1.1.0.50" for comparison purposes.
+    /// This is appropriate since we're comparing preview-to-preview versions (the package is in preview).
     /// </summary>
     private Version? TryParseVersion(string versionString)
     {

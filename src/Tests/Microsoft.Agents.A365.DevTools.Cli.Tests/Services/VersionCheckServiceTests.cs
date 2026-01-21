@@ -83,12 +83,10 @@ public class VersionCheckServiceTests
     [InlineData("1.1.0-preview.100", "1.1.0-preview.50", false)] // Current preview is newer
     public void ParseVersion_ComparesVersionsCorrectly(string current, string latest, bool expectedNewerAvailable)
     {
-        // This tests the internal version comparison logic indirectly
-        // by observing the behavior through ParseVersion
-        var currentVersion = InvokePrivateMethod<Version>(_versionCheckService, "ParseVersion", current);
-        var latestVersion = InvokePrivateMethod<Version>(_versionCheckService, "ParseVersion", latest);
+        // Act - ParseVersion is internal, accessible to test assembly
+        var currentVersion = _versionCheckService.ParseVersion(current);
+        var latestVersion = _versionCheckService.ParseVersion(latest);
 
-        // Act
         var isNewer = latestVersion > currentVersion;
 
         // Assert
@@ -119,13 +117,5 @@ public class VersionCheckServiceTests
             // Cleanup
             Environment.SetEnvironmentVariable(envVar, null);
         }
-    }
-
-    // Helper method to invoke private methods for testing
-    private T InvokePrivateMethod<T>(object obj, string methodName, params object[] parameters)
-    {
-        var method = obj.GetType().GetMethod(methodName, 
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        return (T)method!.Invoke(obj, parameters)!;
     }
 }
