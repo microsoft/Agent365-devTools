@@ -109,6 +109,8 @@ public static class McpConstants
 
                 // User/Me servers
                 ["MCP_MeTools"] = ("McpServers.Me.All", "api://mcp-metools"),
+                ["MCP_MeServer"] = ("McpServers.Me.All", "api://mcp-meserver"),
+                ["mcp_meserver"] = ("McpServers.Me.All", "api://mcp-meserver"),
                 ["MeMCPServer"] = ("McpServers.Me.All", "api://mcp-meserver"),
 
                 // Admin servers
