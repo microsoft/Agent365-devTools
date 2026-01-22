@@ -37,12 +37,12 @@ public class AuthenticationService
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
     /// <param name="scopes">Optional explicit scopes to request. If not provided, uses .default scope pattern</param>
     public async Task<string> GetAccessTokenAsync(
-        string resourceUrl, 
-        string? tenantId = null, 
-        bool forceRefresh = false, 
+        string resourceUrl,
+        string? tenantId = null,
+        bool forceRefresh = false,
         string? clientId = null,
         IEnumerable<string>? scopes = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = true)
     {
         // Build cache key based on resource and tenant only
         // Azure AD returns tokens with all consented scopes regardless of which scopes are requested,
@@ -338,12 +338,12 @@ public class AuthenticationService
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
     /// <returns>Access token with the requested scopes</returns>
     public async Task<string> GetAccessTokenWithScopesAsync(
-        string resourceAppId, 
-        IEnumerable<string> scopes, 
-        string? tenantId = null, 
+        string resourceAppId,
+        IEnumerable<string> scopes,
+        string? tenantId = null,
         bool forceRefresh = false,
         string? clientId = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = true)
     {
         if (string.IsNullOrWhiteSpace(resourceAppId))
             throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));

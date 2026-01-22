@@ -63,7 +63,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     public async Task<string?> GetMgGraphAccessTokenAsync(
         string tenantId,
         IEnumerable<string> scopes,
-        bool useDeviceCode = true,
+        bool useDeviceCode = false,
         string? clientAppId = null,
         CancellationToken ct = default)
     {
@@ -180,7 +180,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         var escapedTenantId = CommandStringHelper.EscapePowerShellString(tenantId);
         var scopesArray = BuildScopesArray(scopes);
 
-        // Use -UseDeviceCode for CLI-friendly authentication (no browser popup/download)
+        // Use interactive browser auth by default (useDeviceCode=false)
+        // If useDeviceCode=true, use device code flow instead
         var authMethod = useDeviceCode ? "-UseDeviceCode" : "";
         
         // Include -ClientId parameter if provided (ensures authentication uses the custom client app)
