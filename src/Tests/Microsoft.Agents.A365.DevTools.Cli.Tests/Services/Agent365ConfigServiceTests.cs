@@ -208,6 +208,130 @@ public class Agent365ConfigServiceTests : IDisposable
         Assert.DoesNotContain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", secondContent);
     }
 
+    [Fact]
+    public async Task SaveStateAsync_SavesLocallyWhenStaticConfigExists()
+    {
+        // Arrange - Create a project directory with a static config
+        var projectDir = Path.Combine(Path.GetTempPath(), $"agent365-project-{Guid.NewGuid()}");
+        Directory.CreateDirectory(projectDir);
+        
+        try
+        {
+            var originalDir = Environment.CurrentDirectory;
+            Environment.CurrentDirectory = projectDir;
+            
+            try
+            {
+                // Create a static config file in the project directory
+                var staticConfigPath = Path.Combine(projectDir, "a365.config.json");
+                var staticConfig = new
+                {
+                    tenantId = "12345678-1234-1234-1234-123456789012",
+                    subscriptionId = "87654321-4321-4321-4321-210987654321",
+                    resourceGroup = "rg-test",
+                    location = "eastus",
+                    appServicePlanName = "asp-test",
+                    webAppName = "webapp-test",
+                    agentIdentityDisplayName = "Test Agent"
+                };
+                await File.WriteAllTextAsync(staticConfigPath, JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true }));
+
+                // Create a config to save
+                var config = new Agent365Config { TenantId = "12345678-1234-1234-1234-123456789012" };
+                config.AgentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+                // Get global config path to verify it's NOT written there
+                var globalDir = ConfigService.GetGlobalConfigDirectory();
+                var globalStatePath = Path.Combine(globalDir, "a365.generated.config.json");
+                
+                // Delete global state if it exists to ensure clean test
+                if (File.Exists(globalStatePath))
+                {
+                    File.Delete(globalStatePath);
+                }
+
+                // Act - Save state (should go to local directory, NOT global)
+                await _service.SaveStateAsync(config, "a365.generated.config.json");
+
+                // Assert - State should be saved locally
+                var localStatePath = Path.Combine(projectDir, "a365.generated.config.json");
+                Assert.True(File.Exists(localStatePath), "Local state file should exist in project directory");
+                
+                var localContent = await File.ReadAllTextAsync(localStatePath);
+                Assert.Contains("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", localContent);
+
+                // Assert - State should NOT be saved to global directory
+                Assert.False(File.Exists(globalStatePath), "Global state file should NOT exist when saving in a project directory");
+            }
+            finally
+            {
+                Environment.CurrentDirectory = originalDir;
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(projectDir))
+            {
+                Directory.Delete(projectDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SaveStateAsync_SavesGloballyWhenNoStaticConfigExists()
+    {
+        // Arrange - Use a directory without a static config
+        var tempDir = Path.Combine(Path.GetTempPath(), $"agent365-noproj-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        
+        try
+        {
+            var originalDir = Environment.CurrentDirectory;
+            Environment.CurrentDirectory = tempDir;
+            
+            try
+            {
+                // Create a config to save
+                var config = new Agent365Config { TenantId = "12345678-1234-1234-1234-123456789012" };
+                config.AgentBlueprintId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+
+                // Get global config path
+                var globalDir = ConfigService.GetGlobalConfigDirectory();
+                var globalStatePath = Path.Combine(globalDir, "a365.generated.config.json");
+                
+                // Delete global state if it exists to ensure clean test
+                if (File.Exists(globalStatePath))
+                {
+                    File.Delete(globalStatePath);
+                }
+
+                // Act - Save state (should go to global directory, NOT local)
+                await _service.SaveStateAsync(config, "a365.generated.config.json");
+
+                // Assert - State should be saved globally
+                Assert.True(File.Exists(globalStatePath), "Global state file should exist when no local config present");
+                
+                var globalContent = await File.ReadAllTextAsync(globalStatePath);
+                Assert.Contains("bbbbbbbb-cccc-dddd-eeee-ffffffffffff", globalContent);
+
+                // Assert - State should NOT be saved to current directory
+                var localStatePath = Path.Combine(tempDir, "a365.generated.config.json");
+                Assert.False(File.Exists(localStatePath), "Local state file should NOT exist when no static config present");
+            }
+            finally
+            {
+                Environment.CurrentDirectory = originalDir;
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
     #endregion
 
     #region ValidateAsync Tests
