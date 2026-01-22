@@ -307,7 +307,8 @@ internal static class BlueprintSubcommand
             delegatedConsentService,
             setupConfig.ClientAppId,
             setupConfig.TenantId,
-            logger);
+            logger,
+            correlationId: correlationId);
 
         if (!consentResult)
         {
@@ -525,7 +526,8 @@ internal static class BlueprintSubcommand
         string clientAppId,
         string tenantId,
         ILogger logger,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? correlationId = null)
     {
         var retryHelper = new RetryHelper(logger);
 
@@ -537,7 +539,8 @@ internal static class BlueprintSubcommand
                     return await delegatedConsentService.EnsureBlueprintPermissionGrantAsync(
                         clientAppId,
                         tenantId,
-                        ct);
+                        ct,
+                        correlationId: correlationId);
                 },
                 result => !result,
                 maxRetries: 3,

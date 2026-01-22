@@ -38,18 +38,17 @@ public sealed class DelegatedConsentService
     /// <param name="callingAppId">Application ID of the custom client app from configuration</param>
     /// <param name="tenantId">Tenant ID where the permission grant will be created</param>
     /// <param name="cancellationToken">Cancellation token</param>
+    /// <param name="correlationId">Correlation Id</param>
     /// <returns>True if grant was created or updated successfully</returns>
     public async Task<bool> EnsureBlueprintPermissionGrantAsync(
         string callingAppId,
         string tenantId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? correlationId = null)
     {
-        // Generate correlation ID at workflow entry point
-        var correlationId = HttpClientFactory.GenerateCorrelationId();
-
         try
         {
-            _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app (CorrelationId: {CorrelationId})", correlationId);
+            _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app");
             _logger.LogInformation("    Client App ID: {AppId}", callingAppId);
             _logger.LogInformation("    Tenant ID: {TenantId}", tenantId);
             _logger.LogInformation("    Required Scope: {Scope}", TargetScope);
