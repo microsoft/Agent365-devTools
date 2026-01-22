@@ -90,9 +90,9 @@ public class VersionCheckService : IVersionCheckService
         try
         {
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(authToken: null);
-            
-            var response = await httpClient.GetAsync(NuGetApiUrl, cancellationToken);
-            
+
+            using var response = await httpClient.GetAsync(NuGetApiUrl, cancellationToken);
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogDebug("NuGet API returned status code: {StatusCode}", response.StatusCode);
@@ -206,15 +206,9 @@ public class VersionCheckService : IVersionCheckService
                     if (previewPart.StartsWith("preview.") && previewPart.Length > 8)
                     {
                         var previewNumber = previewPart.Substring(8); // Get number after "preview."
-                        if (int.TryParse(previewNumber, out var preview))
-                        {
-                            cleanVersion = $"{baseVersion}.{preview}";
-                        }
-                        else
-                        {
-                            // If parsing fails, just use base version
-                            cleanVersion = baseVersion;
-                        }
+                        cleanVersion = int.TryParse(previewNumber, out var preview)
+                            ? $"{baseVersion}.{preview}"
+                            : baseVersion; // If parsing fails, just use base version
                     }
                     // Format 2: "1.1.52-preview" - version already includes iteration number
                     else
@@ -230,10 +224,10 @@ public class VersionCheckService : IVersionCheckService
 
             // Ensure we have at least 3 components for Version constructor
             var versionParts = cleanVersion.Split('.');
-            while (versionParts.Length < 3)
+            var componentsNeeded = 3 - versionParts.Length;
+            for (var i = 0; i < componentsNeeded; i++)
             {
                 cleanVersion += ".0";
-                versionParts = cleanVersion.Split('.');
             }
 
             return new Version(cleanVersion);

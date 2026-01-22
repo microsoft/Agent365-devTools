@@ -9,6 +9,17 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+/// <summary>
+/// VersionCheck tests must run sequentially because they modify global environment variables.
+/// Running in parallel would cause race conditions when tests set/unset environment variables.
+/// </summary>
+[CollectionDefinition("VersionCheckTests", DisableParallelization = true)]
+public class VersionCheckTestCollection
+{
+    // This class is never instantiated. It exists only to define the collection.
+}
+
+[Collection("VersionCheckTests")]
 public class VersionCheckServiceTests
 {
     private readonly ILogger<VersionCheckService> _logger;
