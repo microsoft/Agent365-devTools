@@ -366,7 +366,7 @@ public class ConfigService : IConfigService
         }
 
         // For relative paths, check if we're in a project directory (has local static config)
-        var staticConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.config.json");
+        var staticConfigPath = Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
         bool hasLocalStaticConfig = File.Exists(staticConfigPath);
         
         if (hasLocalStaticConfig)
