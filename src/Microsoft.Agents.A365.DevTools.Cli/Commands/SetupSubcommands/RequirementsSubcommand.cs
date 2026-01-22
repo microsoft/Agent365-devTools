@@ -151,6 +151,9 @@ internal static class RequirementsSubcommand
     {
         return new List<IRequirementCheck>
         {
+            // Frontier Preview Program enrollment check
+            new FrontierPreviewRequirementCheck(),
+            
             // PowerShell modules required for Microsoft Graph operations
             new PowerShellModulesRequirementCheck(),
             
