@@ -12,7 +12,29 @@ using System.Text.Json;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for handling authentication to Agent 365 Tools
+/// Service for handling authentication to Agent 365 Tools and Microsoft Graph API.
+///
+/// AUTHENTICATION STRATEGY:
+/// - Uses interactive browser authentication by default (no device code flow)
+/// - Implements comprehensive token caching to minimize authentication prompts
+/// - Typical user experience: 1-2 authentication prompts for entire CLI workflow
+///
+/// TOKEN CACHING:
+/// - Cache Location: %LocalApplicationData%\Agent365\token-cache.json (Windows)
+/// - Cache Key Format: {resourceUrl}:tenant:{tenantId}
+/// - Cache Expiration: Validated with 5-minute buffer before token expiry
+/// - Reuse Across Commands: All CLI commands share the same token cache
+///
+/// AUTHENTICATION FLOW:
+/// 1. Check cache for valid token (tenant-specific)
+/// 2. If cache miss or expired: Prompt for interactive browser authentication
+/// 3. Cache new token for future CLI command invocations
+/// 4. Token persists across CLI sessions until expiration
+///
+/// MULTI-COMMAND WORKFLOW:
+/// - First command (e.g., 'setup all'): 1-2 authentication prompts
+/// - Subsequent commands: 0 prompts (uses cached tokens)
+/// - Token refresh: Automatic when within 5 minutes of expiration
 /// </summary>
 public class AuthenticationService
 {

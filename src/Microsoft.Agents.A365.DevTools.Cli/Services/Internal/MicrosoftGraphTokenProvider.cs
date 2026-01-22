@@ -17,6 +17,20 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
 /// Implements Microsoft Graph token acquisition via PowerShell Microsoft.Graph module.
+///
+/// AUTHENTICATION METHOD:
+/// - Uses Connect-MgGraph (PowerShell) for Graph API authentication
+/// - Default: Interactive browser authentication (useDeviceCode=false)
+/// - Device Code Flow: Available but NOT used by default (DCF discouraged in production)
+///
+/// TOKEN CACHING:
+/// - In-memory cache per CLI process: Tokens cached by (tenant + clientId + scopes)
+/// - Persistent cache: PowerShell module manages its own session cache
+/// - Reduces repeated Connect-MgGraph prompts during multi-step operations
+///
+/// USAGE:
+/// - Called by GraphApiService when specific scopes are required
+/// - Integrates with overall CLI authentication strategy (1-2 total prompts)
 /// </summary>
 public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, IDisposable
 {
