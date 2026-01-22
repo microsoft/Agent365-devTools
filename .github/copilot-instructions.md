@@ -41,6 +41,56 @@
   - Even in mock/test handlers, follow proper disposal patterns
   - Consider using `using` statements or ensure test handlers dispose responses
   - This applies to all `IDisposable` test objects to avoid analyzer warnings
+- **Disable parallel execution for tests with shared state**:
+  - Tests that modify environment variables must disable parallelization
+  - Tests that access shared file system resources must run sequentially
+  - Use `[CollectionDefinition("TestName", DisableParallelization = true)]` pattern
+  - Add `[Collection("TestName")]` attribute to test class
+  - **Pattern to follow**:
+    ```csharp
+    /// <summary>
+    /// Tests must run sequentially because they modify environment variables.
+    /// </summary>
+    [CollectionDefinition("EnvTests", DisableParallelization = true)]
+    public class EnvTestCollection { }
+
+    [Collection("EnvTests")]
+    public class MyTests
+    {
+        [Fact]
+        public void Test_ModifiesEnvironmentVariable()
+        {
+            Environment.SetEnvironmentVariable("VAR", "value");
+            try
+            {
+                // Test logic
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("VAR", null);
+            }
+        }
+    }
+    ```
+
+### Resource Management
+- **Always dispose IDisposable objects** to prevent resource leaks:
+  - `HttpResponseMessage` returned by `HttpClient.GetAsync()`, `PostAsync()`, etc. must be disposed
+  - Use `using` statements for automatic disposal: `using var response = await httpClient.GetAsync(...);`
+  - Even when checking `IsSuccessStatusCode` or reading content, wrap in `using`
+  - This applies to all HTTP responses, streams, file handles, and other disposable resources
+  - **Pattern to follow**:
+    ```csharp
+    // CORRECT - Dispose HttpResponseMessage
+    using var response = await httpClient.GetAsync(url, cancellationToken);
+    if (!response.IsSuccessStatusCode) { return null; }
+    var content = await response.Content.ReadAsStringAsync(cancellationToken);
+
+    // INCORRECT - Resource leak
+    var response = await httpClient.GetAsync(url, cancellationToken);
+    if (!response.IsSuccessStatusCode) { return null; }
+    var content = await response.Content.ReadAsStringAsync(cancellationToken);
+    ```
 
 ### Output and Logging
 - No emojis or special characters in logs, output, or comments
