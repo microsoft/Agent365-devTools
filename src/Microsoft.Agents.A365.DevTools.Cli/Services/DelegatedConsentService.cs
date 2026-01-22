@@ -44,9 +44,12 @@ public sealed class DelegatedConsentService
         string tenantId,
         CancellationToken cancellationToken = default)
     {
+        // Generate correlation ID at workflow entry point
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
         try
         {
-            _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app");
+            _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app (CorrelationId: {CorrelationId})", correlationId);
             _logger.LogInformation("    Client App ID: {AppId}", callingAppId);
             _logger.LogInformation("    Tenant ID: {TenantId}", tenantId);
             _logger.LogInformation("    Required Scope: {Scope}", TargetScope);
@@ -73,7 +76,7 @@ public sealed class DelegatedConsentService
                 return false;
             }
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Step 1: Get or create service principal for custom client app
             _logger.LogInformation("    Looking up service principal for client app (ID: {AppId})", callingAppId);

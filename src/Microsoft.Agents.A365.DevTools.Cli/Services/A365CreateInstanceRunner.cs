@@ -444,9 +444,12 @@ public sealed class A365CreateInstanceRunner
         string displayName,
         CancellationToken ct)
     {
+        // Generate correlation ID at workflow entry point
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
         try
         {
-            _logger.LogInformation("Creating Agent Identity using Graph API...");
+            _logger.LogInformation("Creating Agent Identity using Graph API (CorrelationId: {CorrelationId})...", correlationId);
             _logger.LogInformation("  - Display Name: {Name}", displayName);
             _logger.LogInformation("  - Agent Blueprint ID: {Id}", agentBlueprintId);
             _logger.LogInformation("  - Authenticating using blueprint client credentials...");
@@ -464,7 +467,8 @@ public sealed class A365CreateInstanceRunner
                 tenantId,
                 agentBlueprintId,
                 agentBlueprintClientSecret,
-                ct);
+                ct,
+                correlationId: correlationId);
 
             if (string.IsNullOrWhiteSpace(accessToken))
             {
@@ -472,7 +476,7 @@ public sealed class A365CreateInstanceRunner
                 return (false, null);
             }
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(accessToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(accessToken, correlationId: correlationId);
 
             // Get current user for sponsor (optional - use delegated token for this)
             string? currentUserId = null;
@@ -482,7 +486,7 @@ public sealed class A365CreateInstanceRunner
                 var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
                 if (!string.IsNullOrWhiteSpace(delegatedToken))
                 {
-                    using var delegatedClient = HttpClientFactory.CreateAuthenticatedClient(delegatedToken);
+                    using var delegatedClient = HttpClientFactory.CreateAuthenticatedClient(delegatedToken, correlationId: correlationId);
 
                     var meResponse = await delegatedClient.GetAsync("https://graph.microsoft.com/v1.0/me", ct);
                     if (meResponse.IsSuccessStatusCode)
@@ -592,13 +596,19 @@ public sealed class A365CreateInstanceRunner
         string tenantId,
         string clientId,
         string clientSecret,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? correlationId = null)
     {
         try
         {
             _logger.LogInformation("Acquiring access token using client credentials...");
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient();
+            // Use provided correlation ID or generate a new one
+            var effectiveCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+                ? HttpClientFactory.GenerateCorrelationId()
+                : correlationId;
+
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
             var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
             
             var requestBody = new FormUrlEncodedContent(new[]
@@ -659,9 +669,12 @@ public sealed class A365CreateInstanceRunner
         string? managerEmail,
         CancellationToken ct)
     {
+        // Generate correlation ID at workflow entry point
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
         try
         {
-            _logger.LogInformation("Creating Agent User using Graph API...");
+            _logger.LogInformation("Creating Agent User using Graph API (CorrelationId: {CorrelationId})...", correlationId);
             _logger.LogInformation("  - Display Name: {Name}", displayName);
             _logger.LogInformation("  - User Principal Name: {UPN}", userPrincipalName);
             _logger.LogInformation("  - Agent Identity ID: {Id}", agenticAppId);
@@ -674,7 +687,7 @@ public sealed class A365CreateInstanceRunner
                 return (false, null);
             }
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Check if user already exists
             try
@@ -741,7 +754,7 @@ public sealed class A365CreateInstanceRunner
             // Assign manager if provided
             if (!string.IsNullOrWhiteSpace(managerEmail))
             {
-                await AssignManagerAsync(userId, managerEmail, graphToken, ct);
+                await AssignManagerAsync(userId, managerEmail, graphToken, correlationId: correlationId, ct);
             }
 
             return (true, userId);
@@ -760,13 +773,14 @@ public sealed class A365CreateInstanceRunner
         string userId,
         string managerEmail,
         string graphToken,
+        string correlationId,
         CancellationToken ct)
     {
         try
         {
             _logger.LogInformation("  - Assigning manager");
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Look up manager by email
             var managerUrl = $"https://graph.microsoft.com/v1.0/users?$filter=mail eq '{managerEmail}'";
@@ -918,9 +932,12 @@ public sealed class A365CreateInstanceRunner
         string tenantId,
         CancellationToken cancellationToken)
     {
+        // Generate correlation ID at workflow entry point
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
         try
         {
-            _logger.LogInformation("Assigning licenses to user {UserId} using Graph API", userId);
+            _logger.LogInformation("Assigning licenses to user {UserId} using Graph API (CorrelationId: {CorrelationId})", userId, correlationId);
 
             // Get Graph access token
             var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, cancellationToken);
@@ -930,7 +947,7 @@ public sealed class A365CreateInstanceRunner
                 return;
             }
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Set usage location if provided
             if (!string.IsNullOrWhiteSpace(usageLocation))
@@ -1146,6 +1163,9 @@ public sealed class A365CreateInstanceRunner
         string appId,
         CancellationToken ct)
     {
+        // Generate correlation ID at workflow entry point
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
         try
         {
             // Use Graph API to check if service principal exists
@@ -1156,7 +1176,7 @@ public sealed class A365CreateInstanceRunner
                 return false;
             }
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Query for service principal by appId
             var spUrl = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'";

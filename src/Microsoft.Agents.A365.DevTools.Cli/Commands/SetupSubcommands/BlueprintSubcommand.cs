@@ -144,6 +144,10 @@ internal static class BlueprintSubcommand
 
         command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly) =>
         {
+            // Generate correlation ID at workflow entry point
+            var correlationId = HttpClientFactory.GenerateCorrelationId();
+            logger.LogInformation("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
+
             var setupConfig = await configService.LoadAsync(config.FullName);
 
             if (dryRun)
@@ -173,7 +177,8 @@ internal static class BlueprintSubcommand
                         logger: logger,
                         configService: configService,
                         botConfigurator: botConfigurator,
-                        platformDetector: platformDetector);
+                        platformDetector: platformDetector,
+                        correlationId: correlationId);
 
                     logger.LogInformation("");
                     logger.LogInformation("Endpoint registration completed successfully!");
@@ -207,7 +212,8 @@ internal static class BlueprintSubcommand
                 blueprintService,
                 blueprintLookupService,
                 federatedCredentialService,
-                skipEndpointRegistration
+                skipEndpointRegistration,
+                correlationId: correlationId
                 );
 
         }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption);
@@ -231,6 +237,7 @@ internal static class BlueprintSubcommand
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         bool skipEndpointRegistration = false,
+        string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -450,7 +457,8 @@ internal static class BlueprintSubcommand
                     logger: logger,
                     configService: configService,
                     botConfigurator: botConfigurator,
-                    platformDetector: platformDetector);
+                    platformDetector: platformDetector,
+                    correlationId: correlationId);
                 endpointRegistered = registered;
                 endpointAlreadyExisted = alreadyExisted;
             }
@@ -1513,6 +1521,7 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
+        string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
         var setupConfig = await configService.LoadAsync(configPath);
@@ -1534,7 +1543,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("");
 
         var (endpointRegistered, endpointAlreadyExisted) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator);
+            setupConfig, logger, botConfigurator, correlationId: correlationId);
 
 
         setupConfig.Completed = true;
