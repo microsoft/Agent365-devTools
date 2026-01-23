@@ -27,7 +27,7 @@ public class FrontierPreviewRequirementCheck : RequirementCheck
         logger.LogInformation("Requirement: {Name}", Name);
 
         Console.WriteLine();
-        logger.LogWarning("Frontier Preview Program enrollment is required during the Agent 365 preview.");
+        logger.LogWarning("While Agent 365 is in preview, Frontier Preview Program enrollment is required.");
         Console.WriteLine("  - Enrollment cannot be verified automatically.");
         Console.WriteLine("  - Please confirm your tenant is enrolled before continuing.");
         Console.WriteLine();
