@@ -102,7 +102,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(Task.FromResult(true));
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
         var args = new[] { "cleanup", "instance", "--config", "test.json" };
@@ -189,7 +189,7 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(Task.FromException<Agent365Config>(new FileNotFoundException("Config not found")));
 
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(Task.FromResult(false));
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
@@ -313,7 +313,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
         
         // User declines the initial "Are you sure?" confirmation
@@ -329,7 +329,7 @@ public class CleanupCommandTests
         result.Should().Be(0); // Command completes successfully (just doesn't delete anything)
         
         // Verify NO delete operations were called - check bot configurator wasn't invoked
-        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
     }
 
     /// <summary>
@@ -357,7 +357,7 @@ public class CleanupCommandTests
         result.Should().Be(0);
         
         // Verify NO delete operations were called - check bot configurator wasn't invoked
-        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
     }
 
     /// <summary>
@@ -428,7 +428,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
         
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
@@ -451,7 +451,8 @@ public class CleanupCommandTests
             await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), 
                 config.Location, 
-                config.AgentBlueprintId!);
+                config.AgentBlueprintId!,
+                Arg.Any<string?>());
             
             // Verify blueprint deletion was NOT called (no az ad app delete command)
             await _mockExecutor.DidNotReceive().ExecuteAsync(
@@ -563,7 +564,7 @@ public class CleanupCommandTests
             AgentDescription = "test-agent-description"
         };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(false); // API will likely fail with invalid location
         
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
@@ -585,7 +586,8 @@ public class CleanupCommandTests
             await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), 
                 string.Empty, // Should pass the empty location
-                config.AgentBlueprintId!);
+                config.AgentBlueprintId!,
+                Arg.Any<string?>());
         }
         finally
         {
@@ -603,7 +605,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(Task.FromException<bool>(new InvalidOperationException("API connection failed")));
         
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
@@ -626,7 +628,8 @@ public class CleanupCommandTests
             await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), 
                 config.Location, 
-                config.AgentBlueprintId!);
+                config.AgentBlueprintId!,
+                Arg.Any<string?>());
         }
         finally
         {
@@ -683,7 +686,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
         
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
@@ -704,7 +707,7 @@ public class CleanupCommandTests
             
             // Verify NO deletion was called because invalid input should cancel
             await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
         }
         finally
         {
@@ -722,7 +725,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
         
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
@@ -743,7 +746,7 @@ public class CleanupCommandTests
             
             // Verify NO deletion was called because user declined
             await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
         }
         finally
         {

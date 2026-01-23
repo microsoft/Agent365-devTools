@@ -427,7 +427,8 @@ internal static class SetupHelpers
     public static async Task<(bool success, bool alreadyExisted)> RegisterBlueprintMessagingEndpointAsync(
         Agent365Config setupConfig,
         ILogger logger,
-        IBotConfigurator botConfigurator)
+        IBotConfigurator botConfigurator,
+        string? correlationId = null)
     {
         // Validate required configuration
         if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
@@ -529,7 +530,8 @@ internal static class SetupHelpers
             location: normalizedLocation,
             messagingEndpoint: messagingEndpoint,
             agentDescription: "Agent 365 messaging endpoint for automated interactions",
-            agentBlueprintId: setupConfig.AgentBlueprintId);
+            agentBlueprintId: setupConfig.AgentBlueprintId,
+            correlationId: correlationId);
 
         if (endpointResult == Models.EndpointRegistrationResult.Failed)
         {

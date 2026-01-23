@@ -43,7 +43,8 @@ public class BotConfigurator : IBotConfigurator
         string location,
         string messagingEndpoint,
         string agentDescription,
-        string agentBlueprintId)
+        string agentBlueprintId,
+        string? correlationId = null)
     {
         _logger.LogInformation("Creating endpoint with Agent Blueprint Identity...");
         _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
@@ -114,7 +115,7 @@ public class BotConfigurator : IBotConfigurator
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
                 // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
                 // Call the endpoint
                 _logger.LogInformation("Making request to create endpoint (Location: {Location}).", normalizedLocation);
@@ -193,7 +194,8 @@ public class BotConfigurator : IBotConfigurator
     public async Task<bool> DeleteEndpointWithAgentBlueprintAsync(
         string endpointName,
         string location,
-        string agentBlueprintId)
+        string agentBlueprintId,
+        string? correlationId = null)
     {
         _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
         _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
@@ -266,7 +268,7 @@ public class BotConfigurator : IBotConfigurator
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
                 // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
                 // Call the endpoint
                 _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);

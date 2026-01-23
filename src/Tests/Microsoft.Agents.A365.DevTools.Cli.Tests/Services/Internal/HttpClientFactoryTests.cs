@@ -101,4 +101,102 @@ public class HttpClientFactoryTests
         var userAgentString = client.DefaultRequestHeaders.UserAgent.ToString();
         userAgentString.Should().Contain(expectedVersion?.ToString() ?? "");
     }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithNullCorrelationId_GeneratesCorrelationId()
+    {
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient(correlationId: null);
+
+        // Assert
+        client.DefaultRequestHeaders.Contains(HttpClientFactory.CorrelationIdHeaderName).Should().BeTrue();
+        var correlationId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.CorrelationIdHeaderName).First();
+        correlationId.Should().NotBeNullOrWhiteSpace();
+        Guid.TryParse(correlationId, out _).Should().BeTrue("Generated correlation ID should be a valid GUID");
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithEmptyCorrelationId_GeneratesCorrelationId()
+    {
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient(correlationId: "");
+
+        // Assert
+        client.DefaultRequestHeaders.Contains(HttpClientFactory.CorrelationIdHeaderName).Should().BeTrue();
+        var correlationId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.CorrelationIdHeaderName).First();
+        correlationId.Should().NotBeNullOrWhiteSpace();
+        Guid.TryParse(correlationId, out _).Should().BeTrue("Generated correlation ID should be a valid GUID");
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithWhitespaceCorrelationId_GeneratesCorrelationId()
+    {
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient(correlationId: "   ");
+
+        // Assert
+        client.DefaultRequestHeaders.Contains(HttpClientFactory.CorrelationIdHeaderName).Should().BeTrue();
+        var correlationId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.CorrelationIdHeaderName).First();
+        correlationId.Should().NotBeNullOrWhiteSpace();
+        Guid.TryParse(correlationId, out _).Should().BeTrue("Generated correlation ID should be a valid GUID");
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithProvidedCorrelationId_UsesProvidedValue()
+    {
+        // Arrange
+        const string providedCorrelationId = "test-correlation-id-12345";
+
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient(correlationId: providedCorrelationId);
+
+        // Assert
+        client.DefaultRequestHeaders.Contains(HttpClientFactory.CorrelationIdHeaderName).Should().BeTrue();
+        var correlationId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.CorrelationIdHeaderName).First();
+        correlationId.Should().Be(providedCorrelationId);
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithAllParameters_SetsAllHeaders()
+    {
+        // Arrange
+        const string testToken = "test-token";
+        const string customPrefix = "MyCustomAgent";
+        const string providedCorrelationId = "workflow-correlation-id";
+
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient(testToken, customPrefix, providedCorrelationId);
+
+        // Assert
+        client.DefaultRequestHeaders.Authorization.Should().NotBeNull();
+        client.DefaultRequestHeaders.Authorization!.Parameter.Should().Be(testToken);
+
+        var userAgentString = client.DefaultRequestHeaders.UserAgent.ToString();
+        userAgentString.Should().StartWith($"{customPrefix}/");
+
+        var correlationId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.CorrelationIdHeaderName).First();
+        correlationId.Should().Be(providedCorrelationId);
+    }
+
+    [Fact]
+    public void GenerateCorrelationId_ReturnsValidGuid()
+    {
+        // Act
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
+        // Assert
+        correlationId.Should().NotBeNullOrWhiteSpace();
+        Guid.TryParse(correlationId, out _).Should().BeTrue("Generated correlation ID should be a valid GUID");
+    }
+
+    [Fact]
+    public void GenerateCorrelationId_ReturnsUniqueValues()
+    {
+        // Act
+        var id1 = HttpClientFactory.GenerateCorrelationId();
+        var id2 = HttpClientFactory.GenerateCorrelationId();
+
+        // Assert
+        id1.Should().NotBe(id2, "Each call should generate a unique correlation ID");
+    }
 }

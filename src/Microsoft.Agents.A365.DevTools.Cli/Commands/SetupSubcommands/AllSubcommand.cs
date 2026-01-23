@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -72,6 +73,10 @@ internal static class AllSubcommand
 
         command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements) =>
         {
+            // Generate correlation ID at workflow entry point
+            var correlationId = HttpClientFactory.GenerateCorrelationId();
+            logger.LogInformation("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
@@ -281,7 +286,8 @@ internal static class AllSubcommand
                         graphApiService,
                         blueprintService,
                         blueprintLookupService,
-                        federatedCredentialService
+                        federatedCredentialService,
+                        correlationId: correlationId
                         );
 
                     setupResults.BlueprintCreated = result.BlueprintCreated;
