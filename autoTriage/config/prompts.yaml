@@ -274,8 +274,17 @@ fix_suggestions_user: |
   - Tech Stack: {languages}
   - Topics/Tags: {topics}
 
+  PROJECT STRUCTURE:
+  Top-level directories: {top_directories}
+  Key config files: {config_files}
+  Has tests: {has_tests}
+  Test directories: {test_dirs}
+
   REPOSITORY OVERVIEW:
   {readme_excerpt}
+
+  KEY CONFIGURATION FILES:
+  {config_contents}
 
   ISSUE TYPE: {issue_type}
   PRIORITY: {priority}
@@ -285,5 +294,5 @@ fix_suggestions_user: |
   BODY:
   {body}
 
-  Based on the repository context and tech stack, provide 3-5 specific, actionable suggestions on how to address this issue.
-  Reference specific technologies, files, or patterns that are likely used in this repository.
+  Based on the repository context, codebase structure, and configuration files above, provide 3-5 specific, actionable suggestions on how to address this issue.
+  Reference specific files, directories, dependencies, and patterns from the actual codebase structure.

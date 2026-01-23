@@ -478,6 +478,125 @@ class GitHubService:
                 "default_branch": "main"
             }
 
+    @lru_cache(maxsize=50)
+    def get_repository_structure(self, owner: str, repo: str, max_depth: int = 3) -> Dict[str, Any]:
+        """Get repository directory structure for understanding project layout.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            max_depth: Maximum directory depth to traverse (default: 3)
+
+        Returns:
+            Dict with directory structure and key files
+        """
+        cache_key = f"repo_structure:{owner}/{repo}:{max_depth}"
+        cached = _get_cached(cache_key)
+        if cached:
+            return cached
+
+        try:
+            repository = self._get_repo(owner, repo)
+            default_branch = repository.default_branch
+
+            # Get tree (directory structure) from default branch
+            tree = repository.get_git_tree(default_branch, recursive=True)
+
+            # Organize into directory structure
+            directories = set()
+            files_by_type = {
+                "config": [],
+                "source": [],
+                "tests": [],
+                "docs": []
+            }
+
+            for item in tree.tree[:500]:  # Limit to first 500 items
+                path = item.path
+                depth = path.count('/')
+
+                if depth > max_depth:
+                    continue
+
+                if item.type == "tree":
+                    directories.add(path)
+                elif item.type == "blob":
+                    filename = path.split('/')[-1].lower()
+
+                    # Config files
+                    if filename in ['package.json', 'requirements.txt', 'pyproject.toml', 'tsconfig.json',
+                                   'webpack.config.js', 'vite.config.js', 'jest.config.js',
+                                   'cargo.toml', 'go.mod', 'pom.xml', 'build.gradle']:
+                        files_by_type["config"].append(path)
+                    # Test files
+                    elif 'test' in path.lower() or filename.startswith('test_'):
+                        files_by_type["tests"].append(path)
+                    # Documentation
+                    elif filename.endswith('.md'):
+                        files_by_type["docs"].append(path)
+                    # Source files
+                    elif any(path.endswith(ext) for ext in ['.py', '.ts', '.js', '.jsx', '.tsx', '.cs']):
+                        files_by_type["source"].append(path)
+
+            top_dirs = sorted([d for d in directories if '/' not in d])
+
+            result = {
+                "top_level_directories": top_dirs[:20],
+                "config_files": files_by_type["config"][:10],
+                "test_directories": [d for d in directories if 'test' in d.lower()][:5],
+                "has_tests": len(files_by_type["tests"]) > 0,
+                "has_docs": len(files_by_type["docs"]) > 0
+            }
+
+            _set_cached(cache_key, result, ttl=3600)
+            return result
+
+        except Exception as e:
+            logger.warning(f"Failed to get repository structure: {e}")
+            return {
+                "top_level_directories": [],
+                "config_files": [],
+                "test_directories": [],
+                "has_tests": False,
+                "has_docs": False
+            }
+
+    @lru_cache(maxsize=200)
+    def get_file_content(self, owner: str, repo: str, file_path: str, max_size: int = 10000) -> Optional[str]:
+        """Get content of a specific file from the repository.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            file_path: Path to file in repository
+            max_size: Maximum file size in bytes (default: 10KB)
+
+        Returns:
+            File content as string, or None if not found or too large
+        """
+        cache_key = f"file_content:{owner}/{repo}:{file_path}"
+        cached = _get_cached(cache_key)
+        if cached:
+            return cached
+
+        try:
+            repository = self._get_repo(owner, repo)
+            file_content = repository.get_contents(file_path)
+
+            if isinstance(file_content, list):
+                return None  # It's a directory
+
+            if file_content.size > max_size:
+                return None  # Too large
+
+            content = file_content.decoded_content.decode('utf-8')
+            _set_cached(cache_key, content, ttl=3600)
+            return content
+
+        except Exception as e:
+            logger.debug(f"Failed to get file {file_path}: {e}")
+            return None
+
     def validate_labels(self, owner: str, repo: str, proposed_labels: List[str]) -> Dict[str, dict]:
         """Validate proposed labels against repository labels.
 

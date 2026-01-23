@@ -449,6 +449,21 @@ Provide 3-5 specific, practical suggestions in JSON format with: suggestions (ar
             languages = ", ".join(repo_context.get("languages", [])) or "Unknown"
             topics = ", ".join(repo_context.get("topics", [])) or "None"
             readme_excerpt = repo_context.get("readme_excerpt", "No README available")[:1000]
+
+            # Structure information
+            structure = repo_context.get("structure", {})
+            top_directories = ", ".join(structure.get("top_level_directories", [])) or "Unknown"
+            config_files = ", ".join(structure.get("config_files", [])) or "None"
+            has_tests = "Yes" if structure.get("has_tests", False) else "No"
+            test_dirs = ", ".join(structure.get("test_directories", [])) or "None"
+
+            # Config file contents
+            config_contents_dict = repo_context.get("config_files_content", {})
+            config_contents_str = ""
+            for filename, content in config_contents_dict.items():
+                config_contents_str += f"\n{filename}:\n```\n{content}\n```\n"
+            if not config_contents_str:
+                config_contents_str = "No config files available"
         else:
             repo_name = "Unknown"
             repo_description = "No description available"
@@ -456,6 +471,11 @@ Provide 3-5 specific, practical suggestions in JSON format with: suggestions (ar
             languages = "Unknown"
             topics = "None"
             readme_excerpt = "No README available"
+            top_directories = "Unknown"
+            config_files = "None"
+            has_tests = "Unknown"
+            test_dirs = "None"
+            config_contents_str = "No config files available"
 
         user_prompt = self.prompts.format(
             "fix_suggestions_user",
@@ -469,7 +489,12 @@ Provide 3-5 specific, practical suggestions in JSON format with: suggestions (ar
             primary_language=primary_language,
             languages=languages,
             topics=topics,
-            readme_excerpt=readme_excerpt
+            readme_excerpt=readme_excerpt,
+            top_directories=top_directories,
+            config_files=config_files,
+            has_tests=has_tests,
+            test_dirs=test_dirs,
+            config_contents=config_contents_str
         )
 
         result = self._call_llm(system_prompt, user_prompt, json_response=True)

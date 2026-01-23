@@ -582,6 +582,22 @@ def triage_issues(
     repo_context = github_service.get_repository_context(owner, repo)
     logging.info(f"Retrieved repository context: {repo_context.get('primary_language', 'Unknown')} project with {len(repo_context.get('languages', []))} languages")
 
+    # Get repository structure for project layout understanding
+    repo_structure = github_service.get_repository_structure(owner, repo)
+    logging.info(f"Retrieved repository structure: {len(repo_structure.get('top_level_directories', []))} top-level directories, {len(repo_structure.get('config_files', []))} config files")
+
+    # Fetch key config files for dependency/tech stack info
+    config_contents = {}
+    for config_file in repo_structure.get('config_files', [])[:3]:  # Limit to first 3 config files
+        content = github_service.get_file_content(owner, repo, config_file)
+        if content:
+            config_contents[config_file] = content[:2000]  # Limit to first 2000 chars
+            logging.info(f"Fetched config file: {config_file} ({len(content)} bytes)")
+
+    # Merge structure and config into repo_context
+    repo_context['structure'] = repo_structure
+    repo_context['config_files_content'] = config_contents
+
     # Process each issue
     results = []
     for issue in untriaged_issues:
