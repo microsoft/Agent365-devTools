@@ -44,6 +44,18 @@ public abstract class RequirementCheck : IRequirementCheck
     }
 
     /// <summary>
+    /// Helper method to log check warning
+    /// </summary>
+    protected virtual void LogCheckWarning(ILogger logger, string? details = null)
+    {
+        logger.LogWarning("[WARNING] {Name}: Cannot automatically verify", Name);
+        if (!string.IsNullOrWhiteSpace(details))
+        {
+            logger.LogWarning("  Details: {Details}", details);
+        }
+    }
+
+    /// <summary>
     /// Helper method to log check failure
     /// </summary>
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
@@ -57,35 +69,42 @@ public abstract class RequirementCheck : IRequirementCheck
     /// Helper method to execute the check with consistent logging
     /// </summary>
     protected async Task<RequirementCheckResult> ExecuteCheckWithLoggingAsync(
-        Agent365Config config, 
-        ILogger logger, 
+        Agent365Config config,
+        ILogger logger,
         Func<Agent365Config, ILogger, CancellationToken, Task<RequirementCheckResult>> checkImplementation,
         CancellationToken cancellationToken = default)
     {
         LogCheckStart(logger);
-        
+
         try
         {
             var result = await checkImplementation(config, logger, cancellationToken);
-            
+
             if (result.Passed)
             {
-                LogCheckSuccess(logger, result.Details);
+                if (result.IsWarning)
+                {
+                    LogCheckWarning(logger, result.Details);
+                }
+                else
+                {
+                    LogCheckSuccess(logger, result.Details);
+                }
             }
             else
             {
                 LogCheckFailure(logger, result.ErrorMessage ?? "Check failed", result.ResolutionGuidance ?? "No guidance available");
             }
-            
+
             return result;
         }
         catch (Exception ex)
         {
             var errorMessage = $"Exception during check: {ex.Message}";
             var resolutionGuidance = "Please check the logs for more details and ensure all prerequisites are met";
-            
+
             LogCheckFailure(logger, errorMessage, resolutionGuidance);
-            
+
             return RequirementCheckResult.Failure(errorMessage, resolutionGuidance, ex.ToString());
         }
     }
