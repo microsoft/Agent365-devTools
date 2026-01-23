@@ -15,7 +15,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// Service for handling authentication to Agent 365 Tools and Microsoft Graph API.
 ///
 /// AUTHENTICATION STRATEGY:
-/// - Uses interactive browser authentication by default (no device code flow)
+/// - Uses interactive authentication by default (no device code flow)
 /// - Implements comprehensive token caching to minimize authentication prompts
 /// - Typical user experience: 1-2 authentication prompts for entire CLI workflow
 ///
@@ -27,7 +27,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 ///
 /// AUTHENTICATION FLOW:
 /// 1. Check cache for valid token (tenant-specific)
-/// 2. If cache miss or expired: Prompt for interactive browser authentication
+/// 2. If cache miss or expired: Prompt for interactive authentication
 /// 3. Cache new token for future CLI command invocations
 /// 4. Token persists across CLI sessions until expiration
 ///
