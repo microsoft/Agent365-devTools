@@ -267,6 +267,16 @@ fix_suggestions_system: |
 fix_suggestions_user: |
   Generate fix suggestions for this GitHub issue:
 
+  REPOSITORY CONTEXT:
+  - Name: {repo_name}
+  - Description: {repo_description}
+  - Primary Language: {primary_language}
+  - Tech Stack: {languages}
+  - Topics/Tags: {topics}
+
+  REPOSITORY OVERVIEW:
+  {readme_excerpt}
+
   ISSUE TYPE: {issue_type}
   PRIORITY: {priority}
 
@@ -275,4 +285,5 @@ fix_suggestions_user: |
   BODY:
   {body}
 
-  Provide 3-5 actionable suggestions on how to address this issue.
+  Based on the repository context and tech stack, provide 3-5 specific, actionable suggestions on how to address this issue.
+  Reference specific technologies, files, or patterns that are likely used in this repository.

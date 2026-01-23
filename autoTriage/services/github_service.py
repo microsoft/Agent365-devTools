@@ -407,6 +407,77 @@ class GitHubService:
         except GithubException:
             return {}
 
+    @lru_cache(maxsize=50)
+    def get_repository_context(self, owner: str, repo: str) -> Dict[str, Any]:
+        """Get repository context for better AI suggestions.
+
+        Returns:
+            Dict with repository metadata: description, languages, topics, readme_excerpt
+        """
+        cache_key = f"repo_context:{owner}/{repo}"
+        cached = _get_cached(cache_key)
+        if cached:
+            return cached
+
+        try:
+            repository = self._get_repo(owner, repo)
+
+            # Get primary language and all languages
+            languages = {}
+            try:
+                languages = repository.get_languages()  # Returns dict like {"Python": 12345, "JavaScript": 5678}
+            except:
+                pass
+
+            # Get topics (tags)
+            topics = []
+            try:
+                topics = repository.get_topics()
+            except:
+                pass
+
+            # Get README excerpt (first 1000 chars)
+            readme_excerpt = ""
+            try:
+                readme = repository.get_readme()
+                readme_content = readme.decoded_content.decode('utf-8')
+                # Take first 1000 chars, or up to first major section
+                readme_excerpt = readme_content[:1000]
+                if '\n##' in readme_excerpt:
+                    readme_excerpt = readme_excerpt[:readme_excerpt.index('\n##')]
+            except:
+                pass
+
+            context = {
+                "name": repository.name,
+                "full_name": repository.full_name,
+                "description": repository.description or "",
+                "primary_language": repository.language or "Unknown",
+                "languages": list(languages.keys())[:5],  # Top 5 languages
+                "topics": topics[:10],  # Top 10 topics
+                "readme_excerpt": readme_excerpt.strip(),
+                "is_fork": repository.fork,
+                "default_branch": repository.default_branch
+            }
+
+            # Cache for 1 hour
+            _set_cached(cache_key, context, ttl=3600)
+            return context
+
+        except GithubException as e:
+            logger.warning(f"Failed to get repository context: {e}")
+            return {
+                "name": repo,
+                "full_name": f"{owner}/{repo}",
+                "description": "",
+                "primary_language": "Unknown",
+                "languages": [],
+                "topics": [],
+                "readme_excerpt": "",
+                "is_fork": False,
+                "default_branch": "main"
+            }
+
     def validate_labels(self, owner: str, repo: str, proposed_labels: List[str]) -> Dict[str, dict]:
         """Validate proposed labels against repository labels.
 

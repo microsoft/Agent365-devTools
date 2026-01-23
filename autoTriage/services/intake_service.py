@@ -578,6 +578,10 @@ def triage_issues(
     repo_labels = github_service.get_repository_labels(owner, repo)
     logging.info(f"Retrieved {len(repo_labels)} labels from repository {owner}/{repo}")
 
+    # Get repository context once for better fix suggestions
+    repo_context = github_service.get_repository_context(owner, repo)
+    logging.info(f"Retrieved repository context: {repo_context.get('primary_language', 'Unknown')} project with {len(repo_context.get('languages', []))} languages")
+
     # Process each issue
     results = []
     for issue in untriaged_issues:
@@ -599,12 +603,13 @@ def triage_issues(
         is_copilot_fixable = copilot_result["is_copilot_fixable"]
         copilot_reasoning = copilot_result.get("reasoning", "")
 
-        # Generate fix suggestions
+        # Generate fix suggestions with repository context
         fix_suggestions = llm_service.generate_fix_suggestions(
             title=issue.title,
             body=issue.body or "",
             issue_type=classification["type"],
-            priority=classification["priority"]
+            priority=classification["priority"],
+            repo_context=repo_context
         )
 
         # Determine assignee based on Copilot-fixable status

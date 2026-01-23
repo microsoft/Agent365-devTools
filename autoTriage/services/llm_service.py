@@ -419,7 +419,8 @@ Respond in JSON format with: is_copilot_fixable, confidence, reasoning, suggeste
         title: str,
         body: str,
         issue_type: str = "bug",
-        priority: str = "P3"
+        priority: str = "P3",
+        repo_context: Optional[Dict[str, Any]] = None
     ) -> List[str]:
         """
         Generate actionable fix suggestions for an issue using LLM analysis.
@@ -429,6 +430,7 @@ Respond in JSON format with: is_copilot_fixable, confidence, reasoning, suggeste
             body: Issue body/description
             issue_type: Type of issue (bug, feature, documentation, question)
             priority: Priority level (P1, P2, P3, P4)
+            repo_context: Optional repository context (languages, topics, README, etc.)
 
         Returns:
             List of 3-5 actionable suggestions
@@ -439,13 +441,35 @@ Provide 3-5 specific, practical suggestions in JSON format with: suggestions (ar
 
         system_prompt = self.prompts.get("fix_suggestions_system", default_system)
 
+        # Prepare repository context for prompt
+        if repo_context:
+            repo_name = repo_context.get("full_name", "Unknown")
+            repo_description = repo_context.get("description", "No description available")
+            primary_language = repo_context.get("primary_language", "Unknown")
+            languages = ", ".join(repo_context.get("languages", [])) or "Unknown"
+            topics = ", ".join(repo_context.get("topics", [])) or "None"
+            readme_excerpt = repo_context.get("readme_excerpt", "No README available")[:1000]
+        else:
+            repo_name = "Unknown"
+            repo_description = "No description available"
+            primary_language = "Unknown"
+            languages = "Unknown"
+            topics = "None"
+            readme_excerpt = "No README available"
+
         user_prompt = self.prompts.format(
             "fix_suggestions_user",
             default=f"Generate fix suggestions for: {title}",
             title=title,
             body=body[:2000] if body else "No description provided",
             issue_type=issue_type,
-            priority=priority
+            priority=priority,
+            repo_name=repo_name,
+            repo_description=repo_description,
+            primary_language=primary_language,
+            languages=languages,
+            topics=topics,
+            readme_excerpt=readme_excerpt
         )
 
         result = self._call_llm(system_prompt, user_prompt, json_response=True)
