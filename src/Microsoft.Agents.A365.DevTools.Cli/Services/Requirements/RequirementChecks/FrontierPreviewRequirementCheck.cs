@@ -24,23 +24,21 @@ public class FrontierPreviewRequirementCheck : RequirementCheck
     /// <inheritdoc />
     public override Task<RequirementCheckResult> CheckAsync(Agent365Config config, ILogger logger, CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("Checking: {Name}", Name);
+        logger.LogInformation("Requirement: {Name}", Name);
 
         Console.WriteLine();
-        logger.LogWarning("Microsoft Agent 365 requires your tenant to be enrolled in the");
-        logger.LogWarning("Frontier Preview Program.");
+        logger.LogWarning("Frontier Preview Program enrollment is required during the Agent 365 preview.");
+        Console.WriteLine("  - Enrollment cannot be verified automatically.");
+        Console.WriteLine("  - Please confirm your tenant is enrolled before continuing.");
         Console.WriteLine();
-        logger.LogWarning("This check cannot be verified automatically. Please confirm your");
-        logger.LogWarning("tenant is enrolled before proceeding.");
-        Console.WriteLine();
-        logger.LogWarning("Learn more:");
-        logger.LogWarning("  https://learn.microsoft.com/en-us/microsoft-agent-365/developer/");
-        logger.LogWarning("  https://adoption.microsoft.com/en-us/copilot/frontier-program/");
+        Console.WriteLine("Documentation:");
+        Console.WriteLine("  - https://learn.microsoft.com/en-us/microsoft-agent-365/developer/");
+        Console.WriteLine("  - https://adoption.microsoft.com/en-us/copilot/frontier-program/");
 
         // Return warning without using base class logging (already logged above)
         return Task.FromResult(RequirementCheckResult.Warning(
             message: "Cannot automatically verify Frontier Preview Program enrollment",
-            details: "Tenant must be enrolled in Frontier Preview Program"
+            details: "Tenant must be enrolled in Frontier Preview Program during Agent 365 preview. Check documentation to verify if this requirement still applies."
         ));
     }
 }

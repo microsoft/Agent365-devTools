@@ -50,6 +50,7 @@ internal static class RequirementsSubcommand
         command.SetHandler(async (config, verbose, category) =>
         {
             logger.LogInformation("Agent 365 Requirements Check");
+            logger.LogInformation(new string('-', 28));
             logger.LogInformation("Validating prerequisites for setup...");
 
             try
