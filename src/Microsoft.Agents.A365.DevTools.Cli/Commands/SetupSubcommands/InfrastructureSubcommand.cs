@@ -624,6 +624,54 @@ public static class InfrastructureSubcommand
                 logger.LogWarning("WARNING: identity assign returned error: {Err}", identity.StandardError.Trim());
             }
 
+            // Assign current user as Website Contributor for the WebApp
+            // This enables access to diagnostic logs and log stream
+            logger.LogInformation("Assigning current user as Website Contributor for the web app...");
+            try
+            {
+                // Get the current signed-in user's object ID
+                var userResult = await executor.ExecuteAsync("az", "ad signed-in-user show --query id -o tsv", captureOutput: true, suppressErrorLogging: true);
+                if (userResult.Success && !string.IsNullOrWhiteSpace(userResult.StandardOutput))
+                {
+                    var userObjectId = userResult.StandardOutput.Trim();
+                    logger.LogDebug("Current user object ID: {UserId}", userObjectId);
+
+                    // Create the WebApp resource scope
+                    var webAppScope = $"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Web/sites/{webAppName}";
+
+                    // Assign the "Website Contributor" role to the user
+                    // Website Contributor allows viewing logs and diagnostic info without full Owner permissions
+                    var roleAssignResult = await executor.ExecuteAsync("az", 
+                        $"role assignment create --role \"Website Contributor\" --assignee-object-id {userObjectId} --scope {webAppScope} --assignee-principal-type User", 
+                        captureOutput: true, 
+                        suppressErrorLogging: true);
+
+                    if (roleAssignResult.Success)
+                    {
+                        logger.LogInformation("Successfully assigned Website Contributor role to current user");
+                    }
+                    else if (roleAssignResult.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
+                             roleAssignResult.StandardError.Contains("PrincipalNotFound", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Role assignment already exists or principal not found (possibly using service principal)
+                        logger.LogDebug("Role assignment may already exist or user principal not available: {Error}", roleAssignResult.StandardError.Trim());
+                    }
+                    else
+                    {
+                        logger.LogWarning("Could not assign Website Contributor role to user. Diagnostic logs may not be accessible. Error: {Error}", roleAssignResult.StandardError.Trim());
+                    }
+                }
+                else
+                {
+                    logger.LogDebug("Could not retrieve current user object ID. User may be using a service principal or not logged in with az login.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Don't fail the entire setup if role assignment fails
+                logger.LogWarning(ex, "Failed to assign Website Contributor role to user. Diagnostic logs may not be accessible.");
+            }
+
             // Load or create generated config
             if (File.Exists(generatedConfigPath))
             {

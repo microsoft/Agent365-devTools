@@ -4,6 +4,7 @@
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -286,5 +287,297 @@ public class InfrastructureSubcommandTests
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.VerificationTimeout);
         exception.PlanName.Should().Be(planName);
+    }
+
+    [Fact]
+    public async Task CreateInfrastructureAsync_WhenUserIdAvailable_AssignsWebsiteContributorRole()
+    {
+        // Arrange
+        var subscriptionId = "test-sub-id";
+        var tenantId = "test-tenant-id";
+        var resourceGroup = "test-rg";
+        var location = "eastus";
+        var planName = "test-plan";
+        var webAppName = "test-webapp";
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = Substitute.For<ILogger>();
+        
+        try
+        {
+            // Create temporary project directory
+            Directory.CreateDirectory(deploymentProjectPath);
+            
+            // Setup mock CommandExecutor to return success for all operations
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    
+                    // Resource group exists check
+                    if (args.Contains("group exists"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "true" };
+                    
+                    // App service plan show
+                    if (args.Contains("appservice plan show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    
+                    // Web app show - doesn't exist initially
+                    if (args.Contains("webapp show"))
+                        return new CommandResult { ExitCode = 1, StandardError = "Not found" };
+                    
+                    // Web app create
+                    if (args.Contains("webapp create"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-webapp\"}" };
+                    
+                    // Managed identity assign
+                    if (args.Contains("webapp identity assign"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"principalId\": \"test-principal-id\"}" };
+                    
+                    // MSI verification
+                    if (args.Contains("ad sp show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"id\": \"test-principal-id\"}" };
+                    
+                    // Get current user object ID
+                    if (args.Contains("ad signed-in-user show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "test-user-object-id" };
+                    
+                    // Role assignment
+                    if (args.Contains("role assignment create"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"id\": \"test-role-assignment-id\"}" };
+                    
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Act
+            (string? principalId, bool anyAlreadyExisted) = await InfrastructureSubcommand.CreateInfrastructureAsync(
+                _commandExecutor,
+                subscriptionId,
+                tenantId,
+                resourceGroup,
+                location,
+                planName,
+                "B1",
+                webAppName,
+                generatedConfigPath,
+                deploymentProjectPath,
+                ProjectPlatform.DotNet,
+                logger,
+                needDeployment: true,
+                skipInfra: false,
+                externalHosting: false,
+                CancellationToken.None);
+
+            // Assert - Verify role assignment command was called
+            await _commandExecutor.Received().ExecuteAsync("az",
+                Arg.Is<string>(s => 
+                    s.Contains("role assignment create") && 
+                    s.Contains("Website Contributor") &&
+                    s.Contains("test-user-object-id")),
+                captureOutput: true,
+                suppressErrorLogging: true);
+        }
+        finally
+        {
+            // Cleanup
+            if (File.Exists(generatedConfigPath))
+                File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath))
+                Directory.Delete(deploymentProjectPath, true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateInfrastructureAsync_WhenUserIdUnavailable_ContinuesWithoutRoleAssignment()
+    {
+        // Arrange
+        var subscriptionId = "test-sub-id";
+        var tenantId = "test-tenant-id";
+        var resourceGroup = "test-rg";
+        var location = "eastus";
+        var planName = "test-plan";
+        var webAppName = "test-webapp";
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = Substitute.For<ILogger>();
+        
+        try
+        {
+            // Create temporary project directory
+            Directory.CreateDirectory(deploymentProjectPath);
+            
+            // Setup mock CommandExecutor
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    
+                    // Resource group exists check
+                    if (args.Contains("group exists"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "true" };
+                    
+                    // App service plan show
+                    if (args.Contains("appservice plan show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    
+                    // Web app show - doesn't exist initially
+                    if (args.Contains("webapp show"))
+                        return new CommandResult { ExitCode = 1, StandardError = "Not found" };
+                    
+                    // Web app create
+                    if (args.Contains("webapp create"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-webapp\"}" };
+                    
+                    // Managed identity assign
+                    if (args.Contains("webapp identity assign"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"principalId\": \"test-principal-id\"}" };
+                    
+                    // MSI verification
+                    if (args.Contains("ad sp show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"id\": \"test-principal-id\"}" };
+                    
+                    // Get current user object ID - fails (service principal scenario)
+                    if (args.Contains("ad signed-in-user show"))
+                        return new CommandResult { ExitCode = 1, StandardError = "Not logged in as user" };
+                    
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Act - Should not throw, just log a debug message
+            (string? principalId, bool anyAlreadyExisted) = await InfrastructureSubcommand.CreateInfrastructureAsync(
+                _commandExecutor,
+                subscriptionId,
+                tenantId,
+                resourceGroup,
+                location,
+                planName,
+                "B1",
+                webAppName,
+                generatedConfigPath,
+                deploymentProjectPath,
+                ProjectPlatform.DotNet,
+                logger,
+                needDeployment: true,
+                skipInfra: false,
+                externalHosting: false,
+                CancellationToken.None);
+
+            // Assert - Principal ID should still be set, role assignment just skipped
+            principalId.Should().Be("test-principal-id");
+            
+            // Verify role assignment was NOT attempted (since user ID retrieval failed)
+            await _commandExecutor.DidNotReceive().ExecuteAsync("az",
+                Arg.Is<string>(s => s.Contains("role assignment create")),
+                captureOutput: true,
+                suppressErrorLogging: true);
+        }
+        finally
+        {
+            // Cleanup
+            if (File.Exists(generatedConfigPath))
+                File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath))
+                Directory.Delete(deploymentProjectPath, true);
+        }
+    }
+
+    [Fact]
+    public async Task CreateInfrastructureAsync_WhenRoleAssignmentFails_ContinuesWithWarning()
+    {
+        // Arrange
+        var subscriptionId = "test-sub-id";
+        var tenantId = "test-tenant-id";
+        var resourceGroup = "test-rg";
+        var location = "eastus";
+        var planName = "test-plan";
+        var webAppName = "test-webapp";
+        var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
+        var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
+        var logger = Substitute.For<ILogger>();
+        
+        try
+        {
+            // Create temporary project directory
+            Directory.CreateDirectory(deploymentProjectPath);
+            
+            // Setup mock CommandExecutor
+            _commandExecutor.ExecuteAsync("az", Arg.Any<string>(), captureOutput: true, suppressErrorLogging: Arg.Any<bool>())
+                .Returns(callInfo =>
+                {
+                    var args = callInfo.ArgAt<string>(1);
+                    
+                    // Resource group exists check
+                    if (args.Contains("group exists"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "true" };
+                    
+                    // App service plan show
+                    if (args.Contains("appservice plan show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-plan\"}" };
+                    
+                    // Web app show - doesn't exist initially
+                    if (args.Contains("webapp show"))
+                        return new CommandResult { ExitCode = 1, StandardError = "Not found" };
+                    
+                    // Web app create
+                    if (args.Contains("webapp create"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"name\": \"test-webapp\"}" };
+                    
+                    // Managed identity assign
+                    if (args.Contains("webapp identity assign"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"principalId\": \"test-principal-id\"}" };
+                    
+                    // MSI verification
+                    if (args.Contains("ad sp show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "{\"id\": \"test-principal-id\"}" };
+                    
+                    // Get current user object ID
+                    if (args.Contains("ad signed-in-user show"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "test-user-object-id" };
+                    
+                    // Role assignment - fails with permission error
+                    if (args.Contains("role assignment create"))
+                        return new CommandResult { ExitCode = 1, StandardError = "Insufficient permissions" };
+                    
+                    return new CommandResult { ExitCode = 0 };
+                });
+
+            // Act - Should not throw, just log a warning
+            (string? principalId, bool anyAlreadyExisted) = await InfrastructureSubcommand.CreateInfrastructureAsync(
+                _commandExecutor,
+                subscriptionId,
+                tenantId,
+                resourceGroup,
+                location,
+                planName,
+                "B1",
+                webAppName,
+                generatedConfigPath,
+                deploymentProjectPath,
+                ProjectPlatform.DotNet,
+                logger,
+                needDeployment: true,
+                skipInfra: false,
+                externalHosting: false,
+                CancellationToken.None);
+
+            // Assert - Principal ID should still be set, warning logged
+            principalId.Should().Be("test-principal-id");
+            
+            // Verify warning was logged
+            logger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Could not assign Website Contributor role")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            // Cleanup
+            if (File.Exists(generatedConfigPath))
+                File.Delete(generatedConfigPath);
+            if (Directory.Exists(deploymentProjectPath))
+                Directory.Delete(deploymentProjectPath, true);
+        }
     }
 }
