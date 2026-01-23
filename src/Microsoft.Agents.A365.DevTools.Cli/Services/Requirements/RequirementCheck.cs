@@ -28,7 +28,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckStart(ILogger logger)
     {
-        logger.LogInformation("Checking: {Description}", Description);
+        logger.LogInformation("Checking: {Name}", Name);
     }
 
     /// <summary>

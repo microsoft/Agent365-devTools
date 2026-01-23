@@ -23,7 +23,7 @@ public class FrontierPreviewRequirementCheckTests
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldReturnSuccess_WithWarningDetails()
+    public async Task CheckAsync_ShouldReturnWarning_WithDetails()
     {
         // Arrange
         var check = new FrontierPreviewRequirementCheck();
@@ -35,11 +35,12 @@ public class FrontierPreviewRequirementCheckTests
         // Assert
         result.Should().NotBeNull();
         result.Passed.Should().BeTrue("check should pass to allow user to proceed despite warning");
+        result.IsWarning.Should().BeTrue("check should be flagged as a warning");
         result.Details.Should().NotBeNullOrEmpty();
-        result.Details.Should().Contain("WARNING");
-        result.Details.Should().Contain("Cannot automatically verify");
-        result.ErrorMessage.Should().BeNullOrEmpty("should not have error message for a warning-only check");
-        result.ResolutionGuidance.Should().BeNullOrEmpty("should not have resolution guidance for a warning-only check");
+        result.Details.Should().Contain("ensure");
+        result.Details.Should().Contain("enrolled");
+        result.ErrorMessage.Should().Contain("Cannot automatically verify");
+        result.ResolutionGuidance.Should().BeNullOrEmpty("warning checks don't have resolution guidance");
     }
 
     [Fact]
@@ -83,7 +84,7 @@ public class FrontierPreviewRequirementCheckTests
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldLogPreviewTermsNote()
+    public async Task CheckAsync_ShouldLogLearnMoreText()
     {
         // Arrange
         var check = new FrontierPreviewRequirementCheck();
@@ -93,11 +94,11 @@ public class FrontierPreviewRequirementCheckTests
         await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the logger was called with the preview terms note
+        // Verify the logger was called with "Learn more:" text
         _mockLogger.Received().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("preview terms")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Learn more:")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -147,19 +148,5 @@ public class FrontierPreviewRequirementCheckTests
 
         // Act & Assert
         check.Category.Should().Be("Tenant Enrollment");
-    }
-
-    [Fact]
-    public async Task CheckAsync_Details_ShouldMentionFrontierEnrollment()
-    {
-        // Arrange
-        var check = new FrontierPreviewRequirementCheck();
-        var config = new Agent365Config();
-
-        // Act
-        var result = await check.CheckAsync(config, _mockLogger);
-
-        // Assert
-        result.Details.Should().Contain("Frontier Preview Program enrollment");
     }
 }
