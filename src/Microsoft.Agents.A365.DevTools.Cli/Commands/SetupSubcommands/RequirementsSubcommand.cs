@@ -97,6 +97,7 @@ internal static class RequirementsSubcommand
 
         var totalChecks = requirementChecks.Count;
         var passedChecks = 0;
+        var warningChecks = 0;
         var failedChecks = 0;
 
         // Execute all checks
@@ -111,7 +112,14 @@ internal static class RequirementsSubcommand
 
                 if (result.Passed)
                 {
-                    passedChecks++;
+                    if (result.IsWarning)
+                    {
+                        warningChecks++;
+                    }
+                    else
+                    {
+                        passedChecks++;
+                    }
                 }
                 else
                 {
@@ -128,6 +136,7 @@ internal static class RequirementsSubcommand
         logger.LogInformation(new string('=', 50));
         logger.LogInformation("Total checks: {Total}", totalChecks);
         logger.LogInformation("Passed: {Passed}", passedChecks);
+        logger.LogInformation("Warning: {Warning}", warningChecks);
         logger.LogInformation("Failed: {Failed}", failedChecks);
         logger.LogInformation("");
 
