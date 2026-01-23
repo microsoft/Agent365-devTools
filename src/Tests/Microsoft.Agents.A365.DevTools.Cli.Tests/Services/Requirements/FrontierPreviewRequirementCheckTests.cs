@@ -37,14 +37,14 @@ public class FrontierPreviewRequirementCheckTests
         result.Passed.Should().BeTrue("check should pass to allow user to proceed despite warning");
         result.IsWarning.Should().BeTrue("check should be flagged as a warning");
         result.Details.Should().NotBeNullOrEmpty();
-        result.Details.Should().Contain("ensure");
         result.Details.Should().Contain("enrolled");
+        result.Details.Should().Contain("preview");
         result.ErrorMessage.Should().Contain("Cannot automatically verify");
         result.ResolutionGuidance.Should().BeNullOrEmpty("warning checks don't have resolution guidance");
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldLogDocumentationLink()
+    public async Task CheckAsync_ShouldLogMainWarningMessage()
     {
         // Arrange
         var check = new FrontierPreviewRequirementCheck();
@@ -54,17 +54,17 @@ public class FrontierPreviewRequirementCheckTests
         await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the logger was called with the documentation link
+        // Verify the logger was called with the main warning message
         _mockLogger.Received().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("https://learn.microsoft.com/en-us/microsoft-agent-365/developer/")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Frontier Preview Program enrollment is required")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldLogFrontierProgramLink()
+    public async Task CheckAsync_ShouldLogRequirementName()
     {
         // Arrange
         var check = new FrontierPreviewRequirementCheck();
@@ -74,37 +74,17 @@ public class FrontierPreviewRequirementCheckTests
         await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the logger was called with the Frontier program link
+        // Verify the logger was called with "Requirement:" prefix
         _mockLogger.Received().Log(
-            LogLevel.Warning,
+            LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("https://adoption.microsoft.com/en-us/copilot/frontier-program/")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Requirement:") && o.ToString()!.Contains("Frontier Preview Program")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldLogLearnMoreText()
-    {
-        // Arrange
-        var check = new FrontierPreviewRequirementCheck();
-        var config = new Agent365Config();
-
-        // Act
-        await check.CheckAsync(config, _mockLogger);
-
-        // Assert
-        // Verify the logger was called with "Learn more:" text
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Learn more:")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
-    }
-
-    [Fact]
-    public async Task CheckAsync_ShouldLogGuidanceForAlreadyEnrolled()
+    public async Task CheckAsync_ShouldIncludePreviewContext()
     {
         // Arrange
         var check = new FrontierPreviewRequirementCheck();
@@ -114,9 +94,24 @@ public class FrontierPreviewRequirementCheckTests
         var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the details mention ability to proceed
-        result.Details.Should().Contain("ensure");
-        result.Details.Should().Contain("proceeding");
+        // Verify the result mentions preview context
+        result.Details.Should().Contain("preview");
+        result.Details.Should().Contain("enrolled");
+    }
+
+    [Fact]
+    public async Task CheckAsync_ShouldMentionDocumentationCheck()
+    {
+        // Arrange
+        var check = new FrontierPreviewRequirementCheck();
+        var config = new Agent365Config();
+
+        // Act
+        var result = await check.CheckAsync(config, _mockLogger);
+
+        // Assert
+        // Verify the details mention checking documentation
+        result.Details.Should().Contain("Check documentation");
     }
 
     [Fact]
