@@ -160,7 +160,7 @@ internal static class BlueprintSubcommand
 
             var setupConfig = await configService.LoadAsync(config.FullName);
 
-            // Handle --custom-endpoint: prompt if flag provided without value
+            // Handle --custom-endpoint: resolve custom endpoint value if provided
             var resolvedCustomEndpoint = ResolveCustomEndpoint(customEndpoint, logger);
 
             // Handle --update-endpoint flag
@@ -1891,14 +1891,7 @@ internal static class BlueprintSubcommand
     /// <returns>The custom endpoint URL, or null if not specified</returns>
     private static string? ResolveCustomEndpoint(string? customEndpoint, ILogger logger)
     {
-        // If a non-empty value was provided, return it
-        if (!string.IsNullOrWhiteSpace(customEndpoint))
-        {
-            return customEndpoint;
-        }
-
-        // Option not provided or empty - use default from configuration
-        return null;
+        return string.IsNullOrWhiteSpace(customEndpoint) ? null : customEndpoint;
     }
 
     #endregion
