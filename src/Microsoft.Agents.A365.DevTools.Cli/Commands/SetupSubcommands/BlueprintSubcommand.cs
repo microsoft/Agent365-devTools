@@ -465,7 +465,7 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Setup will continue to configure Bot API permissions");
                 logger.LogWarning("");
                 logger.LogWarning("To resolve endpoint registration issues:");
-                logger.LogWarning("  1. Delete existing endpoint: a365 cleanup blueprint");
+                logger.LogWarning("  1. Delete existing endpoint: a365 cleanup blueprint --endpoint-only");
                 logger.LogWarning("  2. Register endpoint again: a365 setup blueprint --endpoint-only");
                 logger.LogWarning("  Or rerun full setup: a365 setup blueprint");
                 logger.LogWarning("");
