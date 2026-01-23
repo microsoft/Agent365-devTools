@@ -1,0 +1,81 @@
+name: Update Team Workload
+
+# Run weekly on Mondays at 9am UTC, or manually
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9:00 AM UTC
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  update-workload:
+    runs-on: ubuntu-latest
+    name: Update team member contributions
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd autoTriage
+          pip install -r requirements.txt
+
+      - name: Update contributions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd autoTriage
+          python scripts/update_contributions.py \
+            --owner "${{ github.repository_owner }}" \
+            --repo "${{ github.event.repository.name }}"
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if git diff --quiet autoTriage/config/team-members.json; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No workload changes detected"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Workload changes detected"
+          fi
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add autoTriage/config/team-members.json
+          git commit -m "chore: Update team workload contributions
+
+          Automated update based on current open issues and PRs.
+
+          [skip ci]"
+          git push
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Team Workload Update" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
+            echo "✅ Team workload updated based on current open issues" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Changes" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`diff" >> $GITHUB_STEP_SUMMARY
+            git diff autoTriage/config/team-members.json >> $GITHUB_STEP_SUMMARY || echo "Changes committed" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ️ No workload changes - team is balanced" >> $GITHUB_STEP_SUMMARY
+          fi

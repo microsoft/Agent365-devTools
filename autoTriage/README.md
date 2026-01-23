@@ -69,6 +69,43 @@ Create these labels in your repository (Issues > Labels):
 
 The workflow at `.github/workflows/auto-triage-issues.yml` will automatically trigger when new issues are created.
 
+### 5. Automatic Workload Updates (Optional)
+
+The `contributions` field in team-members.json represents current workload and should be updated periodically. We provide an automated solution:
+
+**Automatic Updates via GitHub Actions:**
+
+A workflow runs every Monday at 9am UTC to update team workload based on open issues:
+- Counts open issues assigned to each team member
+- Calculates contribution scores (higher = busier)
+- Commits updated team-members.json automatically
+
+The workflow is at `.github/workflows/update-team-workload.yml` and can also be triggered manually from the Actions tab.
+
+**Manual Updates:**
+
+You can also run the update script locally:
+
+```bash
+cd autoTriage
+export GITHUB_TOKEN="your_token"
+
+# Dry run to preview changes
+python scripts/update_contributions.py --dry-run
+
+# Apply changes
+python scripts/update_contributions.py
+```
+
+**How Contribution Scores Work:**
+
+- **Lower score** = Less busy = More likely to be assigned new issues
+- **Higher score** = Busier = Less likely to be assigned new issues
+- **Formula**: Base score (5) + (2 × open issues) + (1 × open PRs)
+- **Range**: 5 (completely free) to 50 (very busy)
+
+This ensures workload is balanced automatically as team members complete or take on work.
+
 ## File Structure
 
 ```
@@ -76,6 +113,9 @@ autoTriage/
 ├── triage_issue.py           # Main CLI script
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # This file
+├── scripts/                  # Utility scripts
+│   ├── update_contributions.py  # Auto-update team workload
+│   └── __init__.py
 ├── services/                 # Core services
 │   ├── intake_service.py     # Triage logic
 │   ├── github_service.py     # GitHub API wrapper
@@ -93,7 +133,8 @@ autoTriage/
 
 .github/
 └── workflows/
-    └── auto-triage-issues.yml # GitHub Action workflow
+    ├── auto-triage-issues.yml    # Auto-triage on new issues
+    └── update-team-workload.yml  # Weekly workload updates
 ```
 
 ## How It Works
