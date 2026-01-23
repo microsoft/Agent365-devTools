@@ -424,10 +424,15 @@ internal static class SetupHelpers
     /// Register blueprint messaging endpoint
     /// Returns (success, alreadyExisted)
     /// </summary>
+    /// <param name="setupConfig">Agent365 configuration</param>
+    /// <param name="logger">Logger instance</param>
+    /// <param name="botConfigurator">Bot configurator service</param>
+    /// <param name="customEndpoint">Optional custom endpoint URL to override config-derived endpoint</param>
     public static async Task<(bool success, bool alreadyExisted)> RegisterBlueprintMessagingEndpointAsync(
         Agent365Config setupConfig,
         ILogger logger,
-        IBotConfigurator botConfigurator)
+        IBotConfigurator botConfigurator,
+        string? customEndpoint = null)
     {
         // Validate required configuration
         if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
@@ -452,7 +457,37 @@ internal static class SetupHelpers
 
         string messagingEndpoint;
         string endpointName;
-        if (setupConfig.NeedDeployment)
+
+        // If custom endpoint is provided, use it (overrides both Azure and non-Azure paths)
+        if (!string.IsNullOrWhiteSpace(customEndpoint))
+        {
+            if (!Uri.TryCreate(customEndpoint, UriKind.Absolute, out var customUri) ||
+                customUri.Scheme != Uri.UriSchemeHttps)
+            {
+                logger.LogError("Custom endpoint must be a valid HTTPS URL. Current value: {Endpoint}", customEndpoint);
+                throw new SetupValidationException("Custom endpoint must be a valid HTTPS URL.");
+            }
+
+            messagingEndpoint = customEndpoint;
+
+            // Derive endpoint name based on deployment mode
+            if (setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.WebAppName))
+            {
+                // Azure deployment: use WebAppName for endpoint name
+                var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
+                endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
+            }
+            else
+            {
+                // Non-Azure hosting: derive from custom endpoint host
+                var hostPart = customUri.Host.Replace('.', '-');
+                var baseEndpointName = $"{hostPart}-endpoint";
+                endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
+            }
+
+            logger.LogInformation("   - Using custom endpoint override");
+        }
+        else if (setupConfig.NeedDeployment)
         {
             if (string.IsNullOrEmpty(setupConfig.WebAppName))
             {

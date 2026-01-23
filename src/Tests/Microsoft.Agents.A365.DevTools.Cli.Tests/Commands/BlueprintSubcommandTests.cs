@@ -1291,8 +1291,313 @@ public class BlueprintSubcommandTests
     }
 
     #endregion
+
+    #region Custom Endpoint Option Tests
+
+    [Fact]
+    public void CreateCommand_ShouldHaveCustomEndpointOption()
+    {
+        // Act
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockBotConfigurator,
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+
+        // Assert
+        var customEndpointOption = command.Options.FirstOrDefault(o => o.Name == "custom-endpoint");
+        customEndpointOption.Should().NotBeNull();
+        customEndpointOption!.Aliases.Should().Contain("--custom-endpoint");
+    }
+
+    [Fact]
+    public void CreateCommand_ShouldHaveUpdateEndpointOption()
+    {
+        // Act
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockBotConfigurator,
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+
+        // Assert
+        var updateEndpointOption = command.Options.FirstOrDefault(o => o.Name == "update-endpoint");
+        updateEndpointOption.Should().NotBeNull();
+        updateEndpointOption!.Aliases.Should().Contain("--update-endpoint");
+    }
+
+    [Fact]
+    public async Task RegisterEndpointAndSyncAsync_WithCustomEndpoint_ShouldUseProvidedEndpoint()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            WebAppName = "test-webapp",
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var customEndpoint = "https://custom.example.com/api/messages";
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(EndpointRegistrationResult.Created);
+
+            // Act
+            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+                configPath,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector,
+                customEndpoint: customEndpoint);
+
+            // Assert
+            success.Should().BeTrue();
+            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                customEndpoint,
+                Arg.Any<string>(),
+                Arg.Any<string>());
+        }
+        finally
+        {
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+            if (File.Exists(configPath)) File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateEndpointAsync_WithValidUrl_ShouldDeleteAndRegisterEndpoint()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            WebAppName = "test-webapp",
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        // Set BotName via reflection since it's a computed property
+        // We need to test with WebAppName set which derives BotName
+        var newEndpointUrl = "https://newhost.example.com/api/messages";
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(true);
+
+            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(EndpointRegistrationResult.Created);
+
+            // Act
+            await BlueprintSubcommand.UpdateEndpointAsync(
+                configPath,
+                newEndpointUrl,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector);
+
+            // Assert - Should call delete then create
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                config.AgentBlueprintId);
+
+            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                newEndpointUrl,
+                Arg.Any<string>(),
+                config.AgentBlueprintId);
+        }
+        finally
+        {
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+            if (File.Exists(configPath)) File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateEndpointAsync_WithInvalidUrl_ShouldThrowException()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            WebAppName = "test-webapp",
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var invalidUrl = "http://not-https.example.com/api/messages"; // HTTP not HTTPS
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(config));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<Cli.Exceptions.SetupValidationException>(async () =>
+            await BlueprintSubcommand.UpdateEndpointAsync(
+                configPath,
+                invalidUrl,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector));
+
+        exception.Message.Should().Contain("HTTPS");
+    }
+
+    [Fact]
+    public async Task UpdateEndpointAsync_WhenDeleteFails_ShouldThrowAndNotRegister()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            WebAppName = "test-webapp",
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var newEndpointUrl = "https://newhost.example.com/api/messages";
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(config));
+
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(false); // Delete fails
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<Cli.Exceptions.SetupValidationException>(async () =>
+            await BlueprintSubcommand.UpdateEndpointAsync(
+                configPath,
+                newEndpointUrl,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector));
+
+        exception.Message.Should().Contain("delete");
+
+        // Should NOT attempt to register new endpoint
+        await _mockBotConfigurator.DidNotReceive().CreateEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task UpdateEndpointAsync_WithNoExistingEndpoint_ShouldSkipDeleteAndRegister()
+    {
+        // Arrange - Config without BotName (no existing endpoint)
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            // WebAppName not set, so BotName will be empty
+            Location = "eastus",
+            DeploymentProjectPath = Path.GetTempPath(),
+            NeedDeployment = false // Non-Azure hosting
+        };
+
+        var newEndpointUrl = "https://newhost.example.com/api/messages";
+        var testId = Guid.NewGuid().ToString();
+        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(EndpointRegistrationResult.Created);
+
+            // Act
+            await BlueprintSubcommand.UpdateEndpointAsync(
+                configPath,
+                newEndpointUrl,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector);
+
+            // Assert - Should NOT call delete (no existing endpoint)
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>());
+
+            // Should still register the new endpoint
+            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                newEndpointUrl,
+                Arg.Any<string>(),
+                config.AgentBlueprintId);
+        }
+        finally
+        {
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+            if (File.Exists(configPath)) File.Delete(configPath);
+        }
+    }
+
+    #endregion
 }
-
-
-
-

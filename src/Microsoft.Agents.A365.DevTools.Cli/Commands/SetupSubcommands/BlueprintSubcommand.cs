@@ -136,15 +136,49 @@ internal static class BlueprintSubcommand
             "--endpoint-only",
             description: "Register messaging endpoint only (requires existing blueprint)");
 
+        var customEndpointOption = new Option<string?>(
+            "--custom-endpoint",
+            description: "Override the messaging endpoint URL during registration.");
+
+        var updateEndpointOption = new Option<string?>(
+            "--update-endpoint",
+            description: "Delete the existing messaging endpoint and register a new one with the specified URL.");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
+        command.AddOption(customEndpointOption);
+        command.AddOption(updateEndpointOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly) =>
+        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, customEndpoint, updateEndpoint) =>
         {
             var setupConfig = await configService.LoadAsync(config.FullName);
+
+            // Handle --custom-endpoint: prompt if flag provided without value
+            var resolvedCustomEndpoint = ResolveCustomEndpoint(customEndpoint, logger);
+
+            // Handle --update-endpoint flag
+            if (!string.IsNullOrWhiteSpace(updateEndpoint))
+            {
+                try
+                {
+                    await UpdateEndpointAsync(
+                        configPath: config.FullName,
+                        newEndpointUrl: updateEndpoint,
+                        logger: logger,
+                        configService: configService,
+                        botConfigurator: botConfigurator,
+                        platformDetector: platformDetector);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Endpoint update failed: {Message}", ex.Message);
+                    Environment.Exit(1);
+                }
+                return;
+            }
 
             if (dryRun)
             {
@@ -156,6 +190,10 @@ internal static class BlueprintSubcommand
                 if (!skipEndpointRegistration)
                 {
                     logger.LogInformation("  - Would register messaging endpoint");
+                    if (!string.IsNullOrWhiteSpace(resolvedCustomEndpoint))
+                    {
+                        logger.LogInformation("  - Custom endpoint: {Endpoint}", resolvedCustomEndpoint);
+                    }
                 }
                 return;
             }
@@ -173,7 +211,8 @@ internal static class BlueprintSubcommand
                         logger: logger,
                         configService: configService,
                         botConfigurator: botConfigurator,
-                        platformDetector: platformDetector);
+                        platformDetector: platformDetector,
+                        customEndpoint: resolvedCustomEndpoint);
 
                     logger.LogInformation("");
                     logger.LogInformation("Endpoint registration completed successfully!");
@@ -207,10 +246,11 @@ internal static class BlueprintSubcommand
                 blueprintService,
                 blueprintLookupService,
                 federatedCredentialService,
-                skipEndpointRegistration
+                skipEndpointRegistration,
+                customEndpoint: resolvedCustomEndpoint
                 );
 
-        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption);
+        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, customEndpointOption, updateEndpointOption);
 
         return command;
     }
@@ -231,6 +271,7 @@ internal static class BlueprintSubcommand
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         bool skipEndpointRegistration = false,
+        string? customEndpoint = null,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -450,7 +491,8 @@ internal static class BlueprintSubcommand
                     logger: logger,
                     configService: configService,
                     botConfigurator: botConfigurator,
-                    platformDetector: platformDetector);
+                    platformDetector: platformDetector,
+                    customEndpoint: customEndpoint);
                 endpointRegistered = registered;
                 endpointAlreadyExisted = alreadyExisted;
             }
@@ -1534,6 +1576,7 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
+        string? customEndpoint = null,
         CancellationToken cancellationToken = default)
     {
         var setupConfig = await configService.LoadAsync(configPath);
@@ -1544,8 +1587,8 @@ internal static class BlueprintSubcommand
             Environment.Exit(1);
         }
 
-        // Only validate webAppName if needDeployment is true
-        if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
+        // Only validate webAppName if needDeployment is true and no custom endpoint provided
+        if (string.IsNullOrWhiteSpace(customEndpoint) && setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
         {
             logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
             Environment.Exit(1);
@@ -1555,7 +1598,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("");
 
         var (endpointRegistered, endpointAlreadyExisted) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator);
+            setupConfig, logger, botConfigurator, customEndpoint);
 
 
         setupConfig.Completed = true;
@@ -1606,6 +1649,118 @@ internal static class BlueprintSubcommand
         }
         
         return (endpointRegistered, endpointAlreadyExisted);
+    }
+
+    /// <summary>
+    /// Updates the messaging endpoint by deleting the existing one and registering a new one.
+    /// </summary>
+    /// <param name="configPath">Path to the configuration file</param>
+    /// <param name="newEndpointUrl">The new messaging endpoint URL</param>
+    /// <param name="logger">Logger instance</param>
+    /// <param name="configService">Configuration service</param>
+    /// <param name="botConfigurator">Bot configurator service</param>
+    /// <param name="platformDetector">Platform detector service</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public static async Task UpdateEndpointAsync(
+        string configPath,
+        string newEndpointUrl,
+        ILogger logger,
+        IConfigService configService,
+        IBotConfigurator botConfigurator,
+        PlatformDetector platformDetector,
+        CancellationToken cancellationToken = default)
+    {
+        var setupConfig = await configService.LoadAsync(configPath);
+
+        // Validate blueprint ID exists
+        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+        {
+            logger.LogError("Blueprint ID not found. Please confirm agent blueprint id is in config file.");
+            throw new Exceptions.SetupValidationException("Agent Blueprint ID is required for endpoint update.");
+        }
+
+        // Validate new endpoint URL
+        if (!Uri.TryCreate(newEndpointUrl, UriKind.Absolute, out var newUri) ||
+            newUri.Scheme != Uri.UriSchemeHttps)
+        {
+            logger.LogError("New endpoint must be a valid HTTPS URL. Current value: {Endpoint}", newEndpointUrl);
+            throw new Exceptions.SetupValidationException("New endpoint must be a valid HTTPS URL.");
+        }
+
+        logger.LogInformation("Updating messaging endpoint...");
+        logger.LogInformation("");
+
+        // Step 1: Delete existing endpoint if it exists
+        if (!string.IsNullOrWhiteSpace(setupConfig.BotName))
+        {
+            logger.LogInformation("Deleting existing messaging endpoint...");
+            var endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
+            var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
+
+            var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                endpointName,
+                normalizedLocation,
+                setupConfig.AgentBlueprintId);
+
+            if (!deleted)
+            {
+                logger.LogError("Failed to delete existing messaging endpoint.");
+                throw new Exceptions.SetupValidationException("Failed to delete existing messaging endpoint. Cannot proceed with update.");
+            }
+
+            logger.LogInformation("Existing endpoint deleted successfully.");
+        }
+        else
+        {
+            logger.LogInformation("No existing endpoint found. Proceeding with registration.");
+        }
+
+        // Step 2: Register new endpoint with the provided URL
+        logger.LogInformation("");
+        logger.LogInformation("Registering new messaging endpoint...");
+
+        var (endpointRegistered, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+            setupConfig, logger, botConfigurator, newEndpointUrl);
+
+        if (!endpointRegistered)
+        {
+            throw new Exceptions.SetupValidationException("Failed to register new messaging endpoint.");
+        }
+
+        // Step 3: Save updated configuration
+        setupConfig.Completed = true;
+        setupConfig.CompletedAt = DateTime.UtcNow;
+
+        await configService.SaveStateAsync(setupConfig);
+
+        // Step 4: Sync to project settings
+        logger.LogInformation("");
+        logger.LogInformation("Syncing configuration to project settings...");
+
+        var configFileInfo = new FileInfo(configPath);
+        var generatedConfigPath = Path.Combine(
+            configFileInfo.DirectoryName ?? Environment.CurrentDirectory,
+            "a365.generated.config.json");
+
+        try
+        {
+            await ProjectSettingsSyncHelper.ExecuteAsync(
+                a365ConfigPath: configPath,
+                a365GeneratedPath: generatedConfigPath,
+                configService: configService,
+                platformDetector: platformDetector,
+                logger: logger);
+
+            logger.LogInformation("Configuration synced to project settings successfully");
+        }
+        catch (Exception syncEx)
+        {
+            logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually if needed.");
+        }
+
+        logger.LogInformation("");
+        logger.LogInformation("Endpoint update completed successfully!");
+        logger.LogInformation("New endpoint: {Endpoint}", newEndpointUrl);
     }
 
     #region Private Helper Methods
@@ -1713,6 +1868,25 @@ internal static class BlueprintSubcommand
             logger.LogError(ex, "Exception creating federated identity credential: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Resolves the custom endpoint value.
+    /// Returns the custom endpoint if provided, otherwise null.
+    /// </summary>
+    /// <param name="customEndpoint">The custom endpoint value from command line</param>
+    /// <param name="logger">Logger instance</param>
+    /// <returns>The custom endpoint URL, or null if not specified</returns>
+    private static string? ResolveCustomEndpoint(string? customEndpoint, ILogger logger)
+    {
+        // If a non-empty value was provided, return it
+        if (!string.IsNullOrWhiteSpace(customEndpoint))
+        {
+            return customEndpoint;
+        }
+
+        // Option not provided or empty - use default from configuration
+        return null;
     }
 
     #endregion

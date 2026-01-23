@@ -408,6 +408,75 @@ public class SetupCommandTests
         // Verify config was loaded for requirements check
         await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
+
+    #region AllSubcommand Custom Endpoint Option Tests
+
+    [Fact]
+    public void SetupAllCommand_ShouldHaveCustomEndpointOption()
+    {
+        // Arrange
+        var command = SetupCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
+            _mockBotConfigurator,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+
+        // Act
+        var allSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "all");
+
+        // Assert
+        allSubcommand.Should().NotBeNull();
+        var customEndpointOption = allSubcommand!.Options.FirstOrDefault(o => o.Name == "custom-endpoint");
+        customEndpointOption.Should().NotBeNull();
+        customEndpointOption!.Aliases.Should().Contain("--custom-endpoint");
+    }
+
+    [Fact]
+    public async Task SetupAllCommand_DryRun_WithCustomEndpoint_ShouldShowCustomEndpoint()
+    {
+        // Arrange
+        var config = new Agent365Config 
+        { 
+            TenantId = "tenant", 
+            SubscriptionId = "sub", 
+            ResourceGroup = "rg", 
+            Location = "loc", 
+            AppServicePlanName = "plan", 
+            WebAppName = "web", 
+            AgentIdentityDisplayName = "agent", 
+            DeploymentProjectPath = ".",
+            AgentBlueprintDisplayName = "TestBlueprint"
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, 
+            _mockConfigService, 
+            _mockExecutor, 
+            _mockDeploymentService, 
+            _mockBotConfigurator, 
+            _mockAzureValidator, 
+            _mockWebAppCreator, 
+            _mockPlatformDetector,
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
+        
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("all --dry-run --custom-endpoint https://custom.example.com/api/messages", testConsole);
+
+        // Assert - Dry run should succeed (exit code 0)
+        // In dry run mode, it displays what would be done without actually loading config
+        result.Should().Be(0);
+    }
+
+    #endregion
 }
-
-
