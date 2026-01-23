@@ -135,7 +135,8 @@ select_assignee_system: |
   Your job is to select the best engineer to work on a GitHub issue based on:
   1. The issue type, title, and description
   2. Each engineer's role and areas of expertise
-  3. Workload balance (prefer engineers with fewer contributions when skills match)
+  3. Recent commit history to files mentioned in the issue (strong signal of familiarity)
+  4. Workload balance (prefer engineers with fewer contributions when skills match)
 
   Respond in JSON format with:
   - assignee: string - the GitHub login of the selected engineers
@@ -143,6 +144,7 @@ select_assignee_system: |
   - confidence: number - your confidence in this assignment (0.0 to 1.0)
 
   Guidelines:
+  - PRIORITIZE engineers who have recently committed to files mentioned in the issue (they know the code best)
   - Match the issue content to engineer expertise areas
   - For P1/P2 issues, prefer senior engineers or tech leads
   - For security issues, prefer security engineers
@@ -150,6 +152,7 @@ select_assignee_system: |
   - For API/backend issues, prefer backend developers
   - For AI/ML issues, prefer AI/ML engineers
   - For infrastructure/DevOps issues, prefer DevOps/Platform engineers
+  - When expertise matches, prefer engineers with lower contribution scores (less busy)
   - If no strong match, assign to the tech lead for routing
 
 select_assignee_user: |
@@ -163,10 +166,13 @@ select_assignee_user: |
   BODY:
   {body}
 
+  RECENT COMMIT HISTORY:
+  {file_contributor_context}
+
   AVAILABLE ENGINEERS:
   {engineers_json}
 
-  Select the most appropriate engineer based on their expertise and the issue content.
+  Select the most appropriate engineer based on their expertise, recent contributions to mentioned files, and current workload.
 
 # =============================================================================
 # COPILOT-FIXABLE ASSESSMENT

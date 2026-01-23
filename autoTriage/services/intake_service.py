@@ -121,7 +121,8 @@ def _select_human_assignee(
     issue_title: str,
     issue_body: str,
     issue_type: str,
-    priority: str
+    priority: str,
+    file_contributors: Optional[Dict[str, Dict[str, int]]] = None
 ) -> Tuple[str, str]:
     """
     Select an appropriate human assignee using LLM-based expertise matching.
@@ -133,6 +134,7 @@ def _select_human_assignee(
         issue_body: Body/description of the issue
         issue_type: Classification type (bug, feature, documentation, question)
         priority: Priority level (P1, P2, P3, P4)
+        file_contributors: Optional dict mapping file paths to contributors and commit counts
 
     Returns:
         Tuple of (assignee_login, assignment_rationale)
@@ -147,13 +149,14 @@ def _select_human_assignee(
         logging.warning("No team members configured")
         return None, "No team members configured"
 
-    # Use LLM to select best engineer based on expertise
+    # Use LLM to select best engineer based on expertise and commit history
     result = llm_service.select_assignee(
         title=issue_title,
         body=issue_body or "",
         issue_type=issue_type,
         priority=priority,
-        team_members=team_members
+        team_members=team_members,
+        file_contributors=file_contributors
     )
     logging.info(f"LLM select_assignee result: {result}")
     if result.get("assignee"):
@@ -628,13 +631,23 @@ def triage_issues(
             repo_context=repo_context
         )
 
+        # Get file contributors for issues that mention specific files
+        file_contributors = github_service.get_contributors_for_issue(
+            owner=owner,
+            repo=repo,
+            issue_title=issue.title,
+            issue_body=issue.body or ""
+        )
+        if file_contributors:
+            logging.info(f"Found contributor history for {len(file_contributors)} files mentioned in issue #{issue.number}")
+
         # Determine assignee based on Copilot-fixable status
         assignment_rationale = ""
         if is_copilot_fixable:
             suggested_assignee = "copilot"
             assignment_rationale = f"Issue is suitable for Copilot automated fix. {copilot_reasoning}"
         else:
-            # Use LLM to select best human engineer based on expertise
+            # Use LLM to select best human engineer based on expertise and commit history
             logging.info(f"Calling _select_human_assignee for issue #{issue.number}, type={classification['type']}, priority={classification['priority']}")
             human_assignee, assignment_rationale = _select_human_assignee(
                 llm_service=llm_service,
@@ -642,7 +655,8 @@ def triage_issues(
                 issue_title=issue.title,
                 issue_body=issue.body or "",
                 issue_type=classification["type"],
-                priority=classification["priority"]
+                priority=classification["priority"],
+                file_contributors=file_contributors
             )
             logging.info(f"_select_human_assignee returned: assignee={human_assignee}, rationale={assignment_rationale[:100] if assignment_rationale else None}")
             suggested_assignee = human_assignee

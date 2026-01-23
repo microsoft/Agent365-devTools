@@ -751,3 +751,138 @@ class GitHubService:
 
         except GithubException:
             return []
+
+    @lru_cache(maxsize=200)
+    def get_file_contributors(
+        self,
+        owner: str,
+        repo: str,
+        file_path: str,
+        months: int = 6
+    ) -> Dict[str, int]:
+        """
+        Get contributors to a specific file over the last N months.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            file_path: Path to the file (e.g., 'src/main.py')
+            months: Number of months to look back (default: 6)
+
+        Returns:
+            Dict mapping GitHub login to commit count
+            Example: {'mengyimicro': 15, 'joratz': 3}
+        """
+        cache_key = f"file_contributors:{owner}:{repo}:{file_path}:{months}"
+        cached = _get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            repository = self._get_repo(owner, repo)
+            since_date = datetime.now() - timedelta(days=months * 30)
+
+            # Get commits for this specific file
+            commits = repository.get_commits(
+                path=file_path,
+                since=since_date
+            )
+
+            # Count commits per author
+            contributors = {}
+            for commit in commits:
+                if commit.author and commit.author.login:
+                    login = commit.author.login
+                    contributors[login] = contributors.get(login, 0) + 1
+
+            logger.info(f"Found {len(contributors)} contributors to {file_path} in last {months} months")
+            _set_cached(cache_key, contributors, ttl=3600)  # Cache for 1 hour
+            return contributors
+
+        except GithubException as e:
+            logger.warning(f"Could not fetch contributors for {file_path}: {e}")
+            return {}
+
+    def extract_file_paths_from_text(self, text: str) -> List[str]:
+        """
+        Extract potential file paths from issue text.
+
+        Looks for patterns like:
+        - src/services/github_service.py
+        - autoTriage/models/issue_classification.py
+        - backend/config/settings.json
+
+        Args:
+            text: Issue title or body text
+
+        Returns:
+            List of potential file paths
+        """
+        import re
+
+        if not text:
+            return []
+
+        # Pattern to match file paths with extensions
+        # Matches: word/word/file.ext or word/file.ext
+        pattern = r'\b[a-zA-Z0-9_\-./]+/[a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]{1,10}\b'
+
+        matches = re.findall(pattern, text)
+
+        # Filter out URLs (http://, https://)
+        file_paths = [
+            match for match in matches
+            if not match.startswith(('http://', 'https://'))
+        ]
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_paths = []
+        for path in file_paths:
+            if path not in seen:
+                seen.add(path)
+                unique_paths.append(path)
+
+        logger.debug(f"Extracted {len(unique_paths)} file paths from text")
+        return unique_paths[:5]  # Limit to first 5 paths
+
+    def get_contributors_for_issue(
+        self,
+        owner: str,
+        repo: str,
+        issue_title: str,
+        issue_body: str
+    ) -> Dict[str, Dict[str, int]]:
+        """
+        Analyze an issue and get contributor information for mentioned files.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            issue_title: Issue title
+            issue_body: Issue body
+
+        Returns:
+            Dict mapping file paths to contributor info
+            Example:
+            {
+                'src/github_service.py': {'mengyimicro': 15, 'joratz': 3},
+                'config/prompts.yaml': {'sellakumaran': 8}
+            }
+        """
+        # Extract file paths from issue text
+        combined_text = f"{issue_title}\n{issue_body or ''}"
+        file_paths = self.extract_file_paths_from_text(combined_text)
+
+        if not file_paths:
+            logger.debug("No file paths found in issue text")
+            return {}
+
+        # Get contributors for each file
+        file_contributors = {}
+        for file_path in file_paths:
+            contributors = self.get_file_contributors(owner, repo, file_path)
+            if contributors:
+                file_contributors[file_path] = contributors
+
+        return file_contributors

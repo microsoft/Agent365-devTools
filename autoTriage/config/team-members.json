@@ -1,25 +1,39 @@
 {
   "team_members": [
     {
-      "name": "Tech Lead",
+      "name": "Sellakumaran Kanagarathnam",
       "role": "Tech Lead",
-      "login": "GITHUB_USERNAME_HERE",
-      "contributions": 50,
-      "expertise": ["architecture", "code review", "backend", "API design", "mentoring"]
+      "login": "sellakumaran",
+      "contributions": 20,
+      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "repository expert", "system design"]
     },
     {
-      "name": "Backend Engineer",
-      "role": "Backend Developer",
-      "login": "GITHUB_USERNAME_HERE",
-      "contributions": 30,
-      "expertise": ["backend", "Python", "APIs", "database", "microservices"]
+      "name": "Josh Oratz",
+      "role": "Senior Frontend Developer",
+      "login": "joratz",
+      "contributions": 18,
+      "expertise": ["frontend", "React", "JavaScript", "TypeScript", "CSS", "UI/UX", "component design", "codebase familiar"]
     },
     {
-      "name": "Full Stack Engineer",
-      "role": "Full Stack Developer",
-      "login": "GITHUB_USERNAME_HERE",
-      "contributions": 25,
-      "expertise": ["frontend", "backend", "React", "Node.js", "full-stack"]
+      "name": "Mengyi Xu",
+      "role": "AI/ML Engineer (SDE2)",
+      "login": "mengyimicro",
+      "contributions": 15,
+      "expertise": ["AI", "ML", "LLM", "Python", "data science", "prompt engineering", "Azure OpenAI", "repository expert", "auto-triage"]
+    },
+    {
+      "name": "Johan Broberg",
+      "role": "Principal Security Engineer",
+      "login": "pontemonti",
+      "contributions": 12,
+      "expertise": ["security", "authentication", "authorization", "compliance", "vulnerability", "penetration testing"]
+    },
+    {
+      "name": "Tahir Sousa",
+      "role": "Engineering Manager",
+      "login": "tmlsousa",
+      "contributions": 5,
+      "expertise": ["management", "planning", "coordination", "strategic planning"]
     }
   ]
 }

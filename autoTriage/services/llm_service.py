@@ -635,7 +635,8 @@ Remember: No praise, no comments on the person. Just describe the technical work
         body: str,
         issue_type: str,
         priority: str,
-        team_members: List[Dict[str, Any]]
+        team_members: List[Dict[str, Any]],
+        file_contributors: Optional[Dict[str, Dict[str, int]]] = None
     ) -> Dict[str, Any]:
         """
         Select the best engineer to work on an issue using AI.
@@ -646,6 +647,7 @@ Remember: No praise, no comments on the person. Just describe the technical work
             issue_type: Type of issue (bug, feature, documentation, question)
             priority: Priority level (P1, P2, P3, P4)
             team_members: List of team members with name, login, role, and expertise
+            file_contributors: Optional dict mapping file paths to contributors and commit counts
 
         Returns:
             Dict with keys: assignee (login), rationale, confidence
@@ -676,6 +678,19 @@ Respond in JSON format with: assignee, rationale, confidence."""
             }
             engineers_info.append(engineer)
 
+        # Format file contributor information
+        contributor_context = "No specific files mentioned in the issue."
+        if file_contributors:
+            contributor_lines = []
+            for file_path, contributors in file_contributors.items():
+                # Sort contributors by commit count
+                sorted_contributors = sorted(contributors.items(), key=lambda x: x[1], reverse=True)
+                contributor_str = ", ".join([f"{login} ({count} commits)" for login, count in sorted_contributors[:3]])
+                contributor_lines.append(f"  - {file_path}: {contributor_str}")
+
+            if contributor_lines:
+                contributor_context = "Recent contributors to files mentioned in this issue:\n" + "\n".join(contributor_lines)
+
         user_prompt = self.prompts.format(
             "select_assignee_user",
             default=f"Select an assignee for: {title}",
@@ -683,7 +698,8 @@ Respond in JSON format with: assignee, rationale, confidence."""
             body=body[:2000] if body else "No description provided",  # Limit body length
             issue_type=issue_type,
             priority=priority,
-            engineers_json=json.dumps(engineers_info, indent=2)
+            engineers_json=json.dumps(engineers_info, indent=2),
+            file_contributor_context=contributor_context
         )
 
         result = self._call_llm(system_prompt, user_prompt, json_response=True)
