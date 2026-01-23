@@ -145,6 +145,11 @@ internal static class RequirementsSubcommand
             logger.LogError("Some requirements failed. Please address the issues above before running setup.");
             logger.LogInformation("Use the resolution guidance provided for each failed check.");
         }
+        else if (warningChecks > 0)
+        {
+            logger.LogWarning("All automated checks passed, but {WarningCount} requirement(s) require manual verification.", warningChecks);
+            logger.LogInformation("Please review the warnings above and ensure all requirements are met before running setup.");
+        }
         else
         {
             logger.LogInformation("All requirements passed! You're ready to run Agent 365 setup.");
