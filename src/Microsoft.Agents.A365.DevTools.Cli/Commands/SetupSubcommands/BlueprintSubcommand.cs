@@ -154,6 +154,10 @@ internal static class BlueprintSubcommand
 
         command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, customEndpoint, updateEndpoint) =>
         {
+            // Generate correlation ID at workflow entry point
+            var correlationId = HttpClientFactory.GenerateCorrelationId();
+            logger.LogInformation("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
+
             var setupConfig = await configService.LoadAsync(config.FullName);
 
             // Handle --custom-endpoint: prompt if flag provided without value
@@ -212,7 +216,8 @@ internal static class BlueprintSubcommand
                         configService: configService,
                         botConfigurator: botConfigurator,
                         platformDetector: platformDetector,
-                        customEndpoint: resolvedCustomEndpoint);
+                        customEndpoint: resolvedCustomEndpoint,
+                        correlationId: correlationId);
 
                     logger.LogInformation("");
                     logger.LogInformation("Endpoint registration completed successfully!");
@@ -247,7 +252,8 @@ internal static class BlueprintSubcommand
                 blueprintLookupService,
                 federatedCredentialService,
                 skipEndpointRegistration,
-                customEndpoint: resolvedCustomEndpoint
+                customEndpoint: resolvedCustomEndpoint,
+                correlationId: correlationId
                 );
 
         }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, customEndpointOption, updateEndpointOption);
@@ -272,6 +278,7 @@ internal static class BlueprintSubcommand
         FederatedCredentialService federatedCredentialService,
         bool skipEndpointRegistration = false,
         string? customEndpoint = null,
+        string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -341,7 +348,8 @@ internal static class BlueprintSubcommand
             delegatedConsentService,
             setupConfig.ClientAppId,
             setupConfig.TenantId,
-            logger);
+            logger,
+            correlationId: correlationId);
 
         if (!consentResult)
         {
@@ -492,7 +500,8 @@ internal static class BlueprintSubcommand
                     configService: configService,
                     botConfigurator: botConfigurator,
                     platformDetector: platformDetector,
-                    customEndpoint: customEndpoint);
+                    customEndpoint: customEndpoint,
+                    correlationId: correlationId);
                 endpointRegistered = registered;
                 endpointAlreadyExisted = alreadyExisted;
             }
@@ -507,7 +516,7 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Setup will continue to configure Bot API permissions");
                 logger.LogWarning("");
                 logger.LogWarning("To resolve endpoint registration issues:");
-                logger.LogWarning("  1. Delete existing endpoint: a365 cleanup blueprint");
+                logger.LogWarning("  1. Delete existing endpoint: a365 cleanup blueprint --endpoint-only");
                 logger.LogWarning("  2. Register endpoint again: a365 setup blueprint --endpoint-only");
                 logger.LogWarning("  Or rerun full setup: a365 setup blueprint");
                 logger.LogWarning("");
@@ -559,7 +568,8 @@ internal static class BlueprintSubcommand
         string clientAppId,
         string tenantId,
         ILogger logger,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? correlationId = null)
     {
         var retryHelper = new RetryHelper(logger);
 
@@ -571,7 +581,8 @@ internal static class BlueprintSubcommand
                     return await delegatedConsentService.EnsureBlueprintPermissionGrantAsync(
                         clientAppId,
                         tenantId,
-                        ct);
+                        ct,
+                        correlationId: correlationId);
                 },
                 result => !result,
                 maxRetries: 3,
@@ -1577,6 +1588,7 @@ internal static class BlueprintSubcommand
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
         string? customEndpoint = null,
+        string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
         var setupConfig = await configService.LoadAsync(configPath);
@@ -1598,7 +1610,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("");
 
         var (endpointRegistered, endpointAlreadyExisted) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator, customEndpoint);
+            setupConfig, logger, botConfigurator, customEndpoint, correlationId: correlationId);
 
 
         setupConfig.Completed = true;

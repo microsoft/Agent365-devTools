@@ -122,12 +122,15 @@ public static class DevelopCommand
     /// </summary>
     private static async Task<bool> CallDiscoverToolServersAsync(IConfigService configService, bool skipAuth, ILogger logger, AuthenticationService authService, bool skipLogs = false)
     {
+        // Generate correlation ID at workflow entry point
+        var correlationId = Services.Internal.HttpClientFactory.GenerateCorrelationId();
+
         try
         {
             var config = configService.LoadAsync().Result;
             var discoverEndpointUrl = ConfigConstants.GetDiscoverEndpointUrl(config.Environment);
 
-            logger.LogInformation("Calling discoverToolServers endpoint directly...");
+            logger.LogInformation("Calling discoverToolServers endpoint directly (CorrelationId: {CorrelationId})...", correlationId);
             logger.LogInformation("Environment: {Env}", config.Environment);
             logger.LogInformation("Endpoint URL: {Url}", discoverEndpointUrl);
 
@@ -157,7 +160,7 @@ public static class DevelopCommand
             }
 
             // Use helper to create authenticated HTTP client
-            using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
             // Call the endpoint directly (no environment ID needed in URL or query)
             logger.LogInformation("Making GET request to: {RequestUrl}", discoverEndpointUrl);

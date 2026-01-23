@@ -232,7 +232,10 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Build URL using environment from constructor
             var endpointUrl = BuildListEnvironmentsUrl(_environment);
             
-            _logger.LogInformation("Listing Dataverse environments");
+            // Generate correlation ID at workflow entry point
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Listing Dataverse environments (CorrelationId: {CorrelationId})", correlationId);
             _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
@@ -248,7 +251,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             }
 
             // Create authenticated HTTP client
-            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
             
             // Log request details
             LogRequest("GET", endpointUrl);
@@ -307,7 +310,10 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Build URL using environment from constructor
             var endpointUrl = BuildListMcpServersUrl(_environment, environmentId);
             
-            _logger.LogInformation("Listing MCP servers for environment {EnvId}", environmentId);
+            // Generate correlation ID at workflow entry point
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Listing MCP servers for environment {EnvId} (CorrelationId: {CorrelationId})", environmentId, correlationId);
             _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
@@ -323,7 +329,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             }
 
             // Create authenticated HTTP client
-            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
             
             // Log request details
             LogRequest("GET", endpointUrl);
@@ -377,7 +383,10 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Build URL using private helper method
             var endpointUrl = BuildPublishMcpServerUrl(_environment, environmentId, serverName);
             
-            _logger.LogInformation("Publishing MCP server {ServerName} to environment {EnvId}", serverName, environmentId);
+            // Generate correlation ID at workflow entry point
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Publishing MCP server {ServerName} to environment {EnvId} (CorrelationId: {CorrelationId})", serverName, environmentId, correlationId);
             _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
@@ -393,7 +402,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             }
 
             // Create authenticated HTTP client
-            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
             
             // Serialize request body
             var requestPayload = JsonSerializer.Serialize(request);
@@ -460,7 +469,10 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Build URL using private helper method
             var endpointUrl = BuildUnpublishMcpServerUrl(_environment, environmentId, serverName);
             
-            _logger.LogInformation("Unpublishing MCP server {ServerName} from environment {EnvId}", serverName, environmentId);
+            // Generate correlation ID at workflow entry point
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Unpublishing MCP server {ServerName} from environment {EnvId} (CorrelationId: {CorrelationId})", serverName, environmentId, correlationId);
             _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
@@ -476,7 +488,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             }
 
             // Create authenticated HTTP client
-            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
             
             // Log request details
             LogRequest("DELETE", endpointUrl);
@@ -517,7 +529,10 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Build URL using private helper method
             var endpointUrl = BuildApproveMcpServerUrl(_environment, serverName);
             
-            _logger.LogInformation("Approving MCP server {ServerName}", serverName);
+            // Generate correlation ID at workflow entry point
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Approving MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
             _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
@@ -533,7 +548,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             }
 
             // Create authenticated HTTP client
-            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
             
             // Log request details
             LogRequest("POST", endpointUrl);
@@ -575,7 +590,10 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Build URL using private helper method
             var endpointUrl = BuildBlockMcpServerUrl(_environment, serverName);
             
-            _logger.LogInformation("Blocking MCP server {ServerName}", serverName);
+            // Generate correlation ID at workflow entry point
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Blocking MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
             _logger.LogInformation("Environment: {Env}", _environment);
             _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
@@ -591,7 +609,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             }
 
             // Create authenticated HTTP client
-            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
             
             // Log request details
             LogRequest("POST", endpointUrl);
@@ -622,7 +640,10 @@ public class Agent365ToolingService : IAgent365ToolingService
     {
         var endpointUrl = BuildGetMCPServerUrl(_environment);
 
-        _logger.LogInformation("Calling get MCP server for {ServerName}", serverName);
+        // Generate correlation ID at workflow entry point
+        var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+        _logger.LogInformation("Calling get MCP server for {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
         _logger.LogInformation("Environment: {Env}", _environment);
         _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
 
@@ -639,7 +660,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         _logger.LogInformation("Successfully acquired access token");
 
         // Create authenticated HTTP client
-        using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+        using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
         var requestObject = new
         {

@@ -432,7 +432,8 @@ internal static class SetupHelpers
         Agent365Config setupConfig,
         ILogger logger,
         IBotConfigurator botConfigurator,
-        string? customEndpoint = null)
+        string? customEndpoint = null,
+        string? correlationId = null)
     {
         // Validate required configuration
         if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
@@ -564,7 +565,8 @@ internal static class SetupHelpers
             location: normalizedLocation,
             messagingEndpoint: messagingEndpoint,
             agentDescription: "Agent 365 messaging endpoint for automated interactions",
-            agentBlueprintId: setupConfig.AgentBlueprintId);
+            agentBlueprintId: setupConfig.AgentBlueprintId,
+            correlationId: correlationId);
 
         if (endpointResult == Models.EndpointRegistrationResult.Failed)
         {

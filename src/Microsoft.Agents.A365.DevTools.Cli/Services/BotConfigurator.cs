@@ -43,7 +43,8 @@ public class BotConfigurator : IBotConfigurator
         string location,
         string messagingEndpoint,
         string agentDescription,
-        string agentBlueprintId)
+        string agentBlueprintId,
+        string? correlationId = null)
     {
         _logger.LogInformation("Creating endpoint with Agent Blueprint Identity...");
         _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
@@ -114,7 +115,7 @@ public class BotConfigurator : IBotConfigurator
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
                 // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
                 // Call the endpoint
                 _logger.LogInformation("Making request to create endpoint (Location: {Location}).", normalizedLocation);
@@ -143,7 +144,7 @@ public class BotConfigurator : IBotConfigurator
                         _logger.LogInformation("Endpoint registration completed ({AlreadyExistsMessage})", AlreadyExistsErrorMessage);
                         _logger.LogInformation("");
                         _logger.LogInformation("If you need to update the endpoint:");
-                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup blueprint");
+                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup blueprint --endpoint-only");
                         _logger.LogInformation("  2. Register new endpoint: a365 setup blueprint --endpoint-only");
                         return EndpointRegistrationResult.AlreadyExists;
                     }
@@ -161,7 +162,7 @@ public class BotConfigurator : IBotConfigurator
                     _logger.LogError("");
                     _logger.LogError("To resolve this issue:");
                     _logger.LogError("  1. Check if endpoint exists: Review error details above");
-                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup blueprint");
+                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup blueprint --endpoint-only");
                     _logger.LogError("  3. Try registration again: a365 setup blueprint --endpoint-only");
                     return EndpointRegistrationResult.Failed;
                 }
@@ -193,7 +194,8 @@ public class BotConfigurator : IBotConfigurator
     public async Task<bool> DeleteEndpointWithAgentBlueprintAsync(
         string endpointName,
         string location,
-        string agentBlueprintId)
+        string agentBlueprintId,
+        string? correlationId = null)
     {
         _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
         _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
@@ -266,7 +268,7 @@ public class BotConfigurator : IBotConfigurator
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
                 // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
                 // Call the endpoint
                 _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
