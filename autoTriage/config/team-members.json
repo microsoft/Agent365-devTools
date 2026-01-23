@@ -1,0 +1,25 @@
+{
+  "team_members": [
+    {
+      "name": "Tech Lead",
+      "role": "Tech Lead",
+      "login": "GITHUB_USERNAME_HERE",
+      "contributions": 50,
+      "expertise": ["architecture", "code review", "backend", "API design", "mentoring"]
+    },
+    {
+      "name": "Backend Engineer",
+      "role": "Backend Developer",
+      "login": "GITHUB_USERNAME_HERE",
+      "contributions": 30,
+      "expertise": ["backend", "Python", "APIs", "database", "microservices"]
+    },
+    {
+      "name": "Full Stack Engineer",
+      "role": "Full Stack Developer",
+      "login": "GITHUB_USERNAME_HERE",
+      "contributions": 25,
+      "expertise": ["frontend", "backend", "React", "Node.js", "full-stack"]
+    }
+  ]
+}
