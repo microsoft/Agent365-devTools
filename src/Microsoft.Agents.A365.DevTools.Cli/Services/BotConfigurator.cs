@@ -143,7 +143,7 @@ public class BotConfigurator : IBotConfigurator
                         _logger.LogInformation("Endpoint registration completed ({AlreadyExistsMessage})", AlreadyExistsErrorMessage);
                         _logger.LogInformation("");
                         _logger.LogInformation("If you need to update the endpoint:");
-                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup blueprint");
+                        _logger.LogInformation("  1. Delete existing endpoint: a365 cleanup blueprint --endpoint-only");
                         _logger.LogInformation("  2. Register new endpoint: a365 setup blueprint --endpoint-only");
                         return EndpointRegistrationResult.AlreadyExists;
                     }
@@ -161,7 +161,7 @@ public class BotConfigurator : IBotConfigurator
                     _logger.LogError("");
                     _logger.LogError("To resolve this issue:");
                     _logger.LogError("  1. Check if endpoint exists: Review error details above");
-                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup blueprint");
+                    _logger.LogError("  2. Delete conflicting endpoint: a365 cleanup blueprint --endpoint-only");
                     _logger.LogError("  3. Try registration again: a365 setup blueprint --endpoint-only");
                     return EndpointRegistrationResult.Failed;
                 }

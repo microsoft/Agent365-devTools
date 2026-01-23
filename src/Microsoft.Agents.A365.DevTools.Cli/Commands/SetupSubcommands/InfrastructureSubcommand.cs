@@ -624,6 +624,87 @@ public static class InfrastructureSubcommand
                 logger.LogWarning("WARNING: identity assign returned error: {Err}", identity.StandardError.Trim());
             }
 
+            // Assign current user as Website Contributor for the WebApp
+            // This enables access to diagnostic logs and log stream
+            logger.LogInformation("Assigning current user as Website Contributor for the web app...");
+            try
+            {
+                // Get the current signed-in user's object ID
+                var userResult = await executor.ExecuteAsync("az", "ad signed-in-user show --query id -o tsv", captureOutput: true, suppressErrorLogging: true);
+                if (userResult.Success && !string.IsNullOrWhiteSpace(userResult.StandardOutput))
+                {
+                    var userObjectId = userResult.StandardOutput.Trim();
+                    
+                    // Validate that userObjectId is a valid GUID to prevent command injection
+                    if (!Guid.TryParse(userObjectId, out _))
+                    {
+                        logger.LogWarning("Retrieved user object ID is not a valid GUID: {UserId}", userObjectId);
+                        return (principalId, anyAlreadyExisted);
+                    }
+                    
+                    logger.LogDebug("Current user object ID: {UserId}", userObjectId);
+
+                    // Create the WebApp resource scope
+                    var webAppScope = $"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Web/sites/{webAppName}";
+
+                    // Assign the "Website Contributor" role to the user
+                    // Website Contributor allows viewing logs and diagnostic info without full Owner permissions
+                    var roleAssignResult = await executor.ExecuteAsync("az", 
+                        $"role assignment create --role \"Website Contributor\" --assignee-object-id {userObjectId} --scope {webAppScope} --assignee-principal-type User", 
+                        captureOutput: true, 
+                        suppressErrorLogging: true);
+
+                    if (roleAssignResult.Success)
+                    {
+                        logger.LogInformation("Successfully assigned Website Contributor role to current user");
+                    }
+                    else if (roleAssignResult.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Role assignment already exists - this is fine
+                        logger.LogDebug("Role assignment already exists: {Error}", roleAssignResult.StandardError.Trim());
+                    }
+                    else if (roleAssignResult.StandardError.Contains("PrincipalNotFound", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Principal not found (possibly using service principal)
+                        logger.LogDebug("User principal not available: {Error}", roleAssignResult.StandardError.Trim());
+                    }
+                    else
+                    {
+                        logger.LogWarning("Could not assign Website Contributor role to user. Diagnostic logs may not be accessible. Error: {Error}", roleAssignResult.StandardError.Trim());
+                    }
+
+                    // Verify the role assignment
+                    logger.LogInformation("Validating Website Contributor role assignment...");
+                    var verifyResult = await executor.ExecuteAsync("az",
+                        $"role assignment list --scope {webAppScope} --assignee {userObjectId} --role \"Website Contributor\" --query \"[].roleDefinitionName\" -o tsv",
+                        captureOutput: true,
+                        suppressErrorLogging: true);
+
+                    if (verifyResult.Success && !string.IsNullOrWhiteSpace(verifyResult.StandardOutput))
+                    {
+                        logger.LogInformation("Current user is confirmed as Website Contributor for the web app");
+                    }
+                    else
+                    {
+                        logger.LogWarning("WARNING: Could not verify Website Contributor role assignment");
+                        logger.LogWarning("You may need to manually assign the role via Azure Portal:");
+                        logger.LogWarning("  1. Go to Azure Portal -> Your Web App");
+                        logger.LogWarning("  2. Navigate to Access control (IAM)");
+                        logger.LogWarning("  3. Add role assignment -> Website Contributor");
+                        logger.LogWarning("Without this role, you may not be able to access diagnostic logs and log streams");
+                    }
+                }
+                else
+                {
+                    logger.LogDebug("Could not retrieve current user object ID. User may be using a service principal or not logged in with az login.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Don't fail the entire setup if role assignment fails
+                logger.LogWarning(ex, "Failed to assign Website Contributor role to user. Diagnostic logs may not be accessible.");
+            }
+
             // Load or create generated config
             if (File.Exists(generatedConfigPath))
             {
