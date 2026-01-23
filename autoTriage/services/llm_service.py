@@ -414,6 +414,76 @@ Respond in JSON format with: is_copilot_fixable, confidence, reasoning, suggeste
             "suggested_approach": ""
         }
 
+    def generate_fix_suggestions(
+        self,
+        title: str,
+        body: str,
+        issue_type: str = "bug",
+        priority: str = "P3"
+    ) -> List[str]:
+        """
+        Generate actionable fix suggestions for an issue using LLM analysis.
+
+        Args:
+            title: Issue title
+            body: Issue body/description
+            issue_type: Type of issue (bug, feature, documentation, question)
+            priority: Priority level (P1, P2, P3, P4)
+
+        Returns:
+            List of 3-5 actionable suggestions
+        """
+        # Get prompts from config
+        default_system = """You are an expert software engineer helping to provide actionable fix suggestions.
+Provide 3-5 specific, practical suggestions in JSON format with: suggestions (array of strings)."""
+
+        system_prompt = self.prompts.get("fix_suggestions_system", default_system)
+
+        user_prompt = self.prompts.format(
+            "fix_suggestions_user",
+            default=f"Generate fix suggestions for: {title}",
+            title=title,
+            body=body[:2000] if body else "No description provided",
+            issue_type=issue_type,
+            priority=priority
+        )
+
+        result = self._call_llm(system_prompt, user_prompt, json_response=True)
+        if result:
+            try:
+                parsed = json.loads(result)
+                suggestions = parsed.get("suggestions", [])
+                if suggestions and isinstance(suggestions, list):
+                    return suggestions[:5]  # Limit to 5 suggestions
+            except json.JSONDecodeError:
+                logging.warning("Failed to parse LLM fix suggestions response")
+
+        # Fallback generic suggestions based on issue type
+        if issue_type == "bug":
+            return [
+                "Review the error logs and stack traces to identify the root cause",
+                "Check recent code changes that might have introduced the issue",
+                "Add unit tests to reproduce the bug and verify the fix"
+            ]
+        elif issue_type == "feature":
+            return [
+                "Break down the feature into smaller, manageable tasks",
+                "Create a design document outlining the implementation approach",
+                "Consider edge cases and add appropriate error handling"
+            ]
+        elif issue_type == "documentation":
+            return [
+                "Identify which sections of documentation need updates",
+                "Review similar documentation for consistency in style and format",
+                "Include code examples to illustrate key concepts"
+            ]
+        else:  # question
+            return [
+                "Check existing documentation and codebase for related information",
+                "Search for similar issues or discussions in the repository",
+                "Consult with team members who have expertise in the relevant area"
+            ]
+
     def _determine_type(self, content: str) -> str:
         """Determine issue type based on keywords."""
         if any(kw in content for kw in ["bug", "error", "broken", "crash", "fail"]):

@@ -64,6 +64,7 @@ class IssueClassification:
     reason: str = ""  # Legacy single reason field (for backwards compatibility)
     confidence: float = 0.0
     rationale: TriageRationale = field(default_factory=TriageRationale)
+    fix_suggestions: list[str] = field(default_factory=list)  # AI-generated suggestions on how to fix
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -77,7 +78,8 @@ class IssueClassification:
             "is_copilot_fixable": self.is_copilot_fixable,
             "reason": self.reason,
             "confidence": self.confidence,
-            "rationale": self.rationale.to_dict()
+            "rationale": self.rationale.to_dict(),
+            "fix_suggestions": self.fix_suggestions
         }
 
     @staticmethod
@@ -94,5 +96,6 @@ class IssueClassification:
             is_copilot_fixable=data.get("is_copilot_fixable", False),
             reason=data.get("reason", ""),
             confidence=data.get("confidence", 0.0),
-            rationale=TriageRationale.from_dict(rationale_data) if rationale_data else TriageRationale()
+            rationale=TriageRationale.from_dict(rationale_data) if rationale_data else TriageRationale(),
+            fix_suggestions=data.get("fix_suggestions", [])
         )

@@ -66,7 +66,8 @@ def main():
             'recommended_assignee': issue_data.get('suggested_assignee'),  # Fixed: was looking for wrong field name
             'rationale': issue_data.get('rationale', ''),
             'is_copilot_fixable': issue_data.get('is_copilot_fixable', False),
-            'suggested_labels': issue_data.get('suggested_labels', [])
+            'suggested_labels': issue_data.get('suggested_labels', []),
+            'fix_suggestions': issue_data.get('fix_suggestions', [])
         }
 
         # Write result to file for GitHub Action to read
@@ -87,6 +88,12 @@ def main():
             print(f"Recommended Assignee: @{output['recommended_assignee']}")
         print(f"Copilot-fixable: {'Yes' if output['is_copilot_fixable'] else 'No'}")
         print(f"\nRationale: {output['rationale']}")
+
+        if output['fix_suggestions']:
+            print(f"\nFix Suggestions ({len(output['fix_suggestions'])}):")
+            for i, suggestion in enumerate(output['fix_suggestions'], 1):
+                print(f"  {i}. {suggestion}")
+
         print(f"\nResult written to: {output_path}")
 
     except Exception as e:

@@ -599,6 +599,14 @@ def triage_issues(
         is_copilot_fixable = copilot_result["is_copilot_fixable"]
         copilot_reasoning = copilot_result.get("reasoning", "")
 
+        # Generate fix suggestions
+        fix_suggestions = llm_service.generate_fix_suggestions(
+            title=issue.title,
+            body=issue.body or "",
+            issue_type=classification["type"],
+            priority=classification["priority"]
+        )
+
         # Determine assignee based on Copilot-fixable status
         assignment_rationale = ""
         if is_copilot_fixable:
@@ -645,7 +653,8 @@ def triage_issues(
             is_copilot_fixable=is_copilot_fixable,
             reason=combined_reason,
             confidence=classification.get("confidence", 0.8),
-            rationale=triage_rationale
+            rationale=triage_rationale,
+            fix_suggestions=fix_suggestions
         )
 
         # Validate the LLM's choices
