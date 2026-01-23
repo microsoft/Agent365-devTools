@@ -634,6 +634,14 @@ public static class InfrastructureSubcommand
                 if (userResult.Success && !string.IsNullOrWhiteSpace(userResult.StandardOutput))
                 {
                     var userObjectId = userResult.StandardOutput.Trim();
+                    
+                    // Validate that userObjectId is a valid GUID to prevent command injection
+                    if (!Guid.TryParse(userObjectId, out _))
+                    {
+                        logger.LogWarning("Retrieved user object ID is not a valid GUID: {UserId}", userObjectId);
+                        return (principalId, anyAlreadyExisted);
+                    }
+                    
                     logger.LogDebug("Current user object ID: {UserId}", userObjectId);
 
                     // Create the WebApp resource scope
