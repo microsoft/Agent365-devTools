@@ -1,0 +1,88 @@
+{
+  "team_members": [
+    {
+      "name": "Sellakumaran Kanagarathnam",
+      "role": "Tech Lead",
+      "login": "sellakumaran",
+      "contributions": 27,
+      "expertise": ["architecture", "code review", "backend", "API design", "mentoring"]
+    },
+    {
+      "name": "Josina20",
+      "role": "Backend Developer",
+      "login": "Josina20",
+      "contributions": 12,
+      "expertise": ["backend", "Python", "APIs", "database"]
+    },
+    {
+      "name": "Rahul Devikar",
+      "role": "Full Stack Developer",
+      "login": "rahuldevikar761",
+      "contributions": 12,
+      "expertise": ["frontend", "backend", "React", "Node.js", "full-stack"]
+    },
+    {
+      "name": "Josh Oratz",
+      "role": "Frontend Developer",
+      "login": "joratz",
+      "contributions": 8,
+      "expertise": ["frontend", "React", "JavaScript", "CSS", "UI/UX"]
+    },
+    {
+      "name": "Mengyi Xu",
+      "role": "AI/ML Engineer",
+      "login": "mengyimicro",
+      "contributions": 6,
+      "expertise": ["AI", "ML", "LLM", "Python", "data science", "prompts"]
+    },
+    {
+      "name": "Jesus Daniel Terrazas",
+      "role": "DevOps Engineer",
+      "login": "JesuTerraz",
+      "contributions": 5,
+      "expertise": ["DevOps", "CI/CD", "Azure", "infrastructure", "automation"]
+    },
+    {
+      "name": "LavanyaK235",
+      "role": "QA Engineer",
+      "login": "LavanyaK235",
+      "contributions": 5,
+      "expertise": ["testing", "QA", "test automation", "quality assurance"]
+    },
+    {
+      "name": "Mrunal Suyoga Hirve",
+      "role": "Backend Developer",
+      "login": "mrunalhirve128",
+      "contributions": 4,
+      "expertise": ["backend", "Python", "APIs", "microservices"]
+    },
+    {
+      "name": "Mari",
+      "role": "Frontend Developer",
+      "login": "skg-marimuthu",
+      "contributions": 4,
+      "expertise": ["frontend", "React", "JavaScript", "UI components"]
+    },
+    {
+      "name": "Johan Broberg",
+      "role": "Security Engineer",
+      "login": "pontemonti",
+      "contributions": 4,
+      "expertise": ["security", "authentication", "authorization", "compliance", "vulnerability"]
+    },
+    {
+      "name": "Jon",
+      "role": "Platform Engineer",
+      "login": "msftjon",
+      "contributions": 2,
+      "expertise": ["platform", "infrastructure", "Azure", "cloud", "deployment"]
+    },
+    {
+      "name": "Tahir Sousa",
+      "role": "Data Engineer",
+      "login": "tmlsousa",
+      "contributions": 2,
+      "expertise": ["data engineering", "ETL", "databases", "analytics", "SQL"]
+    }
+  ]
+}
