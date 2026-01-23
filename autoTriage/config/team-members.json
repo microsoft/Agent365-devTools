@@ -5,28 +5,28 @@
       "role": "Tech Lead",
       "login": "sellakumaran",
       "contributions": 20,
-      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "repository expert", "system design"]
+      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "system design"]
     },
     {
       "name": "Josh Oratz",
-      "role": "Senior Frontend Developer",
+      "role": "Backend Engineer",
       "login": "joratz",
       "contributions": 18,
-      "expertise": ["frontend", "React", "JavaScript", "TypeScript", "CSS", "UI/UX", "component design", "codebase familiar"]
+      "expertise": []
     },
     {
       "name": "Mengyi Xu",
-      "role": "AI/ML Engineer (SDE2)",
+      "role": "Backend Engineer",
       "login": "mengyimicro",
       "contributions": 15,
-      "expertise": ["AI", "ML", "LLM", "Python", "data science", "prompt engineering", "Azure OpenAI", "repository expert", "auto-triage"]
+      "expertise": []
     },
     {
       "name": "Johan Broberg",
-      "role": "Principal Security Engineer",
+      "role": "Backend Engineer",
       "login": "pontemonti",
       "contributions": 12,
-      "expertise": ["security", "authentication", "authorization", "compliance", "vulnerability", "penetration testing"]
+      "expertise": []
     },
     {
       "name": "Tahir Sousa",
