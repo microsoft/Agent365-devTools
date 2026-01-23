@@ -14,6 +14,11 @@ public class RequirementCheckResult
     public bool Passed { get; set; }
 
     /// <summary>
+    /// Whether this is a warning (informational, doesn't block setup)
+    /// </summary>
+    public bool IsWarning { get; set; }
+
+    /// <summary>
     /// Error message if the check failed
     /// </summary>
     public string? ErrorMessage { get; set; }
@@ -36,6 +41,21 @@ public class RequirementCheckResult
         return new RequirementCheckResult
         {
             Passed = true,
+            IsWarning = false,
+            Details = details
+        };
+    }
+
+    /// <summary>
+    /// Creates a warning result (informational, doesn't block setup)
+    /// </summary>
+    public static RequirementCheckResult Warning(string message, string? details = null)
+    {
+        return new RequirementCheckResult
+        {
+            Passed = true,
+            IsWarning = true,
+            ErrorMessage = message,
             Details = details
         };
     }
@@ -48,6 +68,7 @@ public class RequirementCheckResult
         return new RequirementCheckResult
         {
             Passed = false,
+            IsWarning = false,
             ErrorMessage = errorMessage,
             ResolutionGuidance = resolutionGuidance,
             Details = details

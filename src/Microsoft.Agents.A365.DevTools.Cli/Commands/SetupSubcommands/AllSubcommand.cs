@@ -141,7 +141,7 @@ internal static class AllSubcommand
                     try
                     {
                         var result = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetRequirementChecks(),
+                            RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
                             setupConfig,
                             logger,
                             category: null,
