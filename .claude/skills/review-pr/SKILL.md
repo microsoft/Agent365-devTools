@@ -33,6 +33,7 @@ Examples:
 **Step 2: Post** (`/review-pr <number> --post`)
 1. **Reads the YAML file** you reviewed/edited
 2. **Posts to GitHub**: Submits all enabled comments to the PR
+3. **Automatic fallback**: If GitHub API posting fails (e.g., Enterprise Managed User restrictions), automatically generates a markdown file with formatted comments for manual copy/paste
 
 ## Engineering Review Principles
 
@@ -107,6 +108,7 @@ python .claude/skills/review-pr/review-pr.py <pr-number> --post
 1. Reads the existing YAML file
 2. Previews what will be posted
 3. Posts all enabled comments to GitHub
+4. If posting fails due to API permissions, automatically generates `pr-<number>-review-manual.md` with formatted comments for manual copy/paste
 
 ## Workflow
 
@@ -124,6 +126,7 @@ python .claude/skills/review-pr/review-pr.py <pr-number> --post
 3. **Post to GitHub**: `/review-pr 180 --post`
    - Reads the YAML file
    - Posts all enabled comments to the PR
+   - If API posting fails, automatically generates a markdown file for manual copy/paste
 
 ## Requirements
 

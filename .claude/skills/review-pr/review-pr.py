@@ -45,9 +45,8 @@ class PRReviewer:
             errors='replace'
         )
         if check and result.returncode != 0:
-            print(f"Error: {result.stderr}", file=sys.stderr)
-            if check:
-                sys.exit(1)
+            error_msg = result.stderr if result.stderr else "Command failed"
+            raise Exception(error_msg)
         if result.stdout is None:
             return ""
         return result.stdout.strip()
@@ -305,6 +304,50 @@ Please address the comments and let me know if you have any questions.""",
                 print(f"\n{i}. [{comment['severity'].upper()}] {comment.get('file', 'General')}")
                 print(f"   {comment['body'][:80]}...")
 
+    def generate_manual_format(self, comments_file: Path):
+        """Generate markdown file for manual copy/paste posting."""
+        with open(comments_file, 'r') as f:
+            data = yaml.safe_load(f)
+
+        enabled_comments = [c for c in data['comments'] if c.get('enabled', True)]
+
+        # Create markdown file
+        md_file = comments_file.parent / f"pr-{self.pr_number}-review-manual.md"
+
+        with open(md_file, 'w', encoding='utf-8') as f:
+            f.write(f"# PR #{self.pr_number} Review Comments\n\n")
+            f.write(f"**PR Title:** {data['pr_title']}\n\n")
+            f.write(f"**PR URL:** {data['pr_url']}\n\n")
+            f.write(f"---\n\n")
+            f.write(f"## Instructions\n\n")
+            f.write(f"Copy and paste each comment below to the GitHub PR.\n\n")
+            f.write(f"For file-specific comments, click on the file in the PR and add the comment to the appropriate location.\n\n")
+            f.write(f"---\n\n")
+
+            # Overall review
+            f.write(f"## Overall Review\n\n")
+            f.write(f"{data['overall_body']}\n\n")
+            f.write(f"---\n\n")
+
+            # Individual comments
+            f.write(f"## Comments ({len(enabled_comments)})\n\n")
+
+            for i, comment in enumerate(enabled_comments, 1):
+                f.write(f"### Comment {i} - [{comment['severity'].upper()}]\n\n")
+
+                if 'file' in comment:
+                    f.write(f"**File:** `{comment['file']}`\n\n")
+                else:
+                    f.write(f"**Location:** General comment\n\n")
+
+                f.write(f"{comment['body']}\n\n")
+                f.write(f"---\n\n")
+
+        print(f"\n[OK] Manual format generated: {md_file}")
+        print(f"\nOpen the file and copy/paste comments to GitHub:")
+        print(f"  {md_file}")
+        return md_file
+
     def post_review(self, comments_file: Path):
         """Post review comments to GitHub."""
         with open(comments_file, 'r') as f:
@@ -319,31 +362,44 @@ Please address the comments and let me know if you have any questions.""",
 
         print(f"\nPosting {len(enabled_comments)} comments to PR #{self.pr_number}...")
 
-        # Post overall review
-        decision = data['overall_decision'].lower()
-        overall_body = data['overall_body'].replace('"', '\\"').replace('\n', '\\n')
-
-        self.run_command(
-            f'gh pr review {self.pr_number} --{decision} --body "{overall_body}"'
-        )
-
-        print("[OK] Overall review posted")
-
-        # Post individual comments
-        for i, comment in enumerate(enabled_comments, 1):
-            body = comment['body'].replace('"', '\\"').replace('\n', '\\n')
-
-            print(f"  [{i}/{len(enabled_comments)}] Posting comment...")
+        try:
+            # Post overall review
+            decision = data['overall_decision'].lower()
+            overall_body = data['overall_body'].replace('"', '\\"').replace('\n', '\\n')
 
             self.run_command(
-                f'gh pr comment {self.pr_number} --body "{body}"',
-                check=False
+                f'gh pr review {self.pr_number} --{decision} --body "{overall_body}"'
             )
 
-            time.sleep(0.5)  # Rate limiting
+            print("[OK] Overall review posted")
 
-        print(f"\n[OK] Successfully posted review to PR #{self.pr_number}")
-        print(f"  View at: {data['pr_url']}")
+            # Post individual comments
+            for i, comment in enumerate(enabled_comments, 1):
+                body = comment['body'].replace('"', '\\"').replace('\n', '\\n')
+
+                print(f"  [{i}/{len(enabled_comments)}] Posting comment...")
+
+                self.run_command(
+                    f'gh pr comment {self.pr_number} --body "{body}"',
+                    check=False
+                )
+
+                time.sleep(0.5)  # Rate limiting
+
+            print(f"\n[OK] Successfully posted review to PR #{self.pr_number}")
+            print(f"  View at: {data['pr_url']}")
+
+        except Exception as e:
+            error_msg = str(e)
+            # Check if it's a GitHub API permission error
+            if 'Unauthorized' in error_msg or 'Enterprise Managed User' in error_msg:
+                print(f"\n[WARNING] GitHub API posting failed due to permissions.")
+                print(f"Error: {error_msg}")
+                print(f"\n[INFO] Generating manual copy/paste format instead...")
+                self.generate_manual_format(comments_file)
+            else:
+                # Re-raise other errors
+                raise
 
 
 def main():
