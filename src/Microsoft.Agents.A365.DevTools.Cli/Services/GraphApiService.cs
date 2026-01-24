@@ -182,20 +182,47 @@ public class GraphApiService
 
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        // When specific scopes are required, token provider must be configured
-        if (scopes != null && _tokenProvider == null)
+        // Authentication Strategy:
+        // 1. If specific scopes required AND token provider configured: Use interactive browser auth (cached)
+        // 2. Otherwise: Use Azure CLI token (requires 'az login')
+        // This dual approach minimizes auth prompts while supporting special scope requirements
+
+        string? token;
+
+        if (scopes != null && _tokenProvider != null)
         {
+            // Use token provider with delegated scopes (interactive browser auth with caching)
+            _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes));
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct);
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _logger.LogError("Failed to acquire Graph token with scopes: {Scopes}", string.Join(", ", scopes));
+                return false;
+            }
+
+            _logger.LogDebug("Successfully acquired Graph token with specific scopes (cached or new)");
+        }
+        else if (scopes != null && _tokenProvider == null)
+        {
+            // Scopes required but no token provider - this is a configuration issue
             _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes));
             return false;
         }
+        else
+        {
+            // Use Azure CLI token (default fallback for operations that don't need special scopes)
+            _logger.LogDebug("Acquiring Graph token via Azure CLI (no specific scopes required)");
+            token = await GetGraphAccessTokenAsync(tenantId, ct);
 
-        // When specific scopes are required, use custom client app if configured
-        // CustomClientAppId should be set by callers who have access to config
-        var token = (scopes != null && _tokenProvider != null)
-            ? await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct)
-            : await GetGraphAccessTokenAsync(tenantId, ct);
-        
-        if (string.IsNullOrWhiteSpace(token)) return false;
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _logger.LogError("Failed to acquire Graph token via Azure CLI. Ensure 'az login' is completed.");
+                return false;
+            }
+
+            _logger.LogDebug("Successfully acquired Graph token via Azure CLI");
+        }
 
         // Trim token to remove any newline characters that may cause header validation errors
         token = token.Trim();

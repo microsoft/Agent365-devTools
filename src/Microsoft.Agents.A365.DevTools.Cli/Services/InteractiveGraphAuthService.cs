@@ -83,28 +83,24 @@ public sealed class InteractiveGraphAuthService
         _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
         _logger.LogInformation("");
 
-        // Try browser authentication first
-        GraphServiceClient? graphClient = null;
-        bool shouldTryDeviceCode = false;
-        
+        // Use browser authentication (MsalBrowserCredential handles WAM on Windows and browser on other platforms)
         try
         {
-            // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
             // Pass null for redirectUri to let MsalBrowserCredential decide based on platform
             var browserCredential = new MsalBrowserCredential(
                 _clientAppId,
                 tenantId,
                 redirectUri: null,  // Let MsalBrowserCredential use WAM on Windows
                 _logger);
-            
+
             _logger.LogInformation("Authenticating to Microsoft Graph...");
             _logger.LogInformation("IMPORTANT: You must grant consent for all required permissions.");
             _logger.LogInformation("Required permissions are defined in AuthenticationConstants.RequiredClientAppPermissions.");
             _logger.LogInformation($"See {ConfigConstants.Agent365CliDocumentationUrl} for the complete list.");
             _logger.LogInformation("");
-            
+
             // Create GraphServiceClient with the credential
-            graphClient = new GraphServiceClient(browserCredential, RequiredScopes);
+            var graphClient = new GraphServiceClient(browserCredential, RequiredScopes);
 
             _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
             _logger.LogInformation("");
@@ -112,24 +108,26 @@ public sealed class InteractiveGraphAuthService
             // Cache the client for reuse
             _cachedClient = graphClient;
             _cachedTenantId = tenantId;
-            
+
             return Task.FromResult(graphClient);
         }
         catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
         {
-            // Most specific: permissions issue - don't try fallback
+            // Permissions issue
             ThrowInsufficientPermissionsException(ex);
             throw; // Unreachable but required for compiler
         }
         catch (MsalAuthenticationFailedException ex) when (
-            ex.Message.Contains("localhost") || 
+            ex.Message.Contains("localhost") ||
             ex.Message.Contains("connection") ||
             ex.Message.Contains("redirect_uri"))
         {
-            // Infrastructure issue - try device code fallback
-            _logger.LogWarning("Browser authentication failed due to connectivity issue, falling back to device code flow...");
-            _logger.LogInformation("");
-            shouldTryDeviceCode = true;
+            // Infrastructure/connectivity issue
+            _logger.LogError("Browser authentication failed due to connectivity issue: {Message}", ex.Message);
+            throw new GraphApiException(
+                "Browser authentication",
+                $"Authentication failed due to connectivity issue: {ex.Message}. Please ensure you have network connectivity.",
+                isPermissionIssue: false);
         }
         catch (Microsoft.Identity.Client.MsalServiceException ex) when (ex.ErrorCode == "access_denied")
         {
@@ -147,75 +145,6 @@ public sealed class InteractiveGraphAuthService
                 $"Authentication failed: {ex.Message}",
                 isPermissionIssue: false);
         }
-        
-        // DeviceCodeCredential fallback safety net:
-        // If browser authentication fails due to infrastructure issues (localhost connectivity,
-        // redirect URI problems, etc.), this fallback provides an alternative authentication path.
-        // The device code flow displays a code that users can enter at microsoft.com/devicelogin,
-        // which works even in environments where browser-based OAuth redirects fail.
-        // This fallback is preserved even after the WAM fix (GitHub issues #146, #151).
-        if (shouldTryDeviceCode)
-        {
-            try
-            {
-                var deviceCodeCredential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
-                {
-                    TenantId = tenantId,
-                    ClientId = _clientAppId,
-                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-                    {
-                        Name = AuthenticationConstants.ApplicationName
-                    },
-                    DeviceCodeCallback = (code, cancellation) =>
-                    {
-                        _logger.LogInformation("");
-                        _logger.LogInformation("=============================================================");
-                        _logger.LogInformation("DEVICE CODE AUTHENTICATION");
-                        _logger.LogInformation("=============================================================");
-                        _logger.LogInformation("");
-                        _logger.LogInformation("To sign in, use a web browser to open the page:");
-                        _logger.LogInformation("    {0}", code.VerificationUri);
-                        _logger.LogInformation("");
-                        _logger.LogInformation("And enter the code:");
-                        _logger.LogInformation("    {0}", code.UserCode);
-                        _logger.LogInformation("");
-                        _logger.LogInformation("=============================================================");
-                        _logger.LogInformation("");
-                        return Task.CompletedTask;
-                    }
-                });
-                
-                graphClient = new GraphServiceClient(deviceCodeCredential, RequiredScopes);
-                
-                _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
-                _logger.LogInformation("");
-
-                // Cache the client for reuse
-                _cachedClient = graphClient;
-                _cachedTenantId = tenantId;
-                
-                return Task.FromResult(graphClient);
-            }
-            catch (Azure.Identity.AuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
-            {
-                // Permissions issue in device code flow
-                ThrowInsufficientPermissionsException(ex);
-                throw; // Unreachable but required for compiler
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Device code authentication failed: {Message}", ex.Message);
-                throw new GraphApiException(
-                    "Device code authentication", 
-                    $"Authentication failed: {ex.Message}. Ensure you have required permissions and completed authentication flow.");
-            }
-        }
-        
-        // If browser auth succeeded, we already returned at line 83
-        // If device code was attempted and succeeded, we already returned above
-        // This line is truly unreachable in normal flow
-        throw new InvalidOperationException("Authentication failed unexpectedly.");
     }
 
     private void ThrowInsufficientPermissionsException(Exception innerException)
