@@ -45,7 +45,7 @@ The application you're adding permissions to can be the **same application** you
 
 **Example**: If your `a365.config.json` has `clientAppId: "12345678-..."`, running `a365 develop add-permissions` will add MCP permissions to that same application.
 
-> **Note**: The `clientAppId` must be a **client application you create in your Entra ID tenant** with `Application.ReadWrite.All` permission. See the [custom client app registration guide](../../guides/custom-client-app-registration.md) for setup instructions.
+> **Note**: The `clientAppId` must be a **client application you create in your Entra ID tenant** with `Application.ReadWrite.All` permission. See the [custom client app registration guide](https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration) for setup instructions.
 
 ## Prerequisites
 

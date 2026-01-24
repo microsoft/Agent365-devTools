@@ -113,7 +113,7 @@ Retry (2 attempts remaining)? (Y/n):
 ```
 
 **Prerequisites**: Before running config init, create your custom client app:
-1. Follow the guide: [Custom Client App Registration](../guides/custom-client-app-registration.md)
+1. Follow the guide: [Custom Client App Registration](https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration)
 2. Copy the **Application (client) ID** from Azure Portal
 3. Ensure admin consent is granted for all permissions
 4. Enter the ID when prompted during config init
@@ -254,7 +254,7 @@ The wizard automatically populates these fields:
 |-------|-------------|--------|---------|
 | **clientAppId** | Custom Entra ID app registration Application (client) ID | User provides after creating app | `a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6` |
 
-**Important**: This must be configured before setup. See [Custom Client App Registration Guide](../guides/custom-client-app-registration.md) for detailed setup instructions.
+**Important**: This must be configured before setup. See [Custom Client App Registration Guide](https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration) for detailed setup instructions.
 
 ### Azure Infrastructure (Auto-detected from Azure CLI)
 
