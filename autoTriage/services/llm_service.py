@@ -9,6 +9,9 @@ from openai import OpenAI, AzureOpenAI
 from models.team_config import PriorityRules, CopilotFixableConfig
 from services.prompt_loader import get_prompt_loader
 
+# Display limits
+MAX_CONTRIBUTORS_TO_SHOW = 3  # Maximum contributors to show per file in commit history
+
 
 class LlmService:
     """Service for LLM-based classification and summarization."""
@@ -685,7 +688,7 @@ Respond in JSON format with: assignee, rationale, confidence."""
             for file_path, contributors in file_contributors.items():
                 # Sort contributors by commit count
                 sorted_contributors = sorted(contributors.items(), key=lambda x: x[1], reverse=True)
-                contributor_str = ", ".join([f"{login} ({count} commits)" for login, count in sorted_contributors[:3]])
+                contributor_str = ", ".join([f"{login} ({count} commits)" for login, count in sorted_contributors[:MAX_CONTRIBUTORS_TO_SHOW]])
                 contributor_lines.append(f"  - {file_path}: {contributor_str}")
 
             if contributor_lines:

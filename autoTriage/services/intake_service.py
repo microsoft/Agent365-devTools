@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Tuple
 
-from services.github_service import GitHubService
+from services.github_service import GitHubService, MAX_CONFIG_FILES
 from services.llm_service import LlmService
 from services.config_parser import ConfigParser
 from services.teams_service import TeamsService
@@ -591,7 +591,7 @@ def triage_issues(
 
     # Fetch key config files for dependency/tech stack info
     config_contents = {}
-    for config_file in repo_structure.get('config_files', [])[:3]:  # Limit to first 3 config files
+    for config_file in repo_structure.get('config_files', [])[:MAX_CONFIG_FILES]:  # Limit config files to fetch
         content = github_service.get_file_content(owner, repo, config_file)
         if content:
             config_contents[config_file] = content[:2000]  # Limit to first 2000 chars

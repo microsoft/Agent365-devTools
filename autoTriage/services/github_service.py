@@ -5,7 +5,7 @@ import os
 import time
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Set, Tuple
+from typing import Optional, List, Dict, Set, Tuple, Any
 from github import Github, GithubException
 from difflib import get_close_matches
 from functools import lru_cache
@@ -16,8 +16,22 @@ logger = logging.getLogger(__name__)
 TRIAGE_BOT_USERS = ['github-actions[bot]', 'dependabot[bot]']
 
 # In-memory cache with TTL
-_cache: Dict[str, Tuple[any, datetime]] = {}
+_cache: Dict[str, Tuple[Any, datetime]] = {}
 CACHE_TTL_SECONDS = 900  # 15 minutes - good for demos
+
+# API request limits
+MAX_ITEMS_PER_REQUEST = 100  # Maximum items to fetch per API request
+MAX_MERGED_PRS_TO_FETCH = 50  # Maximum merged PRs to fetch
+MIN_RATE_LIMIT_REMAINING = 10  # Minimum remaining rate limit before warning
+DEFAULT_PER_PAGE = 100  # Default items per page for GitHub API
+
+# Repository analysis limits
+MAX_FILES_TO_SCAN = 500  # Maximum files to scan in repository structure
+MAX_SCAN_DEPTH = 3  # Maximum directory depth to scan
+MAX_CONFIG_FILES = 3  # Maximum config files to fetch content for
+MAX_FILE_CONTENT_SIZE = 10000  # Maximum file size in bytes to fetch
+MAX_FILE_PATHS_TO_EXTRACT = 5  # Maximum file paths to extract from issue text
+MAX_CONTRIBUTORS_TO_SHOW = 3  # Maximum contributors to show per file
 
 
 def _get_cached(key: str):
@@ -31,7 +45,7 @@ def _get_cached(key: str):
     return None
 
 
-def _set_cached(key: str, value: any, ttl: int = CACHE_TTL_SECONDS):
+def _set_cached(key: str, value: Any, ttl: int = CACHE_TTL_SECONDS):
     """Set cached value with TTL."""
     _cache[key] = (value, datetime.now() + timedelta(seconds=ttl))
 
@@ -49,8 +63,8 @@ class GitHubService:
         token = os.environ.get("GITHUB_TOKEN", "")
         if not token:
             logger.warning("GITHUB_TOKEN not set - using unauthenticated requests (60/hour limit)")
-        self.client = Github(token, per_page=100) if token else Github(per_page=100)
-        self._repo_cache: Dict[str, any] = {}
+        self.client = Github(token, per_page=DEFAULT_PER_PAGE) if token else Github(per_page=DEFAULT_PER_PAGE)
+        self._repo_cache: Dict[str, Any] = {}
 
     def _get_repo(self, owner: str, repo: str):
         """Get repository with caching."""
@@ -70,7 +84,7 @@ class GitHubService:
             "used": core.limit - core.remaining,
         }
 
-    def check_rate_limit(self, min_remaining: int = 10) -> bool:
+    def check_rate_limit(self, min_remaining: int = MIN_RATE_LIMIT_REMAINING) -> bool:
         """Check if we have enough rate limit remaining. Returns True if OK."""
         try:
             status = self.get_rate_limit_status()
@@ -177,7 +191,7 @@ class GitHubService:
             repository = self._get_repo(owner, repo)
             issues = repository.get_issues(state="open", sort="updated", direction="desc")
             # Filter out PRs (GitHub API returns both issues and PRs from get_issues)
-            result = [issue for issue in issues if not issue.pull_request][:100]  # Limit to 100 open issues
+            result = [issue for issue in issues if not issue.pull_request][:MAX_ITEMS_PER_REQUEST]  # Limit open issues
             _set_cached(cache_key, result)
             return result
         except GithubException as e:
@@ -194,7 +208,7 @@ class GitHubService:
         try:
             repository = self._get_repo(owner, repo)
             prs = repository.get_pulls(state="open", sort="updated", direction="desc")
-            result = list(prs)[:100]  # Limit to 100 open PRs
+            result = list(prs)[:MAX_ITEMS_PER_REQUEST]  # Limit open PRs
             _set_cached(cache_key, result)
             return result
         except GithubException as e:
@@ -220,7 +234,7 @@ class GitHubService:
                     break
                 if pr.merged_at and pr.merged_at >= since:
                     result.append(pr)
-                if len(result) >= 50:  # Limit merged PRs
+                if len(result) >= MAX_MERGED_PRS_TO_FETCH:  # Limit merged PRs
                     break
             _set_cached(cache_key, result)
             return result
@@ -479,7 +493,7 @@ class GitHubService:
             }
 
     @lru_cache(maxsize=50)
-    def get_repository_structure(self, owner: str, repo: str, max_depth: int = 3) -> Dict[str, Any]:
+    def get_repository_structure(self, owner: str, repo: str, max_depth: int = MAX_SCAN_DEPTH) -> Dict[str, Any]:
         """Get repository directory structure for understanding project layout.
 
         Args:
@@ -511,7 +525,7 @@ class GitHubService:
                 "docs": []
             }
 
-            for item in tree.tree[:500]:  # Limit to first 500 items
+            for item in tree.tree[:MAX_FILES_TO_SCAN]:  # Limit files to scan
                 path = item.path
                 depth = path.count('/')
 
@@ -562,7 +576,7 @@ class GitHubService:
             }
 
     @lru_cache(maxsize=200)
-    def get_file_content(self, owner: str, repo: str, file_path: str, max_size: int = 10000) -> Optional[str]:
+    def get_file_content(self, owner: str, repo: str, file_path: str, max_size: int = MAX_FILE_CONTENT_SIZE) -> Optional[str]:
         """Get content of a specific file from the repository.
 
         Args:
@@ -844,7 +858,7 @@ class GitHubService:
                 unique_paths.append(path)
 
         logger.debug(f"Extracted {len(unique_paths)} file paths from text")
-        return unique_paths[:5]  # Limit to first 5 paths
+        return unique_paths[:MAX_FILE_PATHS_TO_EXTRACT]  # Limit file paths extracted
 
     def get_contributors_for_issue(
         self,

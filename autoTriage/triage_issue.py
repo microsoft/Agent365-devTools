@@ -35,7 +35,7 @@ def main():
     # Check for GITHUB_TOKEN
     github_token = os.getenv('GITHUB_TOKEN')
     if not github_token:
-        print("[ERROR] ERROR: GITHUB_TOKEN environment variable not set")
+        print("[ERROR] GITHUB_TOKEN environment variable not set")
         sys.exit(1)
 
     try:
