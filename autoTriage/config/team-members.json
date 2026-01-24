@@ -1,0 +1,39 @@
+{
+  "team_members": [
+    {
+      "name": "Sellakumaran Kanagarathnam",
+      "role": "Tech Lead",
+      "login": "sellakumaran",
+      "contributions": 20,
+      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "system design"]
+    },
+    {
+      "name": "Josh Oratz",
+      "role": "Backend Engineer",
+      "login": "joratz",
+      "contributions": 18,
+      "expertise": []
+    },
+    {
+      "name": "Mengyi Xu",
+      "role": "Backend Engineer",
+      "login": "mengyimicro",
+      "contributions": 15,
+      "expertise": []
+    },
+    {
+      "name": "Johan Broberg",
+      "role": "Backend Engineer",
+      "login": "pontemonti",
+      "contributions": 12,
+      "expertise": []
+    },
+    {
+      "name": "Tahir Sousa",
+      "role": "Engineering Manager",
+      "login": "tmlsousa",
+      "contributions": 5,
+      "expertise": ["management", "planning", "coordination", "strategic planning"]
+    }
+  ]
+}
