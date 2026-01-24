@@ -10,7 +10,7 @@ import os
 import json
 import logging
 import requests
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 # Conditional imports for type hints only (these models don't exist in autoTriage)
 if TYPE_CHECKING:
