@@ -201,8 +201,9 @@ class TestGitHubServiceFilePathExtraction:
 
         paths = service.extract_file_paths_from_text(text)
 
-        # Should extract relative paths
-        assert any("src/main.py" in path for path in paths) or any("config/settings.json" in path for path in paths)
+        # Should extract both relative paths (with prefixes normalized)
+        assert any("src/main.py" in path for path in paths), "Expected src/main.py to be extracted"
+        assert any("config/settings.json" in path for path in paths), "Expected config/settings.json to be extracted"
 
     def test_extract_file_paths_with_various_extensions(self):
         """Test extraction of files with different extensions."""

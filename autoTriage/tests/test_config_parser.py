@@ -65,9 +65,8 @@ class TestConfigParser:
 
         assert config.team_members is not None
         assert isinstance(config.team_members, list)
-        # Should have team members if file exists
-        # Note: This test will pass even if the file doesn't exist (returns empty list)
-        assert isinstance(config.team_members, list)
+        # Team members file exists in the repo, so we should have members
+        assert len(config.team_members) > 0, "Expected team members to be loaded from config/team-members.json"
 
     def test_get_default_config_has_triage_meta(self):
         """Test that default config has valid triage metadata."""
