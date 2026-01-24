@@ -45,7 +45,8 @@ jobs:
           python triage_issue.py \
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
-            --issue-number "${{ github.event.issue.number }}"
+            --issue-number "${{ github.event.issue.number }}" \
+            --output "${{ runner.temp }}/triage_result.json"
 
       - name: Post triage results
         if: success()
@@ -53,11 +54,13 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const path = require('path');
 
-            // Read triage result
+            // Read triage result from cross-platform temp directory
+            const triageResultPath = path.join(process.env.RUNNER_TEMP, 'triage_result.json');
             let triageResult;
             try {
-              triageResult = JSON.parse(fs.readFileSync('/tmp/triage_result.json', 'utf8'));
+              triageResult = JSON.parse(fs.readFileSync(triageResultPath, 'utf8'));
               console.log('Triage result loaded:', JSON.stringify(triageResult, null, 2));
             } catch (error) {
               console.log('No triage result file found, skipping comment');

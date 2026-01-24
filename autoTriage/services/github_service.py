@@ -1,10 +1,13 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """
 GitHub Service - Wrapper for PyGithub with caching and rate limit handling
 """
 import os
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Set, Tuple, Any
 from github import Github, GithubException
 from difflib import get_close_matches
@@ -38,7 +41,7 @@ def _get_cached(key: str):
     """Get cached value if not expired."""
     if key in _cache:
         value, expiry = _cache[key]
-        if datetime.now() < expiry:
+        if datetime.now(timezone.utc) < expiry:
             logger.debug(f"Cache hit: {key}")
             return value
         del _cache[key]
@@ -47,7 +50,7 @@ def _get_cached(key: str):
 
 def _set_cached(key: str, value: Any, ttl: int = CACHE_TTL_SECONDS):
     """Set cached value with TTL."""
-    _cache[key] = (value, datetime.now() + timedelta(seconds=ttl))
+    _cache[key] = (value, datetime.now(timezone.utc) + timedelta(seconds=ttl))
 
 
 def clear_cache():
@@ -313,8 +316,9 @@ class GitHubService:
             for label in old_labels:
                 try:
                     issue.remove_from_labels(label)
-                except GithubException:
-                    pass
+                except GithubException as e:
+                    # Continue removing other labels even if one fails
+                    logger.debug(f"Could not remove label '{label}' from issue #{issue_number}: {e}")
 
             # Add new labels
             if new_labels:
@@ -440,15 +444,15 @@ class GitHubService:
             languages = {}
             try:
                 languages = repository.get_languages()  # Returns dict like {"Python": 12345, "JavaScript": 5678}
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not fetch languages for {owner}/{repo}: {e}")
 
             # Get topics (tags)
             topics = []
             try:
                 topics = repository.get_topics()
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not fetch topics for {owner}/{repo}: {e}")
 
             # Get README excerpt (first 1000 chars)
             readme_excerpt = ""
@@ -459,8 +463,8 @@ class GitHubService:
                 readme_excerpt = readme_content[:1000]
                 if '\n##' in readme_excerpt:
                     readme_excerpt = readme_excerpt[:readme_excerpt.index('\n##')]
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not fetch README for {owner}/{repo}: {e}")
 
             context = {
                 "name": repository.name,
@@ -706,8 +710,8 @@ class GitHubService:
                     if 'triage' in comment.body.lower() or 'priority' in comment.body.lower():
                         status['has_bot_triage'] = True
                         break
-        except GithubException:
-            pass
+        except GithubException as e:
+            logger.debug(f"Could not fetch comments for issue #{issue.number}: {e}")
 
         return status
 
@@ -794,7 +798,7 @@ class GitHubService:
 
         try:
             repository = self._get_repo(owner, repo)
-            since_date = datetime.now() - timedelta(days=months * 30)
+            since_date = datetime.now(timezone.utc) - timedelta(days=months * 30)
 
             # Get commits for this specific file
             commits = repository.get_commits(

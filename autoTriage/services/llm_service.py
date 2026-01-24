@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """
 LLM Service - GitHub Models / Azure OpenAI integration
 """
@@ -56,16 +59,22 @@ class LlmService:
             return None
 
         try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[
+            # Build kwargs dynamically to avoid passing None for response_format
+            kwargs = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3,
-                max_tokens=1000,
-                response_format={"type": "json_object"} if json_response else None
-            )
+                "temperature": 0.3,
+                "max_tokens": 1000
+            }
+
+            # Only add response_format when json_response is True
+            if json_response:
+                kwargs["response_format"] = {"type": "json_object"}
+
+            response = self._client.chat.completions.create(**kwargs)
             return response.choices[0].message.content
         except Exception as e:
             logging.error(f"LLM call failed: {e}")
@@ -146,8 +155,7 @@ Classify the issue and respond in JSON format with these fields:
         merged_prs: List[Dict],
         stale_prs: List[Dict],
         ci_failures: int,
-        decision_items: List[str],
-        unassigned_issues: List[Dict] = None
+        decision_items: List[str]
     ) -> Dict[str, Any]:
         """
         Use AI to analyze daily activity and provide intelligent recommendations.
@@ -155,8 +163,6 @@ Classify the issue and respond in JSON format with these fields:
         Returns:
             Dict with keys: standup_needed, standup_reason, summary, highlights, recommendations
         """
-        if unassigned_issues is None:
-            unassigned_issues = []
 
         # Get prompts from config (with fallback defaults)
         default_system = """You are a smart engineering team assistant analyzing daily repository activity.

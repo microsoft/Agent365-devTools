@@ -1,15 +1,18 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """
 Config Parser Service - Parses team-assistant.yml configuration files
 """
 import json
 from pathlib import Path
 import yaml
-from typing import Optional
+from typing import Optional, List
 from models.team_config import TeamConfig, PriorityRules, TriageMeta, CopilotFixableConfig
 from models.ado_models import AdoConfig
 
 
-def _load_team_members() -> list[dict]:
+def _load_team_members() -> List[dict]:
     """Load full team member data from config/team-members.json."""
     config_path = Path(__file__).parent.parent / "config" / "team-members.json"
     if config_path.exists():
