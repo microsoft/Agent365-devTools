@@ -4,13 +4,18 @@
 """
 Teams Service - Microsoft Teams webhook integration
 """
+from __future__ import annotations
+
 import os
 import json
 import logging
 import requests
-from typing import Any
-from models.daily_digest import DailyDigestResult
-from models.weekly_plan import WeeklyPlanResult
+from typing import TYPE_CHECKING
+
+# Conditional imports for type hints only (these models don't exist in autoTriage)
+if TYPE_CHECKING:
+    from models.daily_digest import DailyDigestResult
+    from models.weekly_plan import WeeklyPlanResult
 
 
 class TeamsService:
