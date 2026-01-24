@@ -70,9 +70,38 @@ class PRReviewer:
         comments = []
         files = self.pr_data.get('files', [])
 
-        # Identify file types
-        code_files = [f for f in files if f['path'].endswith(('.py', '.js', '.ts', '.cs', '.java'))]
-        test_files = [f for f in files if 'test' in f['path'].lower()]
+        # Track which files we've reviewed
+        reviewed_files = set()
+
+        # Helper function to categorize files
+        def get_file_category(file_path):
+            if file_path.startswith('.github/workflows/') and file_path.endswith(('.yml', '.yaml')):
+                return 'workflow'
+            elif file_path.endswith(('.py', '.js', '.ts', '.cs', '.java', '.go', '.rb', '.php', '.cpp', '.c', '.h')):
+                return 'code'
+            elif file_path.endswith(('.yml', '.yaml', '.json', '.toml', '.ini', '.config')):
+                return 'config'
+            elif file_path.endswith(('.md', '.txt', '.rst')):
+                return 'doc'
+            elif file_path.endswith(('requirements.txt', 'package.json', 'package-lock.json', 'Gemfile', 'go.mod', '.csproj', 'poetry.lock', 'yarn.lock')):
+                return 'dependency'
+            elif 'test' in file_path.lower():
+                return 'test'
+            elif file_path.endswith(('.gitignore', '.dockerignore', 'Dockerfile', '.env.example')):
+                return 'infrastructure'
+            else:
+                return 'unknown'
+
+        # Categorize ALL files
+        code_files = [f for f in files if get_file_category(f['path']) == 'code']
+        test_files = [f for f in files if get_file_category(f['path']) == 'test']
+        workflow_files = [f for f in files if get_file_category(f['path']) == 'workflow']
+        config_files = [f for f in files if get_file_category(f['path']) == 'config']
+        doc_files = [f for f in files if get_file_category(f['path']) == 'doc']
+        dependency_files = [f for f in files if get_file_category(f['path']) == 'dependency']
+        infrastructure_files = [f for f in files if get_file_category(f['path']) == 'infrastructure']
+        unknown_files = [f for f in files if get_file_category(f['path']) == 'unknown']
+
         cs_files = [f for f in files if f['path'].endswith('.cs')]
         py_files = [f for f in files if f['path'].endswith('.py')]
 
@@ -92,6 +121,8 @@ class PRReviewer:
         # Determine the primary context of this PR
         is_cli_pr = len(cli_code_files) > len(github_actions_files)
         is_github_actions_pr = len(github_actions_files) > 0 and not is_cli_pr
+
+        print(f"  Files: {len(files)} total | {len(code_files)} code | {len(workflow_files)} workflow | {len(config_files)} config | {len(unknown_files)} unknown")
 
         # 1. Check for missing tests
         if cli_code_files and not test_files:
@@ -243,8 +274,76 @@ The CLI must work across Windows, Linux, and macOS."""
 - Handle credential errors gracefully with clear error messages"""
                     })
 
-        # 5. Check documentation files (avoid unnecessary docs)
-        doc_files = [f for f in files if f['path'].endswith(('.md', '.txt', '.doc'))]
+        # 5. Check workflow files (comment on new or significantly modified workflows)
+        for workflow in workflow_files:
+            additions = workflow.get('additions', 0)
+            workflow_name = workflow['path'].split('/')[-1]
+
+            # Only comment if workflow has significant changes (>20 lines) or is new
+            if additions > 20:
+                comments.append({
+                    'file': workflow['path'],
+                    'type': 'comment',
+                    'severity': 'medium',
+                    'enabled': True,
+                    'body': f"""**Workflow File Review**: {workflow_name} ({additions} additions)
+
+**Check for**:
+- Secrets properly referenced using `${{{{ secrets.SECRET_NAME }}}}`
+- Appropriate timeouts set for jobs and steps
+- Minimal permissions granted (use `permissions:` block)
+- Proper error handling and failure notifications
+- Dependencies between jobs clearly defined
+- Triggers appropriate for the workflow purpose
+- Consider adding workflow concurrency controls if applicable"""
+                })
+
+        # 6. Check large config files
+        for config in config_files:
+            additions = config.get('additions', 0)
+            if additions > 100:
+                config_name = config['path'].split('/')[-1]
+
+                comments.append({
+                    'file': config['path'],
+                    'type': 'comment',
+                    'severity': 'low',
+                    'enabled': True,
+                    'body': f"""**Large Config File**: {config_name} ({additions} additions)
+
+**Review**:
+- Ensure no sensitive data (tokens, keys, passwords) in config
+- Consider splitting large configs into environment-specific files
+- Validate config structure and syntax
+- Document any non-obvious configuration options"""
+                })
+
+        # 7. Check dependency files (skip lockfiles with no deletions - those are just updates)
+        for dep_file in dependency_files:
+            dep_name = dep_file['path'].split('/')[-1]
+            additions = dep_file.get('additions', 0)
+            deletions = dep_file.get('deletions', 0)
+
+            # Skip lockfile-only updates (additions but no deletions usually means regeneration)
+            # Comment on actual dependency changes
+            is_lockfile = dep_name.endswith(('lock.json', '.lock', 'yarn.lock'))
+            if not is_lockfile or deletions > 0 or additions > 100:
+                comments.append({
+                    'file': dep_file['path'],
+                    'type': 'comment',
+                    'severity': 'medium',
+                    'enabled': True,
+                    'body': f"""**Dependency File Modified**: {dep_name} (+{additions}, -{deletions})
+
+**Review**:
+- Check for security vulnerabilities in new dependencies
+- Verify version pinning strategy (exact vs. range)
+- Ensure dependencies are actively maintained
+- Check license compatibility
+- Consider impact on package size/installation time"""
+                })
+
+        # 8. Check documentation files (avoid unnecessary docs)
         if len(doc_files) > 2:
             comments.append({
                 'type': 'comment',
@@ -256,6 +355,29 @@ The CLI must work across Windows, Linux, and macOS."""
 - Focus on code comments and inline help
 - Keep docs minimal and maintainable
 - Prefer self-documenting code over external docs"""
+            })
+
+        # 9. List other files that don't have category-specific checks
+        if unknown_files:
+            file_list = '\n'.join([f"- `{f['path']}` ({f.get('additions', 0)} additions)" for f in unknown_files[:10]])
+            if len(unknown_files) > 10:
+                file_list += f"\n- ... and {len(unknown_files) - 10} more"
+
+            comments.append({
+                'type': 'comment',
+                'severity': 'info',
+                'enabled': True,
+                'body': f"""**Additional Files Modified**: {len(unknown_files)} file(s) without category-specific checks.
+
+**Files**:
+{file_list}
+
+**General review points**:
+- Verify correctness and completeness
+- Check for security implications
+- Consider performance impact
+- Ensure compatibility with existing code
+- Validate any configuration or data changes"""
             })
 
         # Note: Removed generic code quality checklist comment
