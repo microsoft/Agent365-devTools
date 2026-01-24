@@ -12,22 +12,27 @@ Generate and post AI-powered PR review comments to GitHub following engineering 
 ## Usage
 
 ```bash
-/review-pr <pr-number> [--dry-run]
+/review-pr <pr-number>         # Generate review (step 1)
+/review-pr <pr-number> --post  # Post review to GitHub (step 2)
 ```
 
 Examples:
-- `/review-pr 180` - Generate and post review
-- `/review-pr 180 --dry-run` - Preview without posting
+- `/review-pr 180` - Generate review and save to YAML file
+- `/review-pr 180 --post` - Post the reviewed YAML to GitHub
 
 ## What this skill does
 
+**Step 1: Generate** (`/review-pr <number>`)
 1. **Fetches PR details** from GitHub using the gh CLI
 2. **Analyzes changes** for security, testing, design patterns, and code quality issues
-3. **Generates structured review comments** in an editable YAML file
-4. **Differentiates contexts**: CLI code vs GitHub Actions code (different standards)
-5. **Creates actionable feedback**: Specific refactoring suggestions based on file names and patterns
-6. **Allows customization**: Edit the YAML file before posting
-7. **Posts to GitHub**: Submit approved comments to the PR
+3. **Differentiates contexts**: CLI code vs GitHub Actions code (different standards)
+4. **Creates actionable feedback**: Specific refactoring suggestions based on file names and patterns
+5. **Generates structured review comments** in an editable YAML file
+6. **Shows preview** of all generated comments
+
+**Step 2: Post** (`/review-pr <number> --post`)
+1. **Reads the YAML file** you reviewed/edited
+2. **Posts to GitHub**: Submits all enabled comments to the PR
 
 ## Engineering Review Principles
 
@@ -83,24 +88,42 @@ You can edit this file to:
 
 ## Implementation
 
-Run the Python script:
-```bash
-python .claude/skills/review-pr/review-pr.py <pr-number> [--dry-run]
-```
+The skill runs a Python script with two modes:
 
-The script:
+**Generate mode** (default):
+```bash
+python .claude/skills/review-pr/review-pr.py <pr-number>
+```
 1. Uses `gh pr view` to fetch PR details
 2. Analyzes files and generates structured comments
 3. Creates editable YAML review file
 4. Previews comments for your review
-5. Posts to GitHub upon confirmation (if not --dry-run)
+5. Stops and waits for you to review/edit
+
+**Post mode** (with --post flag):
+```bash
+python .claude/skills/review-pr/review-pr.py <pr-number> --post
+```
+1. Reads the existing YAML file
+2. Previews what will be posted
+3. Posts all enabled comments to GitHub
 
 ## Workflow
 
-1. **Invoke skill**: `/review-pr 180 --dry-run`
-2. **Review generated YAML**: Check comments at temp file path
-3. **Edit if needed**: Modify, disable, or add comments
-4. **Post to GitHub**: `/review-pr 180` (without --dry-run)
+1. **Generate review**: `/review-pr 180`
+   - Fetches PR details from GitHub
+   - Analyzes code and generates review comments
+   - Saves to YAML file (shows path in output)
+
+2. **Review and edit**: Open the YAML file
+   - Review all generated comments
+   - Edit comment text if needed
+   - Disable comments by setting `enabled: false`
+   - Add your own comments if desired
+
+3. **Post to GitHub**: `/review-pr 180 --post`
+   - Reads the YAML file
+   - Posts all enabled comments to the PR
 
 ## Requirements
 

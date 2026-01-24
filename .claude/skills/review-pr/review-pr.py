@@ -357,9 +357,9 @@ def main():
         help='Pull request number'
     )
     parser.add_argument(
-        '--dry-run',
+        '--post',
         action='store_true',
-        help='Preview without posting'
+        help='Post the review to GitHub (reads from existing YAML file)'
     )
     parser.add_argument(
         '--output',
@@ -377,39 +377,47 @@ def main():
         args.output = output_dir / f'pr-{args.pr_number}-review.yaml'
 
     # Create reviewer
-    reviewer = PRReviewer(args.pr_number, args.dry_run)
+    reviewer = PRReviewer(args.pr_number, dry_run=False)
 
     # Execute workflow
     try:
-        # 1. Fetch PR details
-        reviewer.fetch_pr_details()
+        if args.post:
+            # POST mode: Read existing YAML and post to GitHub
+            if not args.output.exists():
+                print(f"Error: Review file not found: {args.output}", file=sys.stderr)
+                print(f"\nGenerate the review first by running:", file=sys.stderr)
+                print(f"  /review-pr {args.pr_number}", file=sys.stderr)
+                sys.exit(1)
 
-        # 2. Analyze and generate comments
-        comments = reviewer.analyze_pr()
+            print(f"Reading review from: {args.output}")
+            reviewer.preview_comments(args.output)
 
-        # 3. Generate YAML file
-        comments_file = reviewer.generate_comments_file(comments, args.output)
+            print(f"\n" + "="*60)
+            print(f"Ready to post review to PR #{args.pr_number}")
+            print("="*60)
 
-        # 4. Preview
-        reviewer.preview_comments(comments_file)
-
-        if args.dry_run:
-            print(f"\n[DRY RUN] Edit the file and run without --dry-run to post:")
-            print(f"  python review-pr.py {args.pr_number} --output {comments_file}")
-            return
-
-        # 5. Confirm and post
-        print(f"\n" + "="*60)
-        print(f"Ready to post review to PR #{args.pr_number}")
-        print(f"Edit {comments_file} if you want to modify comments first.")
-        print("="*60)
-
-        confirm = input("\nPost review? (y/N): ")
-        if confirm.lower() == 'y':
-            reviewer.post_review(comments_file)
+            reviewer.post_review(args.output)
         else:
-            print("Cancelled. Run again when ready.")
-            print(f"  python review-pr.py {args.pr_number} --output {comments_file}")
+            # GENERATE mode (default): Fetch, analyze, generate YAML, preview
+            # 1. Fetch PR details
+            reviewer.fetch_pr_details()
+
+            # 2. Analyze and generate comments
+            comments = reviewer.analyze_pr()
+
+            # 3. Generate YAML file
+            comments_file = reviewer.generate_comments_file(comments, args.output)
+
+            # 4. Preview
+            reviewer.preview_comments(comments_file)
+
+            # 5. Instructions for next step
+            print(f"\n" + "="*60)
+            print(f"Review file generated: {comments_file}")
+            print("="*60)
+            print(f"\n[OK] Review the file and edit if needed.")
+            print(f"When ready to post, run:")
+            print(f"  /review-pr {args.pr_number} --post")
 
     except KeyboardInterrupt:
         print("\n\nCancelled by user.")
