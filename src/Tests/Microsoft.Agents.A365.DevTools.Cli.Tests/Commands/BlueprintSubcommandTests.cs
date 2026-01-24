@@ -1377,6 +1377,7 @@ public class BlueprintSubcommandTests
 
             // Assert
             success.Should().BeTrue();
+            alreadyExisted.Should().BeFalse();
             await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
@@ -1597,6 +1598,65 @@ public class BlueprintSubcommandTests
             if (File.Exists(generatedPath)) File.Delete(generatedPath);
             if (File.Exists(configPath)) File.Delete(configPath);
         }
+    }
+
+    #endregion
+
+    #region Mutually Exclusive Options Tests
+
+    [Theory]
+    [InlineData("https://example.com", true, false, null)] // --update-endpoint with --endpoint-only
+    [InlineData("https://example.com", false, true, null)] // --update-endpoint with --no-endpoint
+    [InlineData("https://example.com", false, false, "https://other.com")] // --update-endpoint with --custom-endpoint
+    [InlineData(null, false, true, "https://example.com")] // --custom-endpoint with --no-endpoint
+    [InlineData(null, true, true, null)] // --endpoint-only with --no-endpoint
+    public void ValidateMutuallyExclusiveOptions_WithConflictingOptions_ShouldReturnFalseAndLogError(
+        string? updateEndpoint, bool endpointOnly, bool skipEndpointRegistration, string? customEndpoint)
+    {
+        // Act
+        var result = BlueprintSubcommand.ValidateMutuallyExclusiveOptions(
+            updateEndpoint,
+            endpointOnly,
+            skipEndpointRegistration,
+            customEndpoint,
+            _mockLogger);
+
+        // Assert
+        result.Should().BeFalse();
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("cannot be used together")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Theory]
+    [InlineData(null, true, false, null)] // --endpoint-only only
+    [InlineData(null, false, true, null)] // --no-endpoint only
+    [InlineData(null, false, false, "https://example.com")] // --custom-endpoint only
+    [InlineData(null, true, false, "https://example.com")] // --endpoint-only with --custom-endpoint
+    [InlineData("https://example.com", false, false, null)] // --update-endpoint only
+    [InlineData(null, false, false, null)] // no options
+    public void ValidateMutuallyExclusiveOptions_WithCompatibleOptions_ShouldReturnTrue(
+        string? updateEndpoint, bool endpointOnly, bool skipEndpointRegistration, string? customEndpoint)
+    {
+        // Act
+        var result = BlueprintSubcommand.ValidateMutuallyExclusiveOptions(
+            updateEndpoint,
+            endpointOnly,
+            skipEndpointRegistration,
+            customEndpoint,
+            _mockLogger);
+
+        // Assert
+        result.Should().BeTrue();
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("cannot be used together")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
     }
 
     #endregion

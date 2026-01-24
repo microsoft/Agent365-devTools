@@ -67,7 +67,7 @@ internal static class AllSubcommand
 
         var customEndpointOption = new Option<string?>(
             "--custom-endpoint",
-            description: "Override the messaging endpoint URL during registration.");
+            description: "Override the messaging endpoint URL during registration");
 
         command.AddOption(configOption);
         command.AddOption(verboseOption);

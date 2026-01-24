@@ -138,11 +138,11 @@ internal static class BlueprintSubcommand
 
         var customEndpointOption = new Option<string?>(
             "--custom-endpoint",
-            description: "Override the messaging endpoint URL during registration.");
+            description: "Override the messaging endpoint URL during registration");
 
         var updateEndpointOption = new Option<string?>(
             "--update-endpoint",
-            description: "Delete the existing messaging endpoint and register a new one with the specified URL.");
+            description: "Delete the existing messaging endpoint and register a new one with the specified URL");
 
         command.AddOption(configOption);
         command.AddOption(verboseOption);
@@ -158,10 +158,21 @@ internal static class BlueprintSubcommand
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogInformation("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
 
+            // Validate mutually exclusive options
+            if (!ValidateMutuallyExclusiveOptions(
+                updateEndpoint: updateEndpoint,
+                endpointOnly: endpointOnly,
+                skipEndpointRegistration: skipEndpointRegistration,
+                customEndpoint: customEndpoint,
+                logger: logger))
+            {
+                Environment.Exit(1);
+            }
+
             var setupConfig = await configService.LoadAsync(config.FullName);
 
             // Handle --custom-endpoint: resolve custom endpoint value if provided
-            var resolvedCustomEndpoint = ResolveCustomEndpoint(customEndpoint, logger);
+            var resolvedCustomEndpoint = string.IsNullOrWhiteSpace(customEndpoint) ? null : customEndpoint;
 
             // Handle --update-endpoint flag
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
@@ -259,6 +270,62 @@ internal static class BlueprintSubcommand
         }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, customEndpointOption, updateEndpointOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Validates that mutually exclusive command options are not used together.
+    /// </summary>
+    /// <returns>True if validation passes, false if conflicting options are detected.</returns>
+    internal static bool ValidateMutuallyExclusiveOptions(
+        string? updateEndpoint,
+        bool endpointOnly,
+        bool skipEndpointRegistration,
+        string? customEndpoint,
+        ILogger logger)
+    {
+        var hasUpdateEndpoint = !string.IsNullOrWhiteSpace(updateEndpoint);
+        var hasCustomEndpoint = !string.IsNullOrWhiteSpace(customEndpoint);
+
+        // --update-endpoint cannot be used with --endpoint-only, --no-endpoint, or --custom-endpoint
+        if (hasUpdateEndpoint)
+        {
+            if (endpointOnly)
+            {
+                logger.LogError("Options --update-endpoint and --endpoint-only cannot be used together.");
+                logger.LogError("Use --update-endpoint if the endpoint URL needs to be updated, otherwise use --endpoint-only to register a new endpoint.");
+                return false;
+            }
+            if (skipEndpointRegistration)
+            {
+                logger.LogError("Options --update-endpoint and --no-endpoint cannot be used together.");
+                logger.LogError("--update-endpoint updates an endpoint, which conflicts with --no-endpoint.");
+                return false;
+            }
+            if (hasCustomEndpoint)
+            {
+                logger.LogError("Options --update-endpoint and --custom-endpoint cannot be used together.");
+                logger.LogError("Use --update-endpoint if the endpoint URL needs to be updated, otherwise use --custom-endpoint to register a new endpoint.");
+                return false;
+            }
+        }
+
+        // --custom-endpoint cannot be used with --no-endpoint
+        if (hasCustomEndpoint && skipEndpointRegistration)
+        {
+            logger.LogError("Options --custom-endpoint and --no-endpoint cannot be used together.");
+            logger.LogError("--custom-endpoint registers an endpoint, which conflicts with --no-endpoint.");
+            return false;
+        }
+
+        // --endpoint-only cannot be used with --no-endpoint
+        if (endpointOnly && skipEndpointRegistration)
+        {
+            logger.LogError("Options --endpoint-only and --no-endpoint cannot be used together.");
+            logger.LogError("--endpoint-only registers an endpoint, which conflicts with --no-endpoint.");
+            return false;
+        }
+
+        return true;
     }
 
     public static async Task<BlueprintCreationResult> CreateBlueprintImplementationAsync(
@@ -1672,15 +1739,13 @@ internal static class BlueprintSubcommand
     /// <param name="configService">Configuration service</param>
     /// <param name="botConfigurator">Bot configurator service</param>
     /// <param name="platformDetector">Platform detector service</param>
-    /// <param name="cancellationToken">Cancellation token</param>
     public static async Task UpdateEndpointAsync(
         string configPath,
         string newEndpointUrl,
         ILogger logger,
         IConfigService configService,
         IBotConfigurator botConfigurator,
-        PlatformDetector platformDetector,
-        CancellationToken cancellationToken = default)
+        PlatformDetector platformDetector)
     {
         var setupConfig = await configService.LoadAsync(configPath);
 
@@ -1706,6 +1771,11 @@ internal static class BlueprintSubcommand
         if (!string.IsNullOrWhiteSpace(setupConfig.BotName))
         {
             logger.LogInformation("Deleting existing messaging endpoint...");
+            if (string.IsNullOrWhiteSpace(setupConfig.Location))
+            {
+                logger.LogError("Location not found. Please confirm location is in the config file.");
+                throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
+            }
             var endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
             var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
 
@@ -1880,18 +1950,6 @@ internal static class BlueprintSubcommand
             logger.LogError(ex, "Exception creating federated identity credential: {Message}", ex.Message);
             return false;
         }
-    }
-
-    /// <summary>
-    /// Resolves the custom endpoint value.
-    /// Returns the custom endpoint if provided, otherwise null.
-    /// </summary>
-    /// <param name="customEndpoint">The custom endpoint value from command line</param>
-    /// <param name="logger">Logger instance</param>
-    /// <returns>The custom endpoint URL, or null if not specified</returns>
-    private static string? ResolveCustomEndpoint(string? customEndpoint, ILogger logger)
-    {
-        return string.IsNullOrWhiteSpace(customEndpoint) ? null : customEndpoint;
     }
 
     #endregion
