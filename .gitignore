@@ -71,3 +71,6 @@ nunit-*.xml
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Pre-PR review results
+pr-review-*.md
