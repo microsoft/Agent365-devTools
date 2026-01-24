@@ -29,6 +29,11 @@ public static class ConfigConstants
     public const string Agent365CliDocumentationUrl = "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli";
 
     /// <summary>
+    /// Microsoft Learn documentation URL for custom client app registration
+    /// </summary>
+    public const string CustomClientAppRegistrationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration";
+
+    /// <summary>
     /// Production Agent 365 Tools Discover endpoint URL
     /// </summary>
     public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/discoverToolServers";

@@ -849,7 +849,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
         Console.WriteLine("Why Delegated? You sign in interactively, CLI acts on your behalf.");
         Console.WriteLine("Application permissions are for background services only.");
         Console.WriteLine();
-        Console.WriteLine("See: https://github.com/microsoft/Agent365-devTools/blob/main/docs/guides/custom-client-app-registration.md");
+        Console.WriteLine($"See: {ConfigConstants.CustomClientAppRegistrationUrl}");
         Console.WriteLine("=================================================================");
         Console.WriteLine();
 
