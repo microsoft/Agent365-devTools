@@ -9,6 +9,7 @@ public static class HttpClientFactory
 {
     public const string DefaultUserAgentPrefix = "Agent365CLI";
     public const string CorrelationIdHeaderName = "x-ms-correlation-id";
+    public const string ClientRequestIdHeaderName = "client-request-id";
 
     /// <summary>
     /// Creates an authenticated HTTP client with standard headers.
@@ -46,6 +47,9 @@ public static class HttpClientFactory
             ? Guid.NewGuid().ToString()
             : correlationId;
         client.DefaultRequestHeaders.Add(CorrelationIdHeaderName, effectiveCorrelationId);
+
+        // Add CorrelationId as client-request-id header for Graph API tracing
+        client.DefaultRequestHeaders.Add(ClientRequestIdHeaderName, effectiveCorrelationId);
 
         return client;
     }

@@ -199,4 +199,48 @@ public class HttpClientFactoryTests
         // Assert
         id1.Should().NotBe(id2, "Each call should generate a unique correlation ID");
     }
+
+    [Fact]
+    public void CreateAuthenticatedClient_SetsClientRequestIdHeader()
+    {
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient();
+
+        // Assert
+        client.DefaultRequestHeaders.Contains(HttpClientFactory.ClientRequestIdHeaderName).Should().BeTrue();
+        var clientRequestId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.ClientRequestIdHeaderName).First();
+        clientRequestId.Should().NotBeNullOrWhiteSpace();
+        Guid.TryParse(clientRequestId, out _).Should().BeTrue("Client request ID should be a valid GUID");
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_ClientRequestIdMatchesCorrelationId()
+    {
+        // Arrange
+        const string providedCorrelationId = "matching-correlation-id-12345";
+
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient(correlationId: providedCorrelationId);
+
+        // Assert
+        var correlationId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.CorrelationIdHeaderName).First();
+        var clientRequestId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.ClientRequestIdHeaderName).First();
+
+        correlationId.Should().Be(providedCorrelationId);
+        clientRequestId.Should().Be(providedCorrelationId);
+        clientRequestId.Should().Be(correlationId, "Client request ID should match correlation ID for Graph API tracing");
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithGeneratedCorrelationId_BothHeadersMatch()
+    {
+        // Act
+        using var client = HttpClientFactory.CreateAuthenticatedClient();
+
+        // Assert
+        var correlationId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.CorrelationIdHeaderName).First();
+        var clientRequestId = client.DefaultRequestHeaders.GetValues(HttpClientFactory.ClientRequestIdHeaderName).First();
+
+        correlationId.Should().Be(clientRequestId, "Both headers should have the same auto-generated correlation ID");
+    }
 }
