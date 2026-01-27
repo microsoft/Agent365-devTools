@@ -136,10 +136,6 @@ internal static class BlueprintSubcommand
             "--endpoint-only",
             description: "Register messaging endpoint only (requires existing blueprint)");
 
-        var customEndpointOption = new Option<string?>(
-            "--custom-endpoint",
-            description: "Override the messaging endpoint URL during registration");
-
         var updateEndpointOption = new Option<string?>(
             "--update-endpoint",
             description: "Delete the existing messaging endpoint and register a new one with the specified URL");
@@ -149,10 +145,9 @@ internal static class BlueprintSubcommand
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
-        command.AddOption(customEndpointOption);
         command.AddOption(updateEndpointOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, customEndpoint, updateEndpoint) =>
+        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, updateEndpoint) =>
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -163,16 +158,12 @@ internal static class BlueprintSubcommand
                 updateEndpoint: updateEndpoint,
                 endpointOnly: endpointOnly,
                 skipEndpointRegistration: skipEndpointRegistration,
-                customEndpoint: customEndpoint,
                 logger: logger))
             {
                 Environment.Exit(1);
             }
 
             var setupConfig = await configService.LoadAsync(config.FullName);
-
-            // Handle --custom-endpoint: resolve custom endpoint value if provided
-            var resolvedCustomEndpoint = string.IsNullOrWhiteSpace(customEndpoint) ? null : customEndpoint;
 
             // Handle --update-endpoint flag
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
@@ -205,10 +196,6 @@ internal static class BlueprintSubcommand
                 if (!skipEndpointRegistration)
                 {
                     logger.LogInformation("  - Would register messaging endpoint");
-                    if (!string.IsNullOrWhiteSpace(resolvedCustomEndpoint))
-                    {
-                        logger.LogInformation("  - Custom endpoint: {Endpoint}", resolvedCustomEndpoint);
-                    }
                 }
                 return;
             }
@@ -227,7 +214,6 @@ internal static class BlueprintSubcommand
                         configService: configService,
                         botConfigurator: botConfigurator,
                         platformDetector: platformDetector,
-                        customEndpoint: resolvedCustomEndpoint,
                         correlationId: correlationId);
 
                     logger.LogInformation("");
@@ -263,11 +249,10 @@ internal static class BlueprintSubcommand
                 blueprintLookupService,
                 federatedCredentialService,
                 skipEndpointRegistration,
-                customEndpoint: resolvedCustomEndpoint,
                 correlationId: correlationId
                 );
 
-        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, customEndpointOption, updateEndpointOption);
+        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, updateEndpointOption);
 
         return command;
     }
@@ -280,13 +265,11 @@ internal static class BlueprintSubcommand
         string? updateEndpoint,
         bool endpointOnly,
         bool skipEndpointRegistration,
-        string? customEndpoint,
         ILogger logger)
     {
         var hasUpdateEndpoint = !string.IsNullOrWhiteSpace(updateEndpoint);
-        var hasCustomEndpoint = !string.IsNullOrWhiteSpace(customEndpoint);
 
-        // --update-endpoint cannot be used with --endpoint-only, --no-endpoint, or --custom-endpoint
+        // --update-endpoint cannot be used with --endpoint-only or --no-endpoint
         if (hasUpdateEndpoint)
         {
             if (endpointOnly)
@@ -301,20 +284,6 @@ internal static class BlueprintSubcommand
                 logger.LogError("--update-endpoint updates an endpoint, which conflicts with --no-endpoint.");
                 return false;
             }
-            if (hasCustomEndpoint)
-            {
-                logger.LogError("Options --update-endpoint and --custom-endpoint cannot be used together.");
-                logger.LogError("Use --update-endpoint if the endpoint URL needs to be updated, otherwise use --custom-endpoint to register a new endpoint.");
-                return false;
-            }
-        }
-
-        // --custom-endpoint cannot be used with --no-endpoint
-        if (hasCustomEndpoint && skipEndpointRegistration)
-        {
-            logger.LogError("Options --custom-endpoint and --no-endpoint cannot be used together.");
-            logger.LogError("--custom-endpoint registers an endpoint, which conflicts with --no-endpoint.");
-            return false;
         }
 
         // --endpoint-only cannot be used with --no-endpoint
@@ -344,7 +313,6 @@ internal static class BlueprintSubcommand
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         bool skipEndpointRegistration = false,
-        string? customEndpoint = null,
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
@@ -567,7 +535,6 @@ internal static class BlueprintSubcommand
                     configService: configService,
                     botConfigurator: botConfigurator,
                     platformDetector: platformDetector,
-                    customEndpoint: customEndpoint,
                     correlationId: correlationId);
                 endpointRegistered = registered;
                 endpointAlreadyExisted = alreadyExisted;
@@ -1654,7 +1621,6 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
-        string? customEndpoint = null,
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
@@ -1666,8 +1632,8 @@ internal static class BlueprintSubcommand
             Environment.Exit(1);
         }
 
-        // Only validate webAppName if needDeployment is true and no custom endpoint provided
-        if (string.IsNullOrWhiteSpace(customEndpoint) && setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
+        // Validate webAppName if needDeployment is true
+        if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
         {
             logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
             Environment.Exit(1);
@@ -1677,7 +1643,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("");
 
         var (endpointRegistered, endpointAlreadyExisted) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator, customEndpoint, correlationId: correlationId);
+            setupConfig, logger, botConfigurator, correlationId: correlationId);
 
 
         setupConfig.Completed = true;

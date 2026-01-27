@@ -1292,27 +1292,7 @@ public class BlueprintSubcommandTests
 
     #endregion
 
-    #region Custom Endpoint Option Tests
-
-    [Fact]
-    public void CreateCommand_ShouldHaveCustomEndpointOption()
-    {
-        // Act
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAzureValidator,
-            _mockWebAppCreator,
-            _mockPlatformDetector,
-            _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert
-        var customEndpointOption = command.Options.FirstOrDefault(o => o.Name == "custom-endpoint");
-        customEndpointOption.Should().NotBeNull();
-        customEndpointOption!.Aliases.Should().Contain("--custom-endpoint");
-    }
+    #region Update Endpoint Option Tests
 
     [Fact]
     public void CreateCommand_ShouldHaveUpdateEndpointOption()
@@ -1332,64 +1312,6 @@ public class BlueprintSubcommandTests
         var updateEndpointOption = command.Options.FirstOrDefault(o => o.Name == "update-endpoint");
         updateEndpointOption.Should().NotBeNull();
         updateEndpointOption!.Aliases.Should().Contain("--update-endpoint");
-    }
-
-    [Fact]
-    public async Task RegisterEndpointAndSyncAsync_WithCustomEndpoint_ShouldUseProvidedEndpoint()
-    {
-        // Arrange
-        var config = new Agent365Config
-        {
-            TenantId = "00000000-0000-0000-0000-000000000000",
-            AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp",
-            Location = "eastus",
-            DeploymentProjectPath = Path.GetTempPath()
-        };
-
-        var customEndpoint = "https://custom.example.com/api/messages";
-        var testId = Guid.NewGuid().ToString();
-        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
-        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
-
-        await File.WriteAllTextAsync(generatedPath, "{}");
-
-        try
-        {
-            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(Task.FromResult(config));
-
-            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
-                .Returns(Task.CompletedTask);
-
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
-
-            // Act
-            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
-                configPath,
-                _mockLogger,
-                _mockConfigService,
-                _mockBotConfigurator,
-                _mockPlatformDetector,
-                customEndpoint: customEndpoint);
-
-            // Assert
-            success.Should().BeTrue();
-            alreadyExisted.Should().BeFalse();
-            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                customEndpoint,
-                Arg.Any<string>(),
-                Arg.Any<string>());
-        }
-        finally
-        {
-            if (File.Exists(generatedPath)) File.Delete(generatedPath);
-            if (File.Exists(configPath)) File.Delete(configPath);
-        }
     }
 
     [Fact]
@@ -1605,20 +1527,17 @@ public class BlueprintSubcommandTests
     #region Mutually Exclusive Options Tests
 
     [Theory]
-    [InlineData("https://example.com", true, false, null)] // --update-endpoint with --endpoint-only
-    [InlineData("https://example.com", false, true, null)] // --update-endpoint with --no-endpoint
-    [InlineData("https://example.com", false, false, "https://other.com")] // --update-endpoint with --custom-endpoint
-    [InlineData(null, false, true, "https://example.com")] // --custom-endpoint with --no-endpoint
-    [InlineData(null, true, true, null)] // --endpoint-only with --no-endpoint
+    [InlineData("https://example.com", true, false)] // --update-endpoint with --endpoint-only
+    [InlineData("https://example.com", false, true)] // --update-endpoint with --no-endpoint
+    [InlineData(null, true, true)] // --endpoint-only with --no-endpoint
     public void ValidateMutuallyExclusiveOptions_WithConflictingOptions_ShouldReturnFalseAndLogError(
-        string? updateEndpoint, bool endpointOnly, bool skipEndpointRegistration, string? customEndpoint)
+        string? updateEndpoint, bool endpointOnly, bool skipEndpointRegistration)
     {
         // Act
         var result = BlueprintSubcommand.ValidateMutuallyExclusiveOptions(
             updateEndpoint,
             endpointOnly,
             skipEndpointRegistration,
-            customEndpoint,
             _mockLogger);
 
         // Assert
@@ -1632,21 +1551,18 @@ public class BlueprintSubcommandTests
     }
 
     [Theory]
-    [InlineData(null, true, false, null)] // --endpoint-only only
-    [InlineData(null, false, true, null)] // --no-endpoint only
-    [InlineData(null, false, false, "https://example.com")] // --custom-endpoint only
-    [InlineData(null, true, false, "https://example.com")] // --endpoint-only with --custom-endpoint
-    [InlineData("https://example.com", false, false, null)] // --update-endpoint only
-    [InlineData(null, false, false, null)] // no options
+    [InlineData(null, true, false)] // --endpoint-only only
+    [InlineData(null, false, true)] // --no-endpoint only
+    [InlineData("https://example.com", false, false)] // --update-endpoint only
+    [InlineData(null, false, false)] // no options
     public void ValidateMutuallyExclusiveOptions_WithCompatibleOptions_ShouldReturnTrue(
-        string? updateEndpoint, bool endpointOnly, bool skipEndpointRegistration, string? customEndpoint)
+        string? updateEndpoint, bool endpointOnly, bool skipEndpointRegistration)
     {
         // Act
         var result = BlueprintSubcommand.ValidateMutuallyExclusiveOptions(
             updateEndpoint,
             endpointOnly,
             skipEndpointRegistration,
-            customEndpoint,
             _mockLogger);
 
         // Assert

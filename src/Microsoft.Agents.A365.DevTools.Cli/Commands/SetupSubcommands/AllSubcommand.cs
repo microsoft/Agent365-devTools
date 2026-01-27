@@ -65,18 +65,13 @@ internal static class AllSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
-        var customEndpointOption = new Option<string?>(
-            "--custom-endpoint",
-            description: "Override the messaging endpoint URL during registration");
-
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
-        command.AddOption(customEndpointOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements, customEndpoint) =>
+        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements) =>
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -110,10 +105,6 @@ internal static class AllSubcommand
                 logger.LogInformation("  3. Configure MCP server permissions");
                 logger.LogInformation("  4. Configure Bot API permissions");
                 logger.LogInformation("  5. Register blueprint messaging endpoint and sync project settings");
-                if (!string.IsNullOrWhiteSpace(customEndpoint))
-                {
-                    logger.LogInformation("     Custom endpoint: {Endpoint}", customEndpoint);
-                }
                 logger.LogInformation("No actual changes will be made.");
                 return;
             }
@@ -297,7 +288,6 @@ internal static class AllSubcommand
                         blueprintLookupService,
                         federatedCredentialService,
                         skipEndpointRegistration: false,
-                        customEndpoint: customEndpoint,
                         correlationId: correlationId
                         );
 
@@ -426,7 +416,7 @@ internal static class AllSubcommand
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption, skipRequirementsOption, customEndpointOption);
+        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption, skipRequirementsOption);
 
         return command;
     }
