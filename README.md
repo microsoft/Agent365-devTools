@@ -45,7 +45,7 @@ Before using the Agent365 CLI, you must create a custom Entra ID app registratio
 
 ⚠️ **Important**: Use **Delegated** permissions (you sign in, CLI acts on your behalf), NOT Application permissions (for background services).
 
-📖 **Detailed Setup Guide**: [docs/guides/custom-client-app-registration.md](docs/guides/custom-client-app-registration.md)
+📖 **Detailed Setup Guide**: [Custom Client App Registration](https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration)
 
 > **Why is this required?** The CLI needs elevated permissions to create and manage Agent Identity Blueprints in your tenant. You maintain control over which permissions are granted, and the app stays within your tenant's security boundaries.
 

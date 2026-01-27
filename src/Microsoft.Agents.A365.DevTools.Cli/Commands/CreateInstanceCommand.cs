@@ -541,7 +541,7 @@ public class CreateInstanceCommand
         logger.LogError("  3. Create an agent instance through Microsoft Teams");
         logger.LogError("");
         logger.LogError("For more information, see:");
-        logger.LogError("https://learn.microsoft.com/en-us/microsoft-agent-365/onboard");
+        logger.LogError("https://learn.microsoft.com/microsoft-agent-365/onboard");
         logger.LogError("");
     }
 }
