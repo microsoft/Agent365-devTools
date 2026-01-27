@@ -91,9 +91,10 @@ public class PermissionsSubcommandTests
             _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(2);
+        command.Subcommands.Should().HaveCount(3);
         command.Subcommands.Should().Contain(s => s.Name == "mcp");
         command.Subcommands.Should().Contain(s => s.Name == "bot");
+        command.Subcommands.Should().Contain(s => s.Name == "copilotstudio");
     }
 
     [Fact]
@@ -109,7 +110,7 @@ public class PermissionsSubcommandTests
         // Assert
         command.Should().NotBeNull();
         command.Name.Should().Be("permissions");
-        command.Subcommands.Should().HaveCount(2);
+        command.Subcommands.Should().HaveCount(3);
     }
 
     #endregion
@@ -507,9 +508,9 @@ public class PermissionsSubcommandTests
 
         // Assert
         botSubcommand.Should().NotBeNull();
-        botSubcommand!.Description.Should().NotContain("a365 setup endpoint", 
+        botSubcommand!.Description.Should().NotContain("a365 setup endpoint",
             "the 'a365 setup endpoint' command does not exist - endpoint is registered as part of blueprint setup");
-        botSubcommand.Description.Should().Contain("a365 deploy", 
+        botSubcommand.Description.Should().Contain("a365 deploy",
             "after permissions setup, users should deploy their agent code");
     }
 
@@ -527,9 +528,9 @@ public class PermissionsSubcommandTests
 
         // Assert
         botSubcommand.Should().NotBeNull();
-        botSubcommand!.Description.Should().Contain("Blueprint", 
+        botSubcommand!.Description.Should().Contain("Blueprint",
             "blueprint is a prerequisite for bot permissions");
-        botSubcommand.Description.Should().Contain("MCP permissions", 
+        botSubcommand.Description.Should().Contain("MCP permissions",
             "MCP permissions should be configured before bot permissions");
     }
 

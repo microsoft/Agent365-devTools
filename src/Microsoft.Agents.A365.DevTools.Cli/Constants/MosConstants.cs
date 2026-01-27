@@ -79,6 +79,11 @@ public static class MosConstants
         /// MOS Titles API - Title.ReadWrite.All permission scope ID
         /// </summary>
         public const string MosTitlesTitleReadWriteAll = "ecb8a615-f488-4c95-9efe-cb0142fc07dd";
+
+        /// <summary>
+        /// Power Platform API - CopilotStudio.Copilots.Invoke permission scope ID
+        /// </summary>
+        public const string PowerPlatformCopilotStudioInvoke = "204440d3-c1d0-4826-b570-99eb6f5e2aeb";
     }
 
     /// <summary>
@@ -100,6 +105,11 @@ public static class MosConstants
         /// MOS Titles API - Title.ReadWrite.All permission scope name
         /// </summary>
         public const string MosTitlesTitleReadWriteAll = "Title.ReadWrite.All";
+
+        /// <summary>
+        /// Power Platform API - CopilotStudio.Copilots.Invoke permission scope name
+        /// </summary>
+        public const string PowerPlatformCopilotStudioInvoke = "CopilotStudio.Copilots.Invoke";
     }
 
     /// <summary>
@@ -113,22 +123,29 @@ public static class MosConstants
         /// Permission configuration for TPS AppServices resource app.
         /// Required for test environment MOS operations.
         /// </summary>
-        public static readonly (string ResourceAppId, string ScopeName, string ScopeId) TpsAppServices = 
+        public static readonly (string ResourceAppId, string ScopeName, string ScopeId) TpsAppServices =
             (TpsAppServicesResourceAppId, PermissionNames.TpsAppServicesAuthConfigRead, PermissionIds.TpsAppServicesAuthConfigRead);
 
         /// <summary>
         /// Permission configuration for Power Platform API resource app.
         /// Required for environment management operations.
         /// </summary>
-        public static readonly (string ResourceAppId, string ScopeName, string ScopeId) PowerPlatformApi = 
+        public static readonly (string ResourceAppId, string ScopeName, string ScopeId) PowerPlatformApi =
             (PowerPlatformApiResourceAppId, PermissionNames.PowerPlatformEnvironmentsRead, PermissionIds.PowerPlatformEnvironmentsRead);
 
         /// <summary>
         /// Permission configuration for MOS Titles API resource app.
         /// Uses the primary Title.ReadWrite.All scope that corresponds to the specified ScopeId.
         /// </summary>
-        public static readonly (string ResourceAppId, string ScopeName, string ScopeId) MosTitlesApi = 
+        public static readonly (string ResourceAppId, string ScopeName, string ScopeId) MosTitlesApi =
             (MosTitlesApiResourceAppId, PermissionNames.MosTitlesTitleReadWriteAll, PermissionIds.MosTitlesTitleReadWriteAll);
+
+        /// <summary>
+        /// Permission configuration for Power Platform API - CopilotStudio.
+        /// Required for agent blueprints to invoke Copilot Studio copilots.
+        /// </summary>
+        public static readonly (string ResourceAppId, string ScopeName, string ScopeId) CopilotStudioApi =
+            (PowerPlatformApiResourceAppId, PermissionNames.PowerPlatformCopilotStudioInvoke, PermissionIds.PowerPlatformCopilotStudioInvoke);
 
         /// <summary>
         /// Gets all resource permission configurations.

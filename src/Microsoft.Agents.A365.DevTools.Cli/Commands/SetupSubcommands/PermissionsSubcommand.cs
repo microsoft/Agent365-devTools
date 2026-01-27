@@ -18,51 +18,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class PermissionsSubcommand
 {
-    /// <summary>
-    /// Validates MCP permissions prerequisites without performing any actions.
-    /// </summary>
-    public static Task<List<string>> ValidateMcpAsync(
-        Agent365Config config,
-        CancellationToken cancellationToken = default)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
-        {
-            errors.Add("Blueprint ID not found. Run 'a365 setup blueprint' first");
-        }
-
-        if (string.IsNullOrWhiteSpace(config.DeploymentProjectPath))
-        {
-            errors.Add("deploymentProjectPath is required to read toolingManifest.json");
-            return Task.FromResult(errors);
-        }
-
-        var manifestPath = Path.Combine(config.DeploymentProjectPath, "toolingManifest.json");
-        if (!File.Exists(manifestPath))
-        {
-            errors.Add($"toolingManifest.json not found at {manifestPath}");
-        }
-
-        return Task.FromResult(errors);
-    }
-
-    /// <summary>
-    /// Validates Bot permissions prerequisites without performing any actions.
-    /// </summary>
-    public static Task<List<string>> ValidateBotAsync(
-        Agent365Config config,
-        CancellationToken cancellationToken = default)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
-        {
-            errors.Add("Blueprint ID not found. Run 'a365 setup blueprint' first");
-        }
-
-        return Task.FromResult(errors);
-    }
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
@@ -70,13 +25,14 @@ internal static class PermissionsSubcommand
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
-        var permissionsCommand = new Command("permissions", 
+        var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
         permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, configService, executor, graphApiService, blueprintService));
 
         return permissionsCommand;
     }
@@ -91,7 +47,7 @@ internal static class PermissionsSubcommand
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
-        var command = new Command("mcp", 
+        var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n");
 
@@ -167,7 +123,7 @@ internal static class PermissionsSubcommand
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
-        var command = new Command("bot", 
+        var command = new Command("bot",
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
@@ -257,7 +213,7 @@ internal static class PermissionsSubcommand
             var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
             var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
-            
+
             // Configure all permissions using unified method
             await SetupHelpers.EnsureResourcePermissionsAsync(
                 graphApiService,
