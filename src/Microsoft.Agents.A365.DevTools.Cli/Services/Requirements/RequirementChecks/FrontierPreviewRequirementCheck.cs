@@ -32,7 +32,7 @@ public class FrontierPreviewRequirementCheck : RequirementCheck
         Console.WriteLine("  - Please confirm your tenant is enrolled before continuing.");
         Console.WriteLine();
         Console.WriteLine("Documentation:");
-        Console.WriteLine("  - https://learn.microsoft.com/en-us/microsoft-agent-365/developer/");
+        Console.WriteLine("  - https://learn.microsoft.com/microsoft-agent-365/developer/");
         Console.WriteLine("  - https://adoption.microsoft.com/en-us/copilot/frontier-program/");
 
         // Return warning without using base class logging (already logged above)

@@ -61,7 +61,7 @@ public sealed class A365CreateInstanceRunner
         _logger.LogError("  - Work correctly with messaging and event propagation");
         _logger.LogError("");
         _logger.LogError("Use 'a365 publish' followed by Teams-based hiring instead.");
-        _logger.LogError("See: https://learn.microsoft.com/en-us/microsoft-agent-365/onboard");
+        _logger.LogError("See: https://learn.microsoft.com/microsoft-agent-365/onboard");
         _logger.LogError("");
         return false;
 

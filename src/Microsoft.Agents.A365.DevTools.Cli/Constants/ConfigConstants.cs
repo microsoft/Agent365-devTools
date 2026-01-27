@@ -26,7 +26,7 @@ public static class ConfigConstants
     /// <summary>
     /// Microsoft Learn documentation URL for Agent 365 CLI setup and usage
     /// </summary>
-    public const string Agent365CliDocumentationUrl = "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli";
+    public const string Agent365CliDocumentationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli";
 
     /// <summary>
     /// Microsoft Learn documentation URL for custom client app registration
