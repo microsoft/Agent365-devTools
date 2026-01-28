@@ -224,8 +224,8 @@ public class GraphApiService
             _logger.LogDebug("Successfully acquired Graph token via Azure CLI");
         }
 
-        // Trim token to remove any newline characters that may cause header validation errors
-        token = token.Trim();
+        // Remove all newline characters and trim whitespace to prevent header validation errors
+        token = token.ReplaceLineEndings(string.Empty).Trim();
 
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         // NOTE: Do NOT add "ConsistencyLevel: eventual" header here.
