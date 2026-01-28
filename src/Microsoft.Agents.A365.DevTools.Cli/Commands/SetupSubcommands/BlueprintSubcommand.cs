@@ -136,19 +136,55 @@ internal static class BlueprintSubcommand
             "--endpoint-only",
             description: "Register messaging endpoint only (requires existing blueprint)");
 
+        var updateEndpointOption = new Option<string?>(
+            "--update-endpoint",
+            description: "Delete the existing messaging endpoint and register a new one with the specified URL");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
+        command.AddOption(updateEndpointOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly) =>
+        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, updateEndpoint) =>
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogInformation("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
 
+            // Validate mutually exclusive options
+            if (!ValidateMutuallyExclusiveOptions(
+                updateEndpoint: updateEndpoint,
+                endpointOnly: endpointOnly,
+                skipEndpointRegistration: skipEndpointRegistration,
+                logger: logger))
+            {
+                Environment.Exit(1);
+            }
+
             var setupConfig = await configService.LoadAsync(config.FullName);
+
+            // Handle --update-endpoint flag
+            if (!string.IsNullOrWhiteSpace(updateEndpoint))
+            {
+                try
+                {
+                    await UpdateEndpointAsync(
+                        configPath: config.FullName,
+                        newEndpointUrl: updateEndpoint,
+                        logger: logger,
+                        configService: configService,
+                        botConfigurator: botConfigurator,
+                        platformDetector: platformDetector);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Endpoint update failed: {Message}", ex.Message);
+                    Environment.Exit(1);
+                }
+                return;
+            }
 
             if (dryRun)
             {
@@ -216,9 +252,49 @@ internal static class BlueprintSubcommand
                 correlationId: correlationId
                 );
 
-        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption);
+        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, updateEndpointOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Validates that mutually exclusive command options are not used together.
+    /// </summary>
+    /// <returns>True if validation passes, false if conflicting options are detected.</returns>
+    internal static bool ValidateMutuallyExclusiveOptions(
+        string? updateEndpoint,
+        bool endpointOnly,
+        bool skipEndpointRegistration,
+        ILogger logger)
+    {
+        var hasUpdateEndpoint = !string.IsNullOrWhiteSpace(updateEndpoint);
+
+        // --update-endpoint cannot be used with --endpoint-only or --no-endpoint
+        if (hasUpdateEndpoint)
+        {
+            if (endpointOnly)
+            {
+                logger.LogError("Options --update-endpoint and --endpoint-only cannot be used together.");
+                logger.LogError("Use --update-endpoint if the endpoint URL needs to be updated, otherwise use --endpoint-only to register a new endpoint.");
+                return false;
+            }
+            if (skipEndpointRegistration)
+            {
+                logger.LogError("Options --update-endpoint and --no-endpoint cannot be used together.");
+                logger.LogError("--update-endpoint updates an endpoint, which conflicts with --no-endpoint.");
+                return false;
+            }
+        }
+
+        // --endpoint-only cannot be used with --no-endpoint
+        if (endpointOnly && skipEndpointRegistration)
+        {
+            logger.LogError("Options --endpoint-only and --no-endpoint cannot be used together.");
+            logger.LogError("--endpoint-only registers an endpoint, which conflicts with --no-endpoint.");
+            return false;
+        }
+
+        return true;
     }
 
     public static async Task<BlueprintCreationResult> CreateBlueprintImplementationAsync(
@@ -1556,7 +1632,7 @@ internal static class BlueprintSubcommand
             Environment.Exit(1);
         }
 
-        // Only validate webAppName if needDeployment is true
+        // Validate webAppName if needDeployment is true
         if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
         {
             logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
@@ -1618,6 +1694,121 @@ internal static class BlueprintSubcommand
         }
         
         return (endpointRegistered, endpointAlreadyExisted);
+    }
+
+    /// <summary>
+    /// Updates the messaging endpoint by deleting the existing one and registering a new one.
+    /// </summary>
+    /// <param name="configPath">Path to the configuration file</param>
+    /// <param name="newEndpointUrl">The new messaging endpoint URL</param>
+    /// <param name="logger">Logger instance</param>
+    /// <param name="configService">Configuration service</param>
+    /// <param name="botConfigurator">Bot configurator service</param>
+    /// <param name="platformDetector">Platform detector service</param>
+    public static async Task UpdateEndpointAsync(
+        string configPath,
+        string newEndpointUrl,
+        ILogger logger,
+        IConfigService configService,
+        IBotConfigurator botConfigurator,
+        PlatformDetector platformDetector)
+    {
+        var setupConfig = await configService.LoadAsync(configPath);
+
+        // Validate blueprint ID exists
+        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+        {
+            logger.LogError("Blueprint ID not found. Please confirm agent blueprint id is in config file.");
+            throw new Exceptions.SetupValidationException("Agent Blueprint ID is required for endpoint update.");
+        }
+
+        // Validate new endpoint URL
+        if (!Uri.TryCreate(newEndpointUrl, UriKind.Absolute, out var newUri) ||
+            newUri.Scheme != Uri.UriSchemeHttps)
+        {
+            logger.LogError("New endpoint must be a valid HTTPS URL. Current value: {Endpoint}", newEndpointUrl);
+            throw new Exceptions.SetupValidationException("New endpoint must be a valid HTTPS URL.");
+        }
+
+        logger.LogInformation("Updating messaging endpoint...");
+        logger.LogInformation("");
+
+        // Step 1: Delete existing endpoint if it exists
+        if (!string.IsNullOrWhiteSpace(setupConfig.BotName))
+        {
+            logger.LogInformation("Deleting existing messaging endpoint...");
+            if (string.IsNullOrWhiteSpace(setupConfig.Location))
+            {
+                logger.LogError("Location not found. Please confirm location is in the config file.");
+                throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
+            }
+            var endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
+            var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
+
+            var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                endpointName,
+                normalizedLocation,
+                setupConfig.AgentBlueprintId);
+
+            if (!deleted)
+            {
+                logger.LogError("Failed to delete existing messaging endpoint.");
+                throw new Exceptions.SetupValidationException("Failed to delete existing messaging endpoint. Cannot proceed with update.");
+            }
+
+            logger.LogInformation("Existing endpoint deleted successfully.");
+        }
+        else
+        {
+            logger.LogInformation("No existing endpoint found. Proceeding with registration.");
+        }
+
+        // Step 2: Register new endpoint with the provided URL
+        logger.LogInformation("");
+        logger.LogInformation("Registering new messaging endpoint...");
+
+        var (endpointRegistered, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+            setupConfig, logger, botConfigurator, newEndpointUrl);
+
+        if (!endpointRegistered)
+        {
+            throw new Exceptions.SetupValidationException("Failed to register new messaging endpoint.");
+        }
+
+        // Step 3: Save updated configuration
+        setupConfig.Completed = true;
+        setupConfig.CompletedAt = DateTime.UtcNow;
+
+        await configService.SaveStateAsync(setupConfig);
+
+        // Step 4: Sync to project settings
+        logger.LogInformation("");
+        logger.LogInformation("Syncing configuration to project settings...");
+
+        var configFileInfo = new FileInfo(configPath);
+        var generatedConfigPath = Path.Combine(
+            configFileInfo.DirectoryName ?? Environment.CurrentDirectory,
+            "a365.generated.config.json");
+
+        try
+        {
+            await ProjectSettingsSyncHelper.ExecuteAsync(
+                a365ConfigPath: configPath,
+                a365GeneratedPath: generatedConfigPath,
+                configService: configService,
+                platformDetector: platformDetector,
+                logger: logger);
+
+            logger.LogInformation("Configuration synced to project settings successfully");
+        }
+        catch (Exception syncEx)
+        {
+            logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually if needed.");
+        }
+
+        logger.LogInformation("");
+        logger.LogInformation("Endpoint update completed successfully!");
+        logger.LogInformation("New endpoint: {Endpoint}", newEndpointUrl);
     }
 
     #region Private Helper Methods

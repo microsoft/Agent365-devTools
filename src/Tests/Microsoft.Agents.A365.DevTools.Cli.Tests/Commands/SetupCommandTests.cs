@@ -409,5 +409,3 @@ public class SetupCommandTests
         await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 }
-
-

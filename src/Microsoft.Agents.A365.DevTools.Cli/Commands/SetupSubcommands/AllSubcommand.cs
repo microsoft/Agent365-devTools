@@ -287,6 +287,7 @@ internal static class AllSubcommand
                         blueprintService,
                         blueprintLookupService,
                         federatedCredentialService,
+                        skipEndpointRegistration: false,
                         correlationId: correlationId
                         );
 
