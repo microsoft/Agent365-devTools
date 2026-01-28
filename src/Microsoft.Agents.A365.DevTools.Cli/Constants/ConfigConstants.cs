@@ -59,9 +59,12 @@ public static class ConfigConstants
     public const string ObservabilityApiAppId = "9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
-    /// Power Platform API App ID
-    /// Used for configuring agent blueprint permissions to access Power Platform connections.
-    /// Note: This is different from MosConstants.PowerPlatformApiResourceAppId which is used for MOS token acquisition.
+    /// Microsoft Dynamics CRM / Power Platform Common Data Service API App ID
+    /// Well-known Microsoft API ID for accessing Power Platform connections and Dynamics resources.
+    /// Exposes permissions like Connectivity.Connections.Read for Power Platform connection access.
+    /// 
+    /// Note: This is different from MosConstants.PowerPlatformApiResourceAppId (8578e004-a5c6-46e7-913e-12f58912df43),
+    /// which is the MOS-specific Power Platform API used for environment management with EnvironmentManagement.Environments.Read.
     /// </summary>
     public const string PowerPlatformApiAppId = "00000003-0000-0ff1-ce00-000000000000";
 
