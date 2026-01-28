@@ -357,7 +357,10 @@ internal static class PermissionsSubcommand
                 cancellationToken);
 
             // Configure Power Platform API permissions using unified method
-            // Note: Power Platform API is a first-party Microsoft service
+            // Note: Power Platform API is a first-party Microsoft service with custom OAuth2 scopes.
+            // Similar to Messaging Bot API, we skip addToRequiredResourceAccess because the scopes
+            // won't be found in the standard service principal permissions.
+            // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
             await SetupHelpers.EnsureResourcePermissionsAsync(
                 graphService,
                 blueprintService,
@@ -375,7 +378,7 @@ internal static class PermissionsSubcommand
             await configService.SaveStateAsync(setupConfig);
 
             logger.LogInformation("");
-            logger.LogInformation("Messaging Bot API permissions configured successfully");
+            logger.LogInformation("Bot API permissions configured successfully");
             logger.LogInformation("");
             if (!iSetupAll)
             {

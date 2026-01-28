@@ -60,6 +60,8 @@ public static class ConfigConstants
 
     /// <summary>
     /// Power Platform API App ID
+    /// Used for configuring agent blueprint permissions to access Power Platform connections.
+    /// Note: This is different from MosConstants.PowerPlatformApiResourceAppId which is used for MOS token acquisition.
     /// </summary>
     public const string PowerPlatformApiAppId = "00000003-0000-0ff1-ce00-000000000000";
 
@@ -107,16 +109,16 @@ public static class ConfigConstants
     /// </summary>
     public static readonly List<string> DefaultAgentApplicationScopes = new()
     {
-        "Mail.ReadWrite",
-        "Mail.Send",
-        "Chat.Read",
-        "Chat.ReadWrite",
-        "Files.Read.All",
-        "Sites.Read.All",
-        "User.Read.All",
-        "User.ReadBasic.All",
-        "Presence.ReadWrite",
-        "AgentInstance.Read.All"
+        "Mail.ReadWrite",       // Read and write user's mailbox
+        "Mail.Send",            // Send mail on behalf of user
+        "Chat.Read",            // Read user's Teams chats
+        "Chat.ReadWrite",       // Read and send Teams chat messages
+        "Files.Read.All",       // Read files in OneDrive/SharePoint
+        "Sites.Read.All",       // Read SharePoint sites
+        "User.Read.All",        // Read all user profiles
+        "User.ReadBasic.All",   // Read basic user info
+        "Presence.ReadWrite",   // Read/write user presence status
+        "AgentInstance.Read.All" // Read agent instance information
     };
 
 
