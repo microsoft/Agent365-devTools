@@ -78,6 +78,7 @@ public static class Server
 
         // Log that MCP is mapped
         logger.LogInformation("MCP endpoints mapped: /mcp/sse, /mcp/schema.json");
+        logger.LogInformation("Gateway endpoint mapped: /agents/{{agentInstanceId}}/mcpServers");
 
         // Optional minimal health endpoint for quick check
         app.MapGet("/health", () => Results.Ok(new { status = "ok", mcp = "/mcp", mock = "/mcp-mock" }));
@@ -202,6 +203,41 @@ public static class Server
             {
                 log.LogError(ex, "Mock JSON-RPC failure");
                 return Results.Json(new { jsonrpc = "2.0", id = (object?)null, error = new { code = -32603, message = ex.Message } });
+            }
+        });
+
+        // ===================== GATEWAY ENDPOINT =====================
+        // Platform gateway endpoint that agents use to discover MCP servers
+        // This endpoint returns the list of available MCP servers for an agent instance
+        app.MapGet("/agents/{agentInstanceId}/mcpServers", (string agentInstanceId, ILogger<Program> log) =>
+        {
+            try
+            {
+                log.LogInformation("Gateway endpoint called for agent instance: {AgentInstanceId}", agentInstanceId);
+
+                // Get the configured server port from the URLs
+                var serverUrl = app.Urls.FirstOrDefault() ?? "http://localhost:5309";
+
+                // Build the MCP server list matching ToolingManifest.json structure
+                var mcpServers = mcpServerNames.Select(serverName => new
+                {
+                    mcpServerName = serverName,
+                    mcpServerUniqueName = serverName,
+                    url = $"{serverUrl}/agents/servers/{serverName}",
+                    scope = "offline_access",
+                    audience = serverUrl
+                }).ToArray();
+
+                log.LogInformation("Returning {Count} MCP servers: {Servers}",
+                    mcpServers.Length,
+                    string.Join(", ", mcpServerNames));
+
+                return Results.Json(new { mcpServers });
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Failed to process gateway endpoint request");
+                return Results.Problem(ex.Message, statusCode: 500);
             }
         });
 
