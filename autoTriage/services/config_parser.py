@@ -156,4 +156,4 @@ class ConfigParser:
     def get_default_config() -> TeamConfig:
         """Get default configuration using team-members.json for assignees."""
         # Use the default config which loads team members from team-members.json
-        return ConfigParser.parse_file("../sample-config.yml")
+        return ConfigParser._default_config()
