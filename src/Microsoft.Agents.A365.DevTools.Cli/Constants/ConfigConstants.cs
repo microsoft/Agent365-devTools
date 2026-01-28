@@ -102,11 +102,16 @@ public static class ConfigConstants
     /// </summary>
     public static readonly List<string> DefaultAgentApplicationScopes = new()
     {
-        "Mail.ReadWrite",
-        "Mail.Send",
-        "Chat.ReadWrite",
-        "User.Read.All",
-        "Sites.Read.All"
+        "Mail.ReadWrite",       // Read and write user's mailbox
+        "Mail.Send",            // Send mail on behalf of user
+        "Chat.Read",            // Read user's Teams chats
+        "Chat.ReadWrite",       // Read and send Teams chat messages
+        "Files.Read.All",       // Read files in OneDrive/SharePoint
+        "Sites.Read.All",       // Read SharePoint sites
+        "User.Read.All",        // Read all user profiles
+        "User.ReadBasic.All",   // Read basic user info
+        "Presence.ReadWrite",   // Read/write user presence status
+        "AgentInstance.Read.All" // Read agent instance information
     };
 
 

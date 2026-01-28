@@ -209,9 +209,11 @@ internal static class PermissionsSubcommand
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Configure Bot API Permissions");
-                logger.LogInformation("Would configure Messaging Bot API permissions:");
+                logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Scopes: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Observability API: user_impersonation");
+                logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 return;
             }
 
@@ -354,11 +356,31 @@ internal static class PermissionsSubcommand
                 setupResults,
                 cancellationToken);
 
+            // Configure Power Platform API permissions using unified method
+            // Note: Using the MOS Power Platform API (8578e004-a5c6-46e7-913e-12f58912df43) which is
+            // the Power Platform API for agent operations. This API exposes Connectivity.Connections.Read
+            // for reading Power Platform connections.
+            // Similar to Messaging Bot API, we skip addToRequiredResourceAccess because the scopes
+            // won't be found in the standard service principal permissions.
+            // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
+            await SetupHelpers.EnsureResourcePermissionsAsync(
+                graphService,
+                blueprintService,
+                setupConfig,
+                MosConstants.PowerPlatformApiResourceAppId,
+                "Power Platform API",
+                new[] { "Connectivity.Connections.Read" },
+                logger,
+                addToRequiredResourceAccess: false,
+                setInheritablePermissions: true,
+                setupResults,
+                cancellationToken);
+
             // write changes to generated config
             await configService.SaveStateAsync(setupConfig);
 
             logger.LogInformation("");
-            logger.LogInformation("Messaging Bot API permissions configured successfully");
+            logger.LogInformation("Bot API permissions configured successfully");
             logger.LogInformation("");
             if (!iSetupAll)
             {
