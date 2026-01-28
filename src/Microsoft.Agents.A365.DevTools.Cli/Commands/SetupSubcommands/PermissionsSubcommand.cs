@@ -357,9 +357,9 @@ internal static class PermissionsSubcommand
                 cancellationToken);
 
             // Configure Power Platform API permissions using unified method
-            // Note: This uses the Microsoft Dynamics CRM / Power Platform Common Data Service API (00000003-0000-0ff1-ce00-000000000000)
-            // which exposes Connectivity.Connections.Read. This is different from the MOS Power Platform API
-            // (8578e004-a5c6-46e7-913e-12f58912df43 in MosConstants) used for environment management.
+            // Note: Using the MOS Power Platform API (8578e004-a5c6-46e7-913e-12f58912df43) which is
+            // the Power Platform API for agent operations. This API exposes Connectivity.Connections.Read
+            // for reading Power Platform connections.
             // Similar to Messaging Bot API, we skip addToRequiredResourceAccess because the scopes
             // won't be found in the standard service principal permissions.
             // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
