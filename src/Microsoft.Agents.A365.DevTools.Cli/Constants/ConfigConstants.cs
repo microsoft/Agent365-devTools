@@ -59,6 +59,11 @@ public static class ConfigConstants
     public const string ObservabilityApiAppId = "9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
+    /// Power Platform API App ID
+    /// </summary>
+    public const string PowerPlatformApiAppId = "00000003-0000-0ff1-ce00-000000000000";
+
+    /// <summary>
     /// Production deployment environment
     /// </summary>
     public const string ProductionDeploymentEnvironment = "prd";
@@ -104,9 +109,14 @@ public static class ConfigConstants
     {
         "Mail.ReadWrite",
         "Mail.Send",
+        "Chat.Read",
         "Chat.ReadWrite",
+        "Files.Read.All",
+        "Sites.Read.All",
         "User.Read.All",
-        "Sites.Read.All"
+        "User.ReadBasic.All",
+        "Presence.ReadWrite",
+        "AgentInstance.Read.All"
     };
 
 

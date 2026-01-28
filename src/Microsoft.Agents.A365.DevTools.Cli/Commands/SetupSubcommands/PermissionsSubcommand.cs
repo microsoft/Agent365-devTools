@@ -209,9 +209,11 @@ internal static class PermissionsSubcommand
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Configure Bot API Permissions");
-                logger.LogInformation("Would configure Messaging Bot API permissions:");
+                logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Scopes: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Observability API: user_impersonation");
+                logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 return;
             }
 
@@ -348,6 +350,21 @@ internal static class PermissionsSubcommand
                 ConfigConstants.ObservabilityApiAppId,
                 "Observability API",
                 new[] { "user_impersonation" },
+                logger,
+                addToRequiredResourceAccess: false,
+                setInheritablePermissions: true,
+                setupResults,
+                cancellationToken);
+
+            // Configure Power Platform API permissions using unified method
+            // Note: Power Platform API is a first-party Microsoft service
+            await SetupHelpers.EnsureResourcePermissionsAsync(
+                graphService,
+                blueprintService,
+                setupConfig,
+                ConfigConstants.PowerPlatformApiAppId,
+                "Power Platform API",
+                new[] { "Connectivity.Connections.Read" },
                 logger,
                 addToRequiredResourceAccess: false,
                 setInheritablePermissions: true,
