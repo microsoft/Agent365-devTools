@@ -59,14 +59,6 @@ public static class ConfigConstants
     public const string ObservabilityApiAppId = "9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
-    /// Power Platform API App ID
-    /// MOS-specific Power Platform API for environment management and Power Platform operations.
-    /// Same as MosConstants.PowerPlatformApiResourceAppId.
-    /// Exposes permissions like EnvironmentManagement.Environments.Read and Connectivity.Connections.Read.
-    /// </summary>
-    public const string PowerPlatformApiAppId = "8578e004-a5c6-46e7-913e-12f58912df43";
-
-    /// <summary>
     /// Production deployment environment
     /// </summary>
     public const string ProductionDeploymentEnvironment = "prd";

@@ -367,7 +367,7 @@ internal static class PermissionsSubcommand
                 graphService,
                 blueprintService,
                 setupConfig,
-                ConfigConstants.PowerPlatformApiAppId,
+                MosConstants.PowerPlatformApiResourceAppId,
                 "Power Platform API",
                 new[] { "Connectivity.Connections.Read" },
                 logger,
