@@ -1,0 +1,122 @@
+[
+  {
+    "name": "getMyProfile",
+    "description": "Get the profile of the currently signed-in user, including their display name, email address, job title, and other basic information.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "select": {
+          "type": "string",
+          "description": "Comma-separated list of properties to return (e.g., 'displayName,mail,jobTitle'). If not specified, returns default properties."
+        }
+      },
+      "required": []
+    },
+    "responseTemplate": "{\"id\": \"mock-user-001\", \"displayName\": \"{{mockUserName}}\", \"mail\": \"{{mockUserEmail}}\", \"userPrincipalName\": \"{{mockUserEmail}}\", \"jobTitle\": \"Software Engineer\", \"officeLocation\": \"Building 1\", \"mobilePhone\": \"+1-555-0100\"}",
+    "delayMs": 100,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "listUsers",
+    "description": "Search for users in the organization directory. Use this to find a person's email address when you only know their name. Supports filtering by displayName, mail, userPrincipalName, and other properties.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "description": "Search string to find users. Use format like '\"displayName:John\"' to search by display name, or '\"mail:john@\"' to search by email. Supports partial matching."
+        },
+        "filter": {
+          "type": "string",
+          "description": "OData filter expression (e.g., \"startsWith(displayName,'John')\" or \"mail eq 'john@contoso.com'\")."
+        },
+        "select": {
+          "type": "string",
+          "description": "Comma-separated list of properties to return (e.g., 'displayName,mail,id')."
+        },
+        "top": {
+          "type": "integer",
+          "description": "Maximum number of results to return. Default is 10, maximum is 999."
+        },
+        "orderby": {
+          "type": "string",
+          "description": "Property to sort results by (e.g., 'displayName asc')."
+        }
+      },
+      "required": []
+    },
+    "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#users\", \"value\": [{\"id\": \"mock-user-{{search}}\", \"displayName\": \"{{search}} (Mock User)\", \"mail\": \"{{search}}@contoso.com\", \"userPrincipalName\": \"{{search}}@contoso.com\", \"jobTitle\": \"Team Member\", \"officeLocation\": \"Remote\"}]}",
+    "delayMs": 150,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "getUser",
+    "description": "Get the profile of a specific user by their ID or userPrincipalName.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The unique identifier (GUID) or userPrincipalName (email) of the user to retrieve."
+        },
+        "select": {
+          "type": "string",
+          "description": "Comma-separated list of properties to return."
+        }
+      },
+      "required": ["userId"]
+    },
+    "responseTemplate": "{\"id\": \"{{userId}}\", \"displayName\": \"{{userId}} (Mock User)\", \"mail\": \"{{userId}}\", \"userPrincipalName\": \"{{userId}}\", \"jobTitle\": \"Team Member\", \"officeLocation\": \"Building 1\"}",
+    "delayMs": 100,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "getManager",
+    "description": "Get the manager of a specific user or the currently signed-in user.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The unique identifier or userPrincipalName of the user. Use 'me' for the currently signed-in user."
+        }
+      },
+      "required": []
+    },
+    "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#directoryObjects/$entity\", \"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-manager-001\", \"displayName\": \"{{mockManagerName}}\", \"mail\": \"{{mockManagerEmail}}\", \"userPrincipalName\": \"{{mockManagerEmail}}\", \"jobTitle\": \"Engineering Manager\"}",
+    "delayMs": 100,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "getDirectReports",
+    "description": "Get the direct reports of a specific user or the currently signed-in user.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The unique identifier or userPrincipalName of the user. Use 'me' for the currently signed-in user."
+        },
+        "top": {
+          "type": "integer",
+          "description": "Maximum number of results to return."
+        }
+      },
+      "required": []
+    },
+    "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#directoryObjects\", \"value\": [{\"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-report-001\", \"displayName\": \"Alice Johnson (Mock)\", \"mail\": \"alice.johnson@contoso.com\", \"jobTitle\": \"Software Engineer\"}, {\"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-report-002\", \"displayName\": \"Bob Smith (Mock)\", \"mail\": \"bob.smith@contoso.com\", \"jobTitle\": \"Software Engineer\"}]}",
+    "delayMs": 100,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  }
+]
+

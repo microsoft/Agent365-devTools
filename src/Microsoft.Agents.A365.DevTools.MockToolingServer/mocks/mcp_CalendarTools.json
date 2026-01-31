@@ -779,7 +779,7 @@
         "endDateTime"
       ]
     },
-    "responseTemplate": "Calendar view retrieved from {{startDateTime}} to {{endDateTime}} (mock).",
+    "responseTemplate": "{\"value\": [{\"id\": \"mock-event-001\", \"subject\": \"Team Sync\", \"start\": {\"dateTime\": \"2026-02-01T10:00:00\"}, \"end\": {\"dateTime\": \"2026-02-01T10:30:00\"}, \"showAs\": \"busy\"}, {\"id\": \"mock-event-002\", \"subject\": \"Product Roadmap Review\", \"start\": {\"dateTime\": \"2026-02-01T14:00:00\"}, \"end\": {\"dateTime\": \"2026-02-01T15:00:00\"}, \"showAs\": \"busy\"}, {\"id\": \"mock-event-003\", \"subject\": \"Board Presentation\", \"start\": {\"dateTime\": \"2026-02-01T10:00:00\"}, \"end\": {\"dateTime\": \"2026-02-01T11:00:00\"}, \"showAs\": \"busy\"}]}",
     "delayMs": 250,
     "errorRate": 0,
     "statusCode": 200,
@@ -829,7 +829,7 @@
         }
       }
     },
-    "responseTemplate": "Events list retrieved for user {{userId}} (mock).",
+    "responseTemplate": "{\"value\": [{\"id\": \"mock-event-001\", \"subject\": \"Team Sync\", \"start\": {\"dateTime\": \"2026-02-01T10:00:00\"}, \"end\": {\"dateTime\": \"2026-02-01T10:30:00\"}}, {\"id\": \"mock-event-002\", \"subject\": \"Product Roadmap Review\", \"start\": {\"dateTime\": \"2026-02-01T14:00:00\"}, \"end\": {\"dateTime\": \"2026-02-01T15:00:00\"}}, {\"id\": \"mock-event-003\", \"subject\": \"Board Presentation\", \"start\": {\"dateTime\": \"2026-02-01T10:00:00\"}, \"end\": {\"dateTime\": \"2026-02-01T11:00:00\"}}]}",
     "delayMs": 250,
     "errorRate": 0,
     "statusCode": 200,

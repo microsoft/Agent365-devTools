@@ -1,3 +1,39 @@
+# Mock Tooling Server
+
+A lightweight MCP (Model Context Protocol) server that provides mock implementations of common Microsoft Graph and M365 tools for local agent development and testing.
+
+## Available Mock Servers
+
+The following mock server definitions are included out of the box:
+
+| Server | File | Description |
+|--------|------|-------------|
+| `mcp_CalendarTools` | `mocks/mcp_CalendarTools.json` | Calendar operations (createEvent, listEvents, getSchedule, findMeetingTimes, etc.) |
+| `mcp_MailTools` | `mocks/mcp_MailTools.json` | Email operations (SendEmail, SendEmailWithAttachments, etc.) |
+| `mcp_MeServer` | `mocks/mcp_MeServer.json` | User/directory operations (listUsers, getMyProfile, getManager, etc.) |
+
+### mcp_MeServer Tools
+
+Tools for user profile and directory search operations:
+
+| Tool | Description |
+|------|-------------|
+| `getMyProfile` | Get the currently signed-in user's profile (displayName, mail, jobTitle, etc.) |
+| `listUsers` | Search for users in the directory by name or email. Essential for finding email addresses when only a name is provided. |
+| `getUser` | Get a specific user's profile by ID or userPrincipalName |
+| `getManager` | Get a user's manager |
+| `getDirectReports` | Get a user's direct reports |
+
+### mcp_CalendarTools Tools
+
+Tools for calendar and scheduling operations including `createEvent`, `listEvents`, `getSchedule`, `findMeetingTimes`, `updateEvent`, `deleteEvent`, `cancelEvent`, `acceptEvent`, `declineEvent`, and more.
+
+### mcp_MailTools Tools
+
+Tools for email operations including `SendEmail`, `SendEmailWithAttachments`, and related mail functionality.
+
+---
+
 # How to mock notifications for custom activities
 
 ## Prerequisites
