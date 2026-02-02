@@ -223,9 +223,7 @@ public static class Server
                 {
                     mcpServerName = serverName,
                     mcpServerUniqueName = serverName,
-                    url = $"{serverUrl}/agents/servers/{serverName}",
-                    scope = "offline_access",
-                    audience = serverUrl
+                    url = $"{serverUrl}/agents/servers/{serverName}"
                 }).ToArray();
 
                 log.LogInformation("Returning {Count} MCP servers: {Servers}",
