@@ -16,6 +16,12 @@ public class SetupResults
     public bool MessagingEndpointRegistered { get; set; }
     public bool InheritablePermissionsConfigured { get; set; }
     
+    /// <summary>
+    /// Indicates whether Microsoft Graph inheritable permissions failed to configure.
+    /// This is critical for agent token exchange functionality.
+    /// </summary>
+    public bool GraphInheritablePermissionsFailed { get; set; }
+    
     // Idempotency tracking flags - track whether resources already existed (vs newly created)
     public bool InfrastructureAlreadyExisted { get; set; }
     public bool BlueprintAlreadyExisted { get; set; }

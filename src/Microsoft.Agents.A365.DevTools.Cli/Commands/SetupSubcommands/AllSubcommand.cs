@@ -308,6 +308,16 @@ internal static class AllSubcommand
                         setupResults.Errors.Add("Messaging endpoint registration failed");
                     }
 
+                    // Track Graph inheritable permissions failure - critical for agent token exchange
+                    if (result.GraphInheritablePermissionsFailed)
+                    {
+                        setupResults.GraphInheritablePermissionsFailed = true;
+                        var errorMsg = !string.IsNullOrWhiteSpace(result.GraphInheritablePermissionsError)
+                            ? $"Microsoft Graph inheritable permissions: {result.GraphInheritablePermissionsError}"
+                            : "Microsoft Graph inheritable permissions failed to configure";
+                        setupResults.Warnings.Add(errorMsg);
+                    }
+
                     if (!result.BlueprintCreated)
                     {
                         throw new GraphApiException(

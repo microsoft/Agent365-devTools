@@ -168,6 +168,15 @@ internal static class SetupHelpers
         else if (results.HasWarnings)
         {
             logger.LogInformation("Setup completed successfully with warnings");
+            logger.LogInformation("");
+            logger.LogInformation("Recovery Actions:");
+            
+            if (results.GraphInheritablePermissionsFailed)
+            {
+                logger.LogInformation("  - Graph Inheritable Permissions: Run 'a365 setup blueprint' to retry");
+            }
+            
+            logger.LogInformation("");
             logger.LogInformation("Review warnings above and take action if needed");
         }
         else
