@@ -12,7 +12,7 @@
       },
       "required": []
     },
-    "responseTemplate": "{\"id\": \"mock-user-001\", \"displayName\": \"{{mockUserName}}\", \"mail\": \"{{mockUserEmail}}\", \"userPrincipalName\": \"{{mockUserEmail}}\", \"jobTitle\": \"Software Engineer\", \"officeLocation\": \"Building 1\", \"mobilePhone\": \"+1-555-0100\"}",
+    "responseTemplate": "{\"id\": \"mock-user-001\", \"displayName\": \"Mock User\", \"mail\": \"mock.user@contoso.com\", \"userPrincipalName\": \"mock.user@contoso.com\", \"jobTitle\": \"Software Engineer\", \"officeLocation\": \"Building 1\", \"mobilePhone\": \"+1-555-0100\"}",
     "delayMs": 100,
     "errorRate": 0,
     "statusCode": 200,
@@ -89,7 +89,7 @@
       },
       "required": []
     },
-    "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#directoryObjects/$entity\", \"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-manager-001\", \"displayName\": \"{{mockManagerName}}\", \"mail\": \"{{mockManagerEmail}}\", \"userPrincipalName\": \"{{mockManagerEmail}}\", \"jobTitle\": \"Engineering Manager\"}",
+    "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#directoryObjects/$entity\", \"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-manager-001\", \"displayName\": \"Mock Manager\", \"mail\": \"mock.manager@contoso.com\", \"userPrincipalName\": \"mock.manager@contoso.com\", \"jobTitle\": \"Engineering Manager\"}",
     "delayMs": 100,
     "errorRate": 0,
     "statusCode": 200,
