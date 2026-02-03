@@ -308,14 +308,17 @@ internal static class AllSubcommand
                         setupResults.Errors.Add("Messaging endpoint registration failed");
                     }
 
-                    // Track Graph inheritable permissions failure - critical for agent token exchange
+                    // Track Graph permissions status - critical for agent token exchange
+                    setupResults.GraphPermissionsConfigured = result.GraphPermissionsConfigured;
                     if (result.GraphInheritablePermissionsFailed)
                     {
-                        setupResults.GraphInheritablePermissionsFailed = true;
-                        var errorMsg = !string.IsNullOrWhiteSpace(result.GraphInheritablePermissionsError)
-                            ? $"Microsoft Graph inheritable permissions: {result.GraphInheritablePermissionsError}"
-                            : "Microsoft Graph inheritable permissions failed to configure";
-                        setupResults.Warnings.Add(errorMsg);
+                        setupResults.GraphInheritablePermissionsError = result.GraphInheritablePermissionsError 
+                            ?? "Microsoft Graph inheritable permissions failed to configure";
+                        setupResults.Warnings.Add($"Microsoft Graph inheritable permissions: {setupResults.GraphInheritablePermissionsError}");
+                    }
+                    else
+                    {
+                        setupResults.GraphInheritablePermissionsConfigured = true;
                     }
 
                     if (!result.BlueprintCreated)
@@ -403,6 +406,10 @@ internal static class AllSubcommand
                         setupResults);
 
                     setupResults.BotApiPermissionsConfigured = botPermissionSetup;
+                    if (botPermissionSetup)
+                    {
+                        setupResults.BotInheritablePermissionsConfigured = setupConfig.IsBotInheritanceConfigured();
+                    }
                 }
                 catch (Exception botPermEx)
                 {

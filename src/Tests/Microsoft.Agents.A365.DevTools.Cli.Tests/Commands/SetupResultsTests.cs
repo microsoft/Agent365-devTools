@@ -27,20 +27,21 @@ public class SetupResultsTests
         results.BotApiPermissionsConfigured.Should().BeFalse();
         results.MessagingEndpointRegistered.Should().BeFalse();
         results.InheritablePermissionsConfigured.Should().BeFalse();
-        results.GraphInheritablePermissionsFailed.Should().BeFalse();
+        results.GraphInheritablePermissionsConfigured.Should().BeFalse();
+        results.GraphInheritablePermissionsError.Should().BeNull();
     }
 
     [Fact]
-    public void SetupResults_GraphInheritablePermissionsFailed_CanBeSet()
+    public void SetupResults_GraphInheritablePermissionsError_CanBeSet()
     {
         // Arrange
         var results = new SetupResults();
 
         // Act
-        results.GraphInheritablePermissionsFailed = true;
+        results.GraphInheritablePermissionsError = "Test error message";
 
         // Assert
-        results.GraphInheritablePermissionsFailed.Should().BeTrue();
+        results.GraphInheritablePermissionsError.Should().Be("Test error message");
     }
 
     [Fact]
@@ -94,17 +95,17 @@ public class SetupResultsTests
     }
 
     [Fact]
-    public void SetupResults_GraphInheritablePermissionsFailed_WithWarning_ShouldTrackBoth()
+    public void SetupResults_GraphInheritablePermissionsError_WithWarning_ShouldTrackBoth()
     {
         // Arrange
         var results = new SetupResults();
 
         // Act - simulate the AllSubcommand behavior when Graph inheritable permissions fail
-        results.GraphInheritablePermissionsFailed = true;
-        results.Warnings.Add("Microsoft Graph inheritable permissions: Test error message");
+        results.GraphInheritablePermissionsError = "Test error message";
+        results.Warnings.Add($"Microsoft Graph inheritable permissions: {results.GraphInheritablePermissionsError}");
 
         // Assert
-        results.GraphInheritablePermissionsFailed.Should().BeTrue();
+        results.GraphInheritablePermissionsError.Should().NotBeNull();
         results.HasWarnings.Should().BeTrue();
         results.Warnings.Should().Contain(w => w.Contains("Microsoft Graph inheritable permissions"));
     }

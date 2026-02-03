@@ -33,6 +33,11 @@ internal class BlueprintCreationResult
     /// Indicates whether endpoint registration was attempted (vs. skipped via --no-endpoint or missing config)
     /// </summary>
     public bool EndpointRegistrationAttempted { get; set; }
+
+    /// <summary>
+    /// Indicates whether Graph admin consent (OAuth2 permissions) was granted.
+    /// </summary>
+    public bool GraphPermissionsConfigured { get; set; }
     /// <summary>
     /// Indicates whether Graph inheritable permissions failed to be configured.
     /// This is critical for agent token exchange functionality.
@@ -599,6 +604,7 @@ internal static class BlueprintSubcommand
             EndpointRegistered = endpointRegistered,
             EndpointAlreadyExisted = endpointAlreadyExisted,
             EndpointRegistrationAttempted = !skipEndpointRegistration,
+            GraphPermissionsConfigured = blueprintResult.graphPermissionsConfigured,
             GraphInheritablePermissionsFailed = blueprintResult.graphInheritablePermissionsFailed,
             GraphInheritablePermissionsError = blueprintResult.graphInheritablePermissionsError
         };
@@ -660,9 +666,9 @@ internal static class BlueprintSubcommand
     /// Implements displayName-first discovery for idempotency: always searches by displayName from a365.config.json (the source of truth).
     /// Cached objectIds are only used for dependent resources (FIC, etc.) after blueprint existence is confirmed.
     /// Used by: BlueprintSubcommand and A365SetupRunner Phase 2.2
-    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted, graphInheritablePermissionsFailed, graphInheritablePermissionsError)
+    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted, graphPermissionsConfigured, graphInheritablePermissionsFailed, graphInheritablePermissionsError)
     /// </summary>
-    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError)> CreateAgentBlueprintAsync(
+    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError)> CreateAgentBlueprintAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -747,7 +753,7 @@ internal static class BlueprintSubcommand
             {
                 logger.LogError("Existing blueprint found but required identifiers are missing (AppId: {AppId}, ObjectId: {ObjectId})", 
                     existingAppId, existingObjectId);
-                return (false, null, null, null, alreadyExisted: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
             }
 
             return await CompleteBlueprintConfigurationAsync(
@@ -823,7 +829,7 @@ internal static class BlueprintSubcommand
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
-                return (false, null, null, null, alreadyExisted: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
             }
 
             // Create the application using Microsoft Graph SDK
@@ -868,13 +874,13 @@ internal static class BlueprintSubcommand
                     {
                         errorContent = await appResponse.Content.ReadAsStringAsync(ct);
                         logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                        return (false, null, null, null, alreadyExisted: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                        return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
                     }
                 }
                 else
                 {
                     logger.LogError("Failed to create application: {Status} - {Error}", appResponse.StatusCode, errorContent);
-                    return (false, null, null, null, alreadyExisted: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                    return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
                 }
             }
 
@@ -904,7 +910,7 @@ internal static class BlueprintSubcommand
             if (!appAvailable)
             {
                 logger.LogError("Application object not available after creation and retries. Aborting setup.");
-                return (false, null, null, null, alreadyExisted: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
             }
             
             logger.LogInformation("Application object verified in directory");
@@ -1024,7 +1030,7 @@ internal static class BlueprintSubcommand
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
-            return (false, null, null, null, alreadyExisted: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+            return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
         }
     }
 
@@ -1032,7 +1038,7 @@ internal static class BlueprintSubcommand
     /// Completes blueprint configuration by validating/creating federated credentials and requesting admin consent.
     /// Called by both existing blueprint and new blueprint paths to ensure consistent configuration.
     /// </summary>
-    private static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError)> CompleteBlueprintConfigurationAsync(
+    private static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError)> CompleteBlueprintConfigurationAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -1200,9 +1206,9 @@ internal static class BlueprintSubcommand
             logger.LogWarning("Consent URL: {Url}", consentUrlGraph);
         }
 
-        // Track Graph inheritable permissions failure - this is critical for agent token exchange
+        // Track Graph permissions status - this is critical for agent token exchange
         bool graphPermissionsFailed = !graphInheritablePermissionsConfigured;
-        return (true, appId, objectId, servicePrincipalId, alreadyExisted, graphPermissionsFailed, graphInheritablePermissionsError);
+        return (true, appId, objectId, servicePrincipalId, alreadyExisted, consentSuccess, graphPermissionsFailed, graphInheritablePermissionsError);
     }
 
     /// <summary>

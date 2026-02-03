@@ -40,15 +40,15 @@ public class SetupHelpersDisplaySummaryTests
     }
 
     [Fact]
-    public void DisplaySetupSummary_WithGraphPermissionsFailed_ShouldShowRecoveryAction()
+    public void DisplaySetupSummary_WithGraphPermissionsError_ShouldShowRecoveryAction()
     {
         // Arrange
         var results = new SetupResults
         {
             BlueprintCreated = true,
-            GraphInheritablePermissionsFailed = true
+            GraphInheritablePermissionsError = "Test error"
         };
-        results.Warnings.Add("Microsoft Graph inheritable permissions: Test error");
+        results.Warnings.Add($"Microsoft Graph inheritable permissions: {results.GraphInheritablePermissionsError}");
 
         // Act
         SetupHelpers.DisplaySetupSummary(results, _mockLogger);
@@ -59,13 +59,13 @@ public class SetupHelpersDisplaySummaryTests
     }
 
     [Fact]
-    public void DisplaySetupSummary_WithNoGraphPermissionsFailure_ShouldNotShowRecoveryAction()
+    public void DisplaySetupSummary_WithNoGraphPermissionsError_ShouldNotShowRecoveryAction()
     {
         // Arrange
         var results = new SetupResults
         {
             BlueprintCreated = true,
-            GraphInheritablePermissionsFailed = false
+            GraphInheritablePermissionsError = null
         };
 
         // Act
@@ -76,13 +76,13 @@ public class SetupHelpersDisplaySummaryTests
     }
 
     [Fact]
-    public void DisplaySetupSummary_WithWarningsButNoGraphFailure_ShouldShowWarningsSection()
+    public void DisplaySetupSummary_WithWarningsButNoGraphError_ShouldShowWarningsSection()
     {
         // Arrange
         var results = new SetupResults
         {
             BlueprintCreated = true,
-            GraphInheritablePermissionsFailed = false
+            GraphInheritablePermissionsError = null
         };
         results.Warnings.Add("Some other warning");
 
@@ -95,15 +95,15 @@ public class SetupHelpersDisplaySummaryTests
     }
 
     [Fact]
-    public void DisplaySetupSummary_WithGraphFailureAndOtherWarnings_ShouldShowBothRecoveryActions()
+    public void DisplaySetupSummary_WithGraphErrorAndOtherWarnings_ShouldShowBothRecoveryActions()
     {
         // Arrange
         var results = new SetupResults
         {
             BlueprintCreated = true,
-            GraphInheritablePermissionsFailed = true
+            GraphInheritablePermissionsError = "Permission denied"
         };
-        results.Warnings.Add("Microsoft Graph inheritable permissions: Permission denied");
+        results.Warnings.Add($"Microsoft Graph inheritable permissions: {results.GraphInheritablePermissionsError}");
 
         // Act
         SetupHelpers.DisplaySetupSummary(results, _mockLogger);
@@ -146,7 +146,8 @@ public class SetupHelpersDisplaySummaryTests
             BotApiPermissionsConfigured = true,
             MessagingEndpointRegistered = true,
             InheritablePermissionsConfigured = true,
-            GraphInheritablePermissionsFailed = false
+            GraphInheritablePermissionsConfigured = true,
+            GraphInheritablePermissionsError = null
         };
 
         // Act
@@ -159,7 +160,7 @@ public class SetupHelpersDisplaySummaryTests
     }
 
     [Fact]
-    public void DisplaySetupSummary_WithGraphFailure_ShouldIndicatePartialSuccess()
+    public void DisplaySetupSummary_WithGraphError_ShouldIndicatePartialSuccess()
     {
         // Arrange
         var results = new SetupResults
@@ -169,9 +170,9 @@ public class SetupHelpersDisplaySummaryTests
             McpPermissionsConfigured = true,
             BotApiPermissionsConfigured = true,
             MessagingEndpointRegistered = true,
-            GraphInheritablePermissionsFailed = true
+            GraphInheritablePermissionsError = "Failed"
         };
-        results.Warnings.Add("Microsoft Graph inheritable permissions: Failed");
+        results.Warnings.Add($"Microsoft Graph inheritable permissions: {results.GraphInheritablePermissionsError}");
 
         // Act
         SetupHelpers.DisplaySetupSummary(results, _mockLogger);

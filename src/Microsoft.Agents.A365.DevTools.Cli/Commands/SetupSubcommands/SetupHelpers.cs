@@ -92,20 +92,23 @@ internal static class SetupHelpers
             var status = results.BlueprintAlreadyExisted ? "configured (already exists)" : "created";
             logger.LogInformation("  [OK] Agent blueprint {Status} (Blueprint ID: {BlueprintId})", status, results.BlueprintId ?? "unknown");
         }
-        if (results.McpPermissionsConfigured)
+        if (results.McpPermissionsConfigured && results.InheritablePermissionsConfigured)
         {
-            var status = results.McpPermissionsAlreadyExisted ? "verified (already configured)" : "configured";
-            logger.LogInformation("  [OK] MCP server permissions {Status}", status);
+            var permStatus = results.McpPermissionsAlreadyExisted ? "verified" : "configured";
+            var inheritStatus = results.InheritablePermissionsAlreadyExisted ? "verified" : "configured";
+            logger.LogInformation("  [OK] MCP Tools permissions {PermStatus}, inheritable permissions {InheritStatus}", permStatus, inheritStatus);
         }
-        if (results.InheritablePermissionsConfigured)
+        if (results.BotApiPermissionsConfigured && results.BotInheritablePermissionsConfigured)
         {
-            var status = results.InheritablePermissionsAlreadyExisted ? "verified (already configured)" : "configured";
-            logger.LogInformation("  [OK] Inheritable permissions {Status}", status);
+            var permStatus = results.BotApiPermissionsAlreadyExisted ? "verified" : "configured";
+            var inheritStatus = results.BotInheritablePermissionsAlreadyExisted ? "verified" : "configured";
+            logger.LogInformation("  [OK] Messaging Bot API permissions {PermStatus}, inheritable permissions {InheritStatus}", permStatus, inheritStatus);
         }
-        if (results.BotApiPermissionsConfigured)
+        if (results.GraphPermissionsConfigured && results.GraphInheritablePermissionsConfigured)
         {
-            var status = results.BotApiPermissionsAlreadyExisted ? "verified (already configured)" : "configured";
-            logger.LogInformation("  [OK] Messaging Bot API permissions {Status}", status);
+            var permStatus = results.GraphPermissionsAlreadyExisted ? "verified" : "configured";
+            var inheritStatus = results.GraphInheritablePermissionsAlreadyExisted ? "verified" : "configured";
+            logger.LogInformation("  [OK] Microsoft Graph permissions {PermStatus}, inheritable permissions {InheritStatus}", permStatus, inheritStatus);
         }
         if (results.MessagingEndpointRegistered)
         {
@@ -144,19 +147,19 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Recovery Actions:");
             
-            if (!results.InheritablePermissionsConfigured)
+            if (!results.McpPermissionsConfigured || !results.InheritablePermissionsConfigured)
             {
-                logger.LogInformation("  - Inheritable Permissions: Run 'a365 setup permissions mcp' to retry");
+                logger.LogInformation("  - MCP Tools Permissions: Run 'a365 setup permissions mcp' to retry");
             }
             
-            if (!results.McpPermissionsConfigured)
+            if (!results.BotApiPermissionsConfigured || !results.BotInheritablePermissionsConfigured)
             {
-                logger.LogInformation("  - MCP Permissions: Run 'a365 setup permissions mcp' to retry");
+                logger.LogInformation("  - Messaging Bot API Permissions: Run 'a365 setup permissions bot' to retry");
             }
             
-            if (!results.BotApiPermissionsConfigured)
+            if (!results.GraphPermissionsConfigured || !results.GraphInheritablePermissionsConfigured)
             {
-                logger.LogInformation("  - Bot API Permissions: Run 'a365 setup permissions bot' to retry");
+                logger.LogInformation("  - Microsoft Graph Permissions: Run 'a365 setup blueprint' to retry");
             }
             
             if (!results.MessagingEndpointRegistered)
@@ -171,7 +174,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Recovery Actions:");
             
-            if (results.GraphInheritablePermissionsFailed)
+            if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
             {
                 logger.LogInformation("  - Graph Inheritable Permissions: Run 'a365 setup blueprint' to retry");
             }
@@ -395,6 +398,7 @@ internal static class SetupHelpers
             else if (resourceName.Contains("Bot", StringComparison.OrdinalIgnoreCase))
             {
                 setupResults.BotApiPermissionsAlreadyExisted = inheritanceAlreadyExisted;
+                setupResults.BotInheritablePermissionsAlreadyExisted = inheritanceAlreadyExisted;
             }
         }
 
