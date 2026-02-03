@@ -20,7 +20,7 @@ public class DeploymentService
     private readonly Dictionary<ProjectPlatform, IPlatformBuilder> _builders;
 
     public DeploymentService(
-        ILogger<DeploymentService> logger, 
+        ILogger<DeploymentService> logger,
         CommandExecutor executor,
         PlatformDetector platformDetector,
         ILogger<DotNetBuilder> dotnetLogger,
@@ -30,7 +30,7 @@ public class DeploymentService
         _logger = logger;
         _executor = executor;
         _platformDetector = platformDetector;
-        
+
         // Initialize platform builders
         _builders = new Dictionary<ProjectPlatform, IPlatformBuilder>
         {
@@ -160,31 +160,38 @@ public class DeploymentService
             await OfferPublishInspectionAsync(publishPath, zipPath);
         }
 
+        // Determine the platform for runtime configuration
+        var deployPlatform = config.Platform ?? _platformDetector.Detect(projectDir);
+
         // 7. Deploy to Azure
-        await DeployToAzureAsync(config, projectDir, zipPath);
-        
+        await DeployToAzureAsync(config, projectDir, zipPath, deployPlatform);
+
         return true;
     }
 
     /// <summary>
     /// Deploy the ZIP package to Azure Web App
     /// </summary>
-    private async Task DeployToAzureAsync(DeploymentConfiguration config, string projectDir, string zipPath)
+    private async Task DeployToAzureAsync(DeploymentConfiguration config, string projectDir, string zipPath, ProjectPlatform platform)
     {
         _logger.LogInformation("[7/7] Deploying to Azure Web App...");
         _logger.LogInformation("  Resource Group: {ResourceGroup}", config.ResourceGroup);
         _logger.LogInformation("  App Name: {AppName}", config.AppName);
         _logger.LogInformation("");
+
+        // Explicitly set the correct runtime configuration before deployment
+        await EnsureCorrectRuntimeConfigurationAsync(config.ResourceGroup, config.AppName, platform);
+
         _logger.LogInformation("Deployment typically takes 2-5 minutes to complete");
         _logger.LogDebug("Using async deployment to avoid Azure SCM gateway timeout (4-5 minute limit)");
         _logger.LogInformation("Monitor progress: https://{AppName}.scm.azurewebsites.net/api/deployments/latest", config.AppName);
         _logger.LogInformation("");
-        
+
         var deployArgs = $"webapp deploy --resource-group {config.ResourceGroup} --name {config.AppName} --src-path \"{zipPath}\" --type zip --async true";
         _logger.LogInformation("Uploading deployment package...");
-        
+
         var deployResult = await _executor.ExecuteWithStreamingAsync("az", deployArgs, projectDir, "[Azure] ");
-        
+
         if (!deployResult.Success)
         {
             _logger.LogError("Deployment upload failed with exit code {ExitCode}", deployResult.ExitCode);
@@ -321,6 +328,63 @@ public class DeploymentService
         _logger.LogInformation("");
 
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Ensures the Azure Web App is configured with the correct runtime before deployment.
+    /// The method explicitly sets the linuxFxVersion to ensure the correct container is selected.
+    /// </summary>
+    /// <param name="resourceGroup">The Azure resource group name</param>
+    /// <param name="appName">The Azure Web App name</param>
+    /// <param name="platform">The detected project platform</param>
+    private async Task EnsureCorrectRuntimeConfigurationAsync(string resourceGroup, string appName, ProjectPlatform platform)
+    {
+        if (platform == ProjectPlatform.Unknown)
+        {
+            _logger.LogWarning("Unknown platform detected, skipping runtime configuration");
+            return;
+        }
+
+        var linuxFxVersion = GetLinuxFxVersionForPlatform(platform);
+        _logger.LogInformation("Configuring Azure Web App runtime: {LinuxFxVersion}", linuxFxVersion);
+
+        // Explicitly set the linuxFxVersion to ensure the correct container is used
+        _logger.LogDebug("Setting linuxFxVersion to {LinuxFxVersion}...", linuxFxVersion);
+        var setRuntimeResult = await _executor.ExecuteAsync(
+            "az",
+            $"webapp config set --resource-group {resourceGroup} --name {appName} --linux-fx-version \"{linuxFxVersion}\"",
+            captureOutput: true,
+            suppressErrorLogging: true);
+
+        if (!setRuntimeResult.Success)
+        {
+            _logger.LogWarning("Could not set linuxFxVersion: {Error}", setRuntimeResult.StandardError);
+            // Continue anyway - the Oryx manifest should still work, but log a warning
+            _logger.LogWarning("Deployment will continue, but Azure may use auto-detection for the runtime.");
+            _logger.LogWarning("If the application fails to start, manually run:");
+            _logger.LogWarning("  az webapp config set --resource-group {ResourceGroup} --name {AppName} --linux-fx-version \"{LinuxFxVersion}\"",
+                resourceGroup, appName, linuxFxVersion);
+        }
+        else
+        {
+            _logger.LogDebug("Runtime configuration set successfully");
+        }
+    }
+
+    /// <summary>
+    /// Gets the Azure Web App Linux FX Version string based on the detected platform.
+    /// </summary>
+    /// <param name="platform">The project platform</param>
+    /// <returns>The linuxFxVersion string for Azure Web App configuration</returns>
+    internal static string GetLinuxFxVersionForPlatform(ProjectPlatform platform)
+    {
+        return platform switch
+        {
+            ProjectPlatform.DotNet => "DOTNETCORE|8.0",
+            ProjectPlatform.Python => "PYTHON|3.11",
+            ProjectPlatform.NodeJs => "NODE|20-lts",
+            _ => "DOTNETCORE|8.0" // Default fallback to .NET 8
+        };
     }
 }
 
