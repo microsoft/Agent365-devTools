@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
@@ -180,7 +181,7 @@ public class DeploymentService
         _logger.LogInformation("");
 
         // Explicitly set the correct runtime configuration before deployment
-        await EnsureCorrectRuntimeConfigurationAsync(config.ResourceGroup, config.AppName, platform);
+        await EnsureCorrectRuntimeConfigurationAsync(config.ResourceGroup, config.AppName, platform, projectDir);
 
         _logger.LogInformation("Deployment typically takes 2-5 minutes to complete");
         _logger.LogDebug("Using async deployment to avoid Azure SCM gateway timeout (4-5 minute limit)");
@@ -337,15 +338,10 @@ public class DeploymentService
     /// <param name="resourceGroup">The Azure resource group name</param>
     /// <param name="appName">The Azure Web App name</param>
     /// <param name="platform">The detected project platform</param>
-    private async Task EnsureCorrectRuntimeConfigurationAsync(string resourceGroup, string appName, ProjectPlatform platform)
+    /// <param name="projectDir">The project directory path</param>
+    private async Task EnsureCorrectRuntimeConfigurationAsync(string resourceGroup, string appName, ProjectPlatform platform, string projectDir)
     {
-        if (platform == ProjectPlatform.Unknown)
-        {
-            _logger.LogWarning("Unknown platform detected, skipping runtime configuration");
-            return;
-        }
-
-        var linuxFxVersion = GetLinuxFxVersionForPlatform(platform);
+        var linuxFxVersion = await InfrastructureSubcommand.GetLinuxFxVersionForPlatformAsync(platform, projectDir, _executor, _logger);
         _logger.LogInformation("Configuring Azure Web App runtime: {LinuxFxVersion}", linuxFxVersion);
 
         // Explicitly set the linuxFxVersion to ensure the correct container is used
@@ -369,22 +365,6 @@ public class DeploymentService
         {
             _logger.LogDebug("Runtime configuration set successfully");
         }
-    }
-
-    /// <summary>
-    /// Gets the Azure Web App Linux FX Version string based on the detected platform.
-    /// </summary>
-    /// <param name="platform">The project platform</param>
-    /// <returns>The linuxFxVersion string for Azure Web App configuration</returns>
-    internal static string GetLinuxFxVersionForPlatform(ProjectPlatform platform)
-    {
-        return platform switch
-        {
-            ProjectPlatform.DotNet => "DOTNETCORE|8.0",
-            ProjectPlatform.Python => "PYTHON|3.11",
-            ProjectPlatform.NodeJs => "NODE|20-lts",
-            _ => "DOTNETCORE|8.0" // Default fallback to .NET 8
-        };
     }
 }
 
