@@ -687,7 +687,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             WebAppName = webAppName,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
-            AgentUserPrincipalName = $"UPN.{cleanName}@{domain}",
+            AgentUserPrincipalName = $"{cleanName}@{domain}",
             AgentUserDisplayName = $"{agentName} Agent User"
         };
     }

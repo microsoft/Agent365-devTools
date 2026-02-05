@@ -80,4 +80,24 @@ public class ConfigurationWizardServiceWebAppNameTests
         var upn = (string)derived!.GetType().GetProperty("AgentUserPrincipalName")!.GetValue(derived)!;
         upn.Should().EndWith("@contoso.com");
     }
+
+    [Theory]
+    [InlineData("MyAgent", "contoso.com", "myagent@contoso.com")]
+    [InlineData("Test Agent 123", "a365preview001.onmicrosoft.com", "testagent123@a365preview001.onmicrosoft.com")]
+    [InlineData("Agent-With-Dashes", "test.onmicrosoft.com", "agentwithdashes@test.onmicrosoft.com")]
+    [InlineData("Agent@Special#Chars", "example.com", "agentspecialchars@example.com")]
+    public void GenerateDerivedNames_UPNDoesNotContainPrefix(string agentName, string domain, string expectedUpn)
+    {
+        var azureCli = Substitute.For<IAzureCliService>();
+        var platformDetector = Substitute.For<PlatformDetector>(Substitute.For<ILogger<PlatformDetector>>());
+        var logger = Substitute.For<ILogger<ConfigurationWizardService>>();
+        var svc = new ConfigurationWizardService(azureCli, platformDetector, logger);
+        var method = svc.GetType().GetMethod("GenerateDerivedNames", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        method.Should().NotBeNull();
+        var derived = method!.Invoke(svc, new object[] { agentName, domain });
+        derived.Should().NotBeNull();
+        var upn = (string)derived!.GetType().GetProperty("AgentUserPrincipalName")!.GetValue(derived)!;
+        upn.Should().NotStartWith("UPN.");
+        upn.Should().Be(expectedUpn);
+    }
 }
