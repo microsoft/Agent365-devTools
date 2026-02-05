@@ -489,6 +489,7 @@ def triage_issues(
 
     # Check for single issue mode via issueUrl
     target_issue_number = None
+    since_time = datetime.now(timezone.utc) - timedelta(hours=since_hours)
 
     if issue_url:
         # Single issue mode - parse URL to get owner, repo, issue number
@@ -497,6 +498,7 @@ def triage_issues(
             raise ValueError("Invalid issue URL format. Expected: https://github.com/owner/repo/issues/123")
         owner, repo, target_issue_number = parsed
         since_hours = 8760  # Look back 1 year for single issue mode
+        since_time = datetime.now(timezone.utc) - timedelta(hours=since_hours)
         logging.info(f"Single issue mode: {owner}/{repo}#{target_issue_number}")
 
     # Load config
