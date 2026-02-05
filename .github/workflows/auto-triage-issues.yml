@@ -46,7 +46,8 @@ jobs:
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
             --issue-number "${{ github.event.issue.number }}" \
-            --output "${{ runner.temp }}/triage_result.json"
+            --output "${{ runner.temp }}/triage_result.json" \
+            --apply
 
       - name: Post triage results
         if: success()

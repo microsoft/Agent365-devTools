@@ -148,6 +148,72 @@ Classify the issue and respond in JSON format with these fields:
         result = self._call_llm(system_prompt, content)
         return result if result else f"Summary of {len(content)} characters"
 
+    def is_security_issue(
+        self,
+        title: str,
+        body: str,
+        security_keywords: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Determine if an issue is security-related using keyword matching and LLM analysis.
+
+        Args:
+            title: Issue title
+            body: Issue body/description
+            security_keywords: List of security-related keywords from config
+
+        Returns:
+            Dict with keys: is_security, confidence, reasoning
+        """
+        combined = f"{title} {body}".lower()
+
+        # First pass: keyword matching for quick detection
+        matched_keywords = [kw for kw in security_keywords if kw.lower() in combined]
+        if matched_keywords:
+            logging.info(f"Security keywords detected: {matched_keywords}")
+            return {
+                "is_security": True,
+                "confidence": 0.9,
+                "reasoning": f"Security keywords detected: {', '.join(matched_keywords[:3])}"
+            }
+
+        # Second pass: LLM analysis for subtle security issues
+        system_prompt = """You are a security expert analyzing GitHub issues.
+Determine if this issue describes a security vulnerability, security concern, or security-related bug.
+
+Respond in JSON format with:
+- is_security: boolean - true if this is a security-related issue
+- confidence: number - your confidence (0.0 to 1.0)
+- reasoning: string - brief explanation (1 sentence)
+
+Consider security issues to include:
+- Vulnerabilities (XSS, CSRF, injection, auth bypass, etc.)
+- Data leaks or exposure of sensitive information
+- Authentication/authorization problems
+- Insecure configurations or defaults
+- Potential for malicious exploitation"""
+
+        user_prompt = f"Analyze this issue for security concerns:\n\nTitle: {title}\n\nBody: {body}"
+
+        result = self._call_llm(system_prompt, user_prompt, json_response=True)
+        if result:
+            try:
+                parsed = json.loads(result)
+                return {
+                    "is_security": parsed.get("is_security", False),
+                    "confidence": parsed.get("confidence", 0.5),
+                    "reasoning": parsed.get("reasoning", "")
+                }
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: not detected as security issue
+        return {
+            "is_security": False,
+            "confidence": 0.5,
+            "reasoning": "No security indicators detected"
+        }
+
     def analyze_daily_digest(
         self,
         new_issues: List[Dict],

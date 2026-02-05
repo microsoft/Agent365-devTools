@@ -12,17 +12,28 @@ from models.team_config import TeamConfig, PriorityRules, TriageMeta, CopilotFix
 from models.ado_models import AdoConfig
 
 
-def _load_team_members() -> List[dict]:
-    """Load full team member data from config/team-members.json."""
+def _load_team_config() -> dict:
+    """Load full team config data from config/team-members.json."""
     config_path = Path(__file__).parent.parent / "config" / "team-members.json"
     if config_path.exists():
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("team_members", [])
+                return json.load(f)
         except Exception as e:
             print(f"Warning: Could not load team-members.json: {e}")
-    return []
+    return {}
+
+
+def _load_team_members() -> List[dict]:
+    """Load full team member data from config/team-members.json."""
+    data = _load_team_config()
+    return data.get("team_members", [])
+
+
+def _load_security_config() -> dict:
+    """Load security configuration from config/team-members.json."""
+    data = _load_team_config()
+    return data.get("security", {})
 
 
 class ConfigParser:
@@ -52,7 +63,8 @@ class ConfigParser:
             team_members=team_members,
             copilot_fixable_labels=data.get("copilot_fixable_labels", []),
             features_enabled=data.get("features_enabled", {}),
-            ado_config=ConfigParser._parse_ado_config(data.get("azure_devops", {}))
+            ado_config=ConfigParser._parse_ado_config(data.get("azure_devops", {})),
+            security=_load_security_config()
         )
 
     @staticmethod
@@ -149,7 +161,8 @@ class ConfigParser:
             team_members=team_members,
             copilot_fixable_labels=[],
             features_enabled={},
-            ado_config=None
+            ado_config=None,
+            security=_load_security_config()
         )
 
     @staticmethod

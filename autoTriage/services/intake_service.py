@@ -601,6 +601,12 @@ def triage_issues(
     repo_context['structure'] = repo_structure
     repo_context['config_files_content'] = config_contents
 
+    # Get security config if available
+    security_config = getattr(config, 'security', None) or {}
+    security_keywords = security_config.get('keywords', [])
+    security_assignee = security_config.get('assignee', None)
+    security_default_priority = security_config.get('default_priority', 'P1')
+
     # Process each issue
     results = []
     for issue in untriaged_issues:
@@ -611,16 +617,39 @@ def triage_issues(
             rules=config.priority_rules
         )
 
+        # Check if this is a security issue
+        is_security_issue = False
+        security_reasoning = ""
+        if security_keywords:
+            security_result = llm_service.is_security_issue(
+                title=issue.title,
+                body=issue.body or "",
+                security_keywords=security_keywords
+            )
+            is_security_issue = security_result.get("is_security", False)
+            security_reasoning = security_result.get("reasoning", "")
+            if is_security_issue:
+                logging.info(f"Security issue detected for #{issue.number}: {security_reasoning}")
+                # Override priority to P1 or higher for security issues
+                if classification["priority"] not in ["P0"]:
+                    classification["priority"] = security_default_priority
+                    classification["priority_rationale"] = f"Elevated to {security_default_priority} due to security concern: {security_reasoning}"
+
         # Check if Copilot-fixable using LLM-based assessment
-        copilot_result = llm_service.is_copilot_fixable(
-            title=issue.title,
-            body=issue.body or "",
-            config=config.copilot_fixable,
-            issue_type=classification["type"],
-            priority=classification["priority"]
-        )
-        is_copilot_fixable = copilot_result["is_copilot_fixable"]
-        copilot_reasoning = copilot_result.get("reasoning", "")
+        # Security issues should NOT be auto-fixed by Copilot
+        if is_security_issue:
+            is_copilot_fixable = False
+            copilot_reasoning = "Security issues require human review and should not be auto-fixed"
+        else:
+            copilot_result = llm_service.is_copilot_fixable(
+                title=issue.title,
+                body=issue.body or "",
+                config=config.copilot_fixable,
+                issue_type=classification["type"],
+                priority=classification["priority"]
+            )
+            is_copilot_fixable = copilot_result["is_copilot_fixable"]
+            copilot_reasoning = copilot_result.get("reasoning", "")
 
         # Generate fix suggestions with repository context
         fix_suggestions = llm_service.generate_fix_suggestions(
@@ -641,9 +670,14 @@ def triage_issues(
         if file_contributors:
             logging.info(f"Found contributor history for {len(file_contributors)} files mentioned in issue #{issue.number}")
 
-        # Determine assignee based on Copilot-fixable status
+        # Determine assignee based on security status, then Copilot-fixable status
         assignment_rationale = ""
-        if is_copilot_fixable:
+        if is_security_issue and security_assignee:
+            # Security issues always go to the designated security lead
+            suggested_assignee = security_assignee
+            assignment_rationale = f"Security issue assigned to security lead. {security_reasoning}"
+            logging.info(f"Security issue #{issue.number} assigned to security lead: {security_assignee}")
+        elif is_copilot_fixable:
             suggested_assignee = "copilot"
             assignment_rationale = f"Issue is suitable for Copilot automated fix. {copilot_reasoning}"
         else:
@@ -665,6 +699,11 @@ def triage_issues(
         suggested_labels = _map_to_repository_labels(
             github_service, owner, repo, classification["type"], classification["priority"]
         )
+
+        # Add security label if this is a security issue
+        if is_security_issue:
+            suggested_labels.append("security")
+            logging.info(f"Added 'security' label for issue #{issue.number}")
 
         # Build structured rationale for each decision
         triage_rationale = TriageRationale(

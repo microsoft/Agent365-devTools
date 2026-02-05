@@ -38,6 +38,17 @@ class TriageMeta:
 
 
 @dataclass
+class SecurityConfig:
+    """Configuration for security issue detection and handling."""
+    keywords: list[str] = field(default_factory=lambda: [
+        "vulnerability", "CVE", "security", "exploit", "injection",
+        "XSS", "CSRF", "SQL injection", "auth bypass", "authentication bypass"
+    ])
+    assignee: str = ""  # GitHub login of security lead
+    default_priority: str = "P1"  # Default priority for security issues
+
+
+@dataclass
 class TeamConfig:
     """Complete team configuration from team-assistant.yml."""
     repo: str
@@ -53,6 +64,7 @@ class TeamConfig:
     copilot_fixable_labels: list[str] = field(default_factory=list)
     features_enabled: dict = field(default_factory=dict)
     ado_config: Optional[AdoConfig] = None  # Azure DevOps configuration
+    security: Optional[dict] = None  # Security config from team-members.json
 
     @property
     def assignees(self) -> list[str]:
