@@ -275,6 +275,32 @@ class GitHubService:
         except GithubException:
             return False
 
+    def update_or_add_triage_comment(self, owner: str, repo: str, issue_number: int, comment: str) -> bool:
+        """Update existing triage comment or add a new one if none exists.
+        
+        This prevents duplicate triage comments on re-triage.
+        """
+        try:
+            repository = self._get_repo(owner, repo)
+            issue = repository.get_issue(issue_number)
+            
+            # Look for existing triage comment from bot
+            for existing_comment in issue.get_comments():
+                if any(bot in existing_comment.user.login for bot in TRIAGE_BOT_USERS):
+                    if 'team assistant' in existing_comment.body.lower() or 'triage' in existing_comment.body.lower():
+                        # Update existing comment
+                        existing_comment.edit(comment)
+                        logger.info(f"Updated existing triage comment on issue #{issue_number}")
+                        return True
+            
+            # No existing triage comment, create new one
+            issue.create_comment(comment)
+            logger.info(f"Created new triage comment on issue #{issue_number}")
+            return True
+        except GithubException as e:
+            logger.error(f"Failed to update/add triage comment: {e}")
+            return False
+
     def search_similar_issues(self, owner: str, repo: str, title: str) -> list:
         """Search for similar issues by title with caching."""
         cache_key = f"search:{owner}/{repo}:{title[:50]}"
@@ -398,9 +424,9 @@ class GitHubService:
         if assignee:
             results['assignee'] = self.assign_issue(owner, repo, issue_number, assignee)
 
-        # Add comment
+        # Add or update comment (prevents duplicates on re-triage)
         if comment:
-            results['comment'] = self.add_comment(owner, repo, issue_number, comment)
+            results['comment'] = self.update_or_add_triage_comment(owner, repo, issue_number, comment)
 
         return results
 
@@ -724,6 +750,34 @@ class GitHubService:
         """Check if an issue is completely triaged (has both labels and assignment)."""
         status = self.get_triage_status(issue, repo_labels)
         return not status['needs_labeling'] and not status['needs_assignment']
+
+    def was_recently_triaged(self, issue, minutes: int = 5) -> bool:
+        """Check if an issue was triaged by the bot within the last N minutes.
+        
+        Args:
+            issue: GitHub issue object
+            minutes: Number of minutes to look back (default 5)
+            
+        Returns:
+            True if bot triage comment was posted within the time window
+        """
+        try:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+            comments = list(issue.get_comments())
+            
+            for comment in comments:
+                # Check if comment is from triage bot
+                if any(bot in comment.user.login for bot in TRIAGE_BOT_USERS):
+                    # Check if it's a triage comment
+                    if 'triage' in comment.body.lower() or 'team assistant' in comment.body.lower():
+                        # Check if it was posted recently
+                        if comment.created_at.replace(tzinfo=timezone.utc) > cutoff_time:
+                            logger.info(f"Issue #{issue.number} was triaged {(datetime.now(timezone.utc) - comment.created_at.replace(tzinfo=timezone.utc)).seconds // 60} minutes ago, skipping")
+                            return True
+            return False
+        except GithubException as e:
+            logger.debug(f"Could not check recent triage for issue #{issue.number}: {e}")
+            return False
 
     def filter_untriaged_issues(self, issues: List, repo_labels: Dict[str, dict] = None) -> List:
         """Filter issues that still need triage actions.

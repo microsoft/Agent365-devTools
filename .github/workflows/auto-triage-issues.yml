@@ -1,8 +1,10 @@
-name: Auto-Triage New Issues
+name: Auto-Triage Issues
 
 on:
   issues:
-    types: [opened]
+    types: [opened, edited, labeled]
+  issue_comment:
+    types: [created]
 
 permissions:
   issues: write
@@ -12,6 +14,9 @@ jobs:
   triage:
     runs-on: ubuntu-latest
     name: Auto-triage issue with AI
+    
+    # Skip if triggered by bot to avoid infinite loops
+    if: github.actor != 'github-actions[bot]' && github.actor != 'dependabot[bot]'
 
     steps:
       - name: Checkout repository
@@ -26,6 +31,23 @@ jobs:
         run: |
           cd autoTriage
           pip install -r requirements.txt
+
+      - name: Determine issue number
+        id: issue
+        run: |
+          # Get issue number based on event type
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if this is a re-triage (not a new issue)
+          if [ "${{ github.event.action }}" == "opened" ]; then
+            echo "retriage=false" >> $GITHUB_OUTPUT
+          else
+            echo "retriage=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run triage analysis
         id: triage
@@ -42,12 +64,20 @@ jobs:
           AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
         run: |
           cd autoTriage
-          python triage_issue.py \
-            --owner "${{ github.repository_owner }}" \
-            --repo "${{ github.event.repository.name }}" \
-            --issue-number "${{ github.event.issue.number }}" \
-            --output "${{ runner.temp }}/triage_result.json" \
-            --apply
+          
+          # Build command with optional --retriage flag
+          CMD="python triage_issue.py \
+            --owner \"${{ github.repository_owner }}\" \
+            --repo \"${{ github.event.repository.name }}\" \
+            --issue-number \"${{ steps.issue.outputs.number }}\" \
+            --output \"${{ runner.temp }}/triage_result.json\" \
+            --apply"
+          
+          if [ "${{ steps.issue.outputs.retriage }}" == "true" ]; then
+            CMD="$CMD --retriage"
+          fi
+          
+          eval $CMD
 
       - name: Post triage results
         if: success()

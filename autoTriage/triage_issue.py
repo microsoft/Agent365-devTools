@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from services.intake_service import triage_issues
+from services.github_service import GitHubService
 
 
 def main():
@@ -27,6 +28,8 @@ def main():
                        help='Output file path (default: /tmp/triage_result.json)')
     parser.add_argument('--apply', action='store_true',
                        help='Apply triage changes (labels, assignee) to the issue')
+    parser.add_argument('--retriage', action='store_true',
+                       help='Re-triage mode: skip if already triaged within 5 minutes')
 
     args = parser.parse_args()
 
@@ -37,6 +40,14 @@ def main():
     if not github_token:
         print("[ERROR] GITHUB_TOKEN environment variable not set")
         sys.exit(1)
+
+    # In retriage mode, check if issue was recently triaged
+    if args.retriage:
+        github_service = GitHubService()
+        issue = github_service.get_issue(args.owner, args.repo, args.issue_number)
+        if issue and github_service.was_recently_triaged(issue):
+            print(f"[SKIP] Issue #{args.issue_number} was triaged within last 5 minutes, skipping")
+            sys.exit(0)
 
     try:
         # Run triage using the intake service function
