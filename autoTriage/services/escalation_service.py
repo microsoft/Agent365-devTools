@@ -5,7 +5,7 @@
 Escalation Service - SLA breach detection and escalation logic
 """
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
