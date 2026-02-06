@@ -2,8 +2,8 @@ name: SLA Escalation Check
 
 on:
   schedule:
-    # Run every hour at minute 30
-    - cron: '30 * * * *'
+    # Run daily at 8 AM UTC (before daily report at 9 AM)
+    - cron: '0 8 * * *'
   workflow_dispatch:
     inputs:
       apply:
