@@ -15,6 +15,7 @@ from services.github_service import GitHubService, MAX_CONFIG_FILES
 from services.llm_service import LlmService
 from services.config_parser import ConfigParser
 from services.teams_service import TeamsService
+from services.copilot_service import CopilotService
 from models.issue_classification import IssueClassification, TriageRationale
 
 
@@ -326,7 +327,7 @@ def _apply_triage_changes(
                 logging.warning(f"Skipping 'copilot-fixable' label - not found in repository {owner}/{repo}")
 
         # Use the comprehensive apply_triage_result method
-        comment = f"""## 🤖 Team Assistant Triage
+        comment = f"""## [AUTO-TRIAGE] Team Assistant Triage
 
 This issue has been automatically analyzed and triaged.
 
@@ -335,13 +336,63 @@ This issue has been automatically analyzed and triaged.
 *Labels and assignee have been applied based on this analysis.*
 """
 
+        # Skip assignment if assignee is 'copilot' (not a valid GitHub user)
+        # Instead, we'll invoke the Copilot coding agent
+        assignee_to_apply = classification.suggested_assignee
+        copilot_result = None
+        
+        if assignee_to_apply and assignee_to_apply.lower() == 'copilot':
+            assignee_to_apply = None  # Don't try to assign to 'copilot' via normal assignment
+            logging.info(f"Issue #{classification.issue_number} is marked for Copilot auto-fix")
+            
+            # Try to invoke Copilot coding agent
+            try:
+                copilot_service = CopilotService()
+                
+                # Check if Copilot is enabled for this repo
+                if copilot_service.is_copilot_enabled(owner, repo):
+                    # Generate custom instructions from fix suggestions
+                    custom_instructions = copilot_service.get_fix_instructions(
+                        issue_title=classification.issue_url.split('/')[-1] if classification.issue_url else "",
+                        issue_body="",
+                        fix_suggestions=classification.fix_suggestions or []
+                    )
+                    
+                    # Assign the issue to Copilot coding agent
+                    copilot_result = copilot_service.assign_to_copilot(
+                        owner=owner,
+                        repo=repo,
+                        issue_number=classification.issue_number,
+                        custom_instructions=custom_instructions
+                    )
+                    
+                    if copilot_result.get("success"):
+                        logging.info(f"Successfully assigned issue #{classification.issue_number} to Copilot coding agent")
+                        # Update comment to reflect Copilot assignment
+                        comment = f"""## [AUTO-TRIAGE] Team Assistant Triage
+
+This issue has been automatically analyzed and triaged.
+
+**AI Decision Reasoning:** {classification.reason}
+
+[OK] **Copilot Auto-Fix:** This issue has been assigned to GitHub Copilot coding agent. A draft PR will be created for review.
+
+*Labels have been applied based on this analysis.*
+"""
+                    else:
+                        logging.warning(f"Failed to assign issue #{classification.issue_number} to Copilot: {copilot_result.get('error')}")
+                else:
+                    logging.info(f"Copilot coding agent is not enabled for {owner}/{repo}")
+            except Exception as e:
+                logging.error(f"Error invoking Copilot for issue #{classification.issue_number}: {e}")
+
         # Apply changes with proper error handling
         results = github_service.apply_triage_result(
             owner=owner,
             repo=repo,
             issue_number=classification.issue_number,
             labels=labels if labels else None,  # Only pass labels if we have any
-            assignee=classification.suggested_assignee,
+            assignee=assignee_to_apply,
             comment=comment
         )
 

@@ -261,8 +261,10 @@ class GitHubService:
             repository = self._get_repo(owner, repo)
             issue = repository.get_issue(issue_number)
             issue.add_to_assignees(assignee)
+            logger.info(f"Successfully assigned issue #{issue_number} to {assignee}")
             return True
-        except GithubException:
+        except GithubException as e:
+            logger.error(f"Failed to assign issue #{issue_number} to {assignee}: {e}")
             return False
 
     def add_comment(self, owner: str, repo: str, issue_number: int, comment: str) -> bool:
