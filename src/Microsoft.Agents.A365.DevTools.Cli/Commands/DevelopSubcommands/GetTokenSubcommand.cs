@@ -147,6 +147,16 @@ internal static class GetTokenSubcommand
                 string resourceDisplayName;
                 if (!string.IsNullOrWhiteSpace(resourceId))
                 {
+                    // Validate that resource ID is a valid GUID
+                    if (!Guid.TryParse(resourceId, out _))
+                    {
+                        logger.LogError("Invalid resource application ID: {ResourceId}. Expected a valid GUID.", resourceId);
+                        logger.LogInformation("");
+                        logger.LogInformation("Example: a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
+                        Environment.Exit(1);
+                        return;
+                    }
+
                     // User provided explicit resource ID
                     resourceAppId = resourceId;
                     resourceDisplayName = $"Custom Resource ({resourceId})";
@@ -184,7 +194,7 @@ internal static class GetTokenSubcommand
                     logger.LogInformation("Manifest-based scopes are only supported for the default flow.");
                     logger.LogInformation("Please omit the --resource and --resource-id options if you'd like to use manifest-based scopes.");
                     logger.LogInformation("");
-                    logger.LogInformation("Example: a365 develop get-token --resource powerplatform --scopes https://api.powerplatform.com/.default");
+                    logger.LogInformation("Example: a365 develop get-token --resource powerplatform --scopes .default");
                     Environment.Exit(1);
                     return;
                 }
@@ -225,7 +235,7 @@ internal static class GetTokenSubcommand
                 }
 
                 logger.LogInformation("");
-                logger.LogInformation("Agent 365 Tools Resource App ID: {AppId}", resourceAppId);
+                logger.LogInformation("Resource App ID: {AppId}", resourceAppId);
                 logger.LogInformation("Requesting scopes: {Scopes}", string.Join(", ", requestedScopes));
                 logger.LogInformation("");
 
@@ -361,7 +371,7 @@ internal static class GetTokenSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogError("Failed to acquire token: {Message}", ex.Message);
+            logger.LogError(ex, "Failed to acquire token: {Message}", ex.Message);
             Environment.Exit(1);
         }
     }

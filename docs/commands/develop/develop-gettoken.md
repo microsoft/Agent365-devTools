@@ -24,7 +24,7 @@ a365 develop get-token [options]
 | `--verbose` | `-v` | Show detailed output including full token | `false` |
 | `--force-refresh` | | Force token refresh bypassing cache | `false` |
 | `--resource` | | Resource keyword to get token for (mcp, powerplatform) | `mcp` |
-| `--resource-id` | | Resource application ID (GUID) for custom resources | Agent 365 Tools App ID |
+| `--resource-id` | | Resource application ID (GUID) for custom resources | None |
 
 ### Resource Options
 
@@ -119,7 +119,7 @@ curl -H "Authorization: Bearer $TOKEN" https://agent365.svc.cloud.microsoft/agen
 
 ### Get token for Power Platform API
 ```bash
-a365 develop get-token --resource powerplatform --scopes https://api.powerplatform.com/.default
+a365 develop get-token --resource powerplatform --scopes .default
 ```
 
 ### Get token for a custom resource
