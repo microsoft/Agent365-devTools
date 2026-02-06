@@ -2,9 +2,7 @@ name: Auto-Triage Issues
 
 on:
   issues:
-    types: [opened, edited, labeled]
-  issue_comment:
-    types: [created]
+    types: [opened, edited]
 
 permissions:
   issues: write
