@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       send_teams:
+        # To enable Teams: Create webhook via Teams > Workflows > "Send webhook alerts to a channel", add URL as TEAMS_WEBHOOK_URL secret
         description: 'Send to MS Teams (requires TEAMS_WEBHOOK_URL secret)'
         required: false
         default: 'false'

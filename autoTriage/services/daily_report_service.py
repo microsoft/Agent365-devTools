@@ -11,8 +11,9 @@ from dataclasses import dataclass, field
 
 from .github_service import GitHubService
 from .escalation_service import EscalationService
-from .teams_service import TeamsService
+from .teams_service import TeamsService  # Requires TEAMS_WEBHOOK_URL env var
 from .config_parser import ConfigParser
+# TODO: For email support, add SendGrid or Microsoft Graph API integration
 
 logger = logging.getLogger(__name__)
 
