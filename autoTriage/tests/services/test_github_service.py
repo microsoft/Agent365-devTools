@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 from datetime import datetime, timezone
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from services.github_service import GitHubService
 

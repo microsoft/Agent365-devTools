@@ -642,7 +642,7 @@ def triage_issues(
                 if security_rank < current_rank:
                     classification["priority"] = security_default_priority
                     classification["priority_rationale"] = f"Elevated to {security_default_priority} due to security concern: {security_reasoning}"
-                elif current_rank <= security_rank:
+                else:
                     # Already at or above security priority, just add note
                     classification["priority_rationale"] = f"{classification.get('priority_rationale', '')} [Security issue detected: {security_reasoning}]"
 

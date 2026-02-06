@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 import os
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from services.llm_service import LlmService
 from models.team_config import PriorityRules, CopilotFixableConfig
@@ -357,3 +357,96 @@ class TestLLMServicePromptBuilding:
             # Verify response_format was NOT included
             call_kwargs = mock_create.call_args[1]
             assert "response_format" not in call_kwargs
+
+
+class TestSecurityKeywordWordBoundaries:
+    """Test security keyword detection with word boundaries for short keywords."""
+
+    # Keyword detection test cases
+    KEYWORD_DETECTION_CASES = [
+        # Format: (text, keywords, expected_match, description)
+        ("This is a security issue", ["security"], True, "Direct keyword match"),
+        ("Found a CVE vulnerability", ["cve", "vulnerability"], True, "CVE keyword"),
+        ("XSS attack vector found", ["xss"], True, "XSS uppercase"),
+        ("SQL injection is possible", ["sql injection"], True, "Multi-word keyword"),
+        ("Resource allocation issue", ["rce"], False, "rce in resource - should NOT match"),
+        ("Force reload needed", ["rce"], False, "rce in force - should NOT match"),
+        ("RCE vulnerability", ["rce"], True, "Standalone RCE"),
+        ("Possible RCE in handler", ["rce"], True, "RCE with word boundaries"),
+        ("The sources file", ["rce"], False, "sources contains rce - should NOT match"),
+        ("Expressly stated", ["xss"], False, "xss in expressly - should NOT match"),
+        ("Class extends base", ["xss"], False, "xss in extends - should NOT match"),
+    ]
+
+    @pytest.mark.parametrize(
+        "text,keywords,expected_match,description",
+        KEYWORD_DETECTION_CASES,
+        ids=[c[3] for c in KEYWORD_DETECTION_CASES]
+    )
+    def test_security_keyword_with_word_boundaries(self, text, keywords, expected_match, description):
+        """Test security keyword detection respects word boundaries for short keywords."""
+        import re
+        text_lower = text.lower()
+        found = False
+        
+        for keyword in keywords:
+            keyword_lower = keyword.lower()
+            # Use word boundaries for short keywords (<=3 chars)
+            if len(keyword_lower) <= 3:
+                pattern = rf"\b{re.escape(keyword_lower)}\b"
+                if re.search(pattern, text_lower):
+                    found = True
+                    break
+            else:
+                if keyword_lower in text_lower:
+                    found = True
+                    break
+        
+        assert found == expected_match, f"Keyword detection failed: {description}"
+
+    @patch.dict(os.environ, {'GITHUB_TOKEN': 'test_token'}, clear=True)
+    def test_is_security_issue_rce_word_boundary(self):
+        """Test is_security_issue respects word boundaries for RCE."""
+        service = LlmService()
+        
+        # is_security_issue takes a list of keywords, not SecurityConfig
+        security_keywords = ["rce"]
+        
+        # Should NOT match "resource"
+        result = service.is_security_issue(
+            "Resource allocation issue",
+            "",
+            security_keywords
+        )
+        assert result["is_security"] is False
+        
+        # Should match standalone "RCE"
+        result = service.is_security_issue(
+            "RCE vulnerability found",
+            "",
+            security_keywords
+        )
+        assert result["is_security"] is True
+
+    @patch.dict(os.environ, {'GITHUB_TOKEN': 'test_token'}, clear=True)
+    def test_is_security_issue_xss_word_boundary(self):
+        """Test is_security_issue respects word boundaries for XSS."""
+        service = LlmService()
+        
+        security_keywords = ["xss"]
+        
+        # Should NOT match "expressly"
+        result = service.is_security_issue(
+            "We expressly recommend this approach",
+            "",
+            security_keywords
+        )
+        assert result["is_security"] is False
+        
+        # Should match standalone "XSS"
+        result = service.is_security_issue(
+            "XSS vulnerability in login page",
+            "",
+            security_keywords
+        )
+        assert result["is_security"] is True

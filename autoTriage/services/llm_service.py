@@ -165,10 +165,24 @@ Classify the issue and respond in JSON format with these fields:
         Returns:
             Dict with keys: is_security, confidence, reasoning
         """
+        import re
         combined = f"{title} {body}".lower()
 
-        # First pass: keyword matching for quick detection
-        matched_keywords = [kw for kw in security_keywords if kw.lower() in combined]
+        # First pass: keyword matching with word boundaries to avoid false positives
+        # Short keywords (<=3 chars) require exact word match to avoid matching inside words
+        matched_keywords = []
+        for kw in security_keywords:
+            kw_lower = kw.lower()
+            if len(kw_lower) <= 3:
+                # Short keywords need word boundary matching (e.g., "xss" but not "rce" in "resource")
+                pattern = r'\b' + re.escape(kw_lower) + r'\b'
+                if re.search(pattern, combined):
+                    matched_keywords.append(kw)
+            else:
+                # Longer keywords can use substring matching
+                if kw_lower in combined:
+                    matched_keywords.append(kw)
+        
         if matched_keywords:
             logging.info(f"Security keywords detected: {matched_keywords}")
             return {

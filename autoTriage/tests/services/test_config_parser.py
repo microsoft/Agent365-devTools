@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, mock_open
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from services.config_parser import ConfigParser
 from models.team_config import TeamConfig, PriorityRules
