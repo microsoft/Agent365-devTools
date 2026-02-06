@@ -64,8 +64,7 @@ nunit-*.xml
 
 # We should have at some point .vscode, but for not ignore since we don't have standard
 .vscode
-.claude/
-**/.claude/
+.claude/settings.local.json
 .idea/
 
 # OS-specific files
