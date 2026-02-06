@@ -602,10 +602,10 @@ def triage_issues(
     repo_context['config_files_content'] = config_contents
 
     # Get security config if available
-    security_config = getattr(config, 'security', None) or {}
-    security_keywords = security_config.get('keywords', [])
-    security_assignee = security_config.get('assignee', None)
-    security_default_priority = security_config.get('default_priority', 'P1')
+    security_config = getattr(config, 'security', None)
+    security_keywords = security_config.keywords if security_config else []
+    security_assignee = security_config.assignee if security_config else None
+    security_default_priority = security_config.default_priority if security_config else 'P1'
 
     # Process each issue
     results = []
@@ -630,10 +630,20 @@ def triage_issues(
             security_reasoning = security_result.get("reasoning", "")
             if is_security_issue:
                 logging.info(f"Security issue detected for #{issue.number}: {security_reasoning}")
-                # Override priority to P1 or higher for security issues
-                if classification["priority"] not in ["P0"]:
+                # Elevate priority for security issues (never downgrade)
+                # Priority order: P0 > P1 > P2 > P3 > P4
+                priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4}
+                current_priority = classification["priority"]
+                current_rank = priority_order.get(current_priority, 4)
+                security_rank = priority_order.get(security_default_priority, 1)
+                
+                # Only elevate if security priority is higher (lower rank number)
+                if security_rank < current_rank:
                     classification["priority"] = security_default_priority
                     classification["priority_rationale"] = f"Elevated to {security_default_priority} due to security concern: {security_reasoning}"
+                elif current_rank <= security_rank:
+                    # Already at or above security priority, just add note
+                    classification["priority_rationale"] = f"{classification.get('priority_rationale', '')} [Security issue detected: {security_reasoning}]"
 
         # Check if Copilot-fixable using LLM-based assessment
         # Security issues should NOT be auto-fixed by Copilot

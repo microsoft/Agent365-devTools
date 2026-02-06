@@ -5,16 +5,6 @@ on:
     # Run daily at 9 AM UTC (adjust as needed)
     - cron: '0 9 * * *'
   workflow_dispatch:
-    inputs:
-      send_teams:
-        # To enable Teams: Create webhook via Teams > Workflows > "Send webhook alerts to a channel", add URL as TEAMS_WEBHOOK_URL secret
-        description: 'Send to MS Teams (requires TEAMS_WEBHOOK_URL secret)'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
 
 permissions:
   issues: read
@@ -42,19 +32,9 @@ jobs:
       - name: Generate Daily Report
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         run: |
           cd autoTriage
-          
-          # Build command
-          CMD="python daily_report.py --owner ${{ github.repository_owner }} --repo ${{ github.event.repository.name }} --output report.json --summary $GITHUB_STEP_SUMMARY"
-          
-          # Add Teams flag if requested
-          if [ "${{ inputs.send_teams }}" == "true" ]; then
-            CMD="$CMD --send-teams"
-          fi
-          
-          eval $CMD
+          python daily_report.py --owner ${{ github.repository_owner }} --repo ${{ github.event.repository.name }} --output report.json --summary $GITHUB_STEP_SUMMARY
 
       - name: Upload report artifact
         uses: actions/upload-artifact@v4

@@ -70,7 +70,7 @@
   - [x] 3.2 Create `services/escalation_service.py` with EscalationService class
   - [x] 3.3 Implement `get_sla_for_priority()` method returning hours based on P0-P4
   - [x] 3.4 Implement `check_sla_breach()` method comparing last update time to SLA threshold
-  - [x] 3.5 Implement `escalate_issue()` method to reassign to Lead and add `needs-attention` label
+  - [x] 3.5 Implement `escalate_issue()` method to add Tech Lead as assignee and add `needs-attention` label
   - [x] 3.6 Implement `escalate_to_manager()` for second-level escalation if Lead doesn't respond
   - [x] 3.7 Add @mention notification for Lead and Manager in escalation comment
   - [x] 3.8 Create `.github/workflows/escalate-stale-issues.yml` with daily schedule (8 AM UTC)

@@ -64,8 +64,8 @@ class TeamConfig:
     copilot_fixable_labels: list[str] = field(default_factory=list)
     features_enabled: dict = field(default_factory=dict)
     ado_config: Optional[AdoConfig] = None  # Azure DevOps configuration
-    security: Optional[dict] = None  # Security config from team-members.json
-    sla_hours: Optional[dict] = None  # SLA hours per priority: {"P0": 6, "P1": 12, ...}
+    security: Optional[SecurityConfig] = None  # Security config from team-members.json
+    sla_hours: Optional[dict] = None  # SLA hours per priority: {"P0": 24, "P1": 48, ...}
     escalation_chain: Optional[dict] = None  # Escalation chain: {"lead": [...], "manager": "..."}
 
     @property

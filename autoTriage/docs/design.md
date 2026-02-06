@@ -101,7 +101,7 @@ AutoTriage is an AI-powered GitHub automation system that automatically triages 
 - **FR1.3**: System MUST provide confidence score (0.0-1.0) for each classification
 - **FR1.4**: System MUST provide human-readable rationale for each decision
 
-### FR2: Assignee Selection (COMPLETE - needs apply flag)
+### FR2: Assignee Selection (COMPLETE)
 - **FR2.1**: System MUST select assignee based on team member expertise from `config/team-members.json`
 - **FR2.2**: System MUST consider recent commit history to related files
 - **FR2.3**: System MUST factor in workload balance (contribution scores)
@@ -115,7 +115,7 @@ AutoTriage is an AI-powered GitHub automation system that automatically triages 
 - **FR3.4**: System MUST create a draft PR linked to the issue
 - **FR3.5**: System MUST NOT auto-merge; human review is required
 
-### FR4: SLA Escalation (TODO)
+### FR4: SLA Escalation (COMPLETE)
 - **FR4.1**: System MUST track time since last update for each issue
 - **FR4.2**: System MUST escalate based on priority-specific SLAs:
   | Priority | SLA | Escalation To |
@@ -124,24 +124,24 @@ AutoTriage is an AI-powered GitHub automation system that automatically triages 
   | P1 | 48 hours | Lead + Manager |
   | P2 | 72 hours | Lead + Manager |
   | P3/P4 | 120 hours (5 days) | Lead + Manager |
-- **FR4.3**: Escalation MUST reassign issue from current assignee to Lead
+- **FR4.3**: Escalation MUST add Lead as assignee to the issue
 - **FR4.4**: If Lead doesn't respond within another SLA cycle, escalate to Manager
 - **FR4.5**: System MUST notify via GitHub @mention and/or Teams message
 
-### FR5: Re-triage (TODO)
+### FR5: Re-triage (COMPLETE)
 - **FR5.1**: System MUST re-triage when issue body is edited
 - **FR5.2**: System MUST re-triage when labels are manually changed
 - **FR5.3**: System MUST re-triage when comments contain new technical details
 - **FR5.4**: System MUST update existing triage comment (not create new one)
 - **FR5.5**: System MUST skip re-triage if already triaged by bot in last 5 minutes
 
-### FR6: Label Management (PARTIAL)
+### FR6: Label Management (COMPLETE)
 - **FR6.1**: System MUST map AI classifications to existing repository labels
 - **FR6.2**: System MUST add `copilot-fixable` label when appropriate
 - **FR6.3**: System MUST add `needs-attention` label on escalation
 - **FR6.4**: System MUST add `security` label for security-related issues
 
-### FR7: Notification (TODO)
+### FR7: Notification (COMPLETE)
 - **FR7.1**: System MUST @mention assignee in triage comment
 - **FR7.2**: System MUST @mention Lead and Manager on escalation
 - **FR7.3**: System MAY post to MS Teams channel (optional, configurable)

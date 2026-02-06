@@ -42,7 +42,7 @@
 - [ ] Create `services/escalation_service.py`
 - [ ] Create escalation workflow (hourly check)
 - [ ] Notify Lead + Manager on breach
-- [ ] Reassign to Lead, then Manager
+- [ ] Add Tech Lead as assignee on escalation
 
 ### Phase 4: Re-triage on Updates
 - [ ] Add `issues.edited` trigger
@@ -76,10 +76,10 @@
 
 | Priority | SLA | Escalation |
 |----------|-----|------------|
-| P0 | 6 hrs | Lead + Manager |
-| P1 | 12 hrs | Lead + Manager |
-| P2 | 24 hrs | Lead + Manager |
-| P3/P4 | 72 hrs | Lead + Manager |
+| P0 | 24 hrs | Lead + Manager |
+| P1 | 48 hrs | Lead + Manager |
+| P2 | 72 hrs | Lead + Manager |
+| P3/P4 | 120 hrs (5 days) | Lead + Manager |
 
 | Metric | Target |
 |--------|--------|

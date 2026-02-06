@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import yaml
 from typing import Optional, List
-from models.team_config import TeamConfig, PriorityRules, TriageMeta, CopilotFixableConfig
+from models.team_config import TeamConfig, PriorityRules, TriageMeta, CopilotFixableConfig, SecurityConfig
 from models.ado_models import AdoConfig
 
 
@@ -30,10 +30,17 @@ def _load_team_members() -> List[dict]:
     return data.get("team_members", [])
 
 
-def _load_security_config() -> dict:
+def _load_security_config() -> Optional[SecurityConfig]:
     """Load security configuration from config/team-members.json."""
     data = _load_team_config()
-    return data.get("security", {})
+    security_data = data.get("security", {})
+    if not security_data:
+        return None
+    return SecurityConfig(
+        keywords=security_data.get("keywords", []),
+        assignee=security_data.get("assignee", ""),
+        default_priority=security_data.get("default_priority", "P1")
+    )
 
 
 def _load_sla_hours() -> dict:

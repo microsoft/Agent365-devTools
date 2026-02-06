@@ -286,7 +286,7 @@ class GitHubService:
             
             # Look for existing triage comment from bot
             for existing_comment in issue.get_comments():
-                if any(bot in existing_comment.user.login for bot in TRIAGE_BOT_USERS):
+                if existing_comment.user.login in TRIAGE_BOT_USERS:
                     if 'team assistant' in existing_comment.body.lower() or 'triage' in existing_comment.body.lower():
                         # Update existing comment
                         existing_comment.edit(comment)
@@ -732,7 +732,7 @@ class GitHubService:
         try:
             comments = list(issue.get_comments())
             for comment in comments:
-                if any(bot in comment.user.login for bot in TRIAGE_BOT_USERS):
+                if comment.user.login in TRIAGE_BOT_USERS:
                     if 'triage' in comment.body.lower() or 'priority' in comment.body.lower():
                         status['has_bot_triage'] = True
                         break
@@ -766,8 +766,8 @@ class GitHubService:
             comments = list(issue.get_comments())
             
             for comment in comments:
-                # Check if comment is from triage bot
-                if any(bot in comment.user.login for bot in TRIAGE_BOT_USERS):
+                # Check if comment is from triage bot (exact match)
+                if comment.user.login in TRIAGE_BOT_USERS:
                     # Check if it's a triage comment
                     if 'triage' in comment.body.lower() or 'team assistant' in comment.body.lower():
                         # Check if it was triaged or updated recently

@@ -61,19 +61,20 @@ jobs:
         run: |
           cd autoTriage
           
-          # Build command with optional --retriage flag
-          CMD="python triage_issue.py \
-            --owner \"${{ github.repository_owner }}\" \
-            --repo \"${{ github.event.repository.name }}\" \
-            --issue-number \"${{ steps.issue.outputs.number }}\" \
-            --output \"${{ runner.temp }}/triage_result.json\" \
-            --apply"
+          # Build args array
+          ARGS=(
+            --owner "${{ github.repository_owner }}"
+            --repo "${{ github.event.repository.name }}"
+            --issue-number "${{ steps.issue.outputs.number }}"
+            --output "${{ runner.temp }}/triage_result.json"
+            --apply
+          )
           
           if [ "${{ steps.issue.outputs.retriage }}" == "true" ]; then
-            CMD="$CMD --retriage"
+            ARGS+=(--retriage)
           fi
           
-          eval $CMD
+          python triage_issue.py "${ARGS[@]}"
 
       - name: Post triage results
         if: success()
