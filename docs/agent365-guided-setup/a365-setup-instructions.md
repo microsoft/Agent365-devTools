@@ -1,5 +1,27 @@
 # Agent 365 CLI Setup Instructions for AI Agents
 
+---
+
+> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Call `manage_todo_list` (or equivalent) to create the 5 todos listed below. Then mark Todo 1 in-progress and jump to Step 1. **Do NOT read further. Do NOT run any commands. Do NOT gather values. Do NOT ask questions.**
+
+**RULE 1 — CREATE EXACTLY 5 TODOS:
+
+- Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
+- Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
+- Todo 3: `Step 3: Configure the Agent 365 CLI (Initialize Configuration)`
+- Todo 4: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
+- Todo 5: `Step 5: Publish and Deploy the Agent Application`
+
+**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step.
+
+**RULE 3 — SUB-SECTIONS ARE NOT SEPARATE TODOS.** Each `## Step` has internal sub-sections — these are tasks WITHIN that step, NOT separate todos. Exactly 5 todos total.
+
+**RULE 4 — ONE STEP AT A TIME.** Complete each step fully. Mark its todo in-progress when starting, complete when done. Do NOT run `az account show`, ask about deployment type, or gather Azure values — those belong to Step 3, which comes AFTER Steps 1 and 2.
+
+**RULE 5 — INPUT FIELDS.** In Step 3, present exactly 5 fields (Azure-hosted) or 2 fields (self-hosted). The `clientAppId` is collected in Step 2 — do NOT ask for it again.
+
+---
+
 ## Context
 
 You are an AI coding agent with access to execute shell commands, read the Agent365-devTools repository (code and docs), and browse the web for documentation or GitHub issues. Your task is to set up, configure, and deploy all prerequisite components for a Microsoft Agent 365–compliant agent using the Agent 365 CLI. You must handle this end-to-end: from installation and configuration to deployment. Work step-by-step, and adapt to any issues or differences in CLI versions along the way.
@@ -9,6 +31,8 @@ You are an AI coding agent with access to execute shell commands, read the Agent
 ---
 
 ## Step 1: Verify and Install/Update the Agent 365 CLI
+
+> **DO NOT SKIP THIS STEP.** Even if you believe the CLI is already installed, you MUST run the version check and validate. Mark this todo in-progress now.
 
 Check if the Agent 365 CLI is installed and up-to-date:
 
@@ -35,9 +59,15 @@ After installing or updating, confirm the CLI is ready by running `a365 -h` to d
 
 The CLI is under active development, and some commands may have changed in recent versions. The instructions in this prompt assume you have the latest version. If you discover that a command referenced later (such as `publish`) is not recognized, it means you have an older version – in that case, upgrade the CLI. Using the latest version is essential because older flows (e.g. the `create-instance` command) have been deprecated in favor of new commands (`publish`, etc.). If upgrading isn't possible, adjust your steps according to the older CLI's documentation (for example, use the old `a365 create-instance` command in place of `publish`), but prefer to upgrade if at all feasible.
 
+### Step 1 completion
+
+> **BEFORE MOVING ON:** Mark Todo 1 (Step 1) as **completed** now. Then mark Todo 2 (Step 2) as **in-progress**. Only then proceed to Step 2 below. Do NOT jump ahead to Step 3.
+
 ---
 
 ## Step 2: Ensure Prerequisites and Environment Configuration
+
+> **DO NOT SKIP THIS STEP.** You MUST validate Azure CLI login, Entra ID roles, the custom client app registration, and language-specific build tools. These validations are required before ANY `a365` CLI commands will work. Mark this todo in-progress now.
 
 ### Azure CLI & Authentication
 
@@ -49,42 +79,19 @@ If the Azure CLI is installed, ensure that you are logged in to the correct Azur
 
 The user account you authenticate with must have sufficient privileges to create the necessary resources. According to documentation, the account needs to be at least an **Agent ID Administrator** or **Agent ID Developer**, and certain commands (like the full environment setup) require **Global Administrator + Azure Contributor** roles. If you attempt an operation without adequate permissions, it will fail. Thus, before proceeding, confirm that the logged-in user has one of the required roles (Global Admin is the safest choice for preview setups). If not, prompt the user to either use an appropriate account or have an admin grant the needed roles.
 
-### Custom client app registration (BLOCKING - MUST VALIDATE BEFORE PROCEEDING)
+### Custom client app validation
 
-> **CRITICAL BLOCKER:** The custom client app registration is a hard prerequisite. You MUST validate that the app exists and has all required permissions BEFORE running any `a365` CLI commands (including `a365 config init`, `a365 setup`, etc.). Skipping this validation will cause CLI commands to fail with authentication or permission errors.
+Ask the user: "Please provide the Application (client) ID for your custom Agent 365 client app registration." If they don't have one, see "What to do if validation fails" below.
 
-Verify that a custom client application is registered in Entra ID (Azure AD) for Agent 365 authentication. This is critical for the CLI to function (it uses this app to manage Agent Identity Blueprints). The user should have created this app as part of the prerequisites.
-
-#### Step 2.1: Validate the custom client app exists
-
-You MUST perform this validation before proceeding. Use the Azure CLI to query for the app registration:
-
-1. **If you have a known Application (client) ID** (e.g., from an existing `a365.config.json` file with the `clientAppId` field, or provided by the user), validate it exists:
-   ```bash
-   az ad app show --id <CLIENT_APP_ID> --query "{appId:appId, displayName:displayName}" -o table
-   ```
-   If this command returns the app details, proceed to Step 2.2 to validate permissions.
-   If this command fails with "Resource not found" or similar, the app does not exist - see "Creating the app" below.
-
-2. **If you do not have an Application (client) ID**, ask the user if it exists.
-   If they say no or that they do not know, assume the custom app has not been created - see "Creating the app" below.
-   If they say yes, prompt them for the app id. Once provided, validate it exists.
-   ```bash
-   az ad app show --id <CLIENT_APP_ID> --query "{appId:appId, displayName:displayName}" -o table
-   ``` app list --display-name "Agent365" --query "[].{appId:appId, displayName:displayName}" -o table
-   ```
-   If this command returns the app details, proceed to Step 2.2 to validate permissions.
-   If this command fails with "Resource not found" or similar, the app does not exist - see "Creating the app" below.
-
-#### Step 2.2: Validate required Graph API permissions
-
-Once you have confirmed the app exists, you MUST validate that it has all required delegated permissions with admin consent. Run:
+Once the user provides the ID, replace `<CLIENT_APP_ID>` in the command below and paste it into the terminal verbatim. **Use this exact command — do not write your own queries, do not split it, do not run `az ad app show` or `az ad app permission` separately:**
 
 ```bash
-az ad app show --id <CLIENT_APP_ID> --query "requiredResourceAccess"
+az ad app show --id <CLIENT_APP_ID> --query "{appId:appId, displayName:displayName, requiredResourceAccess:requiredResourceAccess}" -o json && az ad app permission list-grants --id <CLIENT_APP_ID> --query "[].{resourceDisplayName:resourceDisplayName, scope:scope}" -o table
 ```
 
-The app registration must have the following **delegated (not application)** Microsoft Graph permissions, with **admin consent granted** for each:
+From the output of the command above, verify these 5 permissions appear with admin consent. If any are missing or consent is not granted, see "What to do if validation fails" below.
+
+Required **delegated** Microsoft Graph permissions (all must have **admin consent granted**):
 
 | Permission | Description |
 |------------|-------------|
@@ -94,65 +101,112 @@ The app registration must have the following **delegated (not application)** Mic
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
 | `Directory.Read.All` | Read directory data |
 
-To check if admin consent has been granted, run:
-```bash
-az ad app permission list-grants --id <CLIENT_APP_ID> --query "[].{scope:scope}" -o table
+If the app does not exist, permissions are missing, or admin consent has not been granted, see "What to do if validation fails" below.
+
+**If validation fails** (app not found, permissions missing, or no admin consent):
+
+1. STOP — do not proceed to run any `a365` CLI commands.
+2. Inform the user the custom client app registration is missing or incomplete.
+3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all five permissions above, and have a Global Admin grant admin consent.
+4. Wait for the user to confirm the app is properly configured, then re-run the same validation command above.
+
+Save the `clientAppId` value — it will be used automatically in Step 3 (do NOT ask the user for it again).
+
+### Validate language-specific prerequisites (REQUIRED)
+
+> **BLOCKING PREREQUISITE:** You MUST validate that language-specific build tools are installed BEFORE proceeding to Step 3. The deployment will fail if the agent's code cannot be built. Do NOT skip this validation step.
+
+The Agent 365 CLI supports .NET, Node.js, and Python projects. You MUST check that the relevant runtime and build tools are installed for the project type you are deploying.
+
+#### Detect project type
+
+First, detect the project type by checking for project files in the deployment directory:
+
+```powershell
+# Check for .NET project
+Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
+
+# Check for Node.js project
+Test-Path "package.json"
+
+# Check for Python project
+(Test-Path "requirements.txt") -or (Test-Path "pyproject.toml")
 ```
 
-If any permissions are missing or admin consent has not been granted, you MUST stop and resolve this before proceeding.
+#### Validate required tools based on project type
 
-#### What to do if validation fails
+**For .NET agents (REQUIRED if .csproj files exist):**
 
-**If the app does not exist or is missing required permissions:**
+Run these commands and verify the output:
+```bash
+dotnet --version
+dotnet --list-sdks
+```
 
-1. **STOP** - Do not proceed to run any `a365` CLI commands.
-2. **Inform the user** that the custom client app registration is missing or incomplete.
-3. **Direct the user** to follow the official setup guide to create/fix the app:
-   - Register a new app in Azure AD (typically named "Agent365 CLI")
-   - Configure it as a **Public client** with redirect URI `http://localhost:8400`
-   - Add all five delegated permissions listed above
-   - Have a **Global Administrator** grant admin consent for all permissions
-4. **Wait** for the user to confirm the app is properly configured before continuing.
+- [ ] Confirm .NET SDK 8.0 or later is installed
+- [ ] If not installed, instruct the user to install .NET 8.0 SDK from https://dotnet.microsoft.com/download
 
-Do not attempt to automatically create this app via script unless explicitly authorized, because it requires admin privileges and specific consent.
+**For Node.js agents (REQUIRED if package.json exists):**
 
-#### Proceed only when validation passes
+Run these commands and verify the output:
+```bash
+node --version
+npm --version
+```
 
-Only after you have confirmed:
-- [ ] The custom client app exists (you have a valid `clientAppId`)
-- [ ] All five required delegated permissions are configured
-- [ ] Admin consent has been granted for all permissions
+- [ ] Confirm Node.js 18.x or later is installed
+- [ ] Confirm npm is available
+- [ ] If not installed, instruct the user to install Node.js from https://nodejs.org/
 
-...may you proceed to Step 3 (Configure the Agent 365 CLI).
+**For Python agents (REQUIRED if requirements.txt or pyproject.toml exists):**
 
-### Other prerequisites
+Run these commands and verify the output:
+```bash
+python --version
+pip --version
+```
 
-Ensure that any language-specific tools needed for your agent's code are available. The Agent 365 CLI supports .NET, Node.js, and Python projects. Depending on the type of agent you are deploying, check that the relevant runtime or build tools are installed:
+- [ ] Confirm Python 3.10 or later is installed
+- [ ] Confirm pip is available
+- [ ] If not installed, instruct the user to install Python from https://python.org/
 
-- **For .NET agents:** Check `dotnet --list-sdks` and ensure the required .NET SDK for building the project is available.
-- **For Node.js agents:** Check `node --version` and `npm --version`. Ensure you can run a build (e.g., `npm install` and `npm run build` if applicable).
-- **For Python agents:** Check `python --version` and `pip --version`. You should also ensure any Python dependencies (especially any Microsoft 365-related SDKs) can be installed (for example, run `pip install -r requirements.txt` in the project directory to verify).
+#### Validation checkpoint
 
-If any required runtime or tool is missing, attempt to install it (if you have the ability), or instruct the user on how to install it. The deployment will fail if the agent's code can't be built or if required interpreters aren't present.
+> **STOP AND CONFIRM:** Before proceeding to Step 3, you MUST have validated:
+> - [ ] Project type detected (at least one of: .NET, Node.js, or Python)
+> - [ ] Required build tools installed and verified for the detected project type
+> - [ ] All previous Step 2 validations passed (Azure CLI, custom client app, permissions)
+>
+> If any validation failed, resolve the issue before continuing. Do NOT proceed to Step 3 until all checks pass.
+
+### Step 2 completion
+
+> **BEFORE MOVING ON:** Mark Todo 2 (Step 2) as **completed** now. Summarize to the user what was validated. Then mark Todo 3 (Step 3) as **in-progress**. Only then proceed to Step 3 below.
+>
+> **VERIFY YOUR TODO STATE:** At this point your todos MUST look like this:
+> - Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
+>
+> If your todo list does not exist or does not look like the above, STOP — go back to "BEFORE YOU BEGIN" and start over.
 
 ---
 
 ## Step 3: Configure the Agent 365 CLI (Initialize Configuration)
 
-> **PREREQUISITE CHECK:** Before proceeding with this step, you MUST have completed the custom client app registration validation in Step 2. If you have not validated that the app exists and has all required permissions with admin consent, STOP and go back to Step 2.
+> **MANDATORY GATE — DO NOT PROCEED WITHOUT VERIFICATION:**
+> 
+> Before executing ANY part of this step, verify ALL of the following:
+> - [ ] You created exactly 5 todos (RULE 1)
+> - [ ] Todo 1 (Step 1) is marked **completed** — CLI was verified/installed
+> - [ ] Todo 2 (Step 2) is marked **completed** — Azure CLI login confirmed, custom client app validated, build tools verified
+> - [ ] Todo 3 (Step 3) is marked **in-progress**
+> 
+> **If ANY checkbox above is not satisfied, STOP. Go back to the incomplete step and finish it first.**
+> 
+> Common mistake: Jumping to this step first because it has `az account show` commands. Those commands are for Step 3 ONLY — Steps 1 and 2 must be done first.
 
-Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**), create the Agent 365 CLI configuration file. The `a365 config init` command is non-interactive, so you must create an `a365.config.json` file directly and then import it.
+Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), create the Agent 365 CLI configuration file. The `a365 config init` command is non-interactive, so you must create an `a365.config.json` file directly and then import it.
 
-### Pre-configuration checklist
-
-Before creating the configuration, confirm you have:
-- [ ] Validated the custom client app exists (Step 2.1)
-- [ ] Validated all required permissions are granted with admin consent (Step 2.2)
-- [ ] The Application (client) ID ready (from the validation step)
-
-If any of these are not confirmed, do not proceed - go back to Step 2.
-
-### Step 3.1: Gather auto-detected values
+### Gather auto-detected values
 
 Retrieve the following values automatically using the Azure CLI:
 
@@ -165,143 +219,116 @@ You should already have the `clientAppId` from the Step 2 validation.
 
 Set `deploymentProjectPath` to the current working directory (use absolute path).
 
-### Step 3.2: Determine deployment type
+### Ask deployment type
 
-Ask the user: **"Do you want to create a web app in Azure for this agent? (yes/no)"**
+Send the user the following message and then **STOP and WAIT for their reply**. Your message must contain **ONLY** the text below — no tables, no input fields, no additional questions, no follow-up content:
 
-- If **yes**: This is an Azure-hosted deployment. Set `needDeployment: true`. You will need to ask for the `appServicePlanName`.
-- If **no**: This is a non-Azure hosted deployment. Set `needDeployment: false`. Proceed to Step 3.2.1 to determine the messaging endpoint.
+---
 
-#### Step 3.2.1: Determine messaging endpoint for non-Azure deployments
+**Do you want to create a web app in Azure for this agent? (yes/no)**
 
-For non-Azure hosted deployments, ask the user: **"Would you like to use a dev tunnel for local development, or provide a custom messaging endpoint? (devtunnel/custom)"**
+- **Yes** = Azure-hosted (recommended for production)
+- **No** = Self-hosted (e.g., local development with dev tunnel)
 
-- If **devtunnel**: Proceed to Step 3.2.2 to set up a dev tunnel. The dev tunnel URL will be used as the `messagingEndpoint`.
+---
+
+> ⛔ **STOP. OUTPUT ONLY THE QUESTION ABOVE. DO NOT INCLUDE ANYTHING ELSE.**
+> Do NOT show input fields. Do NOT show a table. Do NOT mention resource groups, agent names, or any configuration values.
+> The next section ("Collect configuration inputs") must NOT appear in this message.
+> WAIT for the user to respond before doing anything else.
+
+After the user responds, set the internal value:
+- If **yes**: `needDeployment: true`
+- If **no**: `needDeployment: false`
+
+Then proceed to "Collect configuration inputs" below.
+
+---
+
+### Collect configuration inputs
+
+> ⛔ **DO NOT EXECUTE THIS SECTION** until the user has answered the deployment type question above.
+> If you have not yet received the user's yes/no answer, STOP and go back to ask it.
+
+#### First: Query the subscription for real example values
+
+Before presenting input fields, run the following **single command** to gather real values from the user's Azure subscription. Use these values as **examples** in the input table so the user sees context-specific suggestions instead of generic placeholders.
+
+```bash
+az ad signed-in-user show --query userPrincipalName -o tsv; az group list --query "[].{Name:name, Location:location}" -o table; az appservice plan list --query "[].{Name:name, ResourceGroup:resourceGroup, Location:location}" -o table
+```
+
+> **Run this as ONE command.** Do NOT split into separate terminal calls.
+
+From the output, extract:
+- `{loggedInUser}` — the signed-in user's UPN (e.g., `admin@contoso.onmicrosoft.com`)
+- `{existingResourceGroup}` — name of an existing resource group (e.g., `agent365-rg`)
+- `{existingLocations}` — locations from the resource groups (e.g., `eastus, canadacentral, westus2`)
+- `{existingAppServicePlan}` — name of an existing App Service plan (e.g., `agent365-plan`)
+
+If a query returns no results (e.g., no existing resource groups or App Service plans), use a descriptive fallback like `my-agent-rg` or `my-agent-plan`.
+
+#### Present the input fields
+
+Based on the user's deployment type answer, present the appropriate set of input fields **with the real values you queried above as examples**.
+
+#### If Azure-hosted (`needDeployment: true`)
+
+Present the following fields in a single prompt:
+
+**"Please provide the following values to configure your Azure-hosted agent:"**
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| **Resource Group** | Azure Resource Group (new or existing) | `{existingResourceGroup}` |
+| **Location** | Azure region for deployment | `{existingLocations}` |
+| **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
+| **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
+| **App Service Plan** | Azure App Service Plan name | `{existingAppServicePlan}` |
+
+> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive the web app URL (`{name}-webapp.azurewebsites.net`), Agent Identity, Blueprint, and User Principal Name. Lowercase letters, numbers, hyphens only. Start with a letter. 3-20 chars recommended. Tip: include your org name.
+>
+> **Examples** show real values from your subscription. You can reuse existing resources or provide new names — the CLI will create them if they don't exist.
+>
+> **Do NOT ask for `clientAppId` here.** It was already collected and validated in Step 2. Present ONLY the 5 fields listed above.
+
+#### If self-hosted (`needDeployment: false`)
+
+Present the following fields in a single prompt:
+
+**"Please provide the following values to configure your self-hosted agent:"**
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
+| **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
+
+> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive Agent Identity, Blueprint, and User Principal Name. Lowercase letters, numbers, hyphens only. Start with a letter. 3-20 chars recommended. Tip: include your org name.
+
+After collecting these inputs, proceed to Step 3.3.1 to determine the messaging endpoint.
+
+#### After receiving the user's answers
+
+1. **Validate the inputs** — Check that all required fields are provided, the email format looks valid, and the agent name meets the naming requirements.
+2. **If any field is missing or unclear**, ask only about that specific field — do not re-ask for all inputs.
+3. **Proceed** to derive naming values (or determine the messaging endpoint first for self-hosted deployments).
+
+#### Determine messaging endpoint (non-Azure deployments only)
+
+Only perform this step if the user chose self-hosted deployment.
+
+Ask: **"Would you like to use a dev tunnel for local development, or provide a custom messaging endpoint? (devtunnel/custom)"**
+
+Provide this context:
+- **Dev tunnel**: Creates a secure tunnel from the internet to your local machine. Ideal for development and testing - no need to deploy your code anywhere. The tunnel URL will be your messaging endpoint.
+- **Custom endpoint**: Use this if you already have a publicly accessible HTTPS URL where your agent is hosted (e.g., on another cloud provider, on-premises with a public IP, or behind a reverse proxy).
+
+- If **devtunnel**: Proceed to set up a dev tunnel (next section). The dev tunnel URL will be used as the `messagingEndpoint`.
 - If **custom**: Ask the user to provide their `messagingEndpoint` URL (e.g., `https://myagent.example.com/api/messages`).
 
-#### Step 3.2.2: Set up a dev tunnel (for local development)
+#### Set up a dev tunnel (for local development)
 
-Dev tunnels provide a secure way to expose your local agent to the internet, which is useful for development and testing. Follow these steps to set up a dev tunnel:
-
-##### Prerequisites for dev tunnels
-
-1. **Install the Dev Tunnels CLI** (if not already installed):
-   
-   Check if the dev tunnel CLI is installed by running:
-   ```bash
-   devtunnel --version
-   ```
-   
-   If not installed, install it using one of the following methods:
-   
-   - **Windows (winget):**
-     ```bash
-     winget install Microsoft.devtunnel
-     ```
-   
-   - **Windows (PowerShell direct download):**
-     ```powershell
-     Invoke-WebRequest -Uri https://aka.ms/TunnelsCliDownload/win-x64 -OutFile devtunnel.exe
-     ```
-   
-   - **macOS (Homebrew):**
-     ```bash
-     brew install --cask devtunnel
-     ```
-   
-   - **Linux:**
-     ```bash
-     curl -sL https://aka.ms/DevTunnelCliInstall | bash
-     ```
-
-2. **Log in to dev tunnels:**
-   ```bash
-   devtunnel user login
-   ```
-   This will open a browser for authentication. Use your Microsoft account or Azure AD account.
-
-##### Create and start the dev tunnel
-
-1. **Determine the local port** your agent will run on. Ask the user: **"What local port will your agent run on? (default: 3978)"**
-   
-   Use the provided port or default to `3978` if not specified.
-
-2. **Create a persistent (named) dev tunnel:**
-   ```bash
-   devtunnel create <agentName> --allow-anonymous
-   ```
-   Use the `agentName` value that the user provides in Step 3.3 as the tunnel name. This ensures consistency between the tunnel and agent naming. The `--allow-anonymous` flag allows the Agent 365 service to connect without additional authentication.
-   
-   > **Note:** Since the tunnel name depends on the `agentName` from Step 3.3, you should collect the agent name first (from Step 3.3), then return here to create the tunnel before completing the rest of Step 3.
-
-3. **Add a port to the tunnel:**
-   ```bash
-   devtunnel port create <agentName> --port-number <local-port>
-   ```
-   Replace `<agentName>` with the agent name from Step 3.3 and `<local-port>` with the port from step 1 (e.g., `3978`).
-
-4. **Get the tunnel URL:**
-   ```bash
-   devtunnel show <agentName>
-   ```
-   Look for the "Connect via browser" URL in the output. It will be in the format:
-   `https://<tunnel-id>-<port>.devtunnels.ms`
-
-5. **Construct the messaging endpoint:**
-   Append your agent's message handler path to the tunnel URL. Typically this is `/api/messages`:
-   ```
-   https://<tunnel-id>-<port>.devtunnels.ms/api/messages
-   ```
-   
-   This is your `messagingEndpoint` value.
-
-6. **Start hosting the tunnel:**
-   ```bash
-   devtunnel host <agentName>
-   ```
-
-> **Important:** Keep this terminal window open while developing/testing. The tunnel will stop when this command is terminated.
-
-> **Why use a persistent tunnel?** Persistent (named) tunnels maintain the same URL across sessions. This means you won't need to update your Agent 365 configuration every time you restart the tunnel. Simply run `devtunnel host <agentName>` to resume with the same endpoint URL.
-
-> **Alternative (Temporary tunnel):** If you prefer a quick, temporary tunnel without persistence, you can use:
-> ```bash
-> devtunnel host --port-number <local-port> --allow-anonymous
-> ```
-> Note: The URL will change each time you run this command, requiring you to update the messaging endpoint in Agent 365.
-
-##### Dev tunnel summary
-
-After setting up the dev tunnel, you should have:
-- [ ] Dev tunnel CLI installed and authenticated
-- [ ] A persistent tunnel created using the `agentName` from Step 3.3
-- [ ] The tunnel URL constructed as the `messagingEndpoint`
-- [ ] The tunnel running with `devtunnel host <agentName>`
-
-Proceed to Step 3.3 with the `messagingEndpoint` set to your dev tunnel URL.
-
-### Step 3.3: Prompt user for required values
-
-Prompt the user for the following information:
-
-| Value | Description | Example |
-|-------|-------------|---------|
-| `resourceGroup` | Azure resource group name | `a365-rg` |
-| `location` | Azure region | `eastus`, `canadacentral`, `westus2` |
-| `agentName` | Unique name for the agent (used to derive identity, blueprint, webapp, and user names) | `mya365agent` |
-| `managerEmail` | Email of the agent's manager | `admin@contoso.onmicrosoft.com` |
-
-**For Azure-hosted deployments only** (`needDeployment: true`):
-| Value | Description | Example |
-|-------|-------------|---------|
-| `appServicePlanName` | Name for the App Service Plan | `myagent-app-plan` |
-
-**For non-Azure hosted deployments only** (`needDeployment: false`):
-| Value | Description | Example |
-|-------|-------------|---------|
-| `messagingEndpoint` | The URL where your agent is hosted | `https://myagent.example.com/api/messages` |
-
-### Step 3.4: Derive naming values from base name
+### Derive naming values from base name
 
 Using the `agentBaseName` provided by the user and the domain extracted from `managerEmail`, derive the following values:
 
@@ -314,7 +341,7 @@ Using the `agentBaseName` provided by the user and the domain extracted from `ma
 | `agentDescription` | `{baseName} - Agent 365 Agent` | `mya365agent - Agent 365 Agent` |
 | `webAppName` (Azure-hosted only) | `{baseName}-webapp` | `mya365agent-webapp` |
 
-### Step 3.5: Confirm derived values with user
+### Confirm derived values with user
 
 After deriving the values above, present them to the user and ask for confirmation. Display the derived values in a clear format:
 
@@ -331,10 +358,10 @@ After deriving the values above, present them to the user and ask for confirmati
 
 Then ask: **"Would you like to update any of these derived values, or proceed with the defaults? (update/proceed)"**
 
-- If the user chooses **"proceed"**: Continue to Step 3.6 with the derived default values.
+- If the user chooses **"proceed"**: Continue to create the config file with the derived default values.
 - If the user chooses **"update"**: Ask which field(s) they want to change and collect the new value(s). After updates, display the final values again for confirmation before proceeding.
 
-### Step 3.6: Create the a365.config.json file
+### Create the a365.config.json file
 
 Create the `a365.config.json` file in the current working directory with all gathered and derived values.
 
@@ -385,7 +412,7 @@ Create the `a365.config.json` file in the current working directory with all gat
 }
 ```
 
-### Step 3.7: Import the configuration
+### Import the configuration
 
 After creating the `a365.config.json` file, import it using:
 
@@ -453,6 +480,81 @@ You can generally re-run `a365 setup all` if something went wrong and you fixed 
 
 At this stage, your environment (Azure infrastructure and identity blueprint) is set up. Next, you need to publish the agent and deploy the application code so that the agent is live.
 
+### Review and Update the Manifest File (REQUIRED)
+
+Before publishing, you **MUST** review and customize the `manifest.json` file in your project. This file defines how your agent appears and behaves in Microsoft Teams and other Microsoft 365 apps. The CLI will use this manifest during the publish step.
+
+#### Locate the manifest file
+
+The manifest file should be in your project's root directory or in a location specified by your project structure. If a manifest doesn't exist, the CLI may generate a template, but you should customize it.
+
+#### Manifest fields to update
+
+Present the following information to the user and ask them to review/update these fields:
+
+| Field | Description | What to Update |
+|-------|-------------|----------------|
+| `name.short` | **Agent's display name (short)**<br>The name users will see in Teams app lists and search results. Maximum 30 characters. | Replace `"Your Agent Name"` with your agent's actual name (e.g., `"Contoso HR Assistant"`) |
+| `name.full` | **Agent's full name**<br>The complete name shown in agent details. Maximum 100 characters. | Replace `"Your Agent Full Name"` with a descriptive full name (e.g., `"Contoso Human Resources Assistant Agent"`) |
+| `description.short` | **Brief description**<br>A one-line summary shown in search results and app cards. Maximum 80 characters. | Write a concise description of what your agent does (e.g., `"Answers HR policy questions and helps with time-off requests"`) |
+| `description.full` | **Full description**<br>A comprehensive explanation shown on the agent's detail page. Maximum 4000 characters. | Write a detailed description covering:<br>- What the agent does<br>- What data/systems it can access<br>- How users should interact with it<br>- Any limitations or caveats |
+| `developer.name` | **Publisher/developer name**<br>Your organization's name as the agent publisher. | Replace with your organization name (e.g., `"Contoso Ltd"`) |
+| `developer.websiteUrl` | **Developer website**<br>Link to your organization's website or the agent's landing page. | Update with your organization's URL |
+| `developer.privacyUrl` | **Privacy policy URL**<br>Link to your privacy policy. **Required for production agents.** | Update with your privacy policy URL |
+| `developer.termsOfUseUrl` | **Terms of use URL**<br>Link to your terms of service. **Required for production agents.** | Update with your terms of use URL |
+| `icons.color` | **Color icon (192x192 PNG)**<br>Full-color icon for the agent. | Ensure you have a `color.png` file (192x192 pixels) in your project |
+| `icons.outline` | **Outline icon (32x32 PNG)**<br>Transparent outline icon with single color. | Ensure you have an `outline.png` file (32x32 pixels) in your project |
+| `accentColor` | **Accent color**<br>Hex color code used as background for icons. | Update to match your branding (e.g., `"#0078D4"` for Microsoft blue) |
+| `version` | **Manifest version**<br>Semantic version of your agent package. | Update when making changes (e.g., `"1.0.0"`, `"1.2.3"`) |
+
+#### Example manifest customization
+
+Show the user an example of a customized manifest:
+
+```json
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json",
+  "id": "<auto-generated-by-cli>",
+  "name": {
+    "short": "Contoso HR Bot",
+    "full": "Contoso Human Resources Assistant"
+  },
+  "description": {
+    "short": "Get answers to HR questions and submit time-off requests.",
+    "full": "The Contoso HR Assistant helps employees with common HR tasks. You can ask about company policies, check your PTO balance, submit time-off requests, and get information about benefits. The agent has access to HR policies and can look up your personal leave balance. Note: For sensitive matters like performance reviews or complaints, please contact HR directly."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#0078D4",
+  "version": "1.0.0",
+  "manifestVersion": "devPreview",
+  "developer": {
+    "name": "Contoso Ltd",
+    "mpnId": "",
+    "websiteUrl": "https://www.contoso.com",
+    "privacyUrl": "https://www.contoso.com/privacy",
+    "termsOfUseUrl": "https://www.contoso.com/terms"
+  },
+  "agenticUserTemplates": [
+    {
+      "id": "<auto-generated>",
+      "file": "agenticUserTemplateManifest.json"
+    }
+  ]
+}
+```
+
+#### Prompt the user
+
+Ask the user: **"Please review and update your manifest.json file with your agent's details. Have you updated the manifest with your agent's name, description, and developer information? (yes/no)"**
+
+- If **no**: Wait for the user to update the manifest before proceeding.
+- If **yes**: Proceed to publish the agent manifest.
+
+> **Important:** The `id` field and `agenticUserTemplates[].id` will be automatically populated by the CLI during publish. Do not manually set these values.
+
 ### Publish the agent manifest
 
 Run `a365 publish`. This step updates the agent's manifest identifiers and publishes the agent package to Microsoft Online Services (specifically, it registers the agent with the Microsoft 365 admin center under your tenant). What this does:
@@ -485,7 +587,7 @@ Once deployed, the agent's backend is live. At this point, from the perspective 
 
 For complete details, see [Create agent instances](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance).
 
-#### Step 1: Configure agent in Teams Developer Portal (User action)
+#### Configure agent in Teams Developer Portal (User action)
 
 **Instruct the user** to configure the agent blueprint in Teams Developer Portal to connect their agent to the Microsoft 365 messaging infrastructure. Without this configuration, the agent won't receive messages from Teams, email, or other Microsoft 365 services.
 
@@ -510,7 +612,7 @@ Provide the user with the following instructions:
 
 > **Note:** If the user doesn't have access to the Developer Portal, they should contact their tenant administrator to grant access or complete this configuration on their behalf.
 
-#### Step 2: Create agent instance (User action)
+#### Create agent instance (User action)
 
 **Instruct the user** to request an instance of the agent blueprint from Teams. For more details, see [How to discover, create, and onboard an agent](https://learn.microsoft.com/en-us/microsoft-agent-365/onboard).
 
@@ -524,7 +626,7 @@ Admins can review and approve requests from the [Microsoft admin center - Reques
 
 > **Important:** The user needs to be part of the [Frontier preview program](https://adoption.microsoft.com/copilot/frontier-program/) to create agent instances and interact with agents in Microsoft Teams while Agent 365 is in preview. They should contact their tenant administrator if they don't have access.
 
-#### Step 3: Test your deployed agent (User action)
+#### Test your deployed agent (User action)
 
 **Instruct the user** to test the agent instance in Microsoft Teams after it's created:
 
