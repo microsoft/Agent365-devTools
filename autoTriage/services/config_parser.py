@@ -36,6 +36,18 @@ def _load_security_config() -> dict:
     return data.get("security", {})
 
 
+def _load_sla_hours() -> dict:
+    """Load SLA hours per priority from config/team-members.json."""
+    data = _load_team_config()
+    return data.get("sla_hours", {"P0": 6, "P1": 12, "P2": 24, "P3": 72, "P4": 72})
+
+
+def _load_escalation_chain() -> dict:
+    """Load escalation chain from config/team-members.json."""
+    data = _load_team_config()
+    return data.get("escalation_chain", {"lead": [], "manager": None})
+
+
 class ConfigParser:
     """Parses and validates team-assistant.yml configuration files."""
 
@@ -162,7 +174,9 @@ class ConfigParser:
             copilot_fixable_labels=[],
             features_enabled={},
             ado_config=None,
-            security=_load_security_config()
+            security=_load_security_config(),
+            sla_hours=_load_sla_hours(),
+            escalation_chain=_load_escalation_chain()
         )
 
     @staticmethod

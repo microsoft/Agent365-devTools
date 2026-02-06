@@ -65,6 +65,8 @@ class TeamConfig:
     features_enabled: dict = field(default_factory=dict)
     ado_config: Optional[AdoConfig] = None  # Azure DevOps configuration
     security: Optional[dict] = None  # Security config from team-members.json
+    sla_hours: Optional[dict] = None  # SLA hours per priority: {"P0": 6, "P1": 12, ...}
+    escalation_chain: Optional[dict] = None  # Escalation chain: {"lead": [...], "manager": "..."}
 
     @property
     def assignees(self) -> list[str]:

@@ -1,0 +1,94 @@
+name: SLA Escalation Check
+
+on:
+  schedule:
+    # Run every hour at minute 30
+    - cron: '30 * * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply escalation actions (assign, comment)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check-sla:
+    runs-on: ubuntu-latest
+    name: Check SLA breaches and escalate
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd autoTriage
+          pip install -r requirements.txt
+
+      - name: Run SLA escalation check
+        id: escalation
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd autoTriage
+          
+          # Determine apply mode
+          APPLY_FLAG=""
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            if [ "${{ inputs.apply }}" == "true" ]; then
+              APPLY_FLAG="--apply"
+            fi
+          else
+            # Scheduled runs always apply
+            APPLY_FLAG="--apply"
+          fi
+          
+          python escalation_check.py \
+            --owner "${{ github.repository_owner }}" \
+            --repo "${{ github.event.repository.name }}" \
+            --output "${{ runner.temp }}/escalation_result.json" \
+            $APPLY_FLAG || true
+
+      - name: Upload escalation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: escalation-report
+          path: ${{ runner.temp }}/escalation_result.json
+          retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f "${{ runner.temp }}/escalation_result.json" ]; then
+            echo "## SLA Escalation Report" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            TOTAL=$(cat "${{ runner.temp }}/escalation_result.json" | jq -r '.total_breached')
+            echo "**Total SLA Breaches:** $TOTAL" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$TOTAL" -gt 0 ]; then
+              echo "### Breached Issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Issue | Priority | Hours Open | SLA | Action |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|----------|------------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+              
+              cat "${{ runner.temp }}/escalation_result.json" | jq -r '.issues[] | "| #\(.number) | \(.priority) | \(.hours_open)h | \(.sla_hours)h | \(.escalation_action) |"' >> $GITHUB_STEP_SUMMARY
+            else
+              echo "All issues are within SLA thresholds." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
