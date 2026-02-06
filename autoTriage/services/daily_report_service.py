@@ -55,10 +55,8 @@ class DailyReportService:
         self.team_config = ConfigParser.get_default_config()
 
     def get_sla_hours(self, priority: str) -> int:
-        """Get SLA hours for a priority level."""
-        if self.team_config and self.team_config.sla_hours:
-            return self.team_config.sla_hours.get(priority, 120)
-        return 120  # Default 5 days
+        """Get SLA hours for a priority level. Delegates to EscalationService."""
+        return self.escalation_service.get_sla_hours(priority)
 
     def calculate_sla_status(self, hours_open: float, sla_hours: int) -> str:
         """Calculate SLA status: within, warning (>80%), or breached."""
@@ -151,21 +149,21 @@ class DailyReportService:
     def create_teams_card(self, report: DailyReport) -> dict:
         """Create Adaptive Card for Teams."""
         
-        # Status emoji based on SLA compliance
+        # Status indicator based on SLA compliance
         if report.sla_compliance_pct >= 90:
-            status_emoji = "✅"
+            status_indicator = "[OK]"
             status_color = "good"
         elif report.sla_compliance_pct >= 70:
-            status_emoji = "⚠️"
+            status_indicator = "[WARNING]"
             status_color = "warning"
         else:
-            status_emoji = "🔴"
+            status_indicator = "[CRITICAL]"
             status_color = "attention"
         
         # Build issue rows (top 15)
         issue_rows = []
         for issue in report.issues[:15]:
-            sla_icon = "🔴" if issue.sla_status == "breached" else ("⚠️" if issue.sla_status == "warning" else "✅")
+            sla_icon = "[CRITICAL]" if issue.sla_status == "breached" else ("[WARNING]" if issue.sla_status == "warning" else "[OK]")
             issue_rows.append({
                 "type": "TableRow",
                 "cells": [
@@ -188,7 +186,7 @@ class DailyReportService:
                     "body": [
                         {
                             "type": "TextBlock",
-                            "text": f"📊 Daily Issue Report - {report.repository}",
+                            "text": f"Daily Issue Report - {report.repository}",
                             "weight": "bolder",
                             "size": "large"
                         },

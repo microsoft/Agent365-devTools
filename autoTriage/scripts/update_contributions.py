@@ -174,8 +174,8 @@ def update_team_contributions(owner: str, repo: str, dry_run: bool = False):
 
     if changes:
         for change in changes:
-            direction = "🔴 Busier" if change["change"] > 0 else "🟢 More available"
-            print(f"{direction}: {change['name']} ({change['old']} → {change['new']})")
+            direction = "[BUSIER]" if change["change"] > 0 else "[AVAILABLE]"
+            print(f"{direction}: {change['name']} ({change['old']} -> {change['new']})")
     else:
         print("No changes - all team members have same workload")
 
@@ -188,9 +188,9 @@ def update_team_contributions(owner: str, repo: str, dry_run: bool = False):
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
-        print(f"✅ Updated team-members.json at {config_path}")
+        print(f"[OK] Updated team-members.json at {config_path}")
     else:
-        print("🔍 DRY RUN - No changes written to file")
+        print("[DRY RUN] No changes written to file")
         print("Run without --dry-run to apply changes")
 
 

@@ -85,7 +85,7 @@ def main():
             sys.exit(1)
 
     except Exception as e:
-        print(f"\n[ERROR] ERROR: {e}")
+        print(f"\n[ERROR] Failed to run escalation check: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

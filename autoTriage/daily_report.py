@@ -8,7 +8,6 @@ Used by GitHub Actions for scheduled daily reports.
 """
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
@@ -103,17 +102,17 @@ def generate_summary(report: dict, summary_path: str):
     
     # Determine status
     if report['sla_compliance_pct'] >= 90:
-        status = '✅'
+        status = '[OK]'
         status_text = 'Healthy'
     elif report['sla_compliance_pct'] >= 70:
-        status = '⚠️'
+        status = '[WARNING]'
         status_text = 'Warning'
     else:
-        status = '🔴'
+        status = '[CRITICAL]'
         status_text = 'Critical'
 
     lines = [
-        '# 📊 Daily Issue Report',
+        '# Daily Issue Report',
         '',
         f"**Repository:** `{report['repository']}`",
         f"**Generated:** {report['generated_at']}",
@@ -124,8 +123,8 @@ def generate_summary(report: dict, summary_path: str):
         '|--------|-------|',
         f"| Total Open Issues | **{report['total_open']}** |",
         f"| SLA Compliance | {status} **{report['sla_compliance_pct']}%** ({status_text}) |",
-        f"| Breached (Over SLA) | 🔴 **{report['breached_count']}** |",
-        f"| Warning (>80% SLA) | ⚠️ **{report['warning_count']}** |",
+        f"| Breached (Over SLA) | [CRITICAL] **{report['breached_count']}** |",
+        f"| Warning (>80% SLA) | [WARNING] **{report['warning_count']}** |",
         '',
         '## By Priority',
         '',
@@ -147,7 +146,7 @@ def generate_summary(report: dict, summary_path: str):
     ])
 
     for issue in report['issues'][:20]:
-        status_icon = '🔴' if issue['sla_status'] == 'breached' else ('⚠️' if issue['sla_status'] == 'warning' else '✅')
+        status_icon = '[CRITICAL]' if issue['sla_status'] == 'breached' else ('[WARNING]' if issue['sla_status'] == 'warning' else '[OK]')
         lines.append(f"| [#{issue['number']}]({issue['url']}) | {issue['priority']} | @{issue['assignee']} | {issue['hours_open']}h | {issue['sla_hours']}h | {status_icon} |")
 
     if len(report['issues']) > 20:

@@ -60,7 +60,7 @@ jobs:
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
             --output "${{ runner.temp }}/escalation_result.json" \
-            $APPLY_FLAG || true
+            $APPLY_FLAG
 
       - name: Upload escalation report
         if: always()

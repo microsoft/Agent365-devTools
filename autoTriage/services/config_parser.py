@@ -39,7 +39,7 @@ def _load_security_config() -> dict:
 def _load_sla_hours() -> dict:
     """Load SLA hours per priority from config/team-members.json."""
     data = _load_team_config()
-    return data.get("sla_hours", {"P0": 6, "P1": 12, "P2": 24, "P3": 72, "P4": 72})
+    return data.get("sla_hours", {"P0": 24, "P1": 48, "P2": 72, "P3": 120, "P4": 120})
 
 
 def _load_escalation_chain() -> dict:

@@ -47,10 +47,10 @@ class EscalationService:
     def get_sla_hours(self, priority: str) -> int:
         """Get SLA hours for a priority level."""
         if not self.team_config or not self.team_config.sla_hours:
-            # Default SLAs if not configured
-            defaults = {'P0': 6, 'P1': 12, 'P2': 24, 'P3': 72, 'P4': 72}
-            return defaults.get(priority, 72)
-        return self.team_config.sla_hours.get(priority, 72)
+            # Default SLAs if not configured (must match team-members.json)
+            defaults = {'P0': 24, 'P1': 48, 'P2': 72, 'P3': 120, 'P4': 120}
+            return defaults.get(priority, 120)
+        return self.team_config.sla_hours.get(priority, 120)
 
     def calculate_hours_open(self, issue) -> float:
         """Calculate hours since issue was last updated (or created if no updates)."""

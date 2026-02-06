@@ -64,10 +64,10 @@ AutoTriage is an AI-powered GitHub automation system that automatically triages 
 **So that** no issue falls through the cracks.
 
 **Acceptance Criteria:**
-- [ ] P0 issues escalate after 6 hours
-- [ ] P1 issues escalate after 12 hours
-- [ ] P2 issues escalate after 24 hours
-- [ ] P3/P4 issues escalate after 72 hours
+- [ ] P0 issues escalate after 24 hours
+- [ ] P1 issues escalate after 48 hours
+- [ ] P2 issues escalate after 72 hours
+- [ ] P3/P4 issues escalate after 120 hours (5 working days)
 - [ ] Escalation notifies both Team Lead and Engineering Manager
 
 ### US4: Security Issue Handling
@@ -120,10 +120,10 @@ AutoTriage is an AI-powered GitHub automation system that automatically triages 
 - **FR4.2**: System MUST escalate based on priority-specific SLAs:
   | Priority | SLA | Escalation To |
   |----------|-----|---------------|
-  | P0 | 6 hours | Lead + Manager |
-  | P1 | 12 hours | Lead + Manager |
-  | P2 | 24 hours | Lead + Manager |
-  | P3/P4 | 72 hours | Lead + Manager |
+  | P0 | 24 hours | Lead + Manager |
+  | P1 | 48 hours | Lead + Manager |
+  | P2 | 72 hours | Lead + Manager |
+  | P3/P4 | 120 hours (5 days) | Lead + Manager |
 - **FR4.3**: Escalation MUST reassign issue from current assignee to Lead
 - **FR4.4**: If Lead doesn't respond within another SLA cycle, escalate to Manager
 - **FR4.5**: System MUST notify via GitHub @mention and/or Teams message
@@ -178,15 +178,15 @@ AutoTriage is an AI-powered GitHub automation system that automatically triages 
     }
   ],
   "escalation_chain": {
-    "lead": "sellakumaran",
+    "lead": ["sellakumaran", "pontemonti"],
     "manager": "tmlsousa"
   },
   "sla_hours": {
-    "P0": 6,
-    "P1": 12,
-    "P2": 24,
-    "P3": 72,
-    "P4": 72
+    "P0": 24,
+    "P1": 48,
+    "P2": 72,
+    "P3": 120,
+    "P4": 120
   }
 }
 ```

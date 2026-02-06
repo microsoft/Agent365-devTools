@@ -35,12 +35,8 @@ jobs:
       - name: Determine issue number
         id: issue
         run: |
-          # Get issue number based on event type
-          if [ "${{ github.event_name }}" == "issue_comment" ]; then
-            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-          else
-            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-          fi
+          # Get issue number (same property for both issues and issue_comment events)
+          echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
           
           # Check if this is a re-triage (not a new issue)
           if [ "${{ github.event.action }}" == "opened" ]; then
