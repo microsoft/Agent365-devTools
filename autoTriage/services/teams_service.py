@@ -10,7 +10,7 @@ import os
 import json
 import logging
 import requests
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 # TODO: These models are placeholders for future daily digest and weekly plan features.
 # The DailyDigestResult and WeeklyPlanResult models do not exist yet.

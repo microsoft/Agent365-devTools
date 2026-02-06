@@ -173,11 +173,11 @@ class EscalationService:
         if result.escalation_action == "reassign_lead":
             lead_to_assign = result.escalated_to[0] if result.escalated_to else leads[0]
             comment_lines.extend([
-                f"**Action:** Reassigning to Tech Lead @{lead_to_assign} for immediate attention.",
+                f"**Action:** Adding Tech Lead @{lead_to_assign} as assignee for immediate attention.",
                 "",
                 f"cc: @{manager}" if manager else "",
             ])
-            # Assign to lead
+            # Add lead as assignee (note: this adds, not replaces existing assignees)
             self.github_service.assign_issue(owner, repo, issue_number, lead_to_assign)
             
         elif result.escalation_action == "notify_manager":

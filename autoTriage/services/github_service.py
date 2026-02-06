@@ -770,9 +770,12 @@ class GitHubService:
                 if any(bot in comment.user.login for bot in TRIAGE_BOT_USERS):
                     # Check if it's a triage comment
                     if 'triage' in comment.body.lower() or 'team assistant' in comment.body.lower():
-                        # Check if it was posted recently
-                        if comment.created_at.replace(tzinfo=timezone.utc) > cutoff_time:
-                            logger.info(f"Issue #{issue.number} was triaged {(datetime.now(timezone.utc) - comment.created_at.replace(tzinfo=timezone.utc)).seconds // 60} minutes ago, skipping")
+                        # Check if it was triaged or updated recently
+                        # Use updated_at to handle edited comments (re-triage updates existing comment)
+                        last_activity_time = (getattr(comment, 'updated_at', None) or comment.created_at).replace(tzinfo=timezone.utc)
+                        if last_activity_time > cutoff_time:
+                            minutes_ago = (datetime.now(timezone.utc) - last_activity_time).seconds // 60
+                            logger.info(f"Issue #{issue.number} was triaged {minutes_ago} minutes ago, skipping")
                             return True
             return False
         except GithubException as e:

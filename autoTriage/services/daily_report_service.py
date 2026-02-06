@@ -93,11 +93,12 @@ class DailyReportService:
             else:
                 by_priority["None"] = by_priority.get("None", 0) + 1
             
-            # Calculate hours open
-            created_at = issue.created_at
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
-            hours_open = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+            # Calculate hours since last update (consistent with EscalationService)
+            # Use updated_at for SLA calculation - this resets when someone responds
+            reference_time = issue.updated_at or issue.created_at
+            if reference_time.tzinfo is None:
+                reference_time = reference_time.replace(tzinfo=timezone.utc)
+            hours_open = (datetime.now(timezone.utc) - reference_time).total_seconds() / 3600
             
             # Get SLA info
             sla_hours = self.get_sla_hours(priority) if priority else 120
@@ -212,7 +213,7 @@ class DailyReportService:
                                     "width": "auto",
                                     "items": [
                                         {"type": "TextBlock", "text": "SLA Compliance", "size": "small", "isSubtle": True},
-                                        {"type": "TextBlock", "text": f"{status_emoji} {report.sla_compliance_pct}%", "size": "extraLarge", "weight": "bolder", "color": status_color}
+                                        {"type": "TextBlock", "text": f"{status_indicator} {report.sla_compliance_pct}%", "size": "extraLarge", "weight": "bolder", "color": status_color}
                                     ]
                                 },
                                 {

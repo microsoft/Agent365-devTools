@@ -76,7 +76,9 @@ class ConfigParser:
             copilot_fixable_labels=data.get("copilot_fixable_labels", []),
             features_enabled=data.get("features_enabled", {}),
             ado_config=ConfigParser._parse_ado_config(data.get("azure_devops", {})),
-            security=_load_security_config()
+            security=_load_security_config(),
+            sla_hours=_load_sla_hours(),
+            escalation_chain=_load_escalation_chain(),
         )
 
     @staticmethod
