@@ -51,7 +51,7 @@ class DailyReportService:
     def __init__(self):
         self.github_service = GitHubService()
         self.escalation_service = EscalationService()
-        self.teams_service = TeamsService()
+        self._teams_service = None  # Lazily instantiated
         self.team_config = ConfigParser.get_default_config()
 
     def get_sla_hours(self, priority: str) -> int:
@@ -282,8 +282,11 @@ class DailyReportService:
 
     def send_to_teams(self, report: DailyReport) -> bool:
         """Send report to MS Teams."""
+        # Lazy instantiation - only create TeamsService when actually needed
+        if self._teams_service is None:
+            self._teams_service = TeamsService()
         card = self.create_teams_card(report)
-        return self.teams_service.post_adaptive_card(card)
+        return self._teams_service.post_adaptive_card(card)
 
     def run(self, owner: str, repo: str, send_teams: bool = True) -> DailyReport:
         """Generate report and optionally send to Teams."""

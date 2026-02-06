@@ -146,7 +146,11 @@ class EscalationService:
         return [r for r in all_results if r.sla_breached]
 
     def apply_escalation(self, owner: str, repo: str, result: EscalationResult) -> bool:
-        """Apply escalation action to an issue."""
+        """Apply escalation action to an issue.
+        
+        Returns:
+            True only if all operations (assign, label, comment) succeed.
+        """
         if not result.sla_breached or not result.escalation_action:
             return False
 
@@ -154,6 +158,9 @@ class EscalationService:
         escalation_chain = self.get_escalation_chain()
         leads = escalation_chain.get('lead', [])
         manager = escalation_chain.get('manager')
+        
+        # Track success of all operations
+        assign_success = True  # Default to True for actions that don't assign
 
         # Build escalation comment
         comment_lines = [
@@ -178,7 +185,7 @@ class EscalationService:
                 f"cc: @{manager}" if manager else "",
             ])
             # Add lead as assignee (note: this adds, not replaces existing assignees)
-            self.github_service.assign_issue(owner, repo, issue_number, lead_to_assign)
+            assign_success = self.github_service.assign_issue(owner, repo, issue_number, lead_to_assign)
             
         elif result.escalation_action == "notify_manager":
             comment_lines.extend([
@@ -205,10 +212,13 @@ class EscalationService:
         comment = "\n".join(comment_lines)
         
         # Add escalation label if it doesn't exist
-        self.github_service.apply_labels(owner, repo, issue_number, ["escalated"])
+        label_success = self.github_service.apply_labels(owner, repo, issue_number, ["escalated"])
         
         # Post comment
-        return self.github_service.add_comment(owner, repo, issue_number, comment)
+        comment_success = self.github_service.add_comment(owner, repo, issue_number, comment)
+        
+        # Return True only if all operations succeeded
+        return assign_success and label_success and comment_success
 
     def run_escalation_check(self, owner: str, repo: str, apply: bool = False) -> Dict[str, Any]:
         """Run full escalation check on repository.

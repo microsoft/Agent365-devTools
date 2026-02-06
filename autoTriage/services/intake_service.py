@@ -484,8 +484,7 @@ def triage_issues(
         llm_service = LlmService()
     if config_parser is None:
         config_parser = ConfigParser()
-    if teams_service is None:
-        teams_service = TeamsService()
+    # Note: teams_service is lazily created below only when post_to_teams is True
 
     # Check for single issue mode via issueUrl
     target_issue_number = None
@@ -532,6 +531,8 @@ def triage_issues(
     if not untriaged_issues:
         teams_message_sent = False
         if post_to_teams:
+            if teams_service is None:
+                teams_service = TeamsService()
             teams_message_sent = teams_service.post_intake_results(owner, repo, [], apply_changes)
 
         result = {
@@ -784,6 +785,8 @@ def triage_issues(
     # Post to Teams if requested
     teams_message_sent = False
     if post_to_teams:
+        if teams_service is None:
+            teams_service = TeamsService()
         teams_message_sent = teams_service.post_intake_results(owner, repo, results, apply_changes)
 
     result = {
