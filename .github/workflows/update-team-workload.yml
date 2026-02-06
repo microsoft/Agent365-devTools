@@ -70,12 +70,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
-            echo "✅ Team workload updated based on current open issues" >> $GITHUB_STEP_SUMMARY
+            echo "[OK] Team workload updated based on current open issues" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Changes" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`diff" >> $GITHUB_STEP_SUMMARY
             git diff autoTriage/config/team-members.json >> $GITHUB_STEP_SUMMARY || echo "Changes committed" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           else
-            echo "ℹ️ No workload changes - team is balanced" >> $GITHUB_STEP_SUMMARY
+            echo "[INFO] No workload changes - team is balanced" >> $GITHUB_STEP_SUMMARY
           fi

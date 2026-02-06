@@ -287,10 +287,8 @@ class TestBashArrayCommandBuilding:
             "--apply"
         ]
         
-        retriage = False
-        if retriage:
-            args.append("--retriage")
-        
+        # retriage is False for new issues (action == 'opened')
+        # This test verifies the base args without the --retriage flag
         assert "--retriage" not in args
         assert len(args) == 9  # 9 base args, no retriage
 
@@ -319,8 +317,8 @@ class TestWorkflowNoEval:
         """Test that workflows don't use shell injection patterns."""
         dangerous_patterns = [
             "eval ",
-            "`$(",  # Command substitution in string
-            "$(cat",  # Reading into variable unsafely
+            "`$",  # Backtick followed by variable (command injection)
+            "$(",  # Command substitution
         ]
         
         for name, content in all_workflows.items():

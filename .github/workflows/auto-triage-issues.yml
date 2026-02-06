@@ -33,7 +33,7 @@ jobs:
       - name: Determine issue number
         id: issue
         run: |
-          # Get issue number (same property for both issues and issue_comment events)
+          # Get issue number from the issues event payload
           echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
           
           # Check if this is a re-triage (not a new issue)
@@ -106,7 +106,7 @@ jobs:
             }
 
             // Build comment body
-            let comment = '## 🤖 Auto-Triage Results\n\n';
+            let comment = '## [AUTO-TRIAGE] Results\n\n';
             comment += `**Classification:** ${triageResult.issue_type || 'Unknown'}\n`;
             comment += `**Priority:** ${triageResult.priority || 'P3'}\n`;
             comment += `**Confidence:** ${triageResult.confidence ? (triageResult.confidence * 100).toFixed(1) + '%' : 'N/A'}\n\n`;
@@ -119,12 +119,12 @@ jobs:
             comment += rationaleText + '\n\n';
 
             if (triageResult.is_copilot_fixable) {
-              comment += '✅ This issue appears to be Copilot-fixable!\n\n';
+              comment += '[OK] This issue appears to be Copilot-fixable!\n\n';
             }
 
             // Add fix suggestions if available
             if (triageResult.fix_suggestions && triageResult.fix_suggestions.length > 0) {
-              comment += '### 💡 Suggested Approach\n\n';
+              comment += '### [SUGGESTION] Suggested Approach\n\n';
               triageResult.fix_suggestions.forEach((suggestion, index) => {
                 comment += `${index + 1}. ${suggestion}\n`;
               });

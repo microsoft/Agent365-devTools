@@ -147,7 +147,12 @@ def generate_summary(report: dict, summary_path: str):
 
     for issue in report['issues'][:20]:
         status_icon = '[CRITICAL]' if issue['sla_status'] == 'breached' else ('[WARNING]' if issue['sla_status'] == 'warning' else '[OK]')
-        lines.append(f"| [#{issue['number']}]({issue['url']}) | {issue['priority']} | @{issue['assignee']} | {issue['hours_open']}h | {issue['sla_hours']}h | {status_icon} |")
+        raw_assignee = issue.get('assignee', '')
+        if not raw_assignee or str(raw_assignee).strip().lower() == 'unassigned':
+            assignee_display = 'Unassigned'
+        else:
+            assignee_display = f"@{raw_assignee}"
+        lines.append(f"| [#{issue['number']}]({issue['url']}) | {issue['priority']} | {assignee_display} | {issue['hours_open']}h | {issue['sla_hours']}h | {status_icon} |")
 
     if len(report['issues']) > 20:
         lines.append(f"| ... | *{len(report['issues']) - 20} more issues* | | | | |")
