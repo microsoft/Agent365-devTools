@@ -122,15 +122,15 @@ The Agent 365 CLI supports .NET, Node.js, and Python projects. You MUST check th
 
 First, detect the project type by checking for project files in the deployment directory:
 
-```powershell
-# Check for .NET project
-Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
+```bash
+# Check for .NET project (.csproj)
+find . -name "*.csproj" -print -quit
 
-# Check for Node.js project
-Test-Path "package.json"
+# Check for Node.js project (package.json)
+test -f "package.json" && echo "Node.js project detected"
 
-# Check for Python project
-(Test-Path "requirements.txt") -or (Test-Path "pyproject.toml")
+# Check for Python project (requirements.txt or pyproject.toml)
+{ test -f "requirements.txt" || test -f "pyproject.toml"; } && echo "Python project detected"
 ```
 
 #### Validate required tools based on project type
@@ -486,7 +486,7 @@ Before publishing, you **MUST** review and customize the `manifest.json` file in
 
 #### Locate the manifest file
 
-The manifest file should be in your project's root directory or in a location specified by your project structure. If a manifest doesn't exist, the CLI may generate a template, but you should customize it.
+The Agent 365 CLI expects the manifest at `<deploymentProjectPath>/manifest/manifest.json`. The `a365 publish` command uses the `manifest/` directory and will extract or scaffold a manifest template there if one does not exist, but you must review and customize that file before publishing.
 
 #### Manifest fields to update
 
@@ -559,7 +559,7 @@ Ask the user: **"Please review and update your manifest.json file with your agen
 
 Run `a365 publish`. This step updates the agent's manifest identifiers and publishes the agent package to Microsoft Online Services (specifically, it registers the agent with the Microsoft 365 admin center under your tenant). What this does:
 
-- It takes your project's `manifest.json` (which should define your agent's identity and capabilities) and updates certain IDs in it (the CLI will inject the Azure AD application IDs – the blueprint and instance IDs – where needed).
+- It takes your project's `manifest.json` (which should define your agent's identity and capabilities) and updates certain identifiers in it (the CLI will inject the Azure AD application blueprint ID where needed).
 - It then publishes the agent manifest/package to your tenant's catalog (so that the agent can be "hired" or installed in Teams and other apps).
 
 Watch for output messages. Successful publish will indicate that the agent manifest is updated and that you can proceed to create an instance of the agent. If there's an error during publish, read it closely. For example, if the CLI complains about being unable to update some manifest or reach the admin center, ensure your account has the necessary privileges and that the custom app registration has the permissions for `Application.ReadWrite.All` (since publish might call Graph to update applications). Also, ensure your internet connectivity is good.
@@ -652,142 +652,53 @@ If your agent instance isn't working as expected, see the Troubleshooting sectio
 
 ## Error Handling and Troubleshooting
 
-Things don't always go smoothly. As an AI agent, you must be prepared to diagnose and fix issues at each stage. Here's how to systematically troubleshoot:
+If any step results in an error, stop and analyze the error message carefully. For detailed troubleshooting guidance, refer to the official documentation:
 
-### General approach
+- **[Agent 365 Troubleshooting Guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/troubleshooting)** — comprehensive coverage of common errors, authentication issues, Graph permission problems, Azure provisioning failures, and deployment issues.
+- **[Agent 365 CLI Reference](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli)** — command-specific options and usage details.
+- **[GitHub Issues](https://github.com/microsoft/Agent365-devTools/issues)** — search by error message for known issues and workarounds.
 
-If any step results in an error or unexpected output, stop and analyze the error message carefully. Cross-reference the error with available documentation or known issues. Utilize all resources at your disposal: the official Microsoft Learn docs for Agent 365 CLI, the content of the Agent365-devTools GitHub repository (including its README, usage guide, and any scripts or code), and the GitHub issues (both open and closed) for this project. Often, others have encountered similar problems, and maintainers' responses in issue threads can provide solutions or workarounds.
+### Quick tips
 
-### Installation issues
-
-**NuGet or network errors during `dotnet tool install`:** If the CLI installation fails with an error about retrieving the package (for example, "NuGet package not found" or connectivity issues), ensure internet access is available. The `Microsoft.Agents.A365.DevTools.Cli` package is hosted on NuGet; a common issue when the CLI was just released was needing the `--prerelease` flag (which we already include). Verify that you included `--prerelease`. If the error persists, try again after a short wait (NuGet may have been temporarily unreachable). If there is a persistent version resolution issue, you can search the GitHub issues; for instance, one issue reported an installation glitch that was resolved in later versions. Upgrading dotnet SDK or clearing NuGet caches might help in some cases.
-
-**CLI command not found after installation:** If `a365` still isn't found after a successful install, ensure that the dotnet tools path is in the system PATH. You may need to manually add it or restart the shell. By default on Windows, it's in `%USERPROFILE%\.dotnet\tools`, and on Linux/Mac in `~/.dotnet/tools`. If the agent environment doesn't pick up changes to PATH, you might have to call the binary via its full path.
-
-### Azure CLI / Authentication issues
-
-If commands fail because you are not logged in (for example, an error explicitly saying you need to login or "No subscription found"), run `az login` and ensure the correct subscription.
-
-If `a365 setup` or other commands attempt to do an interactive login (for Graph) and fail in a headless environment (e.g., error: "InteractiveBrowserCredential authentication failed: A window handle must be configured" or any mention of `InteractiveBrowserCredential`), this is a known limitation in non-interactive terminals. Workarounds include:
-
-- Ensure you have the latest CLI version, as improvements might be made to support device code flow. (Check the release notes or issues if such a feature is available, e.g., an issue suggests a `--use-device-code` flag or automatic fallback might be introduced.) If such an option exists, try running the command with that flag to force a device code authentication (which will output a code for the user to enter at https://microsoft.com/devicelogin).
-- If no such option in the CLI, you can attempt to manually pre-authenticate: For example, use the PowerShell Microsoft Graph module or Azure CLI to obtain tokens. However, the CLI may not reuse those for the specific Graph scope it needs (as noted in an issue, the CLI spawned its own process that didn't reuse the parent token cache). In short, the robust solution is likely beyond your direct control. Therefore, the best approach is to inform the user that the operation requires interactive login. For instance, instruct: "This command needs to open a browser to acquire a Graph token. Please run it in an environment where a web browser is available, or use a local machine instead of a headless server for this step." You might also mention that a future CLI update may address this, and reference the relevant issue if appropriate.
-- If the issue persists and blocks progress, treat it as a potential bug (see "Escalating to GitHub" below). 
-
-If `a365 setup` fails at the "setup permissions mcp" stage with an authentication error, this is likely the same issue as above (needing an interactive login for the delegated permissions to configure the MCP – Model Context Protocol – server permissions). The workaround until it's fixed would be the same: use an interactive environment or file a bug.
-
-### Graph permission or consent issues
-
-An error containing "Failed to acquire token" or "insufficient privileges" or anything about authorization failed during setup or publish indicates something amiss with the Graph permissions setup. Double-check that the custom app registration's delegated permissions are exactly as required and that admin consent has been granted. You might retrieve the current permissions via Azure Portal or Azure AD PowerShell to confirm. If a permission was missed or not consented, add/consent it and try again.
-
-If the CLI specifically prints a URL for admin consent (often the case if it tried to do something and realized you need tenant-wide approval), make sure the user (Global Admin) completes that step. The CLI logs or error might mention which permission was lacking when it failed. Provide guidance to the user on granting that permission. Once done, re-run the failed command.
-
-### Azure provisioning issues
-
-**Resource already exists:** If you run `a365 setup all` multiple times, you might see warnings or errors about existing resources (for example, if you had partially run it before). The CLI is generally idempotent, but in case some resource is in a bad state, you may use CLI or Azure Portal to inspect it. For instance, if a web app was created but endpoint registration failed, you might delete that web app manually (or use `a365 cleanup azure`) and then retry setup. Only use `a365 cleanup` as a last resort because it will delete many things (it's meant to remove everything the CLI created).
-
-**Quotas and limits:** As mentioned, if you hit a quota, the error message from Azure will indicate which resource type. The user might need to free up or raise the quota. A quick alternative is to try deploying to a different Azure region or SKU that has available capacity (update the config and run `a365 setup all` again).
-
-**Unsupported region or service:** If the error implies something like "The region is not supported" for an Azure resource (especially likely for Azure Bot Service or related to Teams integration), consult the documentation or known issues for supported regions. The 2025 preview limited certain features (e.g., bot registration) to specific regions. Changing the region to one of the known working ones (as noted earlier) can resolve this.
-
-### Application deployment issues
-
-**Build failures:** If `a365 deploy` fails while building the project, the error will usually show in the console (like MSBuild errors for .NET, or npm errors for Node). Solve these as you would normally: check that all project files are correct, all dependencies are listed, etc. You can attempt to build outside the CLI to replicate the issue (e.g., run `dotnet build` or `npm run build` manually) to get more detail. Address code issues or missing dependencies accordingly.
-
-**Python-specific:** If deploying a Python agent and it fails to detect or install dependencies, ensure that your project has a `requirements.txt` or `pyproject.toml` that lists Agent 365 SDK and others. The CLI tries to convert local `.env` to Azure settings; ensure your environment variables are set in config or `.env` so it picks them up.
-
-**Publish folder not found:** If you used the `--restart` flag on deploy (to skip rebuild) and hit "publish folder not found," it means no previous build output is present. Simply run `a365 deploy` without `--restart` at least once to generate the publish folder, or ensure the `deploymentProjectPath` is correct. We addressed this earlier; follow the fix of doing a full deploy first.
+- Run failing commands with `-v` / `--verbose` for detailed logs.
+- Check log files: Windows `%APPDATA%/a365/logs/`, Linux/Mac `~/.config/a365/logs/`.
+- Most `a365` commands are idempotent — safe to re-run after fixing an issue.
+- Use `a365 cleanup azure` or `a365 cleanup blueprint` only as a last resort to remove created resources.
 
 ### Dev tunnel issues
 
-If you are using a dev tunnel for local development, you may encounter the following issues:
+**Dev tunnel CLI not found:** Ensure the installation completed and the binary is on your PATH. On Windows, restart your terminal or add the installation directory manually.
 
-**Dev tunnel CLI not found:** If `devtunnel` command is not found after installation, ensure the installation completed successfully and the binary is in your PATH. On Windows, you may need to restart your terminal or add the installation directory to PATH manually. Try running the full path to the executable or reinstalling.
-
-**Authentication failures:** If `devtunnel user login` fails or times out, ensure you have a stable internet connection and that your browser can open. If running in a headless environment, use device code authentication:
+**Authentication failures:** If `devtunnel user login` fails in a headless environment, use device code auth:
 ```bash
 devtunnel user login --device-code
 ```
-This will provide a code to enter at https://microsoft.com/devicelogin.
 
-**Tunnel connection issues:** If the tunnel is created but the agent cannot receive messages:
-- Verify the tunnel is actively running (`devtunnel host <tunnel-name>` must be running in a terminal).
+**Tunnel not receiving messages:**
+- Verify the tunnel is actively running (`devtunnel host <tunnel-name>` must be running).
 - Confirm the local port matches what your agent is listening on.
-- Check that `--allow-anonymous` was used when creating the tunnel (required for Agent 365 service connectivity).
-- Test the tunnel URL in a browser - you should see a response from your local agent (or a connection refused if the agent isn't running).
+- Check that `--allow-anonymous` was used when creating the tunnel.
+- Test the tunnel URL in a browser to confirm connectivity.
 
-**Tunnel URL has changed:** If you used a temporary tunnel or recreated your named tunnel, the URL may have changed. Update the messaging endpoint by running:
+**Tunnel URL changed:** Update the messaging endpoint:
 ```bash
 a365 setup blueprint --update-endpoint https://<new-tunnel-id>-<port>.devtunnels.ms/api/messages
 ```
+> **Tip:** Use a persistent (named) tunnel to keep a consistent URL across sessions.
 
-> **Tip:** Using a persistent (named) tunnel avoids this issue. The URL remains consistent across sessions, so you only need to run `devtunnel host <tunnel-name>` to resume.
-
-**Port already in use:** If you see an error that the port is already in use when hosting the tunnel:
+**Port already in use:**
 ```bash
 devtunnel port delete <tunnel-name> --port-number <old-port>
 devtunnel port create <tunnel-name> --port-number <new-port>
 ```
 
-**Tunnel expires or disconnects:** Free-tier dev tunnels may have usage limits or timeout after extended periods of inactivity. If your tunnel stops working:
-- Re-run `devtunnel host <tunnel-name>` to restart it.
-- Consider upgrading to a paid tier for production-like scenarios, or switch to Azure-hosted deployment for long-running agents.
+**Tunnel expires or disconnects:** Re-run `devtunnel host <tunnel-name>` to restart. For long-running agents, consider Azure-hosted deployment instead.
 
-**Cannot access tunnel from Teams:** If the Agent 365 service or Teams cannot reach your tunnel:
-- Ensure the tunnel was created with `--allow-anonymous` flag.
-- Verify your firewall allows outbound connections to `*.devtunnels.ms`.
-- Check that your local agent is running and listening on the correct port.
-- Confirm the full messaging endpoint URL is correct (including the `/api/messages` path or your agent's specific endpoint path).
+**Cannot access tunnel from Teams:**
+- Ensure `--allow-anonymous` flag was used.
+- Verify firewall allows outbound connections to `*.devtunnels.ms`.
+- Confirm the full messaging endpoint URL includes the correct path (e.g., `/api/messages`).
 
-### Using the repository and docs for insight
+### Escalating to GitHub
 
-The Agent365-devTools repo contains a `Readme-Usage.md` (which we have effectively followed) and possibly other docs in the `docs/` folder. If a certain command is not behaving as expected, consider reading the relevant section in those docs or the CLI reference in Microsoft Learn. For example, if uncertain how a subcommand works, you can run `a365 <command> --help` for quick info, or check the `docs/commands/` directory in the repo for detailed reference markdown files.
-
-Search the GitHub issues by error message. If you encounter "ERROR: Web app creation failed" or "Failed to configure XYZ," search those phrases. Often you will find an issue thread where maintainers offer a workaround or it might indicate the bug is fixed in a newer version (prompting you to update the CLI if you haven't).
-
-If you suspect the issue is in the CLI's logic, you can even browse the source code (in `src/`) to understand what it's trying to do. For instance, if a certain property isn't being applied, the source might reveal it. This is advanced and usually not required unless diagnosing a bug for reporting.
-
-### Escalating to GitHub (Drafting an Issue)
-
-If you have exhausted the troubleshooting steps and it appears that the problem is due to a bug or unimplemented feature in the Agent 365 CLI itself (not a user error or missing prerequisite), then prepare to create a GitHub issue for the maintainers. Examples might include: a crash or unhandled exception in the CLI, a scenario where the CLI's behavior contradicts the documentation, or an inability to proceed due to a limitation in the tool.
-
-Before writing a new issue, quickly search the existing issues (open and closed) to see if it's already reported. If it is, you might find temporary fixes or at least avoid duplicate reporting. If you have additional details to contribute, you can plan to mention them in the existing issue thread instead of opening a new one.
-
-**Collect information for the issue:** Gather the relevant details:
-
-- **Descriptive title:** Summarize the problem in a concise way (e.g., "a365 setup all fails to acquire Graph token in headless environment" or "Error XYZ during deploy on Linux"). This will be the issue title.
-- **Environment details:** Note the CLI version (`a365 --version` output), OS platform and version, shell or environment (PowerShell, Bash on Ubuntu, etc.), and any other relevant environment info (Azure CLI version if relevant, or whether you're using a headless server or behind a proxy, etc.).
-- **Steps to reproduce:** Write down the exact sequence of commands you ran and in what context that led to the issue. Be as precise as possible, including any configuration choices that might matter. The goal is for the maintainers (or any developer) to replicate the issue easily. Example: "1. Installed CLI v1.0.49, 2. Ran a365 config init with app ID X... 3. Ran a365 setup all in a Windows Terminal on Windows 10, user is Global Admin, Azure region WestUS, 4. Saw error ..."
-- **The actual error message and logs:** Copy the relevant error output. If it's long, you can provide the tail of the log or the key error snippet. The logs are also available in files (`a365.setup.log`, etc., as noted in the Readme-Usage). You can open and include sections of those log files if they provide more detail than the console output. Make sure to remove or redact any sensitive info (like GUIDs that might be tenant or subscription IDs, if needed). Usually, error messages and stack traces are safe to share.
-- **Expected behavior:** Describe what you expected to happen if the bug was not present (e.g., "the command should complete without errors and the agent should be set up" or "the token acquisition should fall back to device code instead of failing"). This helps clarify the discrepancy.
-- **Workarounds attempted:** List any steps you tried to resolve it (e.g., "I tried re-running with --verbose, tried manual token generation, but none worked"). This helps the maintainers know what you've already done and not suggest the same things again.
-- **Potential cause or fix (optional):** If you have insight from the error or code, include your thoughts. For example, "It appears the CLI does not support device code flow for Graph auth in headless scenarios. Perhaps adding `-UseDeviceAuthentication` to the PowerShell `Connect-MgGraph` call would solve this." Even if you're not 100% sure, this shows you did homework and could speed up the fix. If you have identified exactly where in the code the problem is and can suggest a specific code change, that's even better. For instance, "The error comes from A365SetupRunner when calling the Graph SDK. Catching the exception and retrying with a device code might resolve it." (Keep a respectful tone and frame it as a suggestion.)
-
-Once you compile this information, format it as a new GitHub issue. Follow the style of existing issues: start with a brief description, then headings like "To Reproduce", "Expected behavior", "Actual behavior" (or "Error details"), and "Environment". Attach log excerpts or screenshots if helpful (text is preferable for logs).
-
-**Do not actually create the GitHub issue on your own** (unless explicitly authorized). Instead, present the draft to the user or maintainers. For example, you can output: "Draft Issue Report: ...". This allows the user to review and post it themselves, or gives the maintainers the info if they are following along.
-
-If the bug is blocking your progress and there's no workaround, gracefully stop after providing the draft issue and explanation. It's better to wait for a fix or guidance than to continue in a broken state. In your communication with the user, emphasize that the issue appears to be on the tool's side and that you've prepared a report for the developers.
-
-### Logging and verbosity
-
-If you need more information while troubleshooting, remember that many `a365` commands support a `-v` or `--verbose` flag (as shown in help messages). For example, `a365 setup all -v` might output more detailed logs. Use this when an operation fails without enough info; the extra logs could reveal the failing step. Also, you can check the log files mentioned in the Readme (e.g., `~/.config/a365/logs/a365.setup.log` on Linux/Mac or the AppData path on Windows) for more detail. Include relevant parts of these logs in your analysis or in the GitHub issue if one is being filed.
-
-### Reverting changes
-
-In some cases, you might want to undo partial changes (for example, if the deployment got half-way and you want to clean up before retrying). The CLI's `a365 cleanup` commands can remove resources: `a365 cleanup azure` to delete Azure components, `a365 cleanup blueprint` to remove the Entra ID application (blueprint), etc. Use them carefully and only if you plan to fully retry the setup or if you want to roll back everything. If only a minor fix is needed, it's usually not necessary to clean up; you can just re-run the failing step.
-
-### Reference official documentation
-
-Throughout the process, if you are unsure how to proceed or want to verify the proper usage of a command, refer to the official documentation on Microsoft Learn. The main pages of interest are:
-
-- **Agent 365 CLI overview and installation** – provides info on prerequisites and install/update process.
-- **Agent 365 CLI Reference** – lists all commands and options in detail.
-- **Specific command reference pages** – e.g., "setup" command, "config" command, "deploy" command references, which detail what each sub-step does and any options or requirements.
-- **Custom client app registration guide** – details how to do the Entra ID app setup (we summarized it above).
-
-These docs can be accessed online (links were given) or might be included in the repository's docs folder. Use them as needed to double-check correct behavior.
-
----
-
-By following the above steps and using thorough troubleshooting practices, you should be able to successfully guide the Agent 365 CLI through installing all prerequisites, configuring the environment, and deploying the agent. Always prioritize resolving any errors before moving on to the next step, to ensure a smooth setup. Once completed, confirm with the user that the agent is up and running, and provide any final instructions (like how to interact with the agent in Teams or where to find logs for the running agent).
+If the issue appears to be a CLI bug, draft an issue with: CLI version (`a365 --version`), OS/shell, exact steps to reproduce, error output, and expected vs actual behavior. Present the draft to the user — do not create the issue unless authorized.
