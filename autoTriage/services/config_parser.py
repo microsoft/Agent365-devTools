@@ -168,14 +168,14 @@ class ConfigParser:
                 default_priority="P3"
             ),
             copilot_fixable=CopilotFixableConfig(
-                enabled=False,
+                enabled=True,
                 criteria=["typo", "simple fix", "documentation", "good first issue"],
                 max_issues_per_day=5
             ),
             triage_meta=TriageMeta(
                 auto_assign=True,
                 auto_label=True,
-                copilot_enabled=False,
+                copilot_enabled=True,
                 copilot_max_issues_per_day=5
             ),
             labels={},
