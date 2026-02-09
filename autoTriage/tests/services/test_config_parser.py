@@ -220,3 +220,34 @@ triage_meta:
         assert ado_config.project == "test-project"
         assert "Bug" in ado_config.tracked_work_item_types
         assert "Task" in ado_config.tracked_work_item_types
+
+
+class TestDefaultConfig:
+    """Test default configuration values."""
+
+    def test_default_config_has_copilot_enabled(self):
+        """Test that default config has copilot_enabled set to True."""
+        config = ConfigParser._default_config()
+
+        assert config.triage_meta.copilot_enabled is True
+        assert config.is_copilot_enabled() is True
+
+    def test_default_config_has_copilot_fixable_enabled(self):
+        """Test that default config has copilot_fixable.enabled set to True."""
+        config = ConfigParser._default_config()
+
+        assert config.copilot_fixable.enabled is True
+
+    def test_default_config_copilot_max_issues_per_day(self):
+        """Test that default config has reasonable copilot limits."""
+        config = ConfigParser._default_config()
+
+        assert config.triage_meta.copilot_max_issues_per_day == 5
+        assert config.copilot_fixable.max_issues_per_day == 5
+
+    def test_get_default_config_returns_same_as_default_config(self):
+        """Test get_default_config method returns proper config."""
+        config = ConfigParser.get_default_config()
+
+        assert config.triage_meta.copilot_enabled is True
+        assert config.copilot_fixable.enabled is True

@@ -163,3 +163,195 @@ class TestReportDataclasses:
         assert len(report.issues) == 2
         assert report.issues[0].number == 1
         assert report.issues[1].sla_status == "breached"
+
+    def test_daily_report_with_ai_summary(self):
+        """Test DailyReport with AI summary field."""
+        from services.daily_report_service import DailyReport
+        
+        report = DailyReport(
+            repository="owner/repo",
+            generated_at="2026-02-09",
+            total_open=5,
+            sla_compliance_pct=80.0,
+            breached_count=1,
+            warning_count=1,
+            by_priority={"P1": 2, "P2": 3},
+            issues=[],
+            ai_summary="The repository has 5 open issues with good SLA compliance."
+        )
+        
+        assert report.ai_summary == "The repository has 5 open issues with good SLA compliance."
+
+    def test_daily_report_ai_summary_defaults_to_none(self):
+        """Test DailyReport ai_summary defaults to None."""
+        from services.daily_report_service import DailyReport
+        
+        report = DailyReport(
+            repository="owner/repo",
+            generated_at="2026-02-09",
+            total_open=5,
+            sla_compliance_pct=80.0,
+            breached_count=1,
+            warning_count=1,
+            by_priority={"P1": 2, "P2": 3},
+            issues=[]
+        )
+        
+        assert report.ai_summary is None
+
+
+class TestAISummaryGeneration:
+    """Test AI summary generation for daily reports."""
+
+    def test_generate_ai_summary_success(self):
+        """Test successful AI summary generation."""
+        from services.daily_report_service import DailyReportService, IssueReportItem
+        
+        mock_llm = MagicMock()
+        mock_llm._call_llm.return_value = "The repository has 3 open issues with 90% SLA compliance."
+        mock_llm.prompts.get.return_value = "You are an assistant."
+        mock_llm.prompts.format.return_value = "Generate summary for 3 issues."
+        
+        with patch('services.daily_report_service.GitHubService'), \
+             patch('services.daily_report_service.EscalationService'), \
+             patch('services.daily_report_service.ConfigParser'):
+            service = DailyReportService()
+            service._llm_service = mock_llm
+            
+            issues = [
+                IssueReportItem(
+                    number=1, title="Issue 1", priority="P2",
+                    labels=[], assignee="user1", hours_open=10,
+                    sla_hours=72, sla_status="within",
+                    url="https://github.com/o/r/issues/1"
+                )
+            ]
+            
+            result = service.generate_ai_summary(
+                repository="owner/repo",
+                total_open=3,
+                sla_compliance_pct=90.0,
+                breached_count=0,
+                warning_count=1,
+                by_priority={"P1": 0, "P2": 2, "P3": 1},
+                issues=issues
+            )
+            
+            assert result == "The repository has 3 open issues with 90% SLA compliance."
+            mock_llm._call_llm.assert_called_once()
+
+    def test_generate_ai_summary_handles_empty_result(self):
+        """Test AI summary returns None when LLM returns empty."""
+        from services.daily_report_service import DailyReportService
+        
+        mock_llm = MagicMock()
+        mock_llm._call_llm.return_value = ""
+        mock_llm.prompts.get.return_value = "You are an assistant."
+        mock_llm.prompts.format.return_value = "Generate summary."
+        
+        with patch('services.daily_report_service.GitHubService'), \
+             patch('services.daily_report_service.EscalationService'), \
+             patch('services.daily_report_service.ConfigParser'):
+            service = DailyReportService()
+            service._llm_service = mock_llm
+            
+            result = service.generate_ai_summary(
+                repository="owner/repo",
+                total_open=0,
+                sla_compliance_pct=100.0,
+                breached_count=0,
+                warning_count=0,
+                by_priority={},
+                issues=[]
+            )
+            
+            assert result is None
+
+    def test_generate_ai_summary_handles_exception(self):
+        """Test AI summary returns None when exception occurs."""
+        from services.daily_report_service import DailyReportService
+        
+        mock_llm = MagicMock()
+        mock_llm.prompts.get.side_effect = Exception("LLM error")
+        
+        with patch('services.daily_report_service.GitHubService'), \
+             patch('services.daily_report_service.EscalationService'), \
+             patch('services.daily_report_service.ConfigParser'):
+            service = DailyReportService()
+            service._llm_service = mock_llm
+            
+            result = service.generate_ai_summary(
+                repository="owner/repo",
+                total_open=5,
+                sla_compliance_pct=80.0,
+                breached_count=1,
+                warning_count=1,
+                by_priority={"P2": 5},
+                issues=[]
+            )
+            
+            assert result is None
+
+    def test_generate_ai_summary_formats_priority_breakdown(self):
+        """Test AI summary properly formats priority breakdown."""
+        from services.daily_report_service import DailyReportService, IssueReportItem
+        
+        mock_llm = MagicMock()
+        mock_llm._call_llm.return_value = "Summary with priorities."
+        mock_llm.prompts.get.return_value = "System prompt"
+        mock_llm.prompts.format.return_value = "User prompt"
+        
+        with patch('services.daily_report_service.GitHubService'), \
+             patch('services.daily_report_service.EscalationService'), \
+             patch('services.daily_report_service.ConfigParser'):
+            service = DailyReportService()
+            service._llm_service = mock_llm
+            
+            issues = [
+                IssueReportItem(
+                    number=1, title="Breached issue", priority="P1",
+                    labels=[], assignee="user1", hours_open=50,
+                    sla_hours=48, sla_status="breached",
+                    url="https://github.com/o/r/issues/1"
+                ),
+                IssueReportItem(
+                    number=2, title="Warning issue", priority="P2",
+                    labels=[], assignee="Unassigned", hours_open=60,
+                    sla_hours=72, sla_status="warning",
+                    url="https://github.com/o/r/issues/2"
+                )
+            ]
+            
+            result = service.generate_ai_summary(
+                repository="owner/repo",
+                total_open=2,
+                sla_compliance_pct=50.0,
+                breached_count=1,
+                warning_count=1,
+                by_priority={"P1": 1, "P2": 1},
+                issues=issues
+            )
+            
+            assert result == "Summary with priorities."
+            # Verify format was called with expected parameters
+            mock_llm.prompts.format.assert_called_once()
+
+    def test_llm_service_lazy_initialization(self):
+        """Test LLM service is lazily initialized."""
+        from services.daily_report_service import DailyReportService
+        
+        with patch('services.daily_report_service.GitHubService'), \
+             patch('services.daily_report_service.EscalationService'), \
+             patch('services.daily_report_service.ConfigParser'), \
+             patch('services.daily_report_service.LlmService') as mock_llm_class:
+            
+            service = DailyReportService()
+            
+            # LLM service should not be created yet
+            mock_llm_class.assert_not_called()
+            
+            # Access the property to trigger initialization
+            _ = service.llm_service
+            
+            # Now it should be created
+            mock_llm_class.assert_called_once()

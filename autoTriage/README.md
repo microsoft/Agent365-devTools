@@ -8,7 +8,9 @@ This directory contains an AI-powered GitHub Action that automatically triages n
 - **Priority Assessment**: Assigns P0-P4 priority labels based on issue content
 - **Smart Assignment**: Recommends team members based on expertise matching
 - **Confidence Scoring**: Provides confidence level for all classifications
-- **Copilot Detection**: Identifies issues that could be fixed by GitHub Copilot
+- **Copilot Auto-Fix**: Automatically assigns Copilot-fixable issues to GitHub Copilot coding agent
+- **AI Daily Reports**: Generates daily issue status reports with AI-powered executive summaries
+- **SLA Monitoring**: Tracks SLA compliance and escalates overdue issues
 
 ## Setup
 
@@ -110,7 +112,11 @@ This ensures workload is balanced automatically as team members complete or take
 
 ```
 autoTriage/
-├── triage_issue.py           # Main CLI script
+├── cli/                      # CLI entry points
+│   ├── daily_report.py       # Daily issue report CLI
+│   ├── escalation_check.py   # SLA escalation check CLI
+│   ├── triage_issue.py       # Issue triage CLI
+│   └── __init__.py
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # This file
 ├── scripts/                  # Utility scripts
@@ -122,11 +128,17 @@ autoTriage/
 │   ├── llm_service.py        # AI integration
 │   ├── config_parser.py      # Config loading
 │   ├── prompt_loader.py      # Prompt management
+│   ├── copilot_service.py    # Copilot auto-fix integration
+│   ├── daily_report_service.py  # Daily report generation
+│   ├── escalation_service.py # SLA monitoring
 │   └── teams_service.py      # Teams notifications (optional)
 ├── models/                   # Data models
 │   ├── issue_classification.py
 │   ├── team_config.py
 │   └── ado_models.py
+├── tests/                    # Unit tests
+│   ├── services/             # Service tests
+│   └── models/               # Model tests
 └── config/                   # Configuration files
     ├── team-members.json     # Team roster
     └── prompts.yaml          # AI prompts
@@ -134,6 +146,8 @@ autoTriage/
 .github/
 └── workflows/
     ├── auto-triage-issues.yml    # Auto-triage on new issues
+    ├── daily-issue-report.yml    # Daily report at 9 AM UTC
+    ├── escalate-stale-issues.yml # SLA check at 8 AM UTC
     └── update-team-workload.yml  # Weekly workload updates
 ```
 
@@ -165,11 +179,46 @@ export AZURE_OPENAI_DEPLOYMENT="gpt-4o"
 export AZURE_OPENAI_API_VERSION="2024-02-01"
 
 # Run triage
-python triage_issue.py \
+python cli/triage_issue.py \
   --owner microsoft \
   --repo Agent365-devTools \
   --issue-number 123
+
+# Generate daily report
+python cli/daily_report.py \
+  --owner microsoft \
+  --repo Agent365-devTools \
+  --output report.json \
+  --summary summary.md
+
+# Check SLA escalations
+python cli/escalation_check.py \
+  --owner microsoft \
+  --repo Agent365-devTools
 ```
+
+## Copilot Auto-Fix
+
+When an issue is identified as Copilot-fixable (simple, well-scoped tasks like documentation, typos, etc.), the system can automatically assign it to GitHub Copilot coding agent.
+
+**Requirements:**
+- GitHub Copilot coding agent must be enabled for your repository
+- The `copilot_enabled` setting is `true` by default
+
+**How it works:**
+1. AI analyzes the issue and determines if it's suitable for Copilot
+2. If suitable, the issue is assigned to `copilot-swe-agent`
+3. Copilot creates a draft PR with the fix
+4. Team reviews and merges the PR
+
+## Daily Reports
+
+Daily issue reports include an AI-generated executive summary that provides:
+- Overall backlog health assessment
+- Critical items needing immediate attention
+- Actionable recommendations
+
+Reports are generated daily at 9 AM UTC and appear in the GitHub Actions Summary.
 
 ## Troubleshooting
 
