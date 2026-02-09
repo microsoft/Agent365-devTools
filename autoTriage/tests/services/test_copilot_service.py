@@ -50,24 +50,13 @@ def make_subprocess_result(returncode: int, stdout: str = "", stderr: str = "") 
 class TestCopilotServiceInit:
     """Test CopilotService initialization."""
 
-    @pytest.mark.parametrize("token,expected", [
-        ("ghp_abc123xyz789", "ghp_abc123xyz789"),
-        ("gho_token", "gho_token"),
-        ("", ""),
-    ], ids=["classic_token", "oauth_token", "empty_string"])
-    def test_init_with_github_token_values(self, monkeypatch, token, expected):
-        """Test initialization with various GITHUB_TOKEN values."""
+    def test_init_creates_service(self):
+        """Test that CopilotService initializes successfully."""
         from services.copilot_service import CopilotService
-        monkeypatch.setenv('GITHUB_TOKEN', token)
         service = CopilotService()
-        assert service.github_token == expected
-
-    def test_init_without_github_token(self, monkeypatch):
-        """Test initialization without GITHUB_TOKEN environment variable."""
-        from services.copilot_service import CopilotService
-        monkeypatch.delenv('GITHUB_TOKEN', raising=False)
-        service = CopilotService()
-        assert service.github_token is None
+        # Service should initialize without error
+        # Note: gh CLI authentication is handled externally via GH_TOKEN or gh auth
+        assert service is not None
 
 
 # =============================================================================
@@ -79,11 +68,12 @@ class TestIsCopilotEnabled:
 
     # Test: Copilot presence in actors list
     @pytest.mark.parametrize("actors,expected,description", [
-        # Should return True - copilot-swe-agent present
+        # Should return True - copilot-swe-agent present (both variants accepted)
         ([{"login": "copilot-swe-agent"}], True, "only copilot"),
         ([{"login": "copilot-swe-agent"}, {"login": "user1"}], True, "copilot first"),
         ([{"login": "user1"}, {"login": "copilot-swe-agent"}], True, "copilot last"),
         ([{"login": "user1"}, {"login": "copilot-swe-agent"}, {"login": "user2"}], True, "copilot middle"),
+        ([{"login": "copilot-swe-agent[bot]"}], True, "bot suffix variant"),
         
         # Should return False - copilot-swe-agent NOT present
         ([], False, "empty list"),
@@ -91,7 +81,6 @@ class TestIsCopilotEnabled:
         ([{"login": "user1"}, {"login": "user2"}, {"login": "user3"}], False, "multiple users"),
         
         # Edge cases: similar but not exact match
-        ([{"login": "copilot-swe-agent[bot]"}], False, "bot suffix"),
         ([{"login": "copilot"}], False, "just copilot"),
         ([{"login": "swe-agent"}], False, "partial name"),
         ([{"login": "Copilot-swe-agent"}], False, "wrong case"),
@@ -211,13 +200,13 @@ class TestAssignToCopilot:
             
             assert result["success"] is True
             assert result["issue_number"] == issue_num
-            assert result["assigned_to"] == "copilot-swe-agent[bot]"
+            assert result["assigned_to"] == "copilot-swe-agent[bot]"  # Uses COPILOT_ASSIGNEE constant
             assert result["base_branch"] == base_branch
 
     # Test: Payload verification
     def test_payload_structure(self):
         """Verify the payload sent to GitHub API is correct."""
-        from services.copilot_service import CopilotService
+        from services.copilot_service import CopilotService, COPILOT_ASSIGNEE
         
         mock_result = make_subprocess_result(0, "{}")
         
@@ -233,7 +222,7 @@ class TestAssignToCopilot:
             call_kwargs = mock_run.call_args.kwargs
             payload = json.loads(call_kwargs['input'])
             
-            assert payload["assignees"] == ["copilot-swe-agent[bot]"]
+            assert payload["assignees"] == [COPILOT_ASSIGNEE]
             assert payload["agent_assignment"]["target_repo"] == "microsoft/Agent365-devTools"
             assert payload["agent_assignment"]["base_branch"] == "develop"
             assert payload["agent_assignment"]["custom_instructions"] == "Fix it"
@@ -320,6 +309,53 @@ class TestGetFixInstructions:
         assert "Requirements:" in instructions
         assert "Follow existing code style" in instructions
         assert "Keep the PR small" in instructions
+
+    # Test: Issue title is included
+    def test_issue_title_included(self):
+        """Test that issue title is included in the instructions."""
+        from services.copilot_service import CopilotService
+        
+        service = CopilotService()
+        instructions = service.get_fix_instructions(
+            issue_title="Button color is wrong on mobile",
+            issue_body="The button should be blue",
+            fix_suggestions=[]
+        )
+        
+        assert "Issue: Button color is wrong on mobile" in instructions
+
+    # Test: Issue body is included
+    def test_issue_body_included(self):
+        """Test that issue body is included in the instructions."""
+        from services.copilot_service import CopilotService
+        
+        service = CopilotService()
+        instructions = service.get_fix_instructions(
+            issue_title="Test",
+            issue_body="The submit button on the checkout page shows as gray instead of blue.",
+            fix_suggestions=[]
+        )
+        
+        assert "Description:" in instructions
+        assert "submit button" in instructions
+        assert "gray instead of blue" in instructions
+
+    # Test: Long issue body is truncated
+    def test_issue_body_truncated(self):
+        """Test that very long issue bodies are truncated."""
+        from services.copilot_service import CopilotService
+        
+        service = CopilotService()
+        long_body = "A" * 2000  # Longer than 1500 char limit
+        instructions = service.get_fix_instructions(
+            issue_title="Test",
+            issue_body=long_body,
+            fix_suggestions=[]
+        )
+        
+        assert "..." in instructions
+        # Should have truncated content
+        assert "A" * 1500 in instructions
 
     # Test: Suggestion numbering
     def test_suggestions_are_numbered(self):

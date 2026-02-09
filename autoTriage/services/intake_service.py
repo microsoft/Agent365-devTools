@@ -354,10 +354,18 @@ This issue has been automatically analyzed and triaged.
                 
                 # Check if Copilot is enabled for this repo
                 if copilot_service.is_copilot_enabled(owner, repo):
+                    # Fetch the actual issue to get title and body for Copilot context
+                    issue = github_service.get_issue(owner, repo, classification.issue_number)
+                    issue_title = issue.title if issue else f"Issue #{classification.issue_number}"
+                    # Truncate body to avoid excessively long instructions (max 2000 chars)
+                    issue_body = ""
+                    if issue and issue.body:
+                        issue_body = issue.body[:2000] + "..." if len(issue.body) > 2000 else issue.body
+                    
                     # Generate custom instructions from fix suggestions
                     custom_instructions = copilot_service.get_fix_instructions(
-                        issue_title=classification.issue_url.split('/')[-1] if classification.issue_url else "",
-                        issue_body="",
+                        issue_title=issue_title,
+                        issue_body=issue_body,
                         fix_suggestions=classification.fix_suggestions or []
                     )
                     

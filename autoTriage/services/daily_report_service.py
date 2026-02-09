@@ -6,7 +6,7 @@ Daily Report Service - Generates and sends daily issue status reports
 """
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
 from .github_service import GitHubService

@@ -8,16 +8,25 @@ import logging
 import os
 import subprocess
 import json
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# Copilot actor names - GitHub may return either variant
+COPILOT_ACTOR_LOGIN = "copilot-swe-agent"
+COPILOT_ACTOR_BOT = "copilot-swe-agent[bot]"
+COPILOT_ASSIGNEE = COPILOT_ACTOR_BOT  # The assignee format for API calls
+
 
 class CopilotService:
-    """Service for invoking GitHub Copilot coding agent to fix issues."""
+    """Service for invoking GitHub Copilot coding agent to fix issues.
+    
+    Note: This service uses the gh CLI which relies on its own authentication.
+    Ensure gh is authenticated via `gh auth login` or GH_TOKEN environment variable.
+    """
 
     def __init__(self):
-        self.github_token = os.getenv('GITHUB_TOKEN')
+        pass  # gh CLI handles authentication via GH_TOKEN or gh auth state
 
     def is_copilot_enabled(self, owner: str, repo: str) -> bool:
         """Check if Copilot coding agent is enabled for the repository.
@@ -57,7 +66,9 @@ class CopilotService:
             actors = data.get('data', {}).get('repository', {}).get('suggestedActors', {}).get('nodes', [])
             
             for actor in actors:
-                if actor.get('login') == 'copilot-swe-agent':
+                login = actor.get('login', '')
+                # Check both variants: with and without [bot] suffix
+                if login in (COPILOT_ACTOR_LOGIN, COPILOT_ACTOR_BOT):
                     return True
             
             return False
@@ -89,7 +100,7 @@ class CopilotService:
         try:
             # Build the API request payload
             payload = {
-                "assignees": ["copilot-swe-agent[bot]"],
+                "assignees": [COPILOT_ASSIGNEE],
                 "agent_assignment": {
                     "target_repo": f"{owner}/{repo}",
                     "base_branch": base_branch,
@@ -131,7 +142,7 @@ class CopilotService:
             return {
                 "success": True,
                 "issue_number": issue_number,
-                "assigned_to": "copilot-swe-agent[bot]",
+                "assigned_to": COPILOT_ASSIGNEE,
                 "base_branch": base_branch,
                 "response": response
             }
@@ -171,6 +182,21 @@ class CopilotService:
         
         instructions.append("Please fix the issue described below.")
         instructions.append("")
+        
+        # Include issue title
+        if issue_title:
+            instructions.append(f"Issue: {issue_title}")
+            instructions.append("")
+        
+        # Include issue body (truncated for reasonable instruction length)
+        if issue_body:
+            # Truncate body to 1500 chars to keep instructions manageable
+            truncated_body = issue_body[:1500]
+            if len(issue_body) > 1500:
+                truncated_body += "..."
+            instructions.append("Description:")
+            instructions.append(truncated_body)
+            instructions.append("")
         
         if fix_suggestions:
             instructions.append("Suggested approach:")

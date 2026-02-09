@@ -13,7 +13,6 @@ import pytest
 import sys
 import re
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -434,7 +433,7 @@ class TestTeamsServiceLazyInit:
             logger = logging.getLogger()
             logger.addHandler(handler)
             
-            service = TeamsService()
+            _service = TeamsService()  # noqa: F841 - instantiation triggers logging
             
             logger.removeHandler(handler)
             
