@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """
 Prompt Loader Service - Load AI prompts from configuration files
 """

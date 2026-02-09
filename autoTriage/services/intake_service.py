@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """
 Intake Service - Core business logic for issue triage.
 Used by both FastAPI (local dev) and Azure Functions (production).

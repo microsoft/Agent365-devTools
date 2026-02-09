@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """
 CLI script to triage a GitHub issue using the intake service.
 Used by GitHub Actions for auto-triage on new issue creation.
