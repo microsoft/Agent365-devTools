@@ -49,6 +49,7 @@ def main():
             'breached_count': report.breached_count,
             'warning_count': report.warning_count,
             'by_priority': report.by_priority,
+            'ai_summary': report.ai_summary,
             'issues': [
                 {
                     'number': i.number,
@@ -117,7 +118,20 @@ def generate_summary(report: dict, summary_path: str):
         f"**Repository:** `{report['repository']}`",
         f"**Generated:** {report['generated_at']}",
         '',
-        '## Summary',
+    ]
+
+    # Add AI Summary if available
+    ai_summary = report.get('ai_summary')
+    if ai_summary:
+        lines.extend([
+            '## AI Summary',
+            '',
+            f"> {ai_summary}",
+            '',
+        ])
+
+    lines.extend([
+        '## Metrics',
         '',
         '| Metric | Value |',
         '|--------|-------|',
@@ -130,7 +144,7 @@ def generate_summary(report: dict, summary_path: str):
         '',
         '| Priority | Count |',
         '|----------|-------|',
-    ]
+    ])
 
     for p in ['P0', 'P1', 'P2', 'P3', 'P4', 'None']:
         count = report['by_priority'].get(p, 0)

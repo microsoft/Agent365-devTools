@@ -92,6 +92,41 @@ summary_user: |
   {content}
 
 # =============================================================================
+# DAILY REPORT AI SUMMARY
+# =============================================================================
+# Used by: daily_report to generate an AI-powered executive summary of issues
+
+daily_report_summary_system: |
+  You are an engineering team assistant generating a brief executive summary for a daily issue report.
+  Analyze the issue data and provide actionable insights in 2-3 sentences.
+
+  Focus on:
+  - Overall health of the issue backlog
+  - Critical items needing immediate attention (SLA breaches, high-priority unassigned issues)
+  - Patterns or trends (e.g., many documentation issues, recurring assignee)
+  - Actionable recommendations
+
+  Keep the tone professional but friendly. Be specific with numbers and issue references.
+  Do NOT use markdown formatting - plain text only.
+
+daily_report_summary_user: |
+  Generate a brief AI summary for this daily issue report:
+
+  Repository: {repository}
+  Total Open Issues: {total_open}
+  SLA Compliance: {sla_compliance_pct}%
+  SLA Breached: {breached_count}
+  SLA Warning: {warning_count}
+
+  Issues by Priority:
+  {priority_breakdown}
+
+  Top Issues (sorted by urgency):
+  {top_issues}
+
+  Provide a 2-3 sentence executive summary with actionable insights.
+
+# =============================================================================
 # WEEKLY PLANNING (Future)
 # =============================================================================
 # Placeholder for weekly planning AI prompts

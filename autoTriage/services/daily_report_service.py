@@ -6,13 +6,14 @@ Daily Report Service - Generates and sends daily issue status reports
 """
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 
 from .github_service import GitHubService
 from .escalation_service import EscalationService
 from .teams_service import TeamsService  # Requires TEAMS_WEBHOOK_URL env var
 from .config_parser import ConfigParser
+from .llm_service import LlmService
 # TODO: For email support, add SendGrid or Microsoft Graph API integration
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class DailyReport:
     breached_count: int
     warning_count: int  # Within 80% of SLA
     issues: List[IssueReportItem] = field(default_factory=list)
+    ai_summary: Optional[str] = None  # AI-generated executive summary
 
 
 class DailyReportService:
@@ -52,7 +54,15 @@ class DailyReportService:
         self.github_service = GitHubService()
         self.escalation_service = EscalationService()
         self._teams_service = None  # Lazily instantiated
+        self._llm_service = None  # Lazily instantiated
         self.team_config = ConfigParser.get_default_config()
+
+    @property
+    def llm_service(self) -> LlmService:
+        """Lazily instantiate LLM service."""
+        if self._llm_service is None:
+            self._llm_service = LlmService()
+        return self._llm_service
 
     def get_sla_hours(self, priority: str) -> int:
         """Get SLA hours for a priority level. Delegates to EscalationService."""
@@ -136,6 +146,17 @@ class DailyReportService:
         total_with_priority = sum(v for k, v in by_priority.items() if k != "None")
         sla_compliance = ((total_with_priority - breached_count) / total_with_priority * 100) if total_with_priority > 0 else 100
         
+        # Generate AI summary
+        ai_summary = self.generate_ai_summary(
+            repository=f"{owner}/{repo}",
+            total_open=len(open_issues),
+            sla_compliance_pct=round(sla_compliance, 1),
+            breached_count=breached_count,
+            warning_count=warning_count,
+            by_priority=by_priority,
+            issues=issues_list[:10]  # Top 10 issues for context
+        )
+        
         return DailyReport(
             repository=f"{owner}/{repo}",
             generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -144,8 +165,69 @@ class DailyReportService:
             sla_compliance_pct=round(sla_compliance, 1),
             breached_count=breached_count,
             warning_count=warning_count,
-            issues=issues_list
+            issues=issues_list,
+            ai_summary=ai_summary
         )
+
+    def generate_ai_summary(
+        self,
+        repository: str,
+        total_open: int,
+        sla_compliance_pct: float,
+        breached_count: int,
+        warning_count: int,
+        by_priority: Dict[str, int],
+        issues: List[IssueReportItem]
+    ) -> Optional[str]:
+        """Generate AI-powered executive summary for the daily report."""
+        try:
+            # Format priority breakdown
+            priority_breakdown = "\n".join(
+                f"  - {p}: {count}" for p, count in by_priority.items() if count > 0
+            )
+            
+            # Format top issues
+            top_issues_lines = []
+            for issue in issues[:10]:
+                status_marker = "[BREACHED]" if issue.sla_status == "breached" else (
+                    "[WARNING]" if issue.sla_status == "warning" else ""
+                )
+                assignee = issue.assignee if issue.assignee != "Unassigned" else "UNASSIGNED"
+                top_issues_lines.append(
+                    f"  - #{issue.number} ({issue.priority}, {assignee}) {status_marker}: {issue.title}"
+                )
+            top_issues = "\n".join(top_issues_lines) if top_issues_lines else "No issues"
+            
+            # Get prompts
+            system_prompt = self.llm_service.prompts.get(
+                "daily_report_summary_system",
+                "You are an engineering assistant. Summarize the issue report in 2-3 sentences."
+            )
+            user_prompt = self.llm_service.prompts.format(
+                "daily_report_summary_user",
+                default=f"Summarize: {total_open} open issues, {sla_compliance_pct}% SLA compliance",
+                repository=repository,
+                total_open=total_open,
+                sla_compliance_pct=sla_compliance_pct,
+                breached_count=breached_count,
+                warning_count=warning_count,
+                priority_breakdown=priority_breakdown,
+                top_issues=top_issues
+            )
+            
+            # Call LLM
+            result = self.llm_service._call_llm(system_prompt, user_prompt, json_response=False)
+            
+            if result:
+                logger.info("AI summary generated successfully")
+                return result.strip()
+            else:
+                logger.warning("LLM returned empty result for AI summary")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to generate AI summary: {e}")
+            return None
 
     def create_teams_card(self, report: DailyReport) -> dict:
         """Create Adaptive Card for Teams."""
