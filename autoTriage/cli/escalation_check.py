@@ -12,8 +12,8 @@ import os
 import sys
 from pathlib import Path
 
-# Add current directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent directory (autoTriage) to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.escalation_service import EscalationService
 

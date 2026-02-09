@@ -34,7 +34,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd autoTriage
-          python daily_report.py --owner ${{ github.repository_owner }} --repo ${{ github.event.repository.name }} --output report.json --summary $GITHUB_STEP_SUMMARY
+          python cli/daily_report.py --owner ${{ github.repository_owner }} --repo ${{ github.event.repository.name }} --output report.json --summary $GITHUB_STEP_SUMMARY
 
       - name: Upload report artifact
         uses: actions/upload-artifact@v4

@@ -56,7 +56,7 @@ jobs:
             APPLY_FLAG="--apply"
           fi
           
-          python escalation_check.py \
+          python cli/escalation_check.py \
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
             --output "${{ runner.temp }}/escalation_result.json" \

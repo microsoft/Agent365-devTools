@@ -72,7 +72,7 @@ jobs:
             ARGS+=(--retriage)
           fi
           
-          python triage_issue.py "${ARGS[@]}"
+          python cli/triage_issue.py "${ARGS[@]}"
 
       - name: Post triage results
         if: success()
