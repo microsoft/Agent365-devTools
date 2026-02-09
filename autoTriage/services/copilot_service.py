@@ -26,8 +26,8 @@ class CopilotService:
         """
         try:
             query = '''
-            query {
-              repository(owner: "%s", name: "%s") {
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
                 suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
                   nodes {
                     login
@@ -35,10 +35,15 @@ class CopilotService:
                 }
               }
             }
-            ''' % (owner, repo)
+            '''
             
             result = subprocess.run(
-                ['gh', 'api', 'graphql', '-f', f'query={query}'],
+                [
+                    'gh', 'api', 'graphql',
+                    '-f', f'query={query}',
+                    '-f', f'owner={owner}',
+                    '-f', f'name={repo}'
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30

@@ -215,8 +215,8 @@ class DailyReportService:
                 top_issues=top_issues
             )
             
-            # Call LLM
-            result = self.llm_service._call_llm(system_prompt, user_prompt, json_response=False)
+            # Call LLM using public method
+            result = self.llm_service.call_llm(system_prompt, user_prompt, json_response=False)
             
             if result:
                 logger.info("AI summary generated successfully")

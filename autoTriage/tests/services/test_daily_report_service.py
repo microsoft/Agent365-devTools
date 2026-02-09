@@ -208,7 +208,7 @@ class TestAISummaryGeneration:
         from services.daily_report_service import DailyReportService, IssueReportItem
         
         mock_llm = MagicMock()
-        mock_llm._call_llm.return_value = "The repository has 3 open issues with 90% SLA compliance."
+        mock_llm.call_llm.return_value = "The repository has 3 open issues with 90% SLA compliance."
         mock_llm.prompts.get.return_value = "You are an assistant."
         mock_llm.prompts.format.return_value = "Generate summary for 3 issues."
         
@@ -238,14 +238,14 @@ class TestAISummaryGeneration:
             )
             
             assert result == "The repository has 3 open issues with 90% SLA compliance."
-            mock_llm._call_llm.assert_called_once()
+            mock_llm.call_llm.assert_called_once()
 
     def test_generate_ai_summary_handles_empty_result(self):
         """Test AI summary returns None when LLM returns empty."""
         from services.daily_report_service import DailyReportService
         
         mock_llm = MagicMock()
-        mock_llm._call_llm.return_value = ""
+        mock_llm.call_llm.return_value = ""
         mock_llm.prompts.get.return_value = "You are an assistant."
         mock_llm.prompts.format.return_value = "Generate summary."
         
@@ -297,7 +297,7 @@ class TestAISummaryGeneration:
         from services.daily_report_service import DailyReportService, IssueReportItem
         
         mock_llm = MagicMock()
-        mock_llm._call_llm.return_value = "Summary with priorities."
+        mock_llm.call_llm.return_value = "Summary with priorities."
         mock_llm.prompts.get.return_value = "System prompt"
         mock_llm.prompts.format.return_value = "User prompt"
         

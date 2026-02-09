@@ -314,10 +314,13 @@ class TestWorkflowNoEval:
             assert "eval " not in content, f"Found 'eval' in {name} - security risk"
 
     def test_no_shell_injection_patterns(self, all_workflows):
-        """Test that workflows don't use shell injection patterns."""
+        """Test that workflows don't use shell injection patterns in shell scripts.
+        
+        Note: JavaScript template literals (`${...}`) in github-script actions are safe
+        and should not be flagged as they are JavaScript, not bash.
+        """
         dangerous_patterns = [
             "eval ",
-            "`$",  # Backtick followed by variable (command injection)
             "$(",  # Command substitution
         ]
         

@@ -80,6 +80,23 @@ class LlmService:
             logging.error(f"LLM call failed: {e}")
             return None
 
+    def call_llm(self, system_prompt: str, user_prompt: str, json_response: bool = False) -> Optional[str]:
+        """
+        Public wrapper for making LLM calls with custom prompts.
+
+        Use this method when you need to call the LLM with custom system and user prompts
+        from external services.
+
+        Args:
+            system_prompt: The system prompt to set the LLM's behavior
+            user_prompt: The user prompt containing the actual request
+            json_response: If True, request JSON-formatted response from the LLM
+
+        Returns:
+            The LLM response text, or None if the call fails
+        """
+        return self._call_llm(system_prompt, user_prompt, json_response)
+
     def classify_issue(self, title: str, body: str, rules: PriorityRules) -> Dict[str, Any]:
         """
         Classify an issue by type and priority using AI.
