@@ -77,6 +77,115 @@ class CopilotService:
             logger.error(f"Error checking Copilot status: {e}")
             return False
 
+    def _get_assignment_prerequisites(
+        self, owner: str, repo: str, issue_number: int
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        """Get all prerequisites for Copilot assignment in a single GraphQL call.
+        
+        Combines bot ID lookup and issue/repo ID lookup to reduce API calls
+        and rate-limit pressure.
+        
+        Returns:
+            Tuple of (bot_id, repo_id, issue_id, error). 
+            If error is not None, it indicates the specific failure reason.
+            Individual IDs may be None with error=None if that specific item wasn't found.
+        """
+        try:
+            query = '''
+            query($owner: String!, $name: String!, $issueNumber: Int!) {
+              repository(owner: $owner, name: $name) {
+                id
+                issue(number: $issueNumber) {
+                  id
+                }
+                suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
+                  nodes {
+                    login
+                    __typename
+                    ... on Bot {
+                      id
+                    }
+                    ... on User {
+                      id
+                    }
+                  }
+                }
+              }
+            }
+            '''
+            
+            result = subprocess.run(
+                [
+                    'gh', 'api', 'graphql',
+                    '-f', f'query={query}',
+                    '-f', f'owner={owner}',
+                    '-f', f'name={repo}',
+                    '-F', f'issueNumber={issue_number}'
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                error_msg = f"Failed to query prerequisites: {result.stderr.strip() or 'Unknown error'}"
+                logger.warning(error_msg)
+                return None, None, None, error_msg
+            
+            data = json.loads(result.stdout)
+            
+            # Normalize nullable 'data' field to avoid AttributeError on None.get()
+            data_field = data.get('data')
+            if not isinstance(data_field, dict):
+                error_msg = f"GraphQL returned null data for {owner}/{repo}"
+                logger.warning(error_msg)
+                return None, None, None, error_msg
+            
+            # Validate repository data
+            repo_data = data_field.get('repository')
+            if not isinstance(repo_data, dict):
+                logger.warning(f"Repository {owner}/{repo} not found or not accessible")
+                return None, None, None, None  # Not an API error, just repo not found
+            
+            repo_id = repo_data.get('id')
+            
+            # Extract issue ID (may be null if issue doesn't exist)
+            issue_data = repo_data.get('issue')
+            issue_id = None
+            if isinstance(issue_data, dict):
+                issue_id = issue_data.get('id')
+            else:
+                logger.warning(f"Issue #{issue_number} not found in {owner}/{repo}")
+            
+            # Extract Copilot bot ID from suggested actors
+            bot_id = None
+            suggested_actors = repo_data.get('suggestedActors')
+            if isinstance(suggested_actors, dict):
+                nodes = suggested_actors.get('nodes')
+                if isinstance(nodes, list):
+                    for actor in nodes:
+                        if not isinstance(actor, dict):
+                            continue
+                        login = actor.get('login', '')
+                        if login in (COPILOT_ACTOR_LOGIN, COPILOT_ACTOR_BOT):
+                            bot_id = actor.get('id')
+                            break
+            
+            return bot_id, repo_id, issue_id, None
+            
+        except subprocess.TimeoutExpired:
+            error_msg = f"Timeout querying prerequisites for {owner}/{repo}"
+            logger.error(error_msg)
+            return None, None, None, error_msg
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON response: {e}"
+            logger.error(error_msg)
+            return None, None, None, error_msg
+        except Exception as e:
+            error_msg = f"Error getting assignment prerequisites: {e}"
+            logger.error(error_msg)
+            return None, None, None, error_msg
+
     def assign_to_copilot(
         self,
         owner: str,
@@ -85,7 +194,7 @@ class CopilotService:
         custom_instructions: str = "",
         base_branch: str = "main"
     ) -> Dict[str, Any]:
-        """Assign an issue to GitHub Copilot coding agent.
+        """Assign an issue to GitHub Copilot coding agent using GraphQL API.
         
         Args:
             owner: Repository owner
@@ -98,31 +207,85 @@ class CopilotService:
             Dict with success status and details
         """
         try:
-            # Build the API request payload
-            payload = {
-                "assignees": [COPILOT_ASSIGNEE],
-                "agent_assignment": {
-                    "target_repo": f"{owner}/{repo}",
-                    "base_branch": base_branch,
-                    "custom_instructions": custom_instructions,
-                    "custom_agent": "",
-                    "model": ""
+            # Step 1: Get all prerequisites in a single GraphQL call
+            bot_id, repo_id, issue_id, prereq_error = self._get_assignment_prerequisites(
+                owner, repo, issue_number
+            )
+            
+            # If there was an API/query error, return it directly
+            if prereq_error:
+                return {
+                    "success": False,
+                    "error": prereq_error,
+                    "issue_number": issue_number
                 }
-            }
             
-            payload_json = json.dumps(payload)
+            if not bot_id:
+                logger.error(f"Copilot coding agent not available for {owner}/{repo}")
+                return {
+                    "success": False,
+                    "error": "Copilot coding agent not available for this repository",
+                    "issue_number": issue_number
+                }
             
-            # Use gh CLI to make the API call
+            if not repo_id:
+                logger.error(f"Failed to get repository ID for {owner}/{repo}")
+                return {
+                    "success": False,
+                    "error": "Failed to get repository ID",
+                    "issue_number": issue_number
+                }
+            
+            if not issue_id:
+                logger.error(f"Failed to get issue ID for {owner}/{repo}#{issue_number}")
+                return {
+                    "success": False,
+                    "error": "Failed to get issue ID",
+                    "issue_number": issue_number
+                }
+            
+            # Step 2: Assign issue to Copilot using GraphQL mutation
+            # Use json.dumps for proper escaping of all special characters
+            escaped_issue_id = json.dumps(issue_id)
+            escaped_bot_id = json.dumps(bot_id)
+            escaped_repo_id = json.dumps(repo_id)
+            escaped_base_branch = json.dumps(base_branch)
+            escaped_instructions = json.dumps(custom_instructions)
+            
+            mutation = f'''
+            mutation {{
+              addAssigneesToAssignable(input: {{
+                assignableId: {escaped_issue_id},
+                assigneeIds: [{escaped_bot_id}],
+                agentAssignment: {{
+                  targetRepositoryId: {escaped_repo_id},
+                  baseRef: {escaped_base_branch},
+                  customInstructions: {escaped_instructions},
+                  customAgent: "",
+                  model: ""
+                }}
+              }}) {{
+                assignable {{
+                  ... on Issue {{
+                    id
+                    title
+                    assignees(first: 10) {{
+                      nodes {{
+                        login
+                      }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+            '''
+            
             result = subprocess.run(
                 [
-                    'gh', 'api',
-                    '--method', 'POST',
-                    '-H', 'Accept: application/vnd.github+json',
-                    '-H', 'X-GitHub-Api-Version: 2022-11-28',
-                    f'/repos/{owner}/{repo}/issues/{issue_number}/assignees',
-                    '--input', '-'
+                    'gh', 'api', 'graphql',
+                    '-f', f'query={mutation}',
+                    '-H', 'GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection'
                 ],
-                input=payload_json,
                 capture_output=True,
                 text=True,
                 timeout=60
@@ -137,6 +300,26 @@ class CopilotService:
                 }
             
             response = json.loads(result.stdout) if result.stdout else {}
+            
+            # Check for GraphQL errors - aggregate all messages for better diagnostics
+            errors = response.get('errors')
+            if errors:
+                error_messages = []
+                for err in errors:
+                    msg = err.get('message', 'Unknown GraphQL error')
+                    path = err.get('path')
+                    if path:
+                        path_str = '/'.join(str(p) for p in path)
+                        msg = f"{msg} (path: {path_str})"
+                    error_messages.append(msg)
+                
+                combined_error_msg = '; '.join(error_messages) if error_messages else 'Unknown GraphQL error'
+                logger.error(f"GraphQL error assigning issue #{issue_number}: {combined_error_msg}")
+                return {
+                    "success": False,
+                    "error": combined_error_msg,
+                    "issue_number": issue_number
+                }
             
             logger.info(f"Successfully assigned issue #{issue_number} to Copilot coding agent")
             return {

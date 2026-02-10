@@ -5,8 +5,13 @@ on:
     types: [opened, edited]
 
 permissions:
-  issues: write
-  contents: read
+  issues: write       # Required to add labels and comments during triage
+  contents: read      # Required to read repository files for analysis
+  # The following permissions are required for Copilot coding agent assignment:
+  # - pull-requests:write - Copilot coding agent creates PRs when fixing issues
+  # - actions:read - Required for the addAssigneesToAssignable GraphQL mutation
+  pull-requests: write
+  actions: read
 
 jobs:
   triage:
