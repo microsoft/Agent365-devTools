@@ -169,11 +169,72 @@ class TestIsCopilotEnabled:
 
 
 # =============================================================================
+# Helper functions for GraphQL API mocking
+# =============================================================================
+
+def make_prerequisites_response(
+    bot_id: str = "BOT_123",
+    repo_id: str = "REPO_123",
+    issue_id: str = "ISSUE_456"
+) -> dict:
+    """Helper to create a valid combined prerequisites lookup response.
+    
+    This response combines bot ID, repo ID, and issue ID lookups into a single
+    GraphQL query response.
+    """
+    return {
+        "data": {
+            "repository": {
+                "id": repo_id,
+                "issue": {
+                    "id": issue_id
+                },
+                "suggestedActors": {
+                    "nodes": [
+                        {"login": "copilot-swe-agent", "id": bot_id, "__typename": "Bot"}
+                    ]
+                }
+            }
+        }
+    }
+
+
+def make_assignment_response() -> dict:
+    """Helper to create a valid assignment mutation response."""
+    return {
+        "data": {
+            "addAssigneesToAssignable": {
+                "assignable": {
+                    "id": "ISSUE_456",
+                    "title": "Test Issue",
+                    "assignees": {
+                        "nodes": [{"login": "copilot-swe-agent"}]
+                    }
+                }
+            }
+        }
+    }
+
+
+# =============================================================================
 # TestAssignToCopilot
 # =============================================================================
 
 class TestAssignToCopilot:
-    """Test assign_to_copilot method."""
+    """Test assign_to_copilot method with GraphQL API (2-call flow)."""
+
+    def _mock_subprocess_calls(self, prereq_response, assign_response):
+        """Helper to mock the sequence of subprocess calls for assign_to_copilot.
+        
+        The optimized flow uses 2 GraphQL calls:
+        1. Prerequisites lookup (bot ID + repo ID + issue ID)
+        2. Assignment mutation
+        """
+        responses = [
+            make_subprocess_result(0, json.dumps(prereq_response)),
+            make_subprocess_result(0, json.dumps(assign_response)),
+        ]
+        return responses
 
     # Test: Successful assignments with different parameters
     @pytest.mark.parametrize("issue_num,base_branch,instructions", [
@@ -184,13 +245,15 @@ class TestAssignToCopilot:
         (1, "main", "Multi\nline\ninstructions"),
     ], ids=["minimal", "standard", "with_branch", "with_instructions", "multiline_instructions"])
     def test_successful_assignment(self, issue_num, base_branch, instructions):
-        """Test successful issue assignment to Copilot."""
+        """Test successful issue assignment to Copilot via GraphQL."""
         from services.copilot_service import CopilotService
         
-        mock_response = {"id": 123, "number": issue_num}
-        mock_result = make_subprocess_result(0, json.dumps(mock_response))
+        responses = self._mock_subprocess_calls(
+            make_prerequisites_response(),
+            make_assignment_response()
+        )
         
-        with patch('subprocess.run', return_value=mock_result):
+        with patch('subprocess.run', side_effect=responses):
             service = CopilotService()
             result = service.assign_to_copilot(
                 "owner", "repo", issue_num,
@@ -200,17 +263,20 @@ class TestAssignToCopilot:
             
             assert result["success"] is True
             assert result["issue_number"] == issue_num
-            assert result["assigned_to"] == "copilot-swe-agent[bot]"  # Uses COPILOT_ASSIGNEE constant
+            assert result["assigned_to"] == "copilot-swe-agent[bot]"
             assert result["base_branch"] == base_branch
 
-    # Test: Payload verification
-    def test_payload_structure(self):
-        """Verify the payload sent to GitHub API is correct."""
-        from services.copilot_service import CopilotService, COPILOT_ASSIGNEE
+    # Test: GraphQL mutation is called with correct structure
+    def test_graphql_mutation_called(self):
+        """Verify that GraphQL mutation is called with proper structure."""
+        from services.copilot_service import CopilotService
         
-        mock_result = make_subprocess_result(0, "{}")
+        responses = self._mock_subprocess_calls(
+            make_prerequisites_response("BOT_XYZ", "REPO_ABC", "ISSUE_DEF"),
+            make_assignment_response()
+        )
         
-        with patch('subprocess.run', return_value=mock_result) as mock_run:
+        with patch('subprocess.run', side_effect=responses) as mock_run:
             service = CopilotService()
             service.assign_to_copilot(
                 "microsoft", "Agent365-devTools", 42,
@@ -218,49 +284,355 @@ class TestAssignToCopilot:
                 base_branch="develop"
             )
             
-            # Extract the input payload
-            call_kwargs = mock_run.call_args.kwargs
-            payload = json.loads(call_kwargs['input'])
+            # Second call should be the mutation (optimized 2-call flow)
+            mutation_call = mock_run.call_args_list[1]
+            call_args = mutation_call[0][0]
             
-            assert payload["assignees"] == [COPILOT_ASSIGNEE]
-            assert payload["agent_assignment"]["target_repo"] == "microsoft/Agent365-devTools"
-            assert payload["agent_assignment"]["base_branch"] == "develop"
-            assert payload["agent_assignment"]["custom_instructions"] == "Fix it"
+            # Verify GraphQL Features header is included
+            assert '-H' in call_args
+            header_index = call_args.index('-H')
+            header_value = call_args[header_index + 1]
+            assert 'issues_copilot_assignment_api_support' in header_value
 
-    # Test: Failure scenarios
-    @pytest.mark.parametrize("side_effect,return_code,stderr,expected_error", [
-        (None, 1, "Not authorized", "Not authorized"),
-        (None, 1, "Issue not found", "Issue not found"),
-        (None, 1, "Rate limit", "Rate limit"),
-        (subprocess.TimeoutExpired(cmd='gh', timeout=60), 0, "", "Timeout"),
-        (Exception("Connection failed"), 0, "", "Connection failed"),
-    ], ids=["unauthorized", "not_found", "rate_limit", "timeout", "exception"])
-    def test_assignment_failures(self, side_effect, return_code, stderr, expected_error):
-        """Test handling of various assignment failures."""
+    # Test: Copilot not available for repository
+    def test_copilot_not_available(self):
+        """Test handling when Copilot is not enabled for the repository."""
         from services.copilot_service import CopilotService
         
-        if side_effect:
-            with patch('subprocess.run', side_effect=side_effect):
-                service = CopilotService()
-                result = service.assign_to_copilot("owner", "repo", 42)
-                
-                assert result["success"] is False
-                assert expected_error in result["error"]
-                assert result["issue_number"] == 42
-        else:
-            mock_result = make_subprocess_result(return_code, "", stderr)
-            with patch('subprocess.run', return_value=mock_result):
-                service = CopilotService()
-                result = service.assign_to_copilot("owner", "repo", 42)
-                
-                assert result["success"] is False
-                assert result["error"] == stderr
-                assert result["issue_number"] == 42
+        # Return response with no copilot-swe-agent in actors (combined query)
+        no_copilot_response = {
+            "data": {
+                "repository": {
+                    "id": "REPO_123",
+                    "issue": {"id": "ISSUE_456"},
+                    "suggestedActors": {
+                        "nodes": [{"login": "some-user", "id": "USER_1"}]
+                    }
+                }
+            }
+        }
+        mock_result = make_subprocess_result(0, json.dumps(no_copilot_response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert "not available" in result["error"]
+            assert result["issue_number"] == 42
 
+    # Test: Failed prerequisites lookup (API error)
+    def test_prerequisites_lookup_failure(self):
+        """Test handling when prerequisites lookup fails with API error."""
+        from services.copilot_service import CopilotService
+        
+        mock_result = make_subprocess_result(1, "", "API error")
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+            # Should reflect the actual API failure, not generic "Copilot not available"
+            assert "Failed to query prerequisites" in result["error"] or "API error" in result["error"]
 
-# =============================================================================
-# TestGetFixInstructions
-# =============================================================================
+    # Test: Issue not found in prerequisites response
+    def test_issue_not_found_in_prerequisites(self):
+        """Test handling when issue is not found in combined prerequisites lookup."""
+        from services.copilot_service import CopilotService
+        
+        # Issue is null but bot and repo are valid
+        missing_issue_response = {
+            "data": {
+                "repository": {
+                    "id": "REPO_123",
+                    "issue": None,
+                    "suggestedActors": {
+                        "nodes": [{"login": "copilot-swe-agent", "id": "BOT_123", "__typename": "Bot"}]
+                    }
+                }
+            }
+        }
+        mock_result = make_subprocess_result(0, json.dumps(missing_issue_response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+            assert "issue ID" in result["error"]
+
+    # Test: Repository not found in prerequisites response
+    def test_repo_not_found_in_prerequisites(self):
+        """Test handling when repository is not found - specific error message."""
+        from services.copilot_service import CopilotService
+        
+        # Repository is null
+        null_repo_response = {
+            "data": {
+                "repository": None
+            }
+        }
+        mock_result = make_subprocess_result(0, json.dumps(null_repo_response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+            # When repo is null, bot_id won't be found, so error should be about Copilot not available
+            assert "error" in result
+            assert "not available" in result["error"] or "repository" in result["error"].lower()
+
+    # Test: GraphQL mutation failure
+    def test_mutation_failure(self):
+        """Test handling when GraphQL mutation fails."""
+        from services.copilot_service import CopilotService
+        
+        responses = [
+            make_subprocess_result(0, json.dumps(make_prerequisites_response())),
+            make_subprocess_result(1, "", "Forbidden"),
+        ]
+        
+        with patch('subprocess.run', side_effect=responses):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert "Forbidden" in result["error"]
+            assert result["issue_number"] == 42
+
+    # Test: GraphQL errors in response
+    def test_graphql_errors_in_response(self):
+        """Test handling of GraphQL errors in the response body."""
+        from services.copilot_service import CopilotService
+        
+        error_response = {
+            "errors": [{"message": "You don't have permission to assign issues"}]
+        }
+        
+        responses = [
+            make_subprocess_result(0, json.dumps(make_prerequisites_response())),
+            make_subprocess_result(0, json.dumps(error_response)),
+        ]
+        
+        with patch('subprocess.run', side_effect=responses):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert "permission" in result["error"]
+            assert result["issue_number"] == 42
+
+    # Test: Multiple GraphQL errors are aggregated
+    def test_multiple_graphql_errors_aggregated(self):
+        """Test that multiple GraphQL errors are aggregated into a single message."""
+        from services.copilot_service import CopilotService
+        
+        multi_error_response = {
+            "errors": [
+                {"message": "First error", "path": ["addAssigneesToAssignable", "assignable"]},
+                {"message": "Second error"},
+                {"message": "Third error", "path": ["mutation", "field"]}
+            ]
+        }
+        
+        responses = [
+            make_subprocess_result(0, json.dumps(make_prerequisites_response())),
+            make_subprocess_result(0, json.dumps(multi_error_response)),
+        ]
+        
+        with patch('subprocess.run', side_effect=responses):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+            # All errors should be in the message
+            assert "First error" in result["error"]
+            assert "Second error" in result["error"]
+            assert "Third error" in result["error"]
+            # Path should be included for errors that have it
+            assert "path:" in result["error"]
+
+    # Test: Timeout during assignment
+    def test_timeout_handling(self):
+        """Test handling of timeout during assignment."""
+        from services.copilot_service import CopilotService
+        
+        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired(cmd='gh', timeout=60)):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+
+    # Test: General exception handling  
+    def test_exception_handling(self):
+        """Test handling of unexpected exceptions."""
+        from services.copilot_service import CopilotService
+        
+        with patch('subprocess.run', side_effect=Exception("Unexpected error")):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+
+    # =========================================================================
+    # Regression tests for nullable GraphQL responses in prerequisites lookup
+    # These test cases ensure _get_assignment_prerequisites handles nulls gracefully.
+    # =========================================================================
+
+    @pytest.mark.parametrize("response,description", [
+        ({"data": {"repository": None}}, "null repository"),
+        ({"data": {"repository": {"id": "R1", "issue": {"id": "I1"}, "suggestedActors": None}}}, "null suggestedActors"),
+        ({"data": {"repository": {"id": "R1", "issue": {"id": "I1"}, "suggestedActors": {"nodes": None}}}}, "null nodes"),
+        ({"data": {"repository": {"id": "R1", "issue": {"id": "I1"}, "suggestedActors": {"nodes": [None]}}}}, "null actor in nodes"),
+        ({"data": None}, "null data"),
+        ({}, "empty response"),
+    ], ids=["null_repo", "null_actors", "null_nodes", "null_actor_item", "null_data", "empty"])
+    def test_prerequisites_nullable_response_variations(self, response, description):
+        """Parameterized test for nullable fields in combined prerequisites lookup.
+        
+        All these cases should fail gracefully without raising exceptions.
+        """
+        from services.copilot_service import CopilotService
+        
+        mock_result = make_subprocess_result(0, json.dumps(response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False, f"Should fail gracefully for prerequisites lookup: {description}"
+            assert result["issue_number"] == 42
+
+    # =========================================================================
+    # Regression tests for nullable issue/repository in prerequisites response
+    # These test cases ensure graceful failure when API returns null for
+    # repository or issue, without raising unexpected exceptions.
+    # =========================================================================
+
+    def test_null_repository_in_response(self):
+        """Test graceful handling when repository is null in GraphQL response.
+        
+        Regression test: When the API returns {"data": {"repository": null}},
+        the code should fail gracefully without raising AttributeError.
+        """
+        from services.copilot_service import CopilotService
+        
+        null_repo_response = {
+            "data": {
+                "repository": None  # Repository not found or no access
+            }
+        }
+        mock_result = make_subprocess_result(0, json.dumps(null_repo_response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+            # Should have a clear error, not an exception traceback
+            assert "error" in result
+
+    def test_null_issue_in_response(self):
+        """Test graceful handling when issue is null in GraphQL response.
+        
+        Regression test: When the API returns {"data": {"repository": {"id": "...", "issue": null}}},
+        the code should fail gracefully without raising AttributeError.
+        """
+        from services.copilot_service import CopilotService
+        
+        null_issue_response = {
+            "data": {
+                "repository": {
+                    "id": "REPO_123",
+                    "issue": None,  # Issue not found
+                    "suggestedActors": {
+                        "nodes": [{"login": "copilot-swe-agent", "id": "BOT_123", "__typename": "Bot"}]
+                    }
+                }
+            }
+        }
+        mock_result = make_subprocess_result(0, json.dumps(null_issue_response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+            assert "error" in result
+
+    def test_null_data_in_response(self):
+        """Test graceful handling when data is null in GraphQL response."""
+        from services.copilot_service import CopilotService
+        
+        null_data_response = {
+            "data": None
+        }
+        mock_result = make_subprocess_result(0, json.dumps(null_data_response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+
+    def test_missing_issue_id_in_response(self):
+        """Test graceful handling when issue object exists but has no id field."""
+        from services.copilot_service import CopilotService
+        
+        missing_id_response = {
+            "data": {
+                "repository": {
+                    "id": "REPO_123",
+                    "issue": {},  # Issue object exists but no id
+                    "suggestedActors": {
+                        "nodes": [{"login": "copilot-swe-agent", "id": "BOT_123", "__typename": "Bot"}]
+                    }
+                }
+            }
+        }
+        mock_result = make_subprocess_result(0, json.dumps(missing_id_response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False
+            assert result["issue_number"] == 42
+
+    @pytest.mark.parametrize("response,description", [
+        ({"data": {"repository": None}}, "null repository"),
+        ({"data": {"repository": {"id": "R1", "issue": None, "suggestedActors": {"nodes": [{"login": "copilot-swe-agent", "id": "B1"}]}}}}, "null issue"),
+        ({"data": None}, "null data"),
+        ({}, "empty response"),
+        ({"data": {}}, "empty data object"),
+        ({"data": {"repository": {}}}, "repository without id"),
+    ], ids=["null_repo", "null_issue", "null_data", "empty", "empty_data", "no_repo_id"])
+    def test_nullable_response_variations(self, response, description):
+        """Parameterized test for various nullable/missing field scenarios.
+        
+        All these cases should fail gracefully without raising exceptions.
+        """
+        from services.copilot_service import CopilotService
+        
+        mock_result = make_subprocess_result(0, json.dumps(response))
+        
+        with patch('subprocess.run', return_value=mock_result):
+            service = CopilotService()
+            result = service.assign_to_copilot("owner", "repo", 42)
+            
+            assert result["success"] is False, f"Should fail gracefully for: {description}"
+            assert result["issue_number"] == 42
 
 class TestGetFixInstructions:
     """Test get_fix_instructions method."""
