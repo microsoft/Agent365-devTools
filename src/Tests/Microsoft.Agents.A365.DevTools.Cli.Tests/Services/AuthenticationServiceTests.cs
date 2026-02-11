@@ -464,7 +464,7 @@ public class AuthenticationServiceTests : IDisposable
     {
         // Arrange
         var currentDir = Environment.CurrentDirectory;
-        var localManifestPath = Path.Combine(currentDir, McpConstants.ToolingManifestFileName);
+        var localManifestPath = Path.Combine(currentDir, "ToolingManifest.json");
         var manifestCreated = false;
 
         try

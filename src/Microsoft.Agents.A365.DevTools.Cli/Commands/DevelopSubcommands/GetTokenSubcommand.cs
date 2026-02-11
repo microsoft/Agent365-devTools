@@ -101,7 +101,7 @@ internal static class GetTokenSubcommand
 
                 // Determine manifest path
                 var manifestPath = manifest?.FullName 
-                    ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, McpConstants.ToolingManifestFileName);
+                    ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, "ToolingManifest.json");
 
                 // Determine which scopes to request
                 string[] requestedScopes;
