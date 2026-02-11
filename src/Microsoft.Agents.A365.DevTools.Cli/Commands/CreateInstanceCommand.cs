@@ -126,7 +126,7 @@ public class CreateInstanceCommand
                 // Admin consent for MCP scopes (oauth2PermissionGrants)
                 logger.LogInformation("Granting MCP scopes to Agent Identity via oauth2PermissionGrants");
 
-                var manifestPath = Path.Combine(instanceConfig.DeploymentProjectPath ?? string.Empty, "ToolingManifest.json");
+                var manifestPath = Path.Combine(instanceConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
                 var scopesForAgent = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
                 // clientId must be the *service principal objectId* of the agentic app

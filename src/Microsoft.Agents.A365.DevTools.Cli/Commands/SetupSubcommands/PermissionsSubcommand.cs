@@ -34,14 +34,14 @@ internal static class PermissionsSubcommand
 
         if (string.IsNullOrWhiteSpace(config.DeploymentProjectPath))
         {
-            errors.Add("deploymentProjectPath is required to read toolingManifest.json");
+            errors.Add("deploymentProjectPath is required to read ToolingManifest.json");
             return Task.FromResult(errors);
         }
 
-        var manifestPath = Path.Combine(config.DeploymentProjectPath, "toolingManifest.json");
+        var manifestPath = Path.Combine(config.DeploymentProjectPath, McpConstants.ToolingManifestFileName);
         if (!File.Exists(manifestPath))
         {
-            errors.Add($"toolingManifest.json not found at {manifestPath}");
+            errors.Add($"ToolingManifest.json not found at {manifestPath}");
         }
 
         return Task.FromResult(errors);
@@ -130,8 +130,8 @@ internal static class PermissionsSubcommand
 
             if (dryRun)
             {
-                // Read scopes from toolingManifest.json
-                var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
+                // Read scopes from ToolingManifest.json
+                var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
                 var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
                 logger.LogInformation("DRY RUN: Configure MCP Permissions");
@@ -252,8 +252,8 @@ internal static class PermissionsSubcommand
 
         try
         {
-            // Read scopes from toolingManifest.json
-            var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
+            // Read scopes from ToolingManifest.json
+            var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
             var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
             var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -133,10 +134,10 @@ public class NodeBuilder : IPlatformBuilder
         }
 
         // Copy ToolingManifest if exists
-        var toolingManifestPath = Path.Combine(projectDir, "ToolingManifest.json");
+        var toolingManifestPath = Path.Combine(projectDir, McpConstants.ToolingManifestFileName);
         if (File.Exists(toolingManifestPath))
         {
-            File.Copy(toolingManifestPath, Path.Combine(publishPath, "ToolingManifest.json"));
+            File.Copy(toolingManifestPath, Path.Combine(publishPath, McpConstants.ToolingManifestFileName));
         }
 
         // Copy source files (src, lib, etc.)
