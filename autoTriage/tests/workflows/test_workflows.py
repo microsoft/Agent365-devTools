@@ -48,9 +48,7 @@ class TestAutoTriageWorkflow:
     def test_workflow_has_required_permissions(self, workflow):
         """Test workflow has correct permissions."""
         assert workflow["permissions"]["issues"] == "write"
-        # Note: contents is temporarily set to 'write' for testing Copilot assignment.
-        # Should be 'read' in production. See workflow comments for details.
-        assert workflow["permissions"]["contents"] in ("read", "write")
+        assert workflow["permissions"]["contents"] == "read"
 
     def test_workflow_uses_python_311(self, workflow):
         """Test workflow uses Python 3.11."""

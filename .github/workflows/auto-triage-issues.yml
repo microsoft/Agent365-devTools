@@ -5,17 +5,8 @@ on:
     types: [opened, edited]
 
 permissions:
-  issues: write       # Required to add labels and comments during triage
-  # TESTING: Temporarily using contents:write instead of contents:read.
-  # Hypothesis: The addAssigneesToAssignable GraphQL mutation with agentAssignment
-  # might require write access to create branches/commits for Copilot coding agent.
-  # Expected: This likely won't help because GITHUB_TOKEN lacks Copilot entitlement
-  # regardless of permissions. Copilot assignment requires user-level authentication.
-  # Revert to contents:read after confirming this doesn't resolve Copilot assignment.
-  contents: write
-  # The following permissions are required for Copilot coding agent assignment:
-  # - pull-requests:write - Copilot coding agent creates PRs when fixing issues
-  # - actions:read - Required for the addAssigneesToAssignable GraphQL mutation
+  issues: write
+  contents: read
   pull-requests: write
   actions: read
 
