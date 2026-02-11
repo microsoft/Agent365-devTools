@@ -6,7 +6,7 @@ on:
 
 permissions:
   issues: write       # Required to add labels and comments during triage
-  contents: read      # Required to read repository files for analysis
+  contents: write     # Required for Copilot coding agent to create branches and commits
   # The following permissions are required for Copilot coding agent assignment:
   # - pull-requests:write - Copilot coding agent creates PRs when fixing issues
   # - actions:read - Required for the addAssigneesToAssignable GraphQL mutation
