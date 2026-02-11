@@ -205,7 +205,7 @@ public static class ManifestHelper
     }
 
     /// <summary>
-    /// Reads toolingManifest.json and returns the unique list of scopes required by all MCP servers.
+    /// Reads ToolingManifest.json and returns the unique list of scopes required by all MCP servers.
     /// Strategy:
     ///  1) If a server entry has an explicit "scope" property, use it.
     ///  2) Otherwise, use McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName).

@@ -417,7 +417,7 @@ public class AuthenticationService
         if (string.IsNullOrWhiteSpace(manifestPath))
         {
             var currentDir = Environment.CurrentDirectory;
-            manifestPath = Path.Combine(currentDir, "ToolingManifest.json");
+            manifestPath = Path.Combine(currentDir, McpConstants.ToolingManifestFileName);
 
             if (!File.Exists(manifestPath))
             {

@@ -337,8 +337,8 @@ public class DeployCommand
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
-        // Read scopes from toolingManifest.json (at deploymentProjectPath)
-        var manifestPath = Path.Combine(config.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
+        // Read scopes from ToolingManifest.json (at deploymentProjectPath)
+        var manifestPath = Path.Combine(config.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
         var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
         // 1. Apply MCP OAuth2 permission grants
