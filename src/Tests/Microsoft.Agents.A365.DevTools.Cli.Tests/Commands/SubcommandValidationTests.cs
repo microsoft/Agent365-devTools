@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -266,7 +267,7 @@ public class SubcommandValidationTests
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
-        var manifestPath = Path.Combine(tempDir, "toolingManifest.json");
+        var manifestPath = Path.Combine(tempDir, McpConstants.ToolingManifestFileName);
         await File.WriteAllTextAsync(manifestPath, "{}");
 
         try
@@ -296,7 +297,7 @@ public class SubcommandValidationTests
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
-        var manifestPath = Path.Combine(tempDir, "toolingManifest.json");
+        var manifestPath = Path.Combine(tempDir, McpConstants.ToolingManifestFileName);
         await File.WriteAllTextAsync(manifestPath, "{}");
 
         try
@@ -341,7 +342,7 @@ public class SubcommandValidationTests
 
             // Assert
             errors.Should().ContainSingle()
-                .Which.Should().Contain("toolingManifest.json");
+                .Which.Should().Contain("ToolingManifest.json");
         }
         finally
         {

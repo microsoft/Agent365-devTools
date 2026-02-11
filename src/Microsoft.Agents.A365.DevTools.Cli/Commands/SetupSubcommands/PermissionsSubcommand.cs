@@ -86,8 +86,8 @@ internal static class PermissionsSubcommand
 
             if (dryRun)
             {
-                // Read scopes from toolingManifest.json
-                var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
+                // Read scopes from ToolingManifest.json
+                var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
                 var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
                 logger.LogInformation("DRY RUN: Configure MCP Permissions");
@@ -210,8 +210,8 @@ internal static class PermissionsSubcommand
 
         try
         {
-            // Read scopes from toolingManifest.json
-            var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, "toolingManifest.json");
+            // Read scopes from ToolingManifest.json
+            var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
             var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
             var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);

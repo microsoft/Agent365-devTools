@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Helpers;
@@ -43,14 +44,14 @@ public static class ValidationHelper
 
         if (string.IsNullOrWhiteSpace(config.DeploymentProjectPath))
         {
-            errors.Add("deploymentProjectPath is required to read toolingManifest.json");
+            errors.Add("deploymentProjectPath is required to read ToolingManifest.json");
             return Task.FromResult(errors);
         }
 
-        var manifestPath = Path.Combine(config.DeploymentProjectPath, "toolingManifest.json");
+        var manifestPath = Path.Combine(config.DeploymentProjectPath, McpConstants.ToolingManifestFileName);
         if (!File.Exists(manifestPath))
         {
-            errors.Add($"toolingManifest.json not found at {manifestPath}");
+            errors.Add($"ToolingManifest.json not found at {manifestPath}");
         }
 
         return Task.FromResult(errors);
