@@ -63,6 +63,22 @@ internal static class GetTokenSubcommand
             ["--force-refresh"],
             description: "Force token refresh even if cached token is valid");
 
+        var resourceOption = new Option<string?>(
+            ["--resource"],
+            description: "Resource keyword to get token for. Available: mcp (default), powerplatform. " +
+                         "When specified, --scopes is required.")
+        {
+            IsRequired = false
+        };
+
+        var resourceIdOption = new Option<string?>(
+            ["--resource-id"],
+            description: "Resource application ID (GUID) to get token for. " +
+                         "When specified, --scopes is required.")
+        {
+            IsRequired = false
+        };
+
         command.AddOption(configOption);
         command.AddOption(appIdOption);
         command.AddOption(manifestOption);
@@ -70,12 +86,36 @@ internal static class GetTokenSubcommand
         command.AddOption(outputFormatOption);
         command.AddOption(verboseOption);
         command.AddOption(forceRefreshOption);
+        command.AddOption(resourceOption);
+        command.AddOption(resourceIdOption);
 
-        command.SetHandler(async (config, appId, manifest, scopes, outputFormat, verbose, forceRefresh) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            // Extract option values from context
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var appId = context.ParseResult.GetValueForOption(appIdOption);
+            var manifest = context.ParseResult.GetValueForOption(manifestOption);
+            var scopes = context.ParseResult.GetValueForOption(scopesOption);
+            var outputFormat = context.ParseResult.GetValueForOption(outputFormatOption)!;
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var forceRefresh = context.ParseResult.GetValueForOption(forceRefreshOption);
+            var resource = context.ParseResult.GetValueForOption(resourceOption);
+            var resourceId = context.ParseResult.GetValueForOption(resourceIdOption);
+
             try
             {
-                logger.LogInformation("Retrieving bearer token for MCP servers...");
+                // Validate mutual exclusivity of --resource and --resource-id
+                if (!string.IsNullOrWhiteSpace(resource) && !string.IsNullOrWhiteSpace(resourceId))
+                {
+                    logger.LogError("Cannot specify both --resource and --resource-id. Use one or the other.");
+                    Environment.Exit(1);
+                    return;
+                }
+
+                // Determine if custom resource is being used
+                bool isCustomResource = !string.IsNullOrWhiteSpace(resource) || !string.IsNullOrWhiteSpace(resourceId);
+
+                logger.LogInformation("Retrieving bearer token...");
                 logger.LogInformation("");
 
                 // Check if config file exists or if --app-id was provided
@@ -99,21 +139,73 @@ internal static class GetTokenSubcommand
                     return;
                 }
 
-                // Determine manifest path
-                var manifestPath = manifest?.FullName 
-                    ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, "ToolingManifest.json");
+                // Determine environment
+                var environment = setupConfig?.Environment ?? "prod";
+
+                // Resolve resource app ID
+                string resourceAppId;
+                string resourceDisplayName;
+                string? resourceUrl = null;
+                if (!string.IsNullOrWhiteSpace(resourceId))
+                {
+                    // Validate that resource ID is a valid GUID
+                    if (!Guid.TryParse(resourceId, out _))
+                    {
+                        logger.LogError("Invalid resource application ID: {ResourceId}. Expected a valid GUID.", resourceId);
+                        logger.LogInformation("");
+                        logger.LogInformation("Example: a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
+                        Environment.Exit(1);
+                        return;
+                    }
+
+                    // User provided explicit resource ID
+                    resourceAppId = resourceId;
+                    resourceDisplayName = $"Custom Resource ({resourceId})";
+                    logger.LogInformation("Using custom resource ID: {ResourceId}", resourceId);
+                }
+                else
+                {
+                    // Resolve resource keyword to GUID (default to "mcp" if null)
+                    var resolved = ResolveResourceApp(resource, environment);
+                    if (resolved == null)
+                    {
+                        logger.LogError("Unknown resource keyword '{Resource}'. Valid options: mcp, powerplatform", resource);
+                        Environment.Exit(1);
+                        return;
+                    }
+
+                    resourceAppId = resolved.Value.resourceAppId;
+                    resourceDisplayName = resolved.Value.displayName;
+                    resourceUrl = resolved.Value.url;
+                    logger.LogInformation("Using resource: {DisplayName}", resourceDisplayName);
+                }
 
                 // Determine which scopes to request
                 string[] requestedScopes;
-                
+
+                // Default MCP flow: manifest or explicit scopes
                 if (scopes != null && scopes.Length > 0)
                 {
                     // User provided explicit scopes
                     requestedScopes = scopes;
                     logger.LogInformation("Using user-specified scopes: {Scopes}", string.Join(", ", requestedScopes));
                 }
+                else if (isCustomResource) {
+                    logger.LogError("The --scopes option is required when using --resource or --resource-id.");
+                    logger.LogInformation("");
+                    logger.LogInformation("Manifest-based scopes are only supported for the default flow.");
+                    logger.LogInformation("Please omit the --resource and --resource-id options if you'd like to use manifest-based scopes.");
+                    logger.LogInformation("");
+                    logger.LogInformation("Example: a365 develop get-token --resource powerplatform --scopes .default");
+                    Environment.Exit(1);
+                    return;
+                }
                 else
                 {
+                    // Determine manifest path
+                    var manifestPath = manifest?.FullName
+                        ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, "ToolingManifest.json");
+
                     // Read scopes from ToolingManifest.json
                     if (!File.Exists(manifestPath))
                     {
@@ -122,7 +214,7 @@ internal static class GetTokenSubcommand
                         logger.LogInformation("Please ensure ToolingManifest.json exists in your project directory");
                         logger.LogInformation("or specify scopes explicitly with --scopes option.");
                         logger.LogInformation("");
-                        logger.LogInformation("Example: a365 develop gettoken --scopes McpServers.Mail.All McpServers.Calendar.All");
+                        logger.LogInformation("Example: a365 develop get-token --scopes McpServers.Mail.All McpServers.Calendar.All");
                         Environment.Exit(1);
                         return;
                     }
@@ -140,121 +232,169 @@ internal static class GetTokenSubcommand
                         return;
                     }
 
-                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}", 
+                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}",
                         requestedScopes.Length, string.Join(", ", requestedScopes));
                 }
 
                 logger.LogInformation("");
-
-                // Get the Agent 365 Tools resource App ID for the environment
-                var environment = setupConfig?.Environment ?? "prod";
-                var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
-                logger.LogInformation("Agent 365 Tools Resource App ID: {AppId}", resourceAppId);
+                logger.LogInformation("Resource App ID: {AppId}", resourceAppId);
                 logger.LogInformation("Requesting scopes: {Scopes}", string.Join(", ", requestedScopes));
                 logger.LogInformation("");
 
-                // Acquire token with explicit scopes
-                logger.LogInformation("Acquiring access token with explicit scopes...");
-                
-                // Determine tenant ID (from config or detect from Azure CLI)
-                string? tenantId = await TenantDetectionHelper.DetectTenantIdAsync(setupConfig, logger);
-                
-                try
-                {
-                    // Determine which client app to use for authentication
-                    string? clientAppId = null;
-                    if (!string.IsNullOrWhiteSpace(appId))
-                    {
-                        // User specified --app-id: use it as the client (caller) application
-                        clientAppId = appId;
-                        logger.LogInformation("Using custom client application: {ClientAppId}", clientAppId);
-                    }
-                    else if (setupConfig != null && !string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-                    {
-                        // Use client app from config
-                        clientAppId = setupConfig.ClientAppId;
-                        logger.LogInformation("Using client application from config: {ClientAppId}", clientAppId);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException("No client application ID specified. Use --app-id or ensure ClientAppId is set in config.");
-                    }
-                    
-                    logger.LogInformation("");
-                    
-                    // Use GetAccessTokenWithScopesAsync for explicit scope control
-                    var token = await authService.GetAccessTokenWithScopesAsync(
-                        resourceAppId,
-                        requestedScopes,
-                        tenantId,
-                        forceRefresh,
-                        clientAppId,
-                        useInteractiveBrowser: true);
-
-                    if (string.IsNullOrWhiteSpace(token))
-                    {
-                        logger.LogError("Failed to acquire token");
-                        Environment.Exit(1);
-                        return;
-                    }
-
-                logger.LogInformation("[SUCCESS] Token acquired successfully with scopes: {Scopes}", 
-                    string.Join(", ", requestedScopes));
-                logger.LogInformation("");
-
-                var tokenCachePath = Path.Combine(
-                    ConfigService.GetGlobalConfigDirectory(),
-                    AuthenticationConstants.TokenCacheFileName);
-
-                // Create a single result representing the consolidated token
-                var tokenResult = new McpServerTokenResult
-                {
-                    ServerName = "Agent 365 Tools (All MCP Servers)",
-                    Url = ConfigConstants.GetDiscoverEndpointUrl(environment),
-                    Scope = string.Join(", ", requestedScopes),
-                    Audience = resourceAppId,
-                    Success = true,
-                    Token = token,
-                    ExpiresOn = DateTime.UtcNow.AddHours(1), // Estimate
-                    CacheFilePath = tokenCachePath
-                };
-
-                var tokenResults = new List<McpServerTokenResult> { tokenResult };
-
-                // Display results based on output format
-                DisplayResults(tokenResults, outputFormat, verbose, logger);
-
-                // Save bearer token to project configuration files
-                if (setupConfig != null)
-                {
-                    await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, logger);
-                }
-                else
-                {
-                    // No config file: user must manually copy the token
-                    logger.LogInformation("");
-                    logger.LogInformation("Note: To use this token in your samples, manually add it to:");
-                    logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > BEARER_TOKEN");
-                    logger.LogInformation("  - Python/Node.js projects: .env file as BEARER_TOKEN={Token}", token);
-                    logger.LogInformation("");
-                }
-
-                logger.LogInformation("Token acquired successfully!");
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError("Failed to acquire token: {Message}", ex.Message);
-                    Environment.Exit(1);
-                }
+                // Acquire and display token
+                await AcquireAndDisplayTokenAsync(
+                    resourceAppId,
+                    resourceDisplayName,
+                    resourceUrl,
+                    requestedScopes,
+                    appId,
+                    setupConfig,
+                    outputFormat,
+                    verbose,
+                    forceRefresh,
+                    authService,
+                    logger);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to retrieve bearer token: {Message}", ex.Message);
                 Environment.Exit(1);
             }
-        }, configOption, appIdOption, manifestOption, scopesOption, outputFormatOption, verboseOption, forceRefreshOption);
+        });
 
         return command;
+    }
+
+    /// <summary>
+    /// Acquires an access token and displays the results.
+    /// </summary>
+    private static async Task AcquireAndDisplayTokenAsync(
+        string resourceAppId,
+        string resourceDisplayName,
+        string? resourceUrl,
+        string[] requestedScopes,
+        string? appId,
+        Agent365Config? setupConfig,
+        string outputFormat,
+        bool verbose,
+        bool forceRefresh,
+        AuthenticationService authService,
+        ILogger logger)
+    {
+        // Acquire token with explicit scopes
+        logger.LogInformation("Acquiring access token with explicit scopes...");
+
+        // Determine tenant ID (from config or detect from Azure CLI)
+        string? tenantId = await TenantDetectionHelper.DetectTenantIdAsync(setupConfig, logger);
+
+        try
+        {
+            // Determine which client app to use for authentication
+            string? clientAppId = null;
+            if (!string.IsNullOrWhiteSpace(appId))
+            {
+                // User specified --app-id: use it as the client (caller) application
+                clientAppId = appId;
+                logger.LogInformation("Using custom client application: {ClientAppId}", clientAppId);
+            }
+            else if (setupConfig != null && !string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+            {
+                // Use client app from config
+                clientAppId = setupConfig.ClientAppId;
+                logger.LogInformation("Using client application from config: {ClientAppId}", clientAppId);
+            }
+            else
+            {
+                throw new InvalidOperationException("No client application ID specified. Use --app-id or ensure ClientAppId is set in config.");
+            }
+
+            logger.LogInformation("");
+
+            // Use GetAccessTokenWithScopesAsync for explicit scope control
+            var token = await authService.GetAccessTokenWithScopesAsync(
+                resourceAppId,
+                requestedScopes,
+                tenantId,
+                forceRefresh,
+                clientAppId,
+                useInteractiveBrowser: true);
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                logger.LogError("Failed to acquire token");
+                Environment.Exit(1);
+                return;
+            }
+
+            logger.LogInformation("[SUCCESS] Token acquired successfully with scopes: {Scopes}",
+                string.Join(", ", requestedScopes));
+            logger.LogInformation("");
+
+            var tokenCachePath = Path.Combine(
+                ConfigService.GetGlobalConfigDirectory(),
+                AuthenticationConstants.TokenCacheFileName);
+
+            // Create a single result representing the consolidated token
+            var tokenResult = new McpServerTokenResult
+            {
+                ServerName = resourceDisplayName,
+                Url = resourceUrl,
+                Scope = string.Join(", ", requestedScopes),
+                Audience = resourceAppId,
+                Success = true,
+                Token = token,
+                ExpiresOn = DateTime.UtcNow.AddHours(1), // Estimate
+                CacheFilePath = tokenCachePath
+            };
+
+            var tokenResults = new List<McpServerTokenResult> { tokenResult };
+
+            // Display results based on output format
+            DisplayResults(tokenResults, outputFormat, verbose, logger);
+
+            // Save bearer token to project configuration files
+            if (setupConfig != null)
+            {
+                await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, logger);
+            }
+            else
+            {
+                // No config file: user must manually copy the token
+                logger.LogInformation("");
+                logger.LogInformation("Note: To use this token in your samples, manually add it to:");
+                logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > BEARER_TOKEN");
+                logger.LogInformation("  - Python/Node.js projects: .env file as BEARER_TOKEN={Token}", token);
+                logger.LogInformation("");
+            }
+
+            logger.LogInformation("Token acquired successfully!");
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to acquire token: {Message}", ex.Message);
+            Environment.Exit(1);
+        }
+    }
+
+    /// <summary>
+    /// Resolves a resource keyword to its corresponding resource app info.
+    /// </summary>
+    /// <param name="keyword">The resource keyword (e.g., "mcp", "powerplatform").</param>
+    /// <param name="environment">The environment to use for MCP resource resolution.</param>
+    /// <returns>A tuple containing the resource app ID, display name, and URL, or null if the keyword is unknown.</returns>
+    private static (string resourceAppId, string displayName, string? url)? ResolveResourceApp(string? keyword, string environment)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            keyword = "mcp"; // Default to MCP if no keyword provided
+        }
+
+        return keyword.ToLowerInvariant() switch
+        {
+            "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)", ConfigConstants.GetDiscoverEndpointUrl(environment)),
+            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API", null),
+            _ => null
+        };
     }
 
     private static void DisplayResults(
@@ -337,8 +477,8 @@ internal static class GetTokenSubcommand
             cacheFilePath = r.CacheFilePath
         });
 
-        var json = JsonSerializer.Serialize(output, new JsonSerializerOptions 
-        { 
+        var json = JsonSerializer.Serialize(output, new JsonSerializerOptions
+        {
             WriteIndented = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
@@ -360,10 +500,10 @@ internal static class GetTokenSubcommand
                     Console.Error.WriteLine($"# Scope: {result.Scope}");
                     Console.Error.WriteLine($"# Audience: {result.Audience}");
                 }
-                
+
                 // Write token to stdout for piping to other tools
                 Console.WriteLine(result.Token);
-                
+
                 if (verbose)
                 {
                     Console.Error.WriteLine();

@@ -12,7 +12,29 @@ using System.Text.Json;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for handling authentication to Agent 365 Tools
+/// Service for handling authentication to Agent 365 Tools and Microsoft Graph API.
+///
+/// AUTHENTICATION STRATEGY:
+/// - Uses interactive authentication by default (no device code flow)
+/// - Implements comprehensive token caching to minimize authentication prompts
+/// - Typical user experience: 1-2 authentication prompts for entire CLI workflow
+///
+/// TOKEN CACHING:
+/// - Cache Location: %LocalApplicationData%\Agent365\token-cache.json (Windows)
+/// - Cache Key Format: {resourceUrl}:tenant:{tenantId}
+/// - Cache Expiration: Validated with 5-minute buffer before token expiry
+/// - Reuse Across Commands: All CLI commands share the same token cache
+///
+/// AUTHENTICATION FLOW:
+/// 1. Check cache for valid token (tenant-specific)
+/// 2. If cache miss or expired: Prompt for interactive authentication
+/// 3. Cache new token for future CLI command invocations
+/// 4. Token persists across CLI sessions until expiration
+///
+/// MULTI-COMMAND WORKFLOW:
+/// - First command (e.g., 'setup all'): 1-2 authentication prompts
+/// - Subsequent commands: 0 prompts (uses cached tokens)
+/// - Token refresh: Automatic when within 5 minutes of expiration
 /// </summary>
 public class AuthenticationService
 {
@@ -37,12 +59,12 @@ public class AuthenticationService
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
     /// <param name="scopes">Optional explicit scopes to request. If not provided, uses .default scope pattern</param>
     public async Task<string> GetAccessTokenAsync(
-        string resourceUrl, 
-        string? tenantId = null, 
-        bool forceRefresh = false, 
+        string resourceUrl,
+        string? tenantId = null,
+        bool forceRefresh = false,
         string? clientId = null,
         IEnumerable<string>? scopes = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = true)
     {
         // Build cache key based on resource and tenant only
         // Azure AD returns tokens with all consented scopes regardless of which scopes are requested,
@@ -338,12 +360,12 @@ public class AuthenticationService
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
     /// <returns>Access token with the requested scopes</returns>
     public async Task<string> GetAccessTokenWithScopesAsync(
-        string resourceAppId, 
-        IEnumerable<string> scopes, 
-        string? tenantId = null, 
+        string resourceAppId,
+        IEnumerable<string> scopes,
+        string? tenantId = null,
         bool forceRefresh = false,
         string? clientId = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = true)
     {
         if (string.IsNullOrWhiteSpace(resourceAppId))
             throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));

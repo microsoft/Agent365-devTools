@@ -64,8 +64,7 @@ nunit-*.xml
 
 # We should have at some point .vscode, but for not ignore since we don't have standard
 .vscode
-.claude/
-**/.claude/
+.claude/settings.local.json
 .idea/
 
 # OS-specific files
@@ -74,3 +73,22 @@ Thumbs.db
 
 # Pre-PR review results
 pr-review-*.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/

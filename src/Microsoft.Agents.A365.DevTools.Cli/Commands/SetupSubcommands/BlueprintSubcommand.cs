@@ -33,6 +33,20 @@ internal class BlueprintCreationResult
     /// Indicates whether endpoint registration was attempted (vs. skipped via --no-endpoint or missing config)
     /// </summary>
     public bool EndpointRegistrationAttempted { get; set; }
+
+    /// <summary>
+    /// Indicates whether Graph admin consent (OAuth2 permissions) was granted.
+    /// </summary>
+    public bool GraphPermissionsConfigured { get; set; }
+    /// <summary>
+    /// Indicates whether Graph inheritable permissions failed to be configured.
+    /// This is critical for agent token exchange functionality.
+    /// </summary>
+    public bool GraphInheritablePermissionsFailed { get; set; }
+    /// <summary>
+    /// Error message when Graph inheritable permissions fail.
+    /// </summary>
+    public string? GraphInheritablePermissionsError { get; set; }
 }
 
 /// <summary>
@@ -136,15 +150,55 @@ internal static class BlueprintSubcommand
             "--endpoint-only",
             description: "Register messaging endpoint only (requires existing blueprint)");
 
+        var updateEndpointOption = new Option<string?>(
+            "--update-endpoint",
+            description: "Delete the existing messaging endpoint and register a new one with the specified URL");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
+        command.AddOption(updateEndpointOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly) =>
+        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, updateEndpoint) =>
         {
+            // Generate correlation ID at workflow entry point
+            var correlationId = HttpClientFactory.GenerateCorrelationId();
+            logger.LogInformation("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
+
+            // Validate mutually exclusive options
+            if (!ValidateMutuallyExclusiveOptions(
+                updateEndpoint: updateEndpoint,
+                endpointOnly: endpointOnly,
+                skipEndpointRegistration: skipEndpointRegistration,
+                logger: logger))
+            {
+                Environment.Exit(1);
+            }
+
             var setupConfig = await configService.LoadAsync(config.FullName);
+
+            // Handle --update-endpoint flag
+            if (!string.IsNullOrWhiteSpace(updateEndpoint))
+            {
+                try
+                {
+                    await UpdateEndpointAsync(
+                        configPath: config.FullName,
+                        newEndpointUrl: updateEndpoint,
+                        logger: logger,
+                        configService: configService,
+                        botConfigurator: botConfigurator,
+                        platformDetector: platformDetector);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Endpoint update failed: {Message}", ex.Message);
+                    Environment.Exit(1);
+                }
+                return;
+            }
 
             if (dryRun)
             {
@@ -173,7 +227,8 @@ internal static class BlueprintSubcommand
                         logger: logger,
                         configService: configService,
                         botConfigurator: botConfigurator,
-                        platformDetector: platformDetector);
+                        platformDetector: platformDetector,
+                        correlationId: correlationId);
 
                     logger.LogInformation("");
                     logger.LogInformation("Endpoint registration completed successfully!");
@@ -207,12 +262,53 @@ internal static class BlueprintSubcommand
                 blueprintService,
                 blueprintLookupService,
                 federatedCredentialService,
-                skipEndpointRegistration
+                skipEndpointRegistration,
+                correlationId: correlationId
                 );
 
-        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption);
+        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, updateEndpointOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Validates that mutually exclusive command options are not used together.
+    /// </summary>
+    /// <returns>True if validation passes, false if conflicting options are detected.</returns>
+    internal static bool ValidateMutuallyExclusiveOptions(
+        string? updateEndpoint,
+        bool endpointOnly,
+        bool skipEndpointRegistration,
+        ILogger logger)
+    {
+        var hasUpdateEndpoint = !string.IsNullOrWhiteSpace(updateEndpoint);
+
+        // --update-endpoint cannot be used with --endpoint-only or --no-endpoint
+        if (hasUpdateEndpoint)
+        {
+            if (endpointOnly)
+            {
+                logger.LogError("Options --update-endpoint and --endpoint-only cannot be used together.");
+                logger.LogError("Use --update-endpoint if the endpoint URL needs to be updated, otherwise use --endpoint-only to register a new endpoint.");
+                return false;
+            }
+            if (skipEndpointRegistration)
+            {
+                logger.LogError("Options --update-endpoint and --no-endpoint cannot be used together.");
+                logger.LogError("--update-endpoint updates an endpoint, which conflicts with --no-endpoint.");
+                return false;
+            }
+        }
+
+        // --endpoint-only cannot be used with --no-endpoint
+        if (endpointOnly && skipEndpointRegistration)
+        {
+            logger.LogError("Options --endpoint-only and --no-endpoint cannot be used together.");
+            logger.LogError("--endpoint-only registers an endpoint, which conflicts with --no-endpoint.");
+            return false;
+        }
+
+        return true;
     }
 
     public static async Task<BlueprintCreationResult> CreateBlueprintImplementationAsync(
@@ -231,6 +327,7 @@ internal static class BlueprintSubcommand
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         bool skipEndpointRegistration = false,
+        string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("");
@@ -300,7 +397,8 @@ internal static class BlueprintSubcommand
             delegatedConsentService,
             setupConfig.ClientAppId,
             setupConfig.TenantId,
-            logger);
+            logger,
+            correlationId: correlationId);
 
         if (!consentResult)
         {
@@ -450,7 +548,8 @@ internal static class BlueprintSubcommand
                     logger: logger,
                     configService: configService,
                     botConfigurator: botConfigurator,
-                    platformDetector: platformDetector);
+                    platformDetector: platformDetector,
+                    correlationId: correlationId);
                 endpointRegistered = registered;
                 endpointAlreadyExisted = alreadyExisted;
             }
@@ -504,7 +603,10 @@ internal static class BlueprintSubcommand
             BlueprintAlreadyExisted = blueprintAlreadyExisted,
             EndpointRegistered = endpointRegistered,
             EndpointAlreadyExisted = endpointAlreadyExisted,
-            EndpointRegistrationAttempted = !skipEndpointRegistration
+            EndpointRegistrationAttempted = !skipEndpointRegistration,
+            GraphPermissionsConfigured = blueprintResult.graphPermissionsConfigured,
+            GraphInheritablePermissionsFailed = blueprintResult.graphInheritablePermissionsFailed,
+            GraphInheritablePermissionsError = blueprintResult.graphInheritablePermissionsError
         };
     }
 
@@ -517,7 +619,8 @@ internal static class BlueprintSubcommand
         string clientAppId,
         string tenantId,
         ILogger logger,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? correlationId = null)
     {
         var retryHelper = new RetryHelper(logger);
 
@@ -529,7 +632,8 @@ internal static class BlueprintSubcommand
                     return await delegatedConsentService.EnsureBlueprintPermissionGrantAsync(
                         clientAppId,
                         tenantId,
-                        ct);
+                        ct,
+                        correlationId: correlationId);
                 },
                 result => !result,
                 maxRetries: 3,
@@ -562,9 +666,9 @@ internal static class BlueprintSubcommand
     /// Implements displayName-first discovery for idempotency: always searches by displayName from a365.config.json (the source of truth).
     /// Cached objectIds are only used for dependent resources (FIC, etc.) after blueprint existence is confirmed.
     /// Used by: BlueprintSubcommand and A365SetupRunner Phase 2.2
-    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted)
+    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted, graphPermissionsConfigured, graphInheritablePermissionsFailed, graphInheritablePermissionsError)
     /// </summary>
-    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted)> CreateAgentBlueprintAsync(
+    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError)> CreateAgentBlueprintAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -649,7 +753,7 @@ internal static class BlueprintSubcommand
             {
                 logger.LogError("Existing blueprint found but required identifiers are missing (AppId: {AppId}, ObjectId: {ObjectId})", 
                     existingAppId, existingObjectId);
-                return (false, null, null, null, alreadyExisted: false);
+                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
             }
 
             return await CompleteBlueprintConfigurationAsync(
@@ -725,7 +829,7 @@ internal static class BlueprintSubcommand
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
-                return (false, null, null, null, alreadyExisted: false);
+                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
             }
 
             // Create the application using Microsoft Graph SDK
@@ -770,13 +874,13 @@ internal static class BlueprintSubcommand
                     {
                         errorContent = await appResponse.Content.ReadAsStringAsync(ct);
                         logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                        return (false, null, null, null, alreadyExisted: false);
+                        return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
                     }
                 }
                 else
                 {
                     logger.LogError("Failed to create application: {Status} - {Error}", appResponse.StatusCode, errorContent);
-                    return (false, null, null, null, alreadyExisted: false);
+                    return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
                 }
             }
 
@@ -806,7 +910,7 @@ internal static class BlueprintSubcommand
             if (!appAvailable)
             {
                 logger.LogError("Application object not available after creation and retries. Aborting setup.");
-                return (false, null, null, null, alreadyExisted: false);
+                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
             }
             
             logger.LogInformation("Application object verified in directory");
@@ -926,7 +1030,7 @@ internal static class BlueprintSubcommand
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
-            return (false, null, null, null, alreadyExisted: false);
+            return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
         }
     }
 
@@ -934,7 +1038,7 @@ internal static class BlueprintSubcommand
     /// Completes blueprint configuration by validating/creating federated credentials and requesting admin consent.
     /// Called by both existing blueprint and new blueprint paths to ensure consistent configuration.
     /// </summary>
-    private static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted)> CompleteBlueprintConfigurationAsync(
+    private static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError)> CompleteBlueprintConfigurationAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -1065,7 +1169,7 @@ internal static class BlueprintSubcommand
         // Admin Consent
         // ========================================================================
         
-        var (consentSuccess, consentUrlGraph) = await EnsureAdminConsentAsync(
+        var (consentSuccess, consentUrlGraph, graphInheritablePermissionsConfigured, graphInheritablePermissionsError) = await EnsureAdminConsentAsync(
             logger,
             executor,
             graphApiService,
@@ -1102,7 +1206,9 @@ internal static class BlueprintSubcommand
             logger.LogWarning("Consent URL: {Url}", consentUrlGraph);
         }
 
-        return (true, appId, objectId, servicePrincipalId, alreadyExisted);
+        // Track Graph permissions status - this is critical for agent token exchange
+        bool graphPermissionsFailed = !graphInheritablePermissionsConfigured;
+        return (true, appId, objectId, servicePrincipalId, alreadyExisted, consentSuccess, graphPermissionsFailed, graphInheritablePermissionsError);
     }
 
     /// <summary>
@@ -1138,9 +1244,9 @@ internal static class BlueprintSubcommand
     /// Ensures admin consent for the blueprint application.
     /// For existing blueprints, checks if consent already exists before requesting browser interaction.
     /// For new blueprints, skips verification and directly requests consent.
-    /// Returns: (consentSuccess, consentUrl)
+    /// Returns: (consentSuccess, consentUrl, graphInheritablePermissionsConfigured, graphInheritablePermissionsError)
     /// </summary>
-    private static async Task<(bool consentSuccess, string consentUrl)> EnsureAdminConsentAsync(
+    private static async Task<(bool consentSuccess, string consentUrl, bool graphInheritablePermissionsConfigured, string? graphInheritablePermissionsError)> EnsureAdminConsentAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -1207,7 +1313,39 @@ internal static class BlueprintSubcommand
 
         if (consentAlreadyExists)
         {
-            return (true, consentUrlGraph);
+            // For existing consent, we still need to verify/configure inheritable permissions
+            logger.LogInformation("Configuring inheritable permissions for Microsoft Graph...");
+            bool graphInheritableConfigured = false;
+            string? graphInheritableError = null;
+            try
+            {
+                setupConfig.AgentBlueprintId = appId;
+
+                await SetupHelpers.EnsureResourcePermissionsAsync(
+                    graph: graphApiService,
+                    blueprintService: blueprintService,
+                    config: setupConfig,
+                    resourceAppId: AuthenticationConstants.MicrosoftGraphResourceAppId,
+                    resourceName: "Microsoft Graph",
+                    scopes: applicationScopes.ToArray(),
+                    logger: logger,
+                    addToRequiredResourceAccess: false,
+                    setInheritablePermissions: true,
+                    setupResults: null,
+                    ct: ct);
+
+                logger.LogInformation("Microsoft Graph inheritable permissions configured successfully");
+                graphInheritableConfigured = true;
+            }
+            catch (Exception ex)
+            {
+                graphInheritableError = ex.Message;
+                logger.LogWarning("Failed to configure Microsoft Graph inheritable permissions: {Message}", ex.Message);
+                logger.LogWarning("Agent instances may not be able to access Microsoft Graph resources");
+                logger.LogWarning("You can configure these manually later with: a365 setup blueprint");
+            }
+
+            return (true, consentUrlGraph, graphInheritableConfigured, graphInheritableError);
         }
 
         // Request consent via browser
@@ -1217,6 +1355,9 @@ internal static class BlueprintSubcommand
         TryOpenBrowser(consentUrlGraph);
 
         var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
+
+        bool graphInheritablePermissionsConfigured = false;
+        string? graphInheritablePermissionsError = null;
 
         if (consentSuccess)
         {
@@ -1242,12 +1383,14 @@ internal static class BlueprintSubcommand
                     ct: ct);
 
                 logger.LogInformation("Microsoft Graph inheritable permissions configured successfully");
+                graphInheritablePermissionsConfigured = true;
             }
             catch (Exception ex)
             {
+                graphInheritablePermissionsError = ex.Message;
                 logger.LogWarning("Failed to configure Microsoft Graph inheritable permissions: {Message}", ex.Message);
                 logger.LogWarning("Agent instances may not be able to access Microsoft Graph resources");
-                logger.LogWarning("You can configure these manually later with: a365 setup permissions");
+                logger.LogWarning("You can configure these manually later with: a365 setup blueprint");
             }
         }
         else
@@ -1255,7 +1398,7 @@ internal static class BlueprintSubcommand
             logger.LogWarning("Graph API admin consent may not have completed");
         }
 
-        return (consentSuccess, consentUrlGraph);
+        return (consentSuccess, consentUrlGraph, graphInheritablePermissionsConfigured, graphInheritablePermissionsError);
     }
 
     /// <summary>
@@ -1534,6 +1677,7 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         IBotConfigurator botConfigurator,
         PlatformDetector platformDetector,
+        string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
         var setupConfig = await configService.LoadAsync(configPath);
@@ -1544,7 +1688,7 @@ internal static class BlueprintSubcommand
             Environment.Exit(1);
         }
 
-        // Only validate webAppName if needDeployment is true
+        // Validate webAppName if needDeployment is true
         if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
         {
             logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
@@ -1555,7 +1699,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("");
 
         var (endpointRegistered, endpointAlreadyExisted) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator);
+            setupConfig, logger, botConfigurator, correlationId: correlationId);
 
 
         setupConfig.Completed = true;
@@ -1606,6 +1750,121 @@ internal static class BlueprintSubcommand
         }
         
         return (endpointRegistered, endpointAlreadyExisted);
+    }
+
+    /// <summary>
+    /// Updates the messaging endpoint by deleting the existing one and registering a new one.
+    /// </summary>
+    /// <param name="configPath">Path to the configuration file</param>
+    /// <param name="newEndpointUrl">The new messaging endpoint URL</param>
+    /// <param name="logger">Logger instance</param>
+    /// <param name="configService">Configuration service</param>
+    /// <param name="botConfigurator">Bot configurator service</param>
+    /// <param name="platformDetector">Platform detector service</param>
+    public static async Task UpdateEndpointAsync(
+        string configPath,
+        string newEndpointUrl,
+        ILogger logger,
+        IConfigService configService,
+        IBotConfigurator botConfigurator,
+        PlatformDetector platformDetector)
+    {
+        var setupConfig = await configService.LoadAsync(configPath);
+
+        // Validate blueprint ID exists
+        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+        {
+            logger.LogError("Blueprint ID not found. Please confirm agent blueprint id is in config file.");
+            throw new Exceptions.SetupValidationException("Agent Blueprint ID is required for endpoint update.");
+        }
+
+        // Validate new endpoint URL
+        if (!Uri.TryCreate(newEndpointUrl, UriKind.Absolute, out var newUri) ||
+            newUri.Scheme != Uri.UriSchemeHttps)
+        {
+            logger.LogError("New endpoint must be a valid HTTPS URL. Current value: {Endpoint}", newEndpointUrl);
+            throw new Exceptions.SetupValidationException("New endpoint must be a valid HTTPS URL.");
+        }
+
+        logger.LogInformation("Updating messaging endpoint...");
+        logger.LogInformation("");
+
+        // Step 1: Delete existing endpoint if it exists
+        if (!string.IsNullOrWhiteSpace(setupConfig.BotName))
+        {
+            logger.LogInformation("Deleting existing messaging endpoint...");
+            if (string.IsNullOrWhiteSpace(setupConfig.Location))
+            {
+                logger.LogError("Location not found. Please confirm location is in the config file.");
+                throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
+            }
+            var endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
+            var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
+
+            var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                endpointName,
+                normalizedLocation,
+                setupConfig.AgentBlueprintId);
+
+            if (!deleted)
+            {
+                logger.LogError("Failed to delete existing messaging endpoint.");
+                throw new Exceptions.SetupValidationException("Failed to delete existing messaging endpoint. Cannot proceed with update.");
+            }
+
+            logger.LogInformation("Existing endpoint deleted successfully.");
+        }
+        else
+        {
+            logger.LogInformation("No existing endpoint found. Proceeding with registration.");
+        }
+
+        // Step 2: Register new endpoint with the provided URL
+        logger.LogInformation("");
+        logger.LogInformation("Registering new messaging endpoint...");
+
+        var (endpointRegistered, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+            setupConfig, logger, botConfigurator, newEndpointUrl);
+
+        if (!endpointRegistered)
+        {
+            throw new Exceptions.SetupValidationException("Failed to register new messaging endpoint.");
+        }
+
+        // Step 3: Save updated configuration
+        setupConfig.Completed = true;
+        setupConfig.CompletedAt = DateTime.UtcNow;
+
+        await configService.SaveStateAsync(setupConfig);
+
+        // Step 4: Sync to project settings
+        logger.LogInformation("");
+        logger.LogInformation("Syncing configuration to project settings...");
+
+        var configFileInfo = new FileInfo(configPath);
+        var generatedConfigPath = Path.Combine(
+            configFileInfo.DirectoryName ?? Environment.CurrentDirectory,
+            "a365.generated.config.json");
+
+        try
+        {
+            await ProjectSettingsSyncHelper.ExecuteAsync(
+                a365ConfigPath: configPath,
+                a365GeneratedPath: generatedConfigPath,
+                configService: configService,
+                platformDetector: platformDetector,
+                logger: logger);
+
+            logger.LogInformation("Configuration synced to project settings successfully");
+        }
+        catch (Exception syncEx)
+        {
+            logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually if needed.");
+        }
+
+        logger.LogInformation("");
+        logger.LogInformation("Endpoint update completed successfully!");
+        logger.LogInformation("New endpoint: {Endpoint}", newEndpointUrl);
     }
 
     #region Private Helper Methods

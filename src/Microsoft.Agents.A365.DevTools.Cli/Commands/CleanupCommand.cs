@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
@@ -38,14 +39,17 @@ public class CleanupCommand
         cleanupCommand.AddOption(configOption);
         cleanupCommand.AddOption(verboseOption);
 
+        // Generate correlation ID at workflow entry point
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (configFile, verbose) =>
         {
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile);
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, correlationId: correlationId);
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, federatedCredentialService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, federatedCredentialService, correlationId: correlationId));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -58,7 +62,8 @@ public class CleanupCommand
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
-        FederatedCredentialService federatedCredentialService)
+        FederatedCredentialService federatedCredentialService,
+        string? correlationId = null)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -97,7 +102,7 @@ public class CleanupCommand
                 // If endpoint-only mode, only delete the messaging endpoint
                 if (endpointOnly)
                 {
-                    await ExecuteEndpointOnlyCleanupAsync(logger, config, botConfigurator);
+                    await ExecuteEndpointOnlyCleanupAsync(logger, config, botConfigurator, correlationId: correlationId);
                     return;
                 }
 
@@ -168,7 +173,7 @@ public class CleanupCommand
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
                 // Handle endpoint deletion if needed using shared helper
-                if (!await DeleteMessagingEndpointAsync(logger, config, botConfigurator))
+                if (!await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId))
                 {
                     return;
                 }
@@ -423,7 +428,8 @@ public class CleanupCommand
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
-        FileInfo? configFile)
+        FileInfo? configFile,
+        string? correlationId = null)
     {
         var cleanupSucceeded = false;
         var hasFailures = false;
@@ -554,7 +560,7 @@ public class CleanupCommand
             // 5. Delete bot messaging endpoint using shared helper
             if (!string.IsNullOrWhiteSpace(config.BotName))
             {
-                var endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator);
+                var endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
                 if (!endpointDeleted)
                 {
                     hasFailures = true;
@@ -701,11 +707,13 @@ public class CleanupCommand
     /// <param name="logger">Logger instance for diagnostic messages</param>
     /// <param name="config">Configuration containing endpoint and blueprint information</param>
     /// <param name="botConfigurator">Bot configurator service for endpoint operations</param>
+    /// <param name="correlationId">Optional correlation ID for request tracing</param>
     /// <returns>True if endpoint was deleted successfully; false otherwise</returns>
     private static async Task<bool> DeleteMessagingEndpointAsync(
         ILogger<CleanupCommand> logger,
         Agent365Config config,
-        IBotConfigurator botConfigurator)
+        IBotConfigurator botConfigurator,
+        string? correlationId = null)
     {
         // Check if there's actually an endpoint to clean up
         if (string.IsNullOrWhiteSpace(config.BotName))
@@ -727,7 +735,8 @@ public class CleanupCommand
         var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
             endpointName,
             config.Location,
-            config.AgentBlueprintId);
+            config.AgentBlueprintId,
+            correlationId: correlationId);
 
         if (endpointDeleted)
         {
@@ -747,7 +756,8 @@ public class CleanupCommand
     private static async Task ExecuteEndpointOnlyCleanupAsync(
         ILogger<CleanupCommand> logger,
         Agent365Config config,
-        IBotConfigurator botConfigurator)
+        IBotConfigurator botConfigurator,
+        string? correlationId = null)
     {
         logger.LogInformation("Starting endpoint-only cleanup...");
         
@@ -783,7 +793,7 @@ public class CleanupCommand
         }
 
         // Use shared helper to delete the endpoint
-        var deleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator);
+        var deleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
         
         if (!deleted)
         {

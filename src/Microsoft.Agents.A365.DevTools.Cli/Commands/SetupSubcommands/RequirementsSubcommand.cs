@@ -18,7 +18,8 @@ internal static class RequirementsSubcommand
 {
     public static Command CreateCommand(
         ILogger logger,
-        IConfigService configService)
+        IConfigService configService,
+        IClientAppValidator clientAppValidator)
     {
         var command = new Command("requirements", 
             "Validate prerequisites for Agent 365 setup\n" +
@@ -49,14 +50,14 @@ internal static class RequirementsSubcommand
         command.SetHandler(async (config, verbose, category) =>
         {
             logger.LogInformation("Agent 365 Requirements Check");
+            logger.LogInformation(new string('-', 28));
             logger.LogInformation("Validating prerequisites for setup...");
-            logger.LogInformation("");
 
             try
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                var requirementChecks = GetRequirementChecks();
+                var requirementChecks = GetRequirementChecks(clientAppValidator);
                 await RunRequirementChecksAsync(requirementChecks, setupConfig, logger, category);
             }
             catch (Exception ex)
@@ -89,37 +90,42 @@ internal static class RequirementsSubcommand
             }
 
             logger.LogInformation("Running checks for category: {Category}", category);
-            logger.LogInformation("");
+            Console.WriteLine();
         }
 
-        // Group checks by category for organized output
+        // Group checks by category for organized output (categories not printed yet)
         var checksByCategory = requirementChecks.GroupBy(c => c.Category).ToList();
 
         var totalChecks = requirementChecks.Count;
         var passedChecks = 0;
+        var warningChecks = 0;
         var failedChecks = 0;
 
-        // Execute all checks
+        // Execute all checks (grouped by category but headers not shown)
         foreach (var categoryGroup in checksByCategory)
         {
-            logger.LogInformation("Category: {Category}", categoryGroup.Key);
-            logger.LogInformation(new string('-', 50));
-
             foreach (var check in categoryGroup)
             {
+                // Add spacing before each check for readability
+                Console.WriteLine();
+
                 var result = await check.CheckAsync(setupConfig, logger, ct);
 
                 if (result.Passed)
                 {
-                    passedChecks++;
+                    if (result.IsWarning)
+                    {
+                        warningChecks++;
+                    }
+                    else
+                    {
+                        passedChecks++;
+                    }
                 }
                 else
                 {
                     failedChecks++;
                 }
-
-                // Add spacing between checks for readability
-                logger.LogInformation("");
             }
         }
 
@@ -128,13 +134,19 @@ internal static class RequirementsSubcommand
         logger.LogInformation(new string('=', 50));
         logger.LogInformation("Total checks: {Total}", totalChecks);
         logger.LogInformation("Passed: {Passed}", passedChecks);
+        logger.LogInformation("Warning: {Warning}", warningChecks);
         logger.LogInformation("Failed: {Failed}", failedChecks);
-        logger.LogInformation("");
+        Console.WriteLine();
 
         if (failedChecks > 0)
         {
             logger.LogError("Some requirements failed. Please address the issues above before running setup.");
             logger.LogInformation("Use the resolution guidance provided for each failed check.");
+        }
+        else if (warningChecks > 0)
+        {
+            logger.LogWarning("All automated checks passed, but {WarningCount} requirement(s) require manual verification.", warningChecks);
+            logger.LogInformation("Please review the warnings above and ensure all requirements are met before running setup.");
         }
         else
         {
@@ -147,13 +159,19 @@ internal static class RequirementsSubcommand
     /// <summary>
     /// Gets all available requirement checks
     /// </summary>
-    public static List<IRequirementCheck> GetRequirementChecks()
+    public static List<IRequirementCheck> GetRequirementChecks(IClientAppValidator clientAppValidator)
     {
         return new List<IRequirementCheck>
         {
+            // Frontier Preview Program enrollment check
+            new FrontierPreviewRequirementCheck(),
+
+            // Client app configuration validation
+            new ClientAppRequirementCheck(clientAppValidator),
+
             // PowerShell modules required for Microsoft Graph operations
             new PowerShellModulesRequirementCheck(),
-            
+
             // Additional checks can be added here
         };
     }

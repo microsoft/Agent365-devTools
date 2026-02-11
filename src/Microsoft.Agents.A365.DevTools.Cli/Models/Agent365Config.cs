@@ -411,6 +411,25 @@ public class Agent365Config
         return resourcesWithInheritance.All(rc => rc.InheritablePermissionsConfigured == true);
     }
 
+    /// <summary>
+    /// Checks if inheritable permissions are configured for Bot API resources.
+    /// Returns true if any Bot-related resource has inheritable permissions configured.
+    /// </summary>
+    public bool IsBotInheritanceConfigured()
+    {
+        var botResources = ResourceConsents
+            .Where(rc => rc.ResourceAppId.Equals(ConfigConstants.MessagingBotApiAppId, StringComparison.OrdinalIgnoreCase) ||
+                         rc.ResourceAppId.Equals(ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase) ||
+                         rc.ResourceAppId.Equals(MosConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
+            .Where(rc => rc.InheritablePermissionsConfigured.HasValue)
+            .ToList();
+
+        if (botResources.Count == 0)
+            return false;
+
+        return botResources.All(rc => rc.InheritablePermissionsConfigured == true);
+    }
+
     #endregion
 
     #region MCP State

@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
@@ -277,7 +278,7 @@ public class SubcommandValidationTests
             };
 
             // Act
-            var errors = await PermissionsSubcommand.ValidateMcpAsync(config);
+            var errors = await ValidationHelper.ValidateMcpAsync(config);
 
             // Assert
             errors.Should().BeEmpty();
@@ -307,7 +308,7 @@ public class SubcommandValidationTests
             };
 
             // Act
-            var errors = await PermissionsSubcommand.ValidateMcpAsync(config);
+            var errors = await ValidationHelper.ValidateMcpAsync(config);
 
             // Assert
             errors.Should().ContainSingle()
@@ -336,7 +337,7 @@ public class SubcommandValidationTests
             };
 
             // Act
-            var errors = await PermissionsSubcommand.ValidateMcpAsync(config);
+            var errors = await ValidationHelper.ValidateMcpAsync(config);
 
             // Assert
             errors.Should().ContainSingle()
@@ -359,7 +360,7 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await PermissionsSubcommand.ValidateBotAsync(config);
+        var errors = await ValidationHelper.ValidateBlueprintAsync(config);
 
         // Assert
         errors.Should().BeEmpty();
@@ -375,7 +376,7 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await PermissionsSubcommand.ValidateBotAsync(config);
+        var errors = await ValidationHelper.ValidateBlueprintAsync(config);
 
         // Assert
         errors.Should().ContainSingle()

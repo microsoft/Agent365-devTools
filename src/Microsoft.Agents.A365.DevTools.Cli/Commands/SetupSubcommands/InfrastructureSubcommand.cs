@@ -146,7 +146,7 @@ public static class InfrastructureSubcommand
                 if (!string.IsNullOrWhiteSpace(dryRunConfig.DeploymentProjectPath))
                 {
                     var detectedPlatform = platformDetector.Detect(dryRunConfig.DeploymentProjectPath);
-                    var detectedRuntime = await GetRuntimeForPlatformAsync(detectedPlatform, dryRunConfig.DeploymentProjectPath, executor, logger);
+                    var detectedRuntime = await GetLinuxFxVersionForPlatformAsync(detectedPlatform, dryRunConfig.DeploymentProjectPath, executor, logger);
                     logger.LogInformation("  - Detected Platform: {Platform}", detectedPlatform);
                     logger.LogInformation("  - Runtime: {Runtime}", detectedRuntime);
                 }
@@ -509,7 +509,7 @@ public static class InfrastructureSubcommand
             var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
             if (!webShow.Success)
             {
-                var runtime = await GetRuntimeForPlatformAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
+                var runtime = await GetLinuxFxVersionForPlatformAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
                 logger.LogInformation("Creating web app {App} with runtime {Runtime}", webAppName, runtime);
                 var createResult = await executor.ExecuteAsync("az", $"webapp create -g {resourceGroup} -p {planName} -n {webAppName} --runtime \"{runtime}\" --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
                 if (!createResult.Success)
@@ -916,36 +916,10 @@ public static class InfrastructureSubcommand
     }
 
     /// <summary>
-    /// Get the Azure Web App runtime string based on the detected platform
-    /// (from A365SetupRunner GetRuntimeForPlatform method)
-    /// </summary>
-    private static async Task<string> GetRuntimeForPlatformAsync(
-        Models.ProjectPlatform platform, 
-        string? deploymentProjectPath, 
-        CommandExecutor executor, 
-        ILogger logger,
-        CancellationToken cancellationToken = default)
-    {
-        var dotnetVersion = await ResolveDotNetRuntimeVersionAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(dotnetVersion))
-        {
-            return $"DOTNETCORE:{dotnetVersion}";
-        }
-
-        return platform switch
-        {
-            Models.ProjectPlatform.Python => "PYTHON:3.11",
-            Models.ProjectPlatform.NodeJs => "NODE:20-lts", 
-            Models.ProjectPlatform.DotNet => "DOTNETCORE:8.0",
-            _ => "DOTNETCORE:8.0" // Default fallback
-        };
-    }
-
-    /// <summary>
     /// Get the Azure Web App Linux FX Version string based on the detected platform
     /// (from A365SetupRunner GetLinuxFxVersionForPlatform method)
     /// </summary>
-    private static async Task<string> GetLinuxFxVersionForPlatformAsync(
+    public static async Task<string> GetLinuxFxVersionForPlatformAsync(
         Models.ProjectPlatform platform, 
         string? deploymentProjectPath, 
         CommandExecutor executor, 
@@ -955,7 +929,7 @@ public static class InfrastructureSubcommand
         var dotnetVersion = await ResolveDotNetRuntimeVersionAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
         if (!string.IsNullOrWhiteSpace(dotnetVersion))
         {
-            return $"DOTNETCORE:{dotnetVersion}";
+            return $"DOTNETCORE|{dotnetVersion}";
         }
 
         return platform switch

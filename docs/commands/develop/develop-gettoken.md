@@ -23,6 +23,22 @@ a365 develop get-token [options]
 | `--output` | `-o` | Output format: table, json, or raw | `table` |
 | `--verbose` | `-v` | Show detailed output including full token | `false` |
 | `--force-refresh` | | Force token refresh bypassing cache | `false` |
+| `--resource` | | Resource keyword to get token for (mcp, powerplatform) | `mcp` |
+| `--resource-id` | | Resource application ID (GUID) for custom resources | None |
+
+### Resource Options
+
+The `--resource` and `--resource-id` options allow you to acquire tokens for different Azure resources:
+
+- **`--resource`**: Use a keyword to select a predefined resource
+  - `mcp` (default): Agent 365 Tools for MCP servers
+  - `powerplatform`: Power Platform API
+
+- **`--resource-id`**: Specify a custom resource application ID (GUID) for resources not covered by keywords
+
+> **Note**: `--resource` and `--resource-id` are mutually exclusive. Use one or the other, not both.
+
+> **Important**: When using `--resource` or `--resource-id`, the `--scopes` option is **required**. Manifest-based scope resolution is only supported for the default MCP flow.
 
 ## When to Use This Command
 
@@ -50,7 +66,7 @@ The application you're getting a token for should be your **custom client app** 
 ## Prerequisites
 
 1. **Azure CLI**: Run `az login` before using this command
-2. **Client Application**: 
+2. **Client Application**:
    - Must exist in Azure AD
    - Must have the required MCP scopes configured
    - Can be configured in `a365.config.json` as `clientAppId` OR provided via `--app-id`
@@ -101,12 +117,23 @@ TOKEN=$(a365 develop get-token --output raw)
 curl -H "Authorization: Bearer $TOKEN" https://agent365.svc.cloud.microsoft/agents/discoverToolServers
 ```
 
+### Get token for Power Platform API
+```bash
+a365 develop get-token --resource powerplatform --scopes .default
+```
+
+### Get token for a custom resource
+```bash
+a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default
+```
+
 ## Authentication Flow
 
-1. **Application Selection**: Uses `--app-id` or `clientAppId` from config
-2. **Scope Resolution**: Uses `--scopes` or reads from `ToolingManifest.json`
-3. **Token Acquisition**: Opens browser for interactive OAuth2 authentication
-4. **Token Caching**: Cached in local storage for reuse (until expiration or `--force-refresh`)
+1. **Resource Selection**: Uses `--resource-id`, `--resource` keyword, or defaults to Agent 365 Tools (MCP)
+2. **Application Selection**: Uses `--app-id` or `clientAppId` from config
+3. **Scope Resolution**: Uses `--scopes` or reads from `ToolingManifest.json` (manifest only for default MCP flow)
+4. **Token Acquisition**: Opens browser for interactive OAuth2 authentication
+5. **Token Caching**: Cached in local storage for reuse (until expiration or `--force-refresh`)
 
 ## Token Storage for Development
 

@@ -1,0 +1,44 @@
+name: Daily Issue Report
+
+on:
+  schedule:
+    # Run daily at 9 AM UTC (adjust as needed)
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: read
+  contents: read
+
+jobs:
+  daily-report:
+    runs-on: ubuntu-latest
+    name: Generate Daily Issue Report
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd autoTriage
+          pip install -r requirements.txt
+
+      - name: Generate Daily Report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd autoTriage
+          python cli/daily_report.py --owner ${{ github.repository_owner }} --repo ${{ github.event.repository.name }} --output report.json --summary $GITHUB_STEP_SUMMARY
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report
+          path: autoTriage/report.json
+          retention-days: 30

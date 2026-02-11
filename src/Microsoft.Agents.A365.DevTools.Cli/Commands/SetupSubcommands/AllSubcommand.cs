@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -72,6 +73,10 @@ internal static class AllSubcommand
 
         command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements) =>
         {
+            // Generate correlation ID at workflow entry point
+            var correlationId = HttpClientFactory.GenerateCorrelationId();
+            logger.LogInformation("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
@@ -141,7 +146,7 @@ internal static class AllSubcommand
                     try
                     {
                         var result = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetRequirementChecks(),
+                            RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
                             setupConfig,
                             logger,
                             category: null,
@@ -281,7 +286,9 @@ internal static class AllSubcommand
                         graphApiService,
                         blueprintService,
                         blueprintLookupService,
-                        federatedCredentialService
+                        federatedCredentialService,
+                        skipEndpointRegistration: false,
+                        correlationId: correlationId
                         );
 
                     setupResults.BlueprintCreated = result.BlueprintCreated;
@@ -299,6 +306,19 @@ internal static class AllSubcommand
                     if (result.EndpointRegistrationAttempted && !result.EndpointRegistered)
                     {
                         setupResults.Errors.Add("Messaging endpoint registration failed");
+                    }
+
+                    // Track Graph permissions status - critical for agent token exchange
+                    setupResults.GraphPermissionsConfigured = result.GraphPermissionsConfigured;
+                    if (result.GraphInheritablePermissionsFailed)
+                    {
+                        setupResults.GraphInheritablePermissionsError = result.GraphInheritablePermissionsError 
+                            ?? "Microsoft Graph inheritable permissions failed to configure";
+                        setupResults.Warnings.Add($"Microsoft Graph inheritable permissions: {setupResults.GraphInheritablePermissionsError}");
+                    }
+                    else
+                    {
+                        setupResults.GraphInheritablePermissionsConfigured = true;
                     }
 
                     if (!result.BlueprintCreated)
@@ -386,6 +406,10 @@ internal static class AllSubcommand
                         setupResults);
 
                     setupResults.BotApiPermissionsConfigured = botPermissionSetup;
+                    if (botPermissionSetup)
+                    {
+                        setupResults.BotInheritablePermissionsConfigured = setupConfig.IsBotInheritanceConfigured();
+                    }
                 }
                 catch (Exception botPermEx)
                 {

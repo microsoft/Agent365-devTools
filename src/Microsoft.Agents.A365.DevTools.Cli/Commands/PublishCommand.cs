@@ -110,11 +110,14 @@ public class PublishCommand
 
         command.SetHandler(async (bool dryRun, bool skipGraph, string mosEnv, string? mosPersonalToken, bool verbose) =>
         {
+            // Generate correlation ID at workflow entry point
+            var correlationId = HttpClientFactory.GenerateCorrelationId();
+
             try
             {
                 // Load configuration using ConfigService
                 var config = await configService.LoadAsync();
-                logger.LogDebug("Configuration loaded successfully");
+                logger.LogDebug("Configuration loaded successfully (CorrelationId: {CorrelationId})", correlationId);
 
                 // Extract required values from config
                 var tenantId = config.TenantId;
@@ -395,7 +398,7 @@ public class PublishCommand
                     return;
                 }
                 
-                using var http = HttpClientFactory.CreateAuthenticatedClient(mosToken);
+                using var http = HttpClientFactory.CreateAuthenticatedClient(mosToken, correlationId: correlationId);
 
                 // Log token info for debugging (first/last chars only for security)
                 if (mosToken.Length >= 20)

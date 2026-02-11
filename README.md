@@ -1,6 +1,6 @@
 # Microsoft Agent 365 DevTools CLI
 
-[![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.A365.DevTools.Cli.svg?label=NuGet&logo=nuget)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
+[![NuGet](https://img.shields.io/nuget/vpre/Microsoft.Agents.A365.DevTools.Cli.svg?label=NuGet&logo=nuget)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
 [![Downloads](https://img.shields.io/nuget/dt/Microsoft.Agents.A365.DevTools.Cli?label=Downloads&color=green)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-devTools/.github/workflows/ci.yml?branch=main&label=Build&logo=github)](https://github.com/microsoft/Agent365-devTools/actions)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
@@ -45,7 +45,7 @@ Before using the Agent365 CLI, you must create a custom Entra ID app registratio
 
 ⚠️ **Important**: Use **Delegated** permissions (you sign in, CLI acts on your behalf), NOT Application permissions (for background services).
 
-📖 **Detailed Setup Guide**: [docs/guides/custom-client-app-registration.md](docs/guides/custom-client-app-registration.md)
+📖 **Detailed Setup Guide**: [Custom Client App Registration](https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration)
 
 > **Why is this required?** The CLI needs elevated permissions to create and manage Agent Identity Blueprints in your tenant. You maintain control over which permissions are granted, and the app stays within your tenant's security boundaries.
 

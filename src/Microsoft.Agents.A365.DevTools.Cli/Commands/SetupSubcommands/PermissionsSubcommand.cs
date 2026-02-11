@@ -18,51 +18,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class PermissionsSubcommand
 {
-    /// <summary>
-    /// Validates MCP permissions prerequisites without performing any actions.
-    /// </summary>
-    public static Task<List<string>> ValidateMcpAsync(
-        Agent365Config config,
-        CancellationToken cancellationToken = default)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
-        {
-            errors.Add("Blueprint ID not found. Run 'a365 setup blueprint' first");
-        }
-
-        if (string.IsNullOrWhiteSpace(config.DeploymentProjectPath))
-        {
-            errors.Add("deploymentProjectPath is required to read toolingManifest.json");
-            return Task.FromResult(errors);
-        }
-
-        var manifestPath = Path.Combine(config.DeploymentProjectPath, "toolingManifest.json");
-        if (!File.Exists(manifestPath))
-        {
-            errors.Add($"toolingManifest.json not found at {manifestPath}");
-        }
-
-        return Task.FromResult(errors);
-    }
-
-    /// <summary>
-    /// Validates Bot permissions prerequisites without performing any actions.
-    /// </summary>
-    public static Task<List<string>> ValidateBotAsync(
-        Agent365Config config,
-        CancellationToken cancellationToken = default)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
-        {
-            errors.Add("Blueprint ID not found. Run 'a365 setup blueprint' first");
-        }
-
-        return Task.FromResult(errors);
-    }
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
@@ -70,13 +25,14 @@ internal static class PermissionsSubcommand
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
-        var permissionsCommand = new Command("permissions", 
+        var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
         permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, configService, executor, graphApiService, blueprintService));
 
         return permissionsCommand;
     }
@@ -91,7 +47,7 @@ internal static class PermissionsSubcommand
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
-        var command = new Command("mcp", 
+        var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n");
 
@@ -167,7 +123,7 @@ internal static class PermissionsSubcommand
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
-        var command = new Command("bot", 
+        var command = new Command("bot",
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
@@ -209,9 +165,11 @@ internal static class PermissionsSubcommand
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Configure Bot API Permissions");
-                logger.LogInformation("Would configure Messaging Bot API permissions:");
+                logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Scopes: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Observability API: user_impersonation");
+                logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 return;
             }
 
@@ -257,7 +215,7 @@ internal static class PermissionsSubcommand
             var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
             var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
-            
+
             // Configure all permissions using unified method
             await SetupHelpers.EnsureResourcePermissionsAsync(
                 graphApiService,
@@ -354,11 +312,31 @@ internal static class PermissionsSubcommand
                 setupResults,
                 cancellationToken);
 
+            // Configure Power Platform API permissions using unified method
+            // Note: Using the MOS Power Platform API (8578e004-a5c6-46e7-913e-12f58912df43) which is
+            // the Power Platform API for agent operations. This API exposes Connectivity.Connections.Read
+            // for reading Power Platform connections.
+            // Similar to Messaging Bot API, we skip addToRequiredResourceAccess because the scopes
+            // won't be found in the standard service principal permissions.
+            // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
+            await SetupHelpers.EnsureResourcePermissionsAsync(
+                graphService,
+                blueprintService,
+                setupConfig,
+                MosConstants.PowerPlatformApiResourceAppId,
+                "Power Platform API",
+                new[] { "Connectivity.Connections.Read" },
+                logger,
+                addToRequiredResourceAccess: false,
+                setInheritablePermissions: true,
+                setupResults,
+                cancellationToken);
+
             // write changes to generated config
             await configService.SaveStateAsync(setupConfig);
 
             logger.LogInformation("");
-            logger.LogInformation("Messaging Bot API permissions configured successfully");
+            logger.LogInformation("Bot API permissions configured successfully");
             logger.LogInformation("");
             if (!iSetupAll)
             {

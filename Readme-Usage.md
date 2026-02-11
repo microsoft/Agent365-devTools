@@ -1,10 +1,10 @@
 # Microsoft Agent 365 CLI
 
-A command-line tool for deploying and managing Microsoft Agent 365 applications on Azure. 
+A command-line tool for deploying and managing Microsoft Agent 365 applications on Azure.
 
 ## Supported Platforms
 - ✅ .NET Applications
-- ✅ Node.js Applications  
+- ✅ Node.js Applications
 - ✅ **Python Applications** (Auto-detects via `pyproject.toml`, handles Microsoft Agent 365 dependencies, converts .env to Azure App Settings)
 
 ## Quick Start
@@ -122,6 +122,7 @@ a365 setup infrastructure
 a365 setup blueprint
 a365 setup permissions mcp
 a365 setup permissions bot
+a365 setup permissions copilotstudio  # Configure Copilot Studio permissions
 ```
 
 ### Publish & Deploy
@@ -174,7 +175,7 @@ a365 develop-mcp list-servers -e "Default-12345678-1234-1234-1234-123456789abc"
 # Publish an MCP server
 a365 develop-mcp publish -e "Default-12345678-1234-1234-1234-123456789abc" -s "msdyn_MyMcpServer"
 
-# Unpublish an MCP server  
+# Unpublish an MCP server
 a365 develop-mcp unpublish -e "Default-12345678-1234-1234-1234-123456789abc" -s "msdyn_MyMcpServer"
 
 # Approve/block MCP servers (global operations, no environment needed)
@@ -200,14 +201,14 @@ The Agent 365 CLI automatically detects and deploys applications built with:
 - **Deployment:** Creates Oryx manifest with `dotnet YourApp.dll` command
 - **Requirements:** .NET SDK installed
 
-### Node.js Applications  
+### Node.js Applications
 - **Detection:** Looks for `package.json` file
 - **Build Process:** `npm ci` → `npm run build` (if build script exists)
 - **Deployment:** Creates Oryx manifest with start script from `package.json`
 - **Requirements:** Node.js and npm installed
 
 ### Python Applications
-- **Detection:** Looks for `requirements.txt`, `setup.py`, `pyproject.toml`, or `*.py` files  
+- **Detection:** Looks for `requirements.txt`, `setup.py`, `pyproject.toml`, or `*.py` files
 - **Build Process:** Copies project files, handles local wheel packages in `dist/`, creates deployment configuration
 - **Deployment:** Creates Oryx manifest with appropriate start command (gunicorn, uvicorn, or python)
 - **Requirements:** Python 3.11+ and pip installed
@@ -232,7 +233,7 @@ a365 deploy --dry-run
 
 The CLI automatically:
 1. Detects your project platform
-2. Validates required tools are installed  
+2. Validates required tools are installed
 3. Cleans previous build artifacts
 4. Builds your application using platform-specific tools
 5. Creates an appropriate Oryx manifest for Azure App Service

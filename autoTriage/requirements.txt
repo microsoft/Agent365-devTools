@@ -1,0 +1,30 @@
+# Azure Functions
+azure-functions
+
+# FastAPI (local development)
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-dotenv>=1.0.0
+
+# GitHub API
+PyGithub>=2.1.0
+
+# Azure DevOps API
+azure-devops==7.1.0b4
+
+# LLM / OpenAI
+openai>=1.0.0
+
+# HTTP requests
+requests>=2.31.0
+httpx>=0.25.0
+
+# YAML config parsing
+PyYAML>=6.0.1
+
+# Async support
+aiohttp>=3.9.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

@@ -17,6 +17,20 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
 /// Implements Microsoft Graph token acquisition via PowerShell Microsoft.Graph module.
+///
+/// AUTHENTICATION METHOD:
+/// - Uses Connect-MgGraph (PowerShell) for Graph API authentication
+/// - Default: Interactive browser authentication (useDeviceCode=false)
+/// - Device Code Flow: Available but NOT used by default (DCF discouraged in production)
+///
+/// TOKEN CACHING:
+/// - In-memory cache per CLI process: Tokens cached by (tenant + clientId + scopes)
+/// - Persistent cache: PowerShell module manages its own session cache
+/// - Reduces repeated Connect-MgGraph prompts during multi-step operations
+///
+/// USAGE:
+/// - Called by GraphApiService when specific scopes are required
+/// - Integrates with overall CLI authentication strategy (1-2 total prompts)
 /// </summary>
 public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, IDisposable
 {
@@ -63,7 +77,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     public async Task<string?> GetMgGraphAccessTokenAsync(
         string tenantId,
         IEnumerable<string> scopes,
-        bool useDeviceCode = true,
+        bool useDeviceCode = false,
         string? clientAppId = null,
         CancellationToken ct = default)
     {
@@ -180,7 +194,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         var escapedTenantId = CommandStringHelper.EscapePowerShellString(tenantId);
         var scopesArray = BuildScopesArray(scopes);
 
-        // Use -UseDeviceCode for CLI-friendly authentication (no browser popup/download)
+        // Use interactive browser auth by default (useDeviceCode=false)
+        // If useDeviceCode=true, use device code flow instead
         var authMethod = useDeviceCode ? "-UseDeviceCode" : "";
         
         // Include -ClientId parameter if provided (ensures authentication uses the custom client app)

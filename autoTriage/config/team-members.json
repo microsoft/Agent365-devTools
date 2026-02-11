@@ -1,0 +1,69 @@
+{
+  "team_members": [
+    {
+      "name": "Sellakumaran Kanagarathnam",
+      "role": "Tech Lead",
+      "login": "sellakumaran",
+      "contributions": 20,
+      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "system design", "security"]
+    },
+    {
+      "name": "Johan Broberg",
+      "role": "Tech Lead",
+      "login": "pontemonti",
+      "contributions": 12,
+      "expertise": ["backend", "infrastructure", "DevOps", "deployment", "Azure", "architecture", "security"]
+    },
+    {
+      "name": "Josh Oratz",
+      "role": "Backend Engineer",
+      "login": "joratz",
+      "contributions": 18,
+      "expertise": ["backend", "CLI", "dotnet", "csharp", "testing", "Azure"]
+    },
+    {
+      "name": "Mengyi Xu",
+      "role": "Backend Engineer",
+      "login": "mengyimicro",
+      "contributions": 15,
+      "expertise": ["backend", "python", "automation", "GitHub Actions", "AI", "LLM integration"]
+    },
+    {
+      "name": "Mrunal Hirve",
+      "role": "Backend Engineer",
+      "login": "mrunalhirve128",
+      "contributions": 25,
+      "expertise": ["backend", "Azure", "AI", "automation", "project management", "testing", "test"]
+    },
+    {
+      "name": "Tahir Sousa",
+      "role": "Engineering Manager",
+      "login": "tmlsousa",
+      "contributions": 5,
+      "expertise": ["management", "planning", "coordination", "strategic planning"]
+    }
+  ],
+  "escalation_chain": {
+    "lead": ["sellakumaran", "pontemonti"],
+    "manager": "tmlsousa"
+  },
+  "sla_hours": {
+    "P0": 24,
+    "P1": 48,
+    "P2": 72,
+    "P3": 120,
+    "P4": 120
+  },
+  "security": {
+    "keywords": [
+      "vulnerability", "CVE", "security", "exploit", "injection",
+      "XSS", "CSRF", "SQL injection", "auth bypass", "authentication bypass",
+      "privilege escalation", "remote code execution", "RCE", "buffer overflow",
+      "denial of service", "DoS", "DDoS", "data leak", "data breach",
+      "secrets exposed", "credential leak", "token leak", "API key exposed",
+      "insecure", "unsafe", "malicious", "attack", "breach"
+    ],
+    "assignee": "pontemonti",
+    "default_priority": "P1"
+  }
+}

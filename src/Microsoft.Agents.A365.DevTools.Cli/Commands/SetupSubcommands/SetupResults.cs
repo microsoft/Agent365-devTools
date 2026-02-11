@@ -15,6 +15,15 @@ public class SetupResults
     public bool BotApiPermissionsConfigured { get; set; }
     public bool MessagingEndpointRegistered { get; set; }
     public bool InheritablePermissionsConfigured { get; set; }
+    public bool BotInheritablePermissionsConfigured { get; set; }
+    public bool GraphPermissionsConfigured { get; set; }
+    public bool GraphInheritablePermissionsConfigured { get; set; }
+    
+    /// <summary>
+    /// Error message when Microsoft Graph inheritable permissions fail to configure.
+    /// Non-null indicates failure. This is critical for agent token exchange functionality.
+    /// </summary>
+    public string? GraphInheritablePermissionsError { get; set; }
     
     // Idempotency tracking flags - track whether resources already existed (vs newly created)
     public bool InfrastructureAlreadyExisted { get; set; }
@@ -23,6 +32,9 @@ public class SetupResults
     public bool McpPermissionsAlreadyExisted { get; set; }
     public bool InheritablePermissionsAlreadyExisted { get; set; }
     public bool BotApiPermissionsAlreadyExisted { get; set; }
+    public bool BotInheritablePermissionsAlreadyExisted { get; set; }
+    public bool GraphPermissionsAlreadyExisted { get; set; }
+    public bool GraphInheritablePermissionsAlreadyExisted { get; set; }
     
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();

@@ -33,13 +33,15 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
             try
             {
                 ArmClient armClient;
-                // Use DefaultAzureCredential with InteractiveBrowserCredential excluded to avoid
-                // Windows Authentication Broker (WAM) issues in console apps.
-                // Users should run 'az login' before using this command.
-                // See GitHub issues #146 and #151.
+                // Use DefaultAzureCredential which tries credentials in this order:
+                // 1. Environment variables
+                // 2. Managed Identity
+                // 3. Visual Studio / VS Code
+                // 4. Azure CLI (az login)
+                // 5. Interactive Browser (if needed)
                 var credentialOptions = new DefaultAzureCredentialOptions
                 {
-                    ExcludeInteractiveBrowserCredential = true
+                    ExcludeInteractiveBrowserCredential = false
                 };
 
                 if (!string.IsNullOrWhiteSpace(tenantId))

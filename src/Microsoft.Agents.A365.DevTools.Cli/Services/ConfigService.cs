@@ -349,15 +349,35 @@ public class ConfigService : IConfigService
         // Serialize to JSON
         var json = JsonSerializer.Serialize(dynamicData, DefaultJsonOptions);
 
-        // Only update in current directory if it already exists
-        var currentDirPath = Path.Combine(Environment.CurrentDirectory, statePath);
-        if (File.Exists(currentDirPath))
+        // If an absolute path is provided, use it directly (for testing and explicit control)
+        if (Path.IsPathRooted(statePath))
         {
             try
             {
-                // Save the state to the local current directory
+                await File.WriteAllTextAsync(statePath, json);
+                _logger?.LogDebug("Saved dynamic state to absolute path: {StatePath}", statePath);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Failed to save dynamic state to: {StatePath}", statePath);
+                throw;
+            }
+        }
+
+        // For relative paths, check if we're in a project directory (has local static config)
+        var staticConfigPath = Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
+        bool hasLocalStaticConfig = File.Exists(staticConfigPath);
+        
+        if (hasLocalStaticConfig)
+        {
+            // We're in a project directory - save state locally only
+            // This ensures each project maintains its own independent configuration
+            var currentDirPath = Path.Combine(Environment.CurrentDirectory, statePath);
+            try
+            {
                 await File.WriteAllTextAsync(currentDirPath, json);
-                _logger?.LogDebug("Saved dynamic state to: {StatePath}", currentDirPath);
+                _logger?.LogDebug("Saved dynamic state to local project directory: {StatePath}", currentDirPath);
             }
             catch (Exception ex)
             {
@@ -365,9 +385,13 @@ public class ConfigService : IConfigService
                 throw;
             }
         }
-
-        // Always sync to global directory for portability
-        await SyncConfigToGlobalDirectoryAsync(statePath, json, throwOnError: true);
+        else
+        {
+            // Not in a project directory - save to global directory for portability
+            // This allows CLI commands to work when run from any directory
+            await SyncConfigToGlobalDirectoryAsync(statePath, json, throwOnError: true);
+            _logger?.LogDebug("Saved dynamic state to global directory (no local static config found)");
+        }
     }
 
     /// <inheritdoc />
