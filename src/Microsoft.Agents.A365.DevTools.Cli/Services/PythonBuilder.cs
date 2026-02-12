@@ -186,7 +186,8 @@ public class PythonBuilder : IPlatformBuilder
         await EnsureLocalPackagesExistInPublish(publishPath, publishDist, verbose);
 
         // Step 4: Create requirements.txt for Azure deployment
-        await CreateAzureRequirementsTxt(publishPath, verbose);
+        // Pass projectDir to detect whether to use editable install or copy existing requirements.txt
+        await CreateAzureRequirementsTxt(projectDir, publishPath, verbose);
 
         // Step 4.5: Create .deployment file to force Oryx build
         await CreateDeploymentFile(publishPath);
@@ -545,16 +546,42 @@ public class PythonBuilder : IPlatformBuilder
         await Task.CompletedTask;
     }
 
-    private async Task CreateAzureRequirementsTxt(string publishPath, bool verbose)
+    /// <summary>
+    /// Creates requirements.txt for Azure deployment.
+    /// For projects with pyproject.toml or setup.py, uses editable install (-e .).
+    /// For projects with only requirements.txt, copies the existing file to preserve dependencies.
+    /// </summary>
+    private async Task CreateAzureRequirementsTxt(string projectDir, string publishPath, bool verbose)
     {
         var requirementsTxt = Path.Combine(publishPath, "requirements.txt");
-        
-        // Azure-native requirements.txt that mirrors local workflow
-        // --pre allows installation of pre-release versions
-        var content = "--find-links dist\n--pre\n-e .\n";
-        
-        await File.WriteAllTextAsync(requirementsTxt, content);
-        _logger.LogInformation("Created requirements.txt for Azure deployment");
+        var hasPyProject = File.Exists(Path.Combine(projectDir, "pyproject.toml"));
+        var hasSetupPy = File.Exists(Path.Combine(projectDir, "setup.py"));
+        var sourceRequirements = Path.Combine(projectDir, "requirements.txt");
+
+        if (hasPyProject || hasSetupPy)
+        {
+            // Use editable install approach for projects with pyproject.toml/setup.py
+            // This allows pip to install the project as a package
+            _logger.LogInformation("Detected pyproject.toml or setup.py - using editable install approach");
+            var content = "--find-links dist\n--pre\n-e .\n";
+            await File.WriteAllTextAsync(requirementsTxt, content);
+            _logger.LogInformation("Created requirements.txt for editable install");
+        }
+        else if (File.Exists(sourceRequirements))
+        {
+            // Copy existing requirements.txt for projects without pyproject.toml/setup.py
+            // This preserves the original dependency list
+            _logger.LogInformation("No pyproject.toml found - copying existing requirements.txt");
+            File.Copy(sourceRequirements, requirementsTxt, overwrite: true);
+            _logger.LogInformation("Copied existing requirements.txt to publish folder");
+        }
+        else
+        {
+            // No requirements file found - create a minimal one
+            _logger.LogWarning("No requirements.txt or pyproject.toml found - creating minimal requirements.txt");
+            var content = "# Auto-generated - add your dependencies here\n";
+            await File.WriteAllTextAsync(requirementsTxt, content);
+        }
     }
 
     private async Task CreateDeploymentFile(string publishPath)
