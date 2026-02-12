@@ -558,6 +558,12 @@ public class PythonBuilder : IPlatformBuilder
         var hasSetupPy = File.Exists(Path.Combine(projectDir, "setup.py"));
         var sourceRequirements = Path.Combine(projectDir, "requirements.txt");
 
+        if (verbose)
+        {
+            _logger.LogDebug("Checking project structure: pyproject.toml={HasPyProject}, setup.py={HasSetupPy}, requirements.txt={HasRequirements}",
+                hasPyProject, hasSetupPy, File.Exists(sourceRequirements));
+        }
+
         if (hasPyProject || hasSetupPy)
         {
             // Use editable install approach for projects with pyproject.toml/setup.py
@@ -571,7 +577,7 @@ public class PythonBuilder : IPlatformBuilder
         {
             // Copy existing requirements.txt for projects without pyproject.toml/setup.py
             // This preserves the original dependency list
-            _logger.LogInformation("No pyproject.toml found - copying existing requirements.txt");
+            _logger.LogInformation("No pyproject.toml or setup.py found - copying existing requirements.txt");
             File.Copy(sourceRequirements, requirementsTxt, overwrite: true);
             _logger.LogInformation("Copied existing requirements.txt to publish folder");
         }
