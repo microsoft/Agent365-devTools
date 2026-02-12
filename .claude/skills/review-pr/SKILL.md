@@ -1,8 +1,7 @@
 ---
 name: review-pr
-description: Generate structured PR review comments with AI analysis and post them to GitHub
-disable-model-invocation: true
-allowed-tools: Bash(python:*), Bash(gh:*)
+description: Generate structured PR review comments using Claude Code agents and post them to GitHub. No API key required - uses Claude Code's existing authentication.
+allowed-tools: Bash(gh:*), Task, Read, Write
 ---
 
 # PR Review Skill
@@ -89,26 +88,27 @@ You can edit this file to:
 
 ## Implementation
 
-The skill runs a Python script with two modes:
+The skill uses **Claude Code directly** for semantic code analysis (inspired by Agent365-dotnet). No separate API key required!
 
 **Generate mode** (default):
-```bash
-python .claude/skills/review-pr/review-pr.py <pr-number>
-```
-1. Uses `gh pr view` to fetch PR details
-2. Analyzes files and generates structured comments
-3. Creates editable YAML review file
-4. Previews comments for your review
-5. Stops and waits for you to review/edit
+1. Claude Code reads `.claude/agents/pr-code-reviewer.md` for review process guidelines
+2. Claude Code reads `.github/copilot-instructions.md` for coding standards
+3. Claude Code fetches PR details: `gh pr view <number> --json ...`
+4. Claude Code analyzes actual code changes: `gh pr diff <number>`
+5. Claude Code performs semantic analysis using its own capabilities
+6. Claude Code identifies specific issues with line numbers and code references
+7. Claude Code writes YAML file to `C:\Users\<username>\AppData\Local\Temp\pr-reviews\pr-<number>-review.yaml`
 
 **Post mode** (with --post flag):
-```bash
-python .claude/skills/review-pr/review-pr.py <pr-number> --post
-```
-1. Reads the existing YAML file
-2. Previews what will be posted
-3. Posts all enabled comments to GitHub
-4. If posting fails due to API permissions, automatically generates `pr-<number>-review-manual.md` with formatted comments for manual copy/paste
+1. Python script reads the YAML file
+2. Python script posts comments to GitHub using `gh pr comment`
+3. If posting fails (API permissions), automatically generates markdown file for manual copy/paste
+
+**Key Advantages**:
+- ✅ No `ANTHROPIC_API_KEY` required - uses Claude Code's existing authentication
+- ✅ Better semantic analysis - Claude Code has full context and conversation history
+- ✅ Simpler Python script - only handles posting logic (~240 lines vs ~1500 lines)
+- ✅ Easier to maintain and debug
 
 ## Workflow
 
@@ -131,8 +131,8 @@ python .claude/skills/review-pr/review-pr.py <pr-number> --post
 ## Requirements
 
 - GitHub CLI (`gh`) installed and authenticated
-- Python 3.x
-- PyYAML library: `pip install pyyaml`
+- Python 3.x (only for --post mode)
+- PyYAML library: `pip install pyyaml` (only for --post mode)
 - Repository must be a GitHub repository
 - GitHub API permissions to post reviews (Enterprise Managed Users may have restrictions)
 

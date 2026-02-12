@@ -54,13 +54,26 @@ For `/review-pr` to work in Claude Code:
 
 ## Features
 
-**Automated Analysis**
-- Detects missing tests
-- Identifies large files (KISS/SRP violations)
-- Flags potential security issues
-- Checks cross-platform compatibility
-- Validates design patterns (SOLID, DRY, YAGNI)
-- Reviews error handling patterns
+**Semantic Code Analysis** (New!)
+- Uses Claude API to analyze actual code logic (not just patterns)
+- Identifies specific logic errors and edge cases with line references
+- Generates actionable test scenarios based on conditional branches
+- Detects missing error handling in specific code paths
+- Provides concrete suggestions with code examples
+
+**Pattern-Based Checks**
+- Detects resource leaks (IDisposable not disposed)
+- Flags hardcoded secrets and API keys
+- Checks for "Kairo" keyword (legacy reference)
+- Validates copyright headers on C# files
+- Reviews workflow permissions (least privilege)
+- Analyzes test quality and coverage
+
+**Context-Aware Analysis**
+- Differentiates CLI code vs GitHub Actions code
+- Understands PR intent (bug fix, feature, refactor)
+- Adjusts severity based on PR context
+- Provides specific recommendations per file type
 
 **Structured Comments**
 - Editable YAML format
@@ -120,8 +133,19 @@ winget install GitHub.cli
 gh auth login
 
 # Install Python dependencies
-pip install PyYAML
+pip install PyYAML anthropic
 ```
+
+**Environment Variables:**
+```bash
+# Required for semantic code analysis
+export ANTHROPIC_API_KEY="your-api-key-here"
+
+# On Windows (PowerShell):
+$env:ANTHROPIC_API_KEY="your-api-key-here"
+```
+
+**Note:** If `ANTHROPIC_API_KEY` is not set, the skill will still work but semantic analysis will be skipped. You'll get pattern-based checks only (copyright headers, resource leaks, hardcoded secrets, etc.).
 
 ### Enable Skill
 
