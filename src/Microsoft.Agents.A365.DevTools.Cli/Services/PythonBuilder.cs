@@ -566,6 +566,15 @@ public class PythonBuilder : IPlatformBuilder
 
         if (hasPyProject || hasSetupPy)
         {
+            // Check if requirements.txt also exists and log a warning
+            if (File.Exists(sourceRequirements))
+            {
+                _logger.LogWarning(
+                    "Both pyproject.toml/setup.py and requirements.txt exist. " +
+                    "Using editable install approach (pyproject.toml takes precedence). " +
+                    "Dependencies from requirements.txt will be ignored - ensure they're declared in pyproject.toml instead.");
+            }
+
             // Use editable install approach for projects with pyproject.toml/setup.py
             // This allows pip to install the project as a package
             _logger.LogInformation("Detected pyproject.toml or setup.py - using editable install approach");
@@ -578,8 +587,27 @@ public class PythonBuilder : IPlatformBuilder
             // Copy existing requirements.txt for projects without pyproject.toml/setup.py
             // This preserves the original dependency list
             _logger.LogInformation("No pyproject.toml or setup.py found - copying existing requirements.txt");
-            File.Copy(sourceRequirements, requirementsTxt, overwrite: true);
-            _logger.LogInformation("Copied existing requirements.txt to publish folder");
+
+            try
+            {
+                File.Copy(sourceRequirements, requirementsTxt, overwrite: true);
+                _logger.LogInformation("Copied existing requirements.txt to publish folder");
+            }
+            catch (FileNotFoundException ex)
+            {
+                _logger.LogError(ex, "Source requirements.txt not found: {Path}", sourceRequirements);
+                throw new DeployAppException($"Cannot find requirements.txt at {sourceRequirements}. The file may have been deleted.", ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogError(ex, "Access denied when copying requirements.txt");
+                throw new DeployAppException($"Permission denied: Cannot copy requirements.txt to {requirementsTxt}. Check file permissions.", ex);
+            }
+            catch (IOException ex)
+            {
+                _logger.LogError(ex, "Failed to copy requirements.txt");
+                throw new DeployAppException($"Failed to copy requirements.txt to publish folder. The file may be in use or disk may be full.", ex);
+            }
         }
         else
         {
