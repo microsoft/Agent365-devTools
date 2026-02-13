@@ -161,19 +161,8 @@ winget install GitHub.cli
 gh auth login
 
 # Install Python dependencies
-pip install PyYAML anthropic
+pip install PyYAML
 ```
-
-**Environment Variables:**
-```bash
-# Required for semantic code analysis
-export ANTHROPIC_API_KEY="your-api-key-here"
-
-# On Windows (PowerShell):
-$env:ANTHROPIC_API_KEY="your-api-key-here"
-```
-
-**Note:** If `ANTHROPIC_API_KEY` is not set, the skill will still work but semantic analysis will be skipped. You'll get pattern-based checks only (copyright headers, resource leaks, hardcoded secrets, etc.).
 
 ### Enable Skill
 
