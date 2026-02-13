@@ -8,10 +8,11 @@ Reads YAML review file and posts comments to GitHub.
 NOTE: Review generation is now handled by Claude Code directly.
 
 Usage:
-    python review-pr.py <pr-number> --post
+    python review-pr.py <pr-number>
 
 Example:
-    python review-pr.py 180 --post    # Post review to GitHub
+    python review-pr.py 180              # Post review to GitHub
+    python review-pr.py 180 --dry-run    # Preview without posting
 
 Requirements:
     pip install PyYAML
@@ -181,12 +182,6 @@ def main():
         'pr_number',
         type=int,
         help='Pull request number'
-    )
-    parser.add_argument(
-        '--post',
-        action='store_true',
-        required=True,
-        help='Post the review to GitHub (reads from existing YAML file)'
     )
     parser.add_argument(
         '--output',
