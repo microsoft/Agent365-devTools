@@ -204,6 +204,7 @@ def main():
     # Create output path
     if args.output is None:
         output_dir = Path(tempfile.gettempdir()) / 'pr-reviews'
+        output_dir.mkdir(exist_ok=True)
         args.output = output_dir / f'pr-{args.pr_number}-review.yaml'
 
     # Create poster
