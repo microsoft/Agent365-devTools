@@ -39,11 +39,13 @@ class PRReviewPoster:
         self.pr_number = pr_number
         self.dry_run = dry_run
 
-    def run_command(self, cmd: str, check: bool = True) -> str:
-        """Execute shell command and return output."""
+    def run_command(self, args: list, check: bool = True) -> str:
+        """Execute command with argument list and return output.
+
+        Uses shell=False to prevent shell injection vulnerabilities.
+        """
         result = subprocess.run(
-            cmd,
-            shell=True,
+            args,
             capture_output=True,
             text=True,
             encoding='utf-8',
@@ -136,22 +138,24 @@ class PRReviewPoster:
         try:
             # Post overall review
             decision = data.get('overall_decision', 'COMMENT').lower()
-            overall_body = data.get('overall_body', '').replace('"', '\\"').replace('\n', '\\n')
+            overall_body = data.get('overall_body', '')
 
             self.run_command(
-                f'gh pr review {self.pr_number} --{decision} --body "{overall_body}"'
+                ['gh', 'pr', 'review', str(self.pr_number),
+                 f'--{decision}', '--body', overall_body]
             )
 
             print("[OK] Overall review posted")
 
             # Post individual comments
             for i, comment in enumerate(enabled_comments, 1):
-                body = comment.get('body', '').replace('"', '\\"').replace('\n', '\\n')
+                body = comment.get('body', '')
 
                 print(f"  [{i}/{len(enabled_comments)}] Posting comment...")
 
                 self.run_command(
-                    f'gh pr comment {self.pr_number} --body "{body}"',
+                    ['gh', 'pr', 'comment', str(self.pr_number),
+                     '--body', body],
                     check=False
                 )
 
