@@ -300,6 +300,8 @@ Present the following fields in a single prompt:
 
 | Field | Description | Example |
 |-------|-------------|---------|
+| **Resource Group** | Azure Resource Group (new or existing) | `{existingResourceGroup}` |
+| **Location** | Azure region for deployment | `{existingLocations}` |
 | **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
 | **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
 
