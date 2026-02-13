@@ -23,11 +23,12 @@ Examples:
 
 **Step 1: Generate** (`/review-pr <number>`)
 1. **Fetches PR details** from GitHub using the gh CLI
-2. **Analyzes changes** for security, testing, design patterns, and code quality issues
-3. **Differentiates contexts**: CLI code vs GitHub Actions code (different standards)
-4. **Creates actionable feedback**: Specific refactoring suggestions based on file names and patterns
-5. **Generates structured review comments** in an editable YAML file
-6. **Shows preview** of all generated comments
+2. **Performs architectural review** (NEW!): Questions design decisions, checks for scope creep, validates use cases
+3. **Analyzes changes** for security, testing, design patterns, and code quality issues
+4. **Differentiates contexts**: CLI code vs GitHub Actions code (different standards)
+5. **Creates actionable feedback**: Specific refactoring suggestions based on file names and patterns
+6. **Generates structured review comments** in an editable YAML file
+7. **Shows preview** of all generated comments
 
 **Step 2: Post** (`/review-pr <number> --post`)
 1. **Reads the YAML file** you reviewed/edited
@@ -38,7 +39,14 @@ Examples:
 
 This skill enforces the following principles:
 
-### Architecture
+### Architectural Review (NEW!)
+- **Design Decision Validation**: Questions "why" before reviewing "how"
+- **Scope Creep Detection**: Flags expansions beyond Agent365 deployment/management
+- **Use Case Validation**: Requires concrete scenarios for new features
+- **Overlap Detection**: Identifies duplication with existing tools (Azure CLI, Portal)
+- **YAGNI Enforcement**: Questions features without documented need
+
+### Architecture & Patterns
 - **.NET architect patterns**: Reviews follow .NET best practices
 - **Azure CLI alignment**: Ensures consistency with az cli patterns and conventions
 - **Cross-platform compatibility**: Validates Windows, Linux, and macOS compatibility (for CLI code)
