@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Client.Broker;
+using Microsoft.Identity.Client.Extensions.Msal;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -17,8 +18,18 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// On Windows, this uses WAM (Windows Authentication Broker) for a native sign-in experience
 /// that doesn't require opening a browser. On other platforms, it falls back to system browser.
 /// 
+/// PERSISTENT TOKEN CACHE:
+/// Uses Microsoft.Identity.Client.Extensions.Msal to persist tokens across all CLI instances.
+/// This dramatically reduces authentication prompts during multi-step operations like 'a365 setup all'.
+///
+/// Cache Location: %LocalApplicationData%\Agent365\msal-token-cache (Windows)
+/// Security: Tokens are encrypted at rest using platform-appropriate mechanisms:
+///   - Windows: DPAPI (Data Protection API) - tokens encrypted with user credentials
+///   - macOS: Keychain - tokens stored in secure keychain
+///   - Linux: Persistent caching is disabled (no platform encryption available); tokens remain in-memory only
+///
 /// See: https://learn.microsoft.com/en-us/entra/msal/dotnet/acquiring-tokens/desktop-mobile/wam
-/// Fixes GitHub issues #146 and #151.
+/// Enhancement: Improves the WAM authentication experience by reducing repeated login prompts.
 /// </summary>
 public sealed class MsalBrowserCredential : TokenCredential
 {
@@ -27,6 +38,15 @@ public sealed class MsalBrowserCredential : TokenCredential
     private readonly string _tenantId;
     private readonly bool _useWam;
     private readonly IntPtr _windowHandle;
+
+    // Shared persistent cache helper - initialized once and reused across all instances.
+    // This is the key to reducing multiple WAM prompts during setup operations.
+    private static MsalCacheHelper? _cacheHelper;
+    private static readonly object _cacheHelperLock = new();
+    private static readonly string CacheFileName = "msal-token-cache";
+    private static readonly string CacheDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        AuthenticationConstants.ApplicationName);
 
     // P/Invoke is required for WAM window handle in console applications.
     // There is no managed .NET API for console/desktop window handles - these are Windows-specific.
@@ -119,6 +139,91 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
 
         _publicClientApp = builder.Build();
+
+        // Register persistent token cache to share tokens across all MsalBrowserCredential instances.
+        // This is crucial for reducing multiple WAM prompts during 'a365 setup all' operations.
+        RegisterPersistentCache(_publicClientApp, _logger);
+    }
+
+    /// <summary>
+    /// Registers a persistent cross-process token cache with the MSAL application.
+    /// The cache is shared across all instances of MsalBrowserCredential within this CLI process
+    /// and persists to disk for reuse across CLI invocations.
+    ///
+    /// Security: Uses platform-appropriate encryption (DPAPI on Windows, Keychain on macOS).
+    /// On Linux, persistent caching is skipped to avoid storing tokens in plaintext on disk.
+    /// </summary>
+    private static void RegisterPersistentCache(IPublicClientApplication app, ILogger? logger)
+    {
+        try
+        {
+            // Skip persistent caching on Linux to avoid storing tokens in plaintext on disk.
+            // Linux lacks a platform-provided encryption mechanism (libsecret/Keyring requires
+            // additional setup that cannot be guaranteed). Users on Linux will see repeated
+            // authentication prompts but their tokens remain safely in-memory only.
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
+                !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                logger?.LogDebug("Skipping persistent token cache on Linux - no platform encryption available. Tokens will be in-memory only.");
+                return;
+            }
+
+            // Use double-check locking to ensure only one cache helper is created
+            if (_cacheHelper == null)
+            {
+                lock (_cacheHelperLock)
+                {
+                    if (_cacheHelper == null)
+                    {
+                        logger?.LogDebug("Initializing persistent MSAL token cache at: {Path}", CacheDirectory);
+
+                        // Ensure directory exists
+                        Directory.CreateDirectory(CacheDirectory);
+
+                        // Configure cache storage properties with platform-appropriate encryption
+                        StorageCreationProperties storageProperties;
+
+                        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                        {
+                            // Windows: Use default behavior which automatically applies DPAPI encryption
+                            // DPAPI (Data Protection API) encrypts tokens at rest, tied to user's Windows credentials
+                            storageProperties = new StorageCreationPropertiesBuilder(CacheFileName, CacheDirectory)
+                                .Build();
+                            logger?.LogDebug("Using DPAPI encryption for token cache (Windows)");
+                        }
+                        else
+                        {
+                            // macOS: Use Keychain for secure storage
+                            storageProperties = new StorageCreationPropertiesBuilder(CacheFileName, CacheDirectory)
+                                .WithMacKeyChain(
+                                    serviceName: AuthenticationConstants.ApplicationName,
+                                    accountName: "MsalCache")
+                                .Build();
+                            logger?.LogDebug("Using macOS Keychain for token cache");
+                        }
+
+                        // Create the cache helper (this is thread-safe and returns same instance if already created)
+                        _cacheHelper = MsalCacheHelper.CreateAsync(storageProperties).GetAwaiter().GetResult();
+
+                        // Verify the cache can actually encrypt/decrypt data on this platform.
+                        // If verification fails, MsalCacheHelper falls back to unprotected storage silently.
+                        _cacheHelper.VerifyPersistence();
+
+                        logger?.LogDebug("Persistent MSAL token cache initialized and verified successfully");
+                    }
+                }
+            }
+
+            // Register this app's token cache with the shared cache helper
+            _cacheHelper.RegisterCache(app.UserTokenCache);
+            logger?.LogDebug("Token cache registered for MSAL application");
+        }
+        catch (Exception ex)
+        {
+            // Cache registration failure is non-fatal - authentication will still work,
+            // but users may see more prompts during multi-step operations
+            logger?.LogWarning(ex, "Failed to register persistent token cache. Authentication prompts may be repeated.");
+        }
     }
 
     /// <inheritdoc/>
