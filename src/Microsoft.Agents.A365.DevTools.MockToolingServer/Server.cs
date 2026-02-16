@@ -87,11 +87,11 @@ public static class Server
         // JSON-RPC over HTTP for mock tools at /mcp-mock
         app.MapPost("/agents/servers/{mcpServerName}", async (string mcpServerName, HttpRequest httpRequest, IMockToolExecutor executor, ILogger<Program> log) =>
         {
+            object? idValue = null;
             try
             {
                 using var doc = await JsonDocument.ParseAsync(httpRequest.Body);
                 var root = doc.RootElement;
-                object? idValue = null;
                 if (root.TryGetProperty("id", out var idProp))
                 {
                     if (idProp.ValueKind == JsonValueKind.Number)
@@ -154,8 +154,17 @@ public static class Server
                 }
                 if (string.Equals(method, "tools/list", StringComparison.OrdinalIgnoreCase))
                 {
-                    var listResult = await executor.ListToolsAsync(mcpServerName);
-                    return Results.Json(new { jsonrpc = "2.0", id = idValue, result = listResult });
+                    try
+                    {
+                        var listResult = await executor.ListToolsAsync(mcpServerName);
+                        return Results.Json(new { jsonrpc = "2.0", id = idValue, result = listResult });
+                    }
+                    catch (ArgumentException)
+                    {
+                        // Unknown MCP server name - return empty tools list instead of crashing
+                        log.LogWarning("No mock tool store for '{McpServerName}' - returning empty tools list", mcpServerName);
+                        return Results.Json(new { jsonrpc = "2.0", id = idValue, result = new { tools = Array.Empty<object>() } });
+                    }
                 }
                 if (string.Equals(method, "tools/call", StringComparison.OrdinalIgnoreCase))
                 {
@@ -187,14 +196,45 @@ public static class Server
                             argsDict[prop.Name] = converted;
                         }
                     }
-                    var callResult = await executor.CallToolAsync(mcpServerName, name, argsDict!);
-                    // Detect error shape
-                    var errorProp = callResult.GetType().GetProperty("error");
-                    if (errorProp != null)
+                    try
                     {
-                        return Results.Json(new { jsonrpc = "2.0", id = idValue, error = errorProp.GetValue(callResult) });
+                        var callResult = await executor.CallToolAsync(mcpServerName, name, argsDict!);
+                        // Detect error shape
+                        var errorProp = callResult.GetType().GetProperty("error");
+                        if (errorProp != null)
+                        {
+                            return Results.Json(new { jsonrpc = "2.0", id = idValue, error = errorProp.GetValue(callResult) });
+                        }
+                        return Results.Json(new { jsonrpc = "2.0", id = idValue, result = callResult });
                     }
-                    return Results.Json(new { jsonrpc = "2.0", id = idValue, result = callResult });
+                    catch (ArgumentException)
+                    {
+                        // Unknown MCP server name
+                        return Results.Json(new { jsonrpc = "2.0", id = idValue, error = new { code = -32602, message = $"No mock tools available for server '{mcpServerName}'" } });
+                    }
+                }
+
+                // Handle MCP ping requests (used by clients to verify connection health)
+                if (string.Equals(method, "ping", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Json(new { jsonrpc = "2.0", id = idValue, result = new { } });
+                }
+                // Handle prompts/list requests (return empty list - no mock prompts)
+                if (string.Equals(method, "prompts/list", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Json(new { jsonrpc = "2.0", id = idValue, result = new { prompts = Array.Empty<object>() } });
+                }
+                // Handle resources/list requests (return empty list - no mock resources)
+                if (string.Equals(method, "resources/list", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Json(new { jsonrpc = "2.0", id = idValue, result = new { resources = Array.Empty<object>() } });
+                }
+
+                // Handle MCP notifications (e.g., notifications/initialized, notifications/cancelled)
+                // Per MCP Streamable HTTP spec: return 202 Accepted with no body for notifications
+                if (method?.StartsWith("notifications/", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    return Results.StatusCode(202);
                 }
 
                 return Results.Json(new { jsonrpc = "2.0", id = idValue, error = new { code = -32601, message = $"Method ({method}) not found" } });
@@ -202,7 +242,7 @@ public static class Server
             catch (Exception ex)
             {
                 log.LogError(ex, "Mock JSON-RPC failure");
-                return Results.Json(new { jsonrpc = "2.0", id = (object?)null, error = new { code = -32603, message = ex.Message } });
+                return Results.Json(new { jsonrpc = "2.0", id = idValue, error = new { code = -32603, message = ex.Message } });
             }
         });
 
