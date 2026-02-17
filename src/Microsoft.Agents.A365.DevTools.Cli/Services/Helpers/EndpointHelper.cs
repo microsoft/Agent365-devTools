@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
@@ -9,9 +10,30 @@ public static class EndpointHelper
 {
     public static string GetEndpointName(string name)
     {
-        return name.Length > 42
+        // Validate input
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new SetupValidationException("Endpoint name cannot be null or whitespace.");
+        }
+
+        // Truncate to 42 characters (Azure Bot Service maximum)
+        var truncated = name.Length > 42
             ? name.Substring(0, 42)
             : name;
+
+        // Trim trailing hyphens to comply with Azure Bot Service naming rules
+        // Azure Bot Service does not allow bot names ending with hyphens
+        truncated = truncated.TrimEnd('-');
+
+        // Validate minimum length after trimming
+        if (truncated.Length < 4)
+        {
+            throw new SetupValidationException(
+                $"Endpoint name '{name}' becomes too short after processing (minimum 4 characters required). " +
+                "Please use a longer hostname or provide a custom endpoint name.");
+        }
+
+        return truncated;
     }
 
     /// <summary>

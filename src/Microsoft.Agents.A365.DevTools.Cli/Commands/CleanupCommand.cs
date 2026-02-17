@@ -776,11 +776,14 @@ public class CleanupCommand
             return;
         }
 
+        // Get the actual endpoint name that will be used for deletion (truncated to 42 chars)
+        var endpointName = EndpointHelper.GetEndpointName(config.BotName);
+
         logger.LogInformation("");
         logger.LogInformation("Endpoint Cleanup Preview:");
         logger.LogInformation("============================");
         logger.LogInformation("Will delete messaging endpoint:");
-        logger.LogInformation("  Endpoint Name: {BotName}", config.BotName);
+        logger.LogInformation("  Endpoint Name: {EndpointName}", endpointName);
         logger.LogInformation("  Location: {Location}", config.Location);
         logger.LogInformation("");
 
