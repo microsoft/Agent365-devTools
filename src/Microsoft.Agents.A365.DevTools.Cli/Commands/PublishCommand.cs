@@ -108,8 +108,19 @@ public class PublishCommand
         command.AddOption(mosPersonalTokenOption);
         command.AddOption(verboseOption);
 
-        command.SetHandler(async (bool dryRun, bool skipGraph, string mosEnv, string? mosPersonalToken, bool verbose) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            // Extract options from invocation context (enables context.ExitCode on error paths)
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var skipGraph = context.ParseResult.GetValueForOption(skipGraphOption);
+            var mosEnv = context.ParseResult.GetValueForOption(mosEnvOption) ?? "prod";
+            var mosPersonalToken = context.ParseResult.GetValueForOption(mosPersonalTokenOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+
+            // Track whether the command completed normally (success or expected early exit)
+            // All unhandled error paths will set context.ExitCode = 1
+            var isNormalExit = false;
+
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
 
@@ -182,6 +193,7 @@ public class PublishCommand
                     logger.LogInformation("DRY RUN: Updated manifest (not saved):\n{Json}", updatedManifest);
                     logger.LogInformation("DRY RUN: Updated agentic user manifest template (not saved):\n{Json}", updatedAgenticUserManifestTemplate);
                     logger.LogInformation("DRY RUN: Skipping zipping & API calls");
+                    isNormalExit = true;
                     return;
                 }
 
@@ -621,12 +633,17 @@ public class PublishCommand
                 if (skipGraph)
                 {
                     logger.LogInformation("--skip-graph specified; skipping federated identity credential and role assignment.");
+                    isNormalExit = true;
                     return;
                 }
 
                 if (string.IsNullOrWhiteSpace(tenantId))
                 {
                     logger.LogWarning("tenantId unavailable; skipping Graph operations.");
+                    // Treat as normal exit (exit code 0) because MOS publish completed successfully
+                    // and Graph operations are optional. Users who need Graph operations should ensure
+                    // tenantId is configured or use --skip-graph explicitly.
+                    isNormalExit = true;
                     return;
                 }
 
@@ -647,12 +664,24 @@ public class PublishCommand
                 }
 
                 logger.LogInformation("Publish completed successfully!");
+                isNormalExit = true;
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Publish command failed: {Message}", ex.Message);
             }
-        }, dryRunOption, skipGraphOption, mosEnvOption, mosPersonalTokenOption, verboseOption);
+            finally
+            {
+                // Set exit code 1 for all error paths (different from ConfigCommand's per-site approach,
+                // but more robust as it catches all error returns and exceptions automatically).
+                // This ensures any error path that doesn't explicitly set isNormalExit=true will
+                // return exit code 1, preventing the bug where ~27 error paths returned 0.
+                if (!isNormalExit)
+                {
+                    context.ExitCode = 1;
+                }
+            }
+        });
 
         return command;
     }
