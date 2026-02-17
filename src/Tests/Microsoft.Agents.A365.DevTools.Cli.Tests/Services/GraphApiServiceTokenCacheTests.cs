@@ -51,30 +51,42 @@ public class GraphApiServiceTokenCacheTests
         // Arrange
         var (service, handler, executor) = CreateService();
 
-        // Queue 3 successful GET responses
-        for (int i = 0; i < 3; i++)
+        try
         {
-            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            // Queue 3 successful GET responses
+            for (int i = 0; i < 3; i++)
             {
-                Content = new StringContent("{\"value\":[]}")
-            });
+                handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[]}")
+                });
+            }
+
+            // Act - make 3 consecutive Graph GET calls to the same tenant
+            var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+            var r2 = await service.GraphGetAsync("tenant-1", "/v1.0/path2");
+            var r3 = await service.GraphGetAsync("tenant-1", "/v1.0/path3");
+
+            // Assert - all calls should succeed
+            r1.Should().NotBeNull();
+            r2.Should().NotBeNull();
+            r3.Should().NotBeNull();
+
+            // The token should be acquired only ONCE (1 account show + 1 get-access-token = 2 az calls)
+            await executor.Received(1).ExecuteAsync(
+                "az",
+                Arg.Is<string>(s => s.Contains("get-access-token")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+
+            await executor.Received(1).ExecuteAsync(
+                "az",
+                Arg.Is<string>(s => s.Contains("account show")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         }
-
-        // Act - make 3 consecutive Graph GET calls to the same tenant
-        var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
-        var r2 = await service.GraphGetAsync("tenant-1", "/v1.0/path2");
-        var r3 = await service.GraphGetAsync("tenant-1", "/v1.0/path3");
-
-        // Assert - all calls should succeed
-        r1.Should().NotBeNull();
-        r2.Should().NotBeNull();
-        r3.Should().NotBeNull();
-
-        // The token should be acquired only ONCE (1 account show + 1 get-access-token = 2 az calls)
-        await executor.Received(1).ExecuteAsync(
-            "az",
-            Arg.Is<string>(s => s.Contains("get-access-token")),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        finally
+        {
+            handler.Dispose();
+        }
     }
 
     [Fact]
@@ -83,28 +95,35 @@ public class GraphApiServiceTokenCacheTests
         // Arrange
         var (service, handler, executor) = CreateService();
 
-        // Queue 2 responses
-        for (int i = 0; i < 2; i++)
+        try
         {
-            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            // Queue 2 responses
+            for (int i = 0; i < 2; i++)
             {
-                Content = new StringContent("{\"value\":[]}")
-            });
+                handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[]}")
+                });
+            }
+
+            // Act - make calls to different tenants
+            var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+            var r2 = await service.GraphGetAsync("tenant-2", "/v1.0/path2");
+
+            // Assert
+            r1.Should().NotBeNull();
+            r2.Should().NotBeNull();
+
+            // Token should be acquired twice (once per tenant)
+            await executor.Received(2).ExecuteAsync(
+                "az",
+                Arg.Is<string>(s => s.Contains("get-access-token")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         }
-
-        // Act - make calls to different tenants
-        var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
-        var r2 = await service.GraphGetAsync("tenant-2", "/v1.0/path2");
-
-        // Assert
-        r1.Should().NotBeNull();
-        r2.Should().NotBeNull();
-
-        // Token should be acquired twice (once per tenant)
-        await executor.Received(2).ExecuteAsync(
-            "az",
-            Arg.Is<string>(s => s.Contains("get-access-token")),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        finally
+        {
+            handler.Dispose();
+        }
     }
 
     [Fact]
@@ -113,35 +132,42 @@ public class GraphApiServiceTokenCacheTests
         // Arrange
         var (service, handler, executor) = CreateService();
 
-        // Queue responses for GET, POST, GET sequence
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        try
         {
-            Content = new StringContent("{\"value\":[]}")
-        });
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            // Queue responses for GET, POST, GET sequence
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"123\"}")
+            });
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act - interleave GET and POST calls
+            var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+            var r2 = await service.GraphPostAsync("tenant-1", "/v1.0/path2", new { name = "test" });
+            var r3 = await service.GraphGetAsync("tenant-1", "/v1.0/path3");
+
+            // Assert
+            r1.Should().NotBeNull();
+            r2.Should().NotBeNull();
+            r3.Should().NotBeNull();
+
+            // Only one token acquisition across all operations
+            await executor.Received(1).ExecuteAsync(
+                "az",
+                Arg.Is<string>(s => s.Contains("get-access-token")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        }
+        finally
         {
-            Content = new StringContent("{\"id\":\"123\"}")
-        });
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[]}")
-        });
-
-        // Act - interleave GET and POST calls
-        var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
-        var r2 = await service.GraphPostAsync("tenant-1", "/v1.0/path2", new { name = "test" });
-        var r3 = await service.GraphGetAsync("tenant-1", "/v1.0/path3");
-
-        // Assert
-        r1.Should().NotBeNull();
-        r2.Should().NotBeNull();
-        r3.Should().NotBeNull();
-
-        // Only one token acquisition across all operations
-        await executor.Received(1).ExecuteAsync(
-            "az",
-            Arg.Is<string>(s => s.Contains("get-access-token")),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            handler.Dispose();
+        }
     }
 
     [Fact]
@@ -158,29 +184,36 @@ public class GraphApiServiceTokenCacheTests
         // Arrange
         var (service, handler, executor) = CreateService();
 
-        // Queue 2 successful GET responses
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        try
         {
-            Content = new StringContent("{\"value\":[]}")
-        });
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            // Queue 2 successful GET responses
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act - First call should acquire token and cache it
+            await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+
+            // Simulate cache expiry by setting expiry to past
+            service.CachedAzCliTokenExpiry = DateTimeOffset.UtcNow.AddMinutes(-1);
+
+            // Second call should acquire new token because cache expired
+            await service.GraphGetAsync("tenant-1", "/v1.0/path2");
+
+            // Assert - Token should be acquired twice (once for each call since cache expired)
+            await executor.Received(2).ExecuteAsync(
+                "az",
+                Arg.Is<string>(s => s.Contains("get-access-token")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        }
+        finally
         {
-            Content = new StringContent("{\"value\":[]}")
-        });
-
-        // Act - First call should acquire token and cache it
-        await service.GraphGetAsync("tenant-1", "/v1.0/path1");
-
-        // Simulate cache expiry by setting expiry to past
-        service.CachedAzCliTokenExpiry = DateTimeOffset.UtcNow.AddMinutes(-1);
-
-        // Second call should acquire new token because cache expired
-        await service.GraphGetAsync("tenant-1", "/v1.0/path2");
-
-        // Assert - Token should be acquired twice (once for each call since cache expired)
-        await executor.Received(2).ExecuteAsync(
-            "az",
-            Arg.Is<string>(s => s.Contains("get-access-token")),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            handler.Dispose();
+        }
     }
 }
