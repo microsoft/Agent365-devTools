@@ -640,6 +640,9 @@ public class PublishCommand
                 if (string.IsNullOrWhiteSpace(tenantId))
                 {
                     logger.LogWarning("tenantId unavailable; skipping Graph operations.");
+                    // Treat as normal exit (exit code 0) because MOS publish completed successfully
+                    // and Graph operations are optional. Users who need Graph operations should ensure
+                    // tenantId is configured or use --skip-graph explicitly.
                     isNormalExit = true;
                     return;
                 }
@@ -669,6 +672,10 @@ public class PublishCommand
             }
             finally
             {
+                // Set exit code 1 for all error paths (different from ConfigCommand's per-site approach,
+                // but more robust as it catches all error returns and exceptions automatically).
+                // This ensures any error path that doesn't explicitly set isNormalExit=true will
+                // return exit code 1, preventing the bug where ~27 error paths returned 0.
                 if (!isNormalExit)
                 {
                     context.ExitCode = 1;
