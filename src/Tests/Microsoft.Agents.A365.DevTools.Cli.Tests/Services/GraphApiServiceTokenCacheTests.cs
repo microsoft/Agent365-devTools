@@ -151,4 +151,36 @@ public class GraphApiServiceTokenCacheTests
         // while eliminating redundant subprocess spawns within a single command.
         GraphApiService.AzCliTokenCacheDuration.Should().Be(TimeSpan.FromMinutes(5));
     }
+
+    [Fact]
+    public async Task GraphGetAsync_ExpiredCache_AcquiresNewToken()
+    {
+        // Arrange
+        var (service, handler, executor) = CreateService();
+
+        // Queue 2 successful GET responses
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[]}")
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[]}")
+        });
+
+        // Act - First call should acquire token and cache it
+        await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+
+        // Simulate cache expiry by setting expiry to past
+        service.CachedAzCliTokenExpiry = DateTimeOffset.UtcNow.AddMinutes(-1);
+
+        // Second call should acquire new token because cache expired
+        await service.GraphGetAsync("tenant-1", "/v1.0/path2");
+
+        // Assert - Token should be acquired twice (once for each call since cache expired)
+        await executor.Received(2).ExecuteAsync(
+            "az",
+            Arg.Is<string>(s => s.Contains("get-access-token")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
 }

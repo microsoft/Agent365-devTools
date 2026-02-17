@@ -107,7 +107,7 @@ public static class PublishHelpers
         {
             if (!resourceSpIds.TryGetValue(resourceAppId, out var resourceSpId))
             {
-                logger.LogDebug("Service principal for {ResourceAppId} not found in cache - configuration needed", resourceAppId);
+                logger.LogWarning("Service principal for {ResourceAppId} not found in cache (unexpected - should have been cached by Check 1)", resourceAppId);
                 return false;
             }
 

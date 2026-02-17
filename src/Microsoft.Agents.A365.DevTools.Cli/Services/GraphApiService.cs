@@ -31,6 +31,15 @@ public class GraphApiService
     private string? _cachedAzCliTenantId;
     private DateTimeOffset _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
     internal static readonly TimeSpan AzCliTokenCacheDuration = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Expiry time for the cached Azure CLI token. Internal for testing purposes.
+    /// </summary>
+    internal DateTimeOffset CachedAzCliTokenExpiry
+    {
+        get => _cachedAzCliTokenExpiry;
+        set => _cachedAzCliTokenExpiry = value;
+    }
     
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
@@ -236,6 +245,11 @@ public class GraphApiService
 
                 if (string.IsNullOrWhiteSpace(token))
                 {
+                    // Clear cache on failure to ensure clean state
+                    _cachedAzCliToken = null;
+                    _cachedAzCliTenantId = null;
+                    _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
+
                     _logger.LogError("Failed to acquire Graph token via Azure CLI. Ensure 'az login' is completed.");
                     return false;
                 }
