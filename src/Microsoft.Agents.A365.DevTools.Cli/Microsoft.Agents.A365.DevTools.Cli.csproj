@@ -23,6 +23,7 @@
     <!-- CLI Framework -->
     <PackageReference Include="Microsoft.Identity.Client" />
     <PackageReference Include="Microsoft.Identity.Client.Broker" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" />
     <PackageReference Include="System.CommandLine" />
 
     <!-- Configuration & JSON -->
