@@ -30,7 +30,7 @@ public static class EndpointHelper
         {
             throw new SetupValidationException(
                 $"Endpoint name '{name}' becomes too short after processing (minimum 4 characters required). " +
-                "Please use a shorter hostname or provide a custom endpoint name.");
+                "Please use a longer hostname or provide a custom endpoint name.");
         }
 
         return truncated;
