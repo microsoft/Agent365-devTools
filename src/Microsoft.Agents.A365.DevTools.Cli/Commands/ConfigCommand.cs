@@ -33,16 +33,31 @@ public static class ConfigCommand
         var cmd = new Command("init", "Interactive wizard to configure Agent 365 with Azure CLI integration and smart defaults")
         {
             new Option<string?>(new[] { "-c", "--configfile" }, "Path to an existing config file to import"),
-            new Option<bool>(new[] { "--global", "-g" }, "Create config in global directory (AppData) instead of current directory")
+            new Option<bool>(new[] { "--global", "-g" }, "Create config in global directory (AppData) instead of current directory"),
+            new Option<bool>("--custom-blueprint-permissions", "Configure custom resource permissions for the agent blueprint"),
+            new Option<string?>("--resourceAppId", "Resource application ID (GUID) for custom blueprint permission"),
+            new Option<string?>("--scopes", "Comma-separated list of scopes for the custom blueprint permission"),
+            new Option<bool>("--reset", "Clear all custom blueprint permissions (use with --custom-blueprint-permissions)"),
+            new Option<bool>("--force", "Skip confirmation prompts when updating existing permissions")
         };
 
         cmd.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             var configFileOption = cmd.Options.OfType<Option<string?>>().First(opt => opt.HasAlias("-c"));
             var globalOption = cmd.Options.OfType<Option<bool>>().First(opt => opt.HasAlias("--global"));
+            var customPermissionsOption = cmd.Options.OfType<Option<bool>>().First(opt => opt.Name == "custom-blueprint-permissions");
+            var resourceAppIdOption = cmd.Options.OfType<Option<string?>>().First(opt => opt.Name == "resourceAppId");
+            var scopesOption = cmd.Options.OfType<Option<string?>>().First(opt => opt.Name == "scopes");
+            var resetOption = cmd.Options.OfType<Option<bool>>().First(opt => opt.Name == "reset");
+            var forceOption = cmd.Options.OfType<Option<bool>>().First(opt => opt.Name == "force");
 
             string? configFile = context.ParseResult.GetValueForOption(configFileOption);
             bool useGlobal = context.ParseResult.GetValueForOption(globalOption);
+            bool customPermissions = context.ParseResult.GetValueForOption(customPermissionsOption);
+            string? resourceAppId = context.ParseResult.GetValueForOption(resourceAppIdOption);
+            string? scopes = context.ParseResult.GetValueForOption(scopesOption);
+            bool reset = context.ParseResult.GetValueForOption(resetOption);
+            bool force = context.ParseResult.GetValueForOption(forceOption);
 
             // Determine config path
             string configPath = useGlobal
@@ -138,6 +153,232 @@ public static class ConfigCommand
                 catch (Exception ex)
                 {
                     logger.LogError($"Failed to import config file: {ex.Message}");
+                    return;
+                }
+            }
+
+            // Handle custom blueprint permissions (parameter-based approach)
+            if (customPermissions)
+            {
+                // Load existing config
+                if (!File.Exists(configPath))
+                {
+                    logger.LogError($"Configuration file not found: {configPath}");
+                    logger.LogError("Run 'a365 config init' first to create a base configuration.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                try
+                {
+                    var existingJson = await File.ReadAllTextAsync(configPath);
+                    var currentConfig = JsonSerializer.Deserialize<Agent365Config>(existingJson);
+
+                    if (currentConfig == null)
+                    {
+                        logger.LogError("Failed to parse existing config file.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    var permissions = currentConfig.CustomBlueprintPermissions != null
+                        ? new List<CustomResourcePermission>(currentConfig.CustomBlueprintPermissions)
+                        : new List<CustomResourcePermission>();
+
+                    // Handle --reset flag
+                    if (reset)
+                    {
+                        Console.WriteLine("Clearing all custom blueprint permissions...");
+                        permissions.Clear();
+                    }
+                    // Handle add/update with --resourceAppId and --scopes
+                    else if (!string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(scopes))
+                    {
+                        // Validate resourceAppId format
+                        if (!Guid.TryParse(resourceAppId, out _))
+                        {
+                            logger.LogError($"ERROR: Invalid resourceAppId '{resourceAppId}'. Must be a valid GUID format.");
+                            context.ExitCode = 1;
+                            return;
+                        }
+
+                        // Validate scopes input before processing
+                        if (string.IsNullOrWhiteSpace(scopes))
+                        {
+                            logger.LogError("ERROR: --scopes parameter cannot be empty.");
+                            context.ExitCode = 1;
+                            return;
+                        }
+
+                        // Parse and validate scopes
+                        var scopesList = scopes
+                            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                            .Select(s => s.Trim())
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .ToList();
+
+                        // This check catches edge case of "  ,  ,  " input
+                        if (scopesList.Count == 0)
+                        {
+                            logger.LogError("ERROR: At least one valid scope is required (all entries were empty).");
+                            context.ExitCode = 1;
+                            return;
+                        }
+
+                        // Check if resourceAppId already exists
+                        var existing = permissions.FirstOrDefault(p =>
+                            p.ResourceAppId.Equals(resourceAppId, StringComparison.OrdinalIgnoreCase));
+
+                        if (existing != null)
+                        {
+                            // Show current scopes
+                            Console.WriteLine($"\nResource {resourceAppId} already exists with scopes:");
+                            Console.WriteLine($"  {string.Join(", ", existing.Scopes)}");
+                            Console.WriteLine();
+
+                            // Ask for confirmation unless --force is specified
+                            if (!force)
+                            {
+                                Console.Write("Do you want to overwrite with new scopes? (y/N): ");
+                                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+
+                                if (response != "y" && response != "yes")
+                                {
+                                    Console.WriteLine("No changes made.");
+                                    return;
+                                }
+                            }
+
+                            // Update existing permission
+                            existing.Scopes = scopesList;
+                            Console.WriteLine("\nPermission updated successfully.");
+                        }
+                        else
+                        {
+                            // Add new permission (resource name will be auto-resolved during setup)
+                            var newPermission = new CustomResourcePermission
+                            {
+                                ResourceAppId = resourceAppId,
+                                ResourceName = null, // Will be auto-resolved during setup
+                                Scopes = scopesList
+                            };
+
+                            // Validate the new permission
+                            var (isValid, errors) = newPermission.Validate();
+                            if (!isValid)
+                            {
+                                logger.LogError("ERROR: Invalid permission:");
+                                foreach (var error in errors)
+                                {
+                                    logger.LogError($"  {error}");
+                                }
+                                context.ExitCode = 1;
+                                return;
+                            }
+
+                            permissions.Add(newPermission);
+                            Console.WriteLine("\nPermission added successfully.");
+                        }
+                    }
+                    // Show current permissions if no parameters provided
+                    else if (string.IsNullOrWhiteSpace(resourceAppId) && string.IsNullOrWhiteSpace(scopes))
+                    {
+                        if (permissions.Count == 0)
+                        {
+                            Console.WriteLine("\nNo custom blueprint permissions configured.");
+                            Console.WriteLine("\nTo add permissions, use:");
+                            Console.WriteLine("  a365 config init --custom-blueprint-permissions --resourceAppId <guid> --scopes <scope1,scope2>");
+                            return;
+                        }
+
+                        Console.WriteLine("\nCurrent custom blueprint permissions:");
+                        for (int i = 0; i < permissions.Count; i++)
+                        {
+                            var perm = permissions[i];
+                            var displayName = string.IsNullOrWhiteSpace(perm.ResourceName)
+                                ? perm.ResourceAppId
+                                : $"{perm.ResourceName} ({perm.ResourceAppId})";
+                            Console.WriteLine($"  {i + 1}. {displayName}");
+                            Console.WriteLine($"     Scopes: {string.Join(", ", perm.Scopes)}");
+                        }
+                        return;
+                    }
+                    // Invalid parameter combination
+                    else
+                    {
+                        logger.LogError("ERROR: Both --resourceAppId and --scopes are required to add/update a permission.");
+                        logger.LogError("Usage:");
+                        logger.LogError("  a365 config init --custom-blueprint-permissions --resourceAppId <guid> --scopes <scope1,scope2>");
+                        logger.LogError("  a365 config init --custom-blueprint-permissions --reset");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    // Create new config with updated permissions using helper method
+                    var updatedConfig = currentConfig.WithCustomBlueprintPermissions(
+                        permissions.Count > 0 ? permissions : null);
+
+                    // Validate the updated config
+                    var configErrors = updatedConfig.Validate();
+                    if (configErrors.Count > 0)
+                    {
+                        logger.LogError("Configuration validation failed:");
+                        foreach (var err in configErrors)
+                        {
+                            logger.LogError($"  {err}");
+                        }
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    // Save updated config (static properties only)
+                    var staticConfig = updatedConfig.GetStaticConfig();
+                    var json = JsonSerializer.Serialize(staticConfig, new JsonSerializerOptions { WriteIndented = true });
+                    await File.WriteAllTextAsync(configPath, json);
+
+                    // Also save to global config directory
+                    if (!useGlobal)
+                    {
+                        var globalConfigPath = Path.Combine(configDir, "a365.config.json");
+                        Directory.CreateDirectory(configDir);
+                        await File.WriteAllTextAsync(globalConfigPath, json);
+                    }
+
+                    Console.WriteLine($"\nConfiguration saved to: {configPath}");
+
+                    // Check if blueprint exists (by checking generated config for agentBlueprintId)
+                    var generatedConfigPath = useGlobal
+                        ? Path.Combine(configDir, "a365.generated.config.json")
+                        : Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
+
+                    bool blueprintExists = false;
+                    if (File.Exists(generatedConfigPath))
+                    {
+                        try
+                        {
+                            var generatedJson = await File.ReadAllTextAsync(generatedConfigPath);
+                            var generatedConfig = JsonSerializer.Deserialize<Agent365Config>(generatedJson);
+                            blueprintExists = !string.IsNullOrWhiteSpace(generatedConfig?.AgentBlueprintId);
+                        }
+                        catch
+                        {
+                            // If we can't read generated config, assume blueprint doesn't exist
+                            blueprintExists = false;
+                        }
+                    }
+
+                    // Show context-aware next step message
+                    if (blueprintExists && permissions.Count > 0)
+                    {
+                        Console.WriteLine("\nNext step: Run 'a365 setup permissions custom' to apply these permissions to your blueprint.");
+                    }
+
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to update custom permissions: {Message}", ex.Message);
+                    context.ExitCode = 1;
                     return;
                 }
             }
