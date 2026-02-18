@@ -228,6 +228,34 @@ a365 setup blueprint
 # Record: Blueprint ID (from a365.config.json)
 ```
 
+#### Test 4.1a: Verify CustomClientAppId Configuration
+```bash
+# This test verifies the fix for issue #271 where CustomClientAppId was not being set,
+# causing inheritable permissions operations to fail on macOS/Linux
+
+# Prerequisite: Ensure config has clientAppId set
+$config = Get-Content a365.config.json | ConvertFrom-Json
+$config.clientAppId | Should -Not -BeNullOrEmpty
+
+# Enable trace logging to capture Graph API authentication
+$env:AGENT365_LOG_LEVEL = "Trace"
+
+# Re-run blueprint setup with inheritable permissions
+a365 setup blueprint --verbose 2>&1 | Tee-Object -Variable output
+
+# Verify output contains correct client ID usage
+# The trace logs should show Connect-MgGraph with the correct -ClientId parameter
+$output | Select-String -Pattern "Connect-MgGraph.*-ClientId $($config.clientAppId)"
+
+# Expected:
+# - Trace logs show Connect-MgGraph command with correct -ClientId
+# - No "Tenant not found" errors (would indicate clientAppId/tenantId were swapped)
+# - Inheritable permissions operations succeed without falling back to SDK default app
+
+# Record: CustomClientAppId configured correctly (Yes/No)
+# Record: Connect-MgGraph used correct ClientId (Yes/No)
+```
+
 #### Test 4.2: Verify Blueprint in Entra ID
 ```bash
 # Query blueprint scopes
