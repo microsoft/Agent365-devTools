@@ -55,15 +55,15 @@ a365 config init --custom-blueprint-permissions \
   --scopes CustomScope.Read,CustomScope.Write
 ```
 
-**Interactive Prompt**:
+**Expected Output**:
 ```
-Resource Name (e.g., "Microsoft Graph Extended"): Microsoft Graph Extended
-
 Permission added successfully.
 Configuration saved to: C:\Users\user\a365.config.json
 
 Next step: Run 'a365 setup permissions custom' to apply these permissions to your blueprint.
 ```
+
+> **Note**: The resource name is not prompted for during configuration. It will be automatically resolved from Azure during the `a365 setup permissions custom` step.
 
 ### Step 2: Verify Configuration
 
@@ -76,7 +76,7 @@ Check your `a365.config.json` file:
   "customBlueprintPermissions": [
     {
       "resourceAppId": "00000003-0000-0000-c000-000000000000",
-      "resourceName": "Microsoft Graph Extended",
+      "resourceName": null,
       "scopes": [
         "Presence.ReadWrite",
         "Files.Read.All",
@@ -85,7 +85,7 @@ Check your `a365.config.json` file:
     },
     {
       "resourceAppId": "abcd1234-5678-90ab-cdef-1234567890ab",
-      "resourceName": "Contoso Custom API",
+      "resourceName": null,
       "scopes": [
         "CustomScope.Read",
         "CustomScope.Write"
@@ -94,6 +94,8 @@ Check your `a365.config.json` file:
   ]
 }
 ```
+
+> **Note**: The `resourceName` field is set to `null` initially and will be auto-resolved from Azure when you run `a365 setup permissions custom`.
 
 ## Usage
 
@@ -292,7 +294,7 @@ The CLI validates custom permissions at multiple stages:
 
 When adding permissions via `a365 config init`:
 - ✅ **GUID Format**: Resource App ID must be a valid GUID
-- ✅ **Required Fields**: Resource name and scopes are required
+- ✅ **Required Fields**: Resource App ID (GUID) and scopes are required; resource name is optional and will be auto-resolved during setup if not provided
 - ✅ **Scopes**: At least one scope must be specified
 - ✅ **Duplicates**: No duplicate scopes within a permission
 - ✅ **Unique Resources**: No duplicate resource App IDs
