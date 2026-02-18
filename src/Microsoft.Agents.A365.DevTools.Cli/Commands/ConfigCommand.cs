@@ -202,14 +202,6 @@ public static class ConfigCommand
                             return;
                         }
 
-                        // Validate scopes input before processing
-                        if (string.IsNullOrWhiteSpace(scopes))
-                        {
-                            logger.LogError("ERROR: --scopes parameter cannot be empty.");
-                            context.ExitCode = 1;
-                            return;
-                        }
-
                         // Parse and validate scopes
                         var scopesList = scopes
                             .Split(',', StringSplitOptions.RemoveEmptyEntries)
