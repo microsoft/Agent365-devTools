@@ -179,6 +179,14 @@ internal static class BlueprintSubcommand
 
             var setupConfig = await configService.LoadAsync(config.FullName);
 
+            // Configure GraphApiService with custom client app ID if available
+            // This ensures inheritable permissions operations use the validated custom app
+            // Fixes: https://github.com/microsoft/Agent365-devTools/issues/271
+            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+            {
+                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+            }
+
             // Handle --update-endpoint flag
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
             {
