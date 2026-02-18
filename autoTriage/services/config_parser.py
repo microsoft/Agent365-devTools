@@ -103,7 +103,7 @@ class ConfigParser:
         """Parse priority rules from config."""
         return PriorityRules(
             p0_keywords=data.get("p0_keywords", ["crash", "outage", "security", "data loss"]),
-            p1_keywords=data.get("p1_keywords", ["bug", "broken", "error"]),
+            p1_keywords=data.get("p1_keywords", ["bug", "broken", "error", "documentation", "docs", "readme", "guide"]),
             p2_keywords=data.get("p2_keywords", ["enhancement", "feature"]),
             default_priority=data.get("default_priority", "P3")
         )
@@ -163,7 +163,7 @@ class ConfigParser:
             timezone="America/Los_Angeles",
             priority_rules=PriorityRules(
                 p0_keywords=["crash", "outage", "security", "data loss"],
-                p1_keywords=["bug", "broken", "error"],
+                p1_keywords=["bug", "broken", "error", "documentation", "docs", "readme", "guide"],
                 p2_keywords=["enhancement", "feature"],
                 default_priority="P3"
             ),
