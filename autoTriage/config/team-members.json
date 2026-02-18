@@ -8,14 +8,14 @@
       "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "system design", "security", "documentation"]
     },
     {
-      "name": "George Harris",
+      "name": "Grant Harris",
       "role": "Team Member",
       "login": "gwharris7",
       "contributions": 10,
       "expertise": ["backend", "testing", "CLI", "dotnet", "csharp", "Azure"]
     },
     {
-      "name": "Alex Fehr",
+      "name": "Alastair Fehr",
       "role": "Engineering Manager",
       "login": "ajmfehr",
       "contributions": 5,
