@@ -30,8 +30,8 @@ public class CustomResourcePermission
     /// List of delegated permission scopes to grant (e.g., "Presence.ReadWrite", "Files.Read.All").
     /// These are OAuth2 delegated permissions that allow the blueprint to act on behalf of users.
     /// </summary>
-    [JsonPropertyName("scopes")]
     private List<string> _scopes = new();
+    [JsonPropertyName("scopes")]
     public List<string> Scopes
     {
         get => _scopes;
