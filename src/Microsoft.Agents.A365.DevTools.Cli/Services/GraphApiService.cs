@@ -284,7 +284,9 @@ public class GraphApiService
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
-        var resp = await _httpClient.GetAsync(url, ct);
+
+        // Ensure HttpResponseMessage is properly disposed
+        using var resp = await _httpClient.GetAsync(url, ct);
         if (!resp.IsSuccessStatusCode) return null;
         var json = await resp.Content.ReadAsStringAsync(ct);
 
@@ -403,6 +405,29 @@ public class GraphApiService
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
         return value[0].GetProperty("id").GetString();
+    }
+
+    /// <summary>
+    /// Looks up the display name of a service principal by its application ID.
+    /// Returns null if the service principal is not found.
+    /// Virtual to allow mocking in unit tests using Moq.
+    /// </summary>
+    public virtual async Task<string?> GetServicePrincipalDisplayNameAsync(
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        // Validate GUID format to prevent OData injection
+        if (!Guid.TryParse(appId, out var validGuid))
+        {
+            _logger.LogWarning("Invalid appId format for service principal lookup: {AppId}", appId);
+            return null;
+        }
+
+        // Use validated GUID in normalized format to prevent OData injection
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{validGuid:D}'&$select=displayName", ct, scopes);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+        if (!value[0].TryGetProperty("displayName", out var displayName)) return null;
+        return displayName.GetString();
     }
 
     /// <summary>

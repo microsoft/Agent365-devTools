@@ -723,4 +723,304 @@ public class Agent365ConfigTests
     }
 
     #endregion
+
+    #region Custom Blueprint Permissions Validation Tests
+
+    [Fact]
+    public void Validate_WithValidCustomBlueprintPermissions_NoErrors()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages",
+            NeedDeployment = false,
+            CustomBlueprintPermissions = new List<CustomResourcePermission>
+            {
+                new()
+                {
+                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
+                    ResourceName = "Microsoft Graph",
+                    Scopes = new List<string> { "User.Read", "Mail.Send" }
+                }
+            }
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_WithInvalidCustomBlueprintPermission_ReturnsError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages",
+            NeedDeployment = false,
+            CustomBlueprintPermissions = new List<CustomResourcePermission>
+            {
+                new()
+                {
+                    ResourceAppId = "invalid-guid",
+                    ResourceName = null,  // ResourceName is optional and will be auto-resolved
+                    Scopes = new List<string>(),
+                },
+            },
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().HaveCount(1);
+        errors[0].Should().Contain("customBlueprintPermissions[0]");
+        errors[0].Should().Contain("resourceAppId must be a valid GUID");
+        errors[0].Should().Contain("At least one scope is required");
+    }
+
+    [Fact]
+    public void Validate_WithDuplicateResourceAppIds_ReturnsError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages",
+            NeedDeployment = false,
+            CustomBlueprintPermissions = new List<CustomResourcePermission>
+            {
+                new()
+                {
+                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
+                    ResourceName = "Microsoft Graph 1",
+                    Scopes = new List<string> { "User.Read" }
+                },
+                new()
+                {
+                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
+                    ResourceName = "Microsoft Graph 2",
+                    Scopes = new List<string> { "Mail.Send" }
+                }
+            }
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain(e => e.Contains("Duplicate resourceAppId found in customBlueprintPermissions"));
+        errors.Should().Contain(e => e.Contains("00000003-0000-0000-c000-000000000000"));
+    }
+
+    [Fact]
+    public void Validate_WithDuplicateResourceAppIdsCaseInsensitive_ReturnsError()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages",
+            NeedDeployment = false,
+            CustomBlueprintPermissions = new List<CustomResourcePermission>
+            {
+                new()
+                {
+                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
+                    ResourceName = "Microsoft Graph 1",
+                    Scopes = new List<string> { "User.Read" }
+                },
+                new()
+                {
+                    ResourceAppId = "00000003-0000-0000-C000-000000000000", // Different case
+                    ResourceName = "Microsoft Graph 2",
+                    Scopes = new List<string> { "Mail.Send" }
+                }
+            }
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().Contain(e => e.Contains("Duplicate resourceAppId"));
+    }
+
+    [Fact]
+    public void Validate_WithMultipleValidCustomBlueprintPermissions_NoErrors()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages",
+            NeedDeployment = false,
+            CustomBlueprintPermissions = new List<CustomResourcePermission>
+            {
+                new()
+                {
+                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
+                    ResourceName = "Microsoft Graph",
+                    Scopes = new List<string> { "User.Read", "Mail.Send" }
+                },
+                new()
+                {
+                    ResourceAppId = "12345678-1234-1234-1234-123456789012",
+                    ResourceName = "Custom API",
+                    Scopes = new List<string> { "custom.read" }
+                }
+            }
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_WithNullCustomBlueprintPermissions_NoErrors()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages",
+            NeedDeployment = false,
+            CustomBlueprintPermissions = null
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Validate_WithEmptyCustomBlueprintPermissionsList_NoErrors()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            Location = "eastus",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = ".",
+            MessagingEndpoint = "https://test.com/api/messages",
+            NeedDeployment = false,
+            CustomBlueprintPermissions = new List<CustomResourcePermission>()
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SerializeToJson_WithCustomBlueprintPermissions_IncludesPermissions()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-123",
+            CustomBlueprintPermissions = new List<CustomResourcePermission>
+            {
+                new()
+                {
+                    ResourceAppId = "00000003-0000-0000-c000-000000000000",
+                    ResourceName = "Microsoft Graph",
+                    Scopes = new List<string> { "User.Read", "Mail.Send" }
+                }
+            }
+        };
+
+        // Act
+        var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+
+        // Assert
+        json.Should().Contain("\"customBlueprintPermissions\"");
+        json.Should().Contain("\"resourceAppId\"");
+        json.Should().Contain("00000003-0000-0000-c000-000000000000");
+        json.Should().Contain("\"resourceName\"");
+        json.Should().Contain("Microsoft Graph");
+        json.Should().Contain("\"scopes\"");
+        json.Should().Contain("User.Read");
+        json.Should().Contain("Mail.Send");
+    }
+
+    [Fact]
+    public void DeserializeFromJson_WithCustomBlueprintPermissions_RestoresPermissions()
+    {
+        // Arrange
+        var json = @"{
+            ""tenantId"": ""tenant-123"",
+            ""customBlueprintPermissions"": [
+                {
+                    ""resourceAppId"": ""00000003-0000-0000-c000-000000000000"",
+                    ""resourceName"": ""Microsoft Graph"",
+                    ""scopes"": [""User.Read"", ""Mail.Send""]
+                }
+            ]
+        }";
+
+        // Act
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        // Assert
+        config.Should().NotBeNull();
+        config!.CustomBlueprintPermissions.Should().NotBeNull();
+        config.CustomBlueprintPermissions.Should().HaveCount(1);
+        config.CustomBlueprintPermissions![0].ResourceAppId.Should().Be("00000003-0000-0000-c000-000000000000");
+        config.CustomBlueprintPermissions[0].ResourceName.Should().Be("Microsoft Graph");
+        config.CustomBlueprintPermissions[0].Scopes.Should().BeEquivalentTo(new[] { "User.Read", "Mail.Send" });
+    }
+
+    #endregion
 }

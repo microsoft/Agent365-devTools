@@ -54,6 +54,32 @@ public class Agent365Config
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
         if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
 
+        // Validate custom blueprint permissions
+        if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
+        {
+            for (int i = 0; i < CustomBlueprintPermissions.Count; i++)
+            {
+                var (isValid, permErrors) = CustomBlueprintPermissions[i].Validate();
+                if (!isValid)
+                {
+                    errors.Add($"customBlueprintPermissions[{i}]: {string.Join(", ", permErrors)}");
+                }
+            }
+
+            // Check for duplicate resourceAppIds
+            var duplicates = CustomBlueprintPermissions
+                .Where(p => !string.IsNullOrWhiteSpace(p.ResourceAppId))
+                .GroupBy(p => p.ResourceAppId.ToLowerInvariant())
+                .Where(g => g.Count() > 1)
+                .Select(g => g.Key)
+                .ToList();
+
+            if (duplicates.Any())
+            {
+                errors.Add($"Duplicate resourceAppId found in customBlueprintPermissions: {string.Join(", ", duplicates)}");
+            }
+        }
+
         return errors;
     }
 
@@ -303,6 +329,14 @@ public class Agent365Config
     /// </summary>
     [JsonPropertyName("mcpDefaultServers")]
     public List<McpServerConfig>? McpDefaultServers { get; init; }
+
+    /// <summary>
+    /// List of custom API permissions to grant to the agent blueprint.
+    /// These permissions are in addition to the standard permissions required for agent operation.
+    /// Each custom permission will receive OAuth2 grants and inheritable permissions configuration.
+    /// </summary>
+    [JsonPropertyName("customBlueprintPermissions")]
+    public List<CustomResourcePermission>? CustomBlueprintPermissions { get; init; }
 
     #endregion
 
@@ -592,6 +626,40 @@ public class Agent365Config
         }
 
         return config;
+    }
+
+    /// <summary>
+    /// Creates a new Agent365Config instance with the same static properties but updated CustomBlueprintPermissions.
+    /// This method handles the complexity of cloning init-only properties when updating custom permissions.
+    /// </summary>
+    /// <param name="permissions">The updated custom blueprint permissions list</param>
+    /// <returns>A new Agent365Config instance with updated permissions</returns>
+    public Agent365Config WithCustomBlueprintPermissions(List<CustomResourcePermission>? permissions)
+    {
+        return new Agent365Config
+        {
+            TenantId = this.TenantId,
+            SubscriptionId = this.SubscriptionId,
+            ResourceGroup = this.ResourceGroup,
+            Location = this.Location,
+            Environment = this.Environment,
+            MessagingEndpoint = this.MessagingEndpoint,
+            NeedDeployment = this.NeedDeployment,
+            ClientAppId = this.ClientAppId,
+            AppServicePlanName = this.AppServicePlanName,
+            AppServicePlanSku = this.AppServicePlanSku,
+            WebAppName = this.WebAppName,
+            AgentIdentityDisplayName = this.AgentIdentityDisplayName,
+            AgentBlueprintDisplayName = this.AgentBlueprintDisplayName,
+            AgentUserPrincipalName = this.AgentUserPrincipalName,
+            AgentUserDisplayName = this.AgentUserDisplayName,
+            ManagerEmail = this.ManagerEmail,
+            AgentUserUsageLocation = this.AgentUserUsageLocation,
+            DeploymentProjectPath = this.DeploymentProjectPath,
+            AgentDescription = this.AgentDescription,
+            McpDefaultServers = this.McpDefaultServers,
+            CustomBlueprintPermissions = permissions,
+        };
     }
 
     /// <summary>

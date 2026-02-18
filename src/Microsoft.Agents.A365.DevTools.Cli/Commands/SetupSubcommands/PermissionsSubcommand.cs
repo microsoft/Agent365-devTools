@@ -32,6 +32,7 @@ internal static class PermissionsSubcommand
         // Add subcommands
         permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, configService, executor, graphApiService, blueprintService));
 
         return permissionsCommand;
@@ -181,6 +182,91 @@ internal static class PermissionsSubcommand
                 setupConfig,
                 graphApiService,
                 blueprintService,
+                false);
+
+        }, configOption, verboseOption, dryRunOption);
+
+        return command;
+    }
+
+    /// <summary>
+    /// Custom blueprint permissions subcommand
+    /// </summary>
+    private static Command CreateCustomSubcommand(
+        ILogger logger,
+        IConfigService configService,
+        CommandExecutor executor,
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService)
+    {
+        var command = new Command("custom",
+            "Configure custom resource OAuth2 grants and inheritable permissions\n" +
+            "Minimum required permissions: Global Administrator\n\n" +
+            "Prerequisites: Blueprint created (run 'a365 setup blueprint' first)\n");
+
+        var configOption = new Option<FileInfo>(
+            ["--config", "-c"],
+            getDefaultValue: () => new FileInfo("a365.config.json"),
+            description: "Configuration file path");
+
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Show detailed output");
+
+        var dryRunOption = new Option<bool>(
+            "--dry-run",
+            description: "Show what would be done without executing");
+
+        command.AddOption(configOption);
+        command.AddOption(verboseOption);
+        command.AddOption(dryRunOption);
+
+        command.SetHandler(async (config, verbose, dryRun) =>
+        {
+            var setupConfig = await configService.LoadAsync(config.FullName);
+
+            if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+            {
+                logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
+                Environment.Exit(1);
+            }
+
+            if (setupConfig.CustomBlueprintPermissions == null ||
+                setupConfig.CustomBlueprintPermissions.Count == 0)
+            {
+                logger.LogWarning("No custom blueprint permissions configured in a365.config.json");
+                logger.LogInformation("Run 'a365 config init --custom-blueprint-permissions --resourceAppId <guid> --scopes <scopes>' to configure custom permissions.");
+                Environment.Exit(0);
+            }
+
+            // Configure GraphApiService with custom client app ID if available
+            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+            {
+                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+            }
+
+            if (dryRun)
+            {
+                logger.LogInformation("DRY RUN: Configure Custom Blueprint Permissions");
+                logger.LogInformation("Would configure the following custom permissions:");
+                foreach (var customPerm in setupConfig.CustomBlueprintPermissions)
+                {
+                    logger.LogInformation("  - {ResourceName} ({ResourceAppId})",
+                        customPerm.ResourceName, customPerm.ResourceAppId);
+                    logger.LogInformation("    Scopes: {Scopes}",
+                        string.Join(", ", customPerm.Scopes));
+                }
+                return;
+            }
+
+            await ConfigureCustomPermissionsAsync(
+                config.FullName,
+                logger,
+                configService,
+                executor,
+                graphApiService,
+                blueprintService,
+                setupConfig,
                 false);
 
         }, configOption, verboseOption, dryRunOption);
@@ -351,6 +437,159 @@ internal static class PermissionsSubcommand
             {
                 throw;
             }
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Creates a fallback resource name from a resource App ID.
+    /// Uses safe substring operation with null/length checks.
+    /// </summary>
+    private static string CreateFallbackResourceName(string? resourceAppId)
+    {
+        const string prefix = "Custom";
+        const int idPrefixLength = 8;
+
+        if (string.IsNullOrWhiteSpace(resourceAppId))
+            return $"{prefix}-Unknown";
+
+        var shortId = resourceAppId.Length >= idPrefixLength
+            ? resourceAppId.Substring(0, idPrefixLength)
+            : resourceAppId;
+
+        return $"{prefix}-{shortId}";
+    }
+
+    /// <summary>
+    /// Configures custom blueprint permissions (OAuth2 grants and inheritable permissions).
+    /// Public method that can be called by AllSubcommand.
+    /// </summary>
+    /// <param name="configPath">Path to the configuration file</param>
+    /// <param name="logger">Logger instance for diagnostic output</param>
+    /// <param name="configService">Service for loading and saving configuration</param>
+    /// <param name="executor">Command executor for Azure CLI operations</param>
+    /// <param name="graphApiService">Service for Microsoft Graph API interactions</param>
+    /// <param name="blueprintService">Service for agent blueprint operations</param>
+    /// <param name="setupConfig">Current configuration including custom permissions</param>
+    /// <param name="isSetupAll">Whether this is called from 'setup all' command (affects error handling)</param>
+    /// <param name="setupResults">Optional results tracker for setup operations</param>
+    /// <param name="cancellationToken">Token to cancel the operation</param>
+    /// <returns>True if configuration succeeded, false otherwise</returns>
+    public static async Task<bool> ConfigureCustomPermissionsAsync(
+        string configPath,
+        ILogger logger,
+        IConfigService configService,
+        CommandExecutor executor,
+        GraphApiService graphApiService,
+        AgentBlueprintService blueprintService,
+        Models.Agent365Config setupConfig,
+        bool isSetupAll,
+        SetupResults? setupResults = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (setupConfig.CustomBlueprintPermissions == null ||
+            setupConfig.CustomBlueprintPermissions.Count == 0)
+        {
+            logger.LogInformation("No custom blueprint permissions configured, skipping");
+            return true;
+        }
+
+        logger.LogInformation("");
+        logger.LogInformation("Configuring custom blueprint permissions...");
+        logger.LogInformation("");
+
+        try
+        {
+            foreach (var customPerm in setupConfig.CustomBlueprintPermissions)
+            {
+                // Auto-resolve resource name if not provided
+                if (string.IsNullOrWhiteSpace(customPerm.ResourceName))
+                {
+                    logger.LogInformation("Resource name not provided, attempting auto-lookup for {ResourceAppId}...",
+                        customPerm.ResourceAppId);
+
+                    try
+                    {
+                        var displayName = await graphApiService.GetServicePrincipalDisplayNameAsync(
+                            setupConfig.TenantId,
+                            customPerm.ResourceAppId,
+                            cancellationToken);
+
+                        if (!string.IsNullOrWhiteSpace(displayName))
+                        {
+                            customPerm.ResourceName = displayName;
+                            logger.LogInformation("  - Auto-resolved resource name: {ResourceName}", displayName);
+                        }
+                        else
+                        {
+                            // Fallback if lookup fails - use safe helper method
+                            customPerm.ResourceName = CreateFallbackResourceName(customPerm.ResourceAppId);
+                            logger.LogWarning("  - Could not resolve resource name, using fallback: {ResourceName}",
+                                customPerm.ResourceName);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Fallback if lookup fails - use safe helper method
+                        customPerm.ResourceName = CreateFallbackResourceName(customPerm.ResourceAppId);
+                        logger.LogWarning(ex, "  - Failed to auto-resolve resource name: {Message}. Using fallback: {ResourceName}",
+                            ex.Message, customPerm.ResourceName);
+                    }
+                }
+
+                logger.LogInformation("Configuring {ResourceName} ({ResourceAppId})...",
+                    customPerm.ResourceName, customPerm.ResourceAppId);
+
+                // Validate
+                var (isValid, errors) = customPerm.Validate();
+                if (!isValid)
+                {
+                    logger.LogError("Invalid custom permission configuration: {Errors}",
+                        string.Join(", ", errors));
+                    if (isSetupAll)
+                        throw new SetupValidationException(
+                            $"Invalid custom permission: {string.Join(", ", errors)}");
+                    continue;
+                }
+
+                // Use the same unified method as standard permissions
+                // Note: Agent Blueprints don't support requiredResourceAccess via v1.0 API
+                // (same limitation as CopilotStudio and MCP permissions)
+                await SetupHelpers.EnsureResourcePermissionsAsync(
+                    graphApiService,
+                    blueprintService,
+                    setupConfig,
+                    customPerm.ResourceAppId,
+                    customPerm.ResourceName,
+                    customPerm.Scopes.ToArray(),
+                    logger,
+                    addToRequiredResourceAccess: false,  // Skip requiredResourceAccess - not supported for Agent Blueprints
+                    setInheritablePermissions: true,      // Inheritable permissions work correctly
+                    setupResults,
+                    cancellationToken);
+
+                logger.LogInformation("  - {ResourceName} configured successfully",
+                    customPerm.ResourceName);
+            }
+
+            logger.LogInformation("");
+            logger.LogInformation("Custom blueprint permissions configured successfully");
+            logger.LogInformation("");
+
+            // Save changes to generated config
+            await configService.SaveStateAsync(setupConfig);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (isSetupAll)
+            {
+                // Let the caller (AllSubcommand) handle logging
+                throw;
+            }
+
+            // Only log when handling the error here (standalone command)
+            logger.LogError(ex, "Failed to configure custom blueprint permissions: {Message}", ex.Message);
             return false;
         }
     }

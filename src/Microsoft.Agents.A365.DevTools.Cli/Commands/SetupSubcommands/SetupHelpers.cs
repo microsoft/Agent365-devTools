@@ -110,6 +110,11 @@ internal static class SetupHelpers
             var inheritStatus = results.GraphInheritablePermissionsAlreadyExisted ? "verified" : "configured";
             logger.LogInformation("  [OK] Microsoft Graph permissions {PermStatus}, inheritable permissions {InheritStatus}", permStatus, inheritStatus);
         }
+        if (results.CustomPermissionsConfigured)
+        {
+            var status = results.CustomPermissionsAlreadyExisted ? "verified" : "configured";
+            logger.LogInformation("  [OK] Custom blueprint permissions {Status}", status);
+        }
         if (results.MessagingEndpointRegistered)
         {
             var status = results.EndpointAlreadyExisted ? "configured (already exists)" : "created";
@@ -161,7 +166,12 @@ internal static class SetupHelpers
             {
                 logger.LogInformation("  - Microsoft Graph Permissions: Run 'a365 setup blueprint' to retry");
             }
-            
+
+            if (!results.CustomPermissionsConfigured)
+            {
+                logger.LogInformation("  - Custom Blueprint Permissions: Run 'a365 setup permissions custom' to retry");
+            }
+
             if (!results.MessagingEndpointRegistered)
             {
                 logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");

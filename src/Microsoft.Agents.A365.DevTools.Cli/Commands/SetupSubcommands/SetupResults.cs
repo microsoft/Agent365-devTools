@@ -18,7 +18,8 @@ public class SetupResults
     public bool BotInheritablePermissionsConfigured { get; set; }
     public bool GraphPermissionsConfigured { get; set; }
     public bool GraphInheritablePermissionsConfigured { get; set; }
-    
+    public bool CustomPermissionsConfigured { get; set; }
+
     /// <summary>
     /// Error message when Microsoft Graph inheritable permissions fail to configure.
     /// Non-null indicates failure. This is critical for agent token exchange functionality.
@@ -35,7 +36,8 @@ public class SetupResults
     public bool BotInheritablePermissionsAlreadyExisted { get; set; }
     public bool GraphPermissionsAlreadyExisted { get; set; }
     public bool GraphInheritablePermissionsAlreadyExisted { get; set; }
-    
+    public bool CustomPermissionsAlreadyExisted { get; set; }
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
     
