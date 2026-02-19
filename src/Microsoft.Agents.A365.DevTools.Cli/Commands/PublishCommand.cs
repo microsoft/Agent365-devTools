@@ -485,7 +485,7 @@ public class PublishCommand
                             logger.LogError("3. Ensure you're signed in with the correct account");
                             logger.LogError("   - Run 'az account show' to verify current account");
                             logger.LogError("4. Try clearing the MOS token cache and re-authenticating:");
-                            logger.LogError("   - Delete: .mos-token-cache.json");
+                            logger.LogError("   - Delete: {CachePath}", Path.Combine(FileHelper.GetSecureCrossOsDirectory(), "mos-token-cache.json"));
                             logger.LogError("   - Run: a365 publish");
                             logger.LogError("");
                         }
