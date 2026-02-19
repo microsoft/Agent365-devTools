@@ -51,6 +51,14 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogDebug("   Messaging Endpoint: {Endpoint}", messagingEndpoint);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError("Location is required to register the messaging endpoint.");
+            _logger.LogError("Add a 'location' field to your a365.config.json with the target Azure region.");
+            _logger.LogError("Example: \"location\": \"eastus\"");
+            return EndpointRegistrationResult.Failed;
+        }
+
         try
         {
             // Get subscription info for tenant ID
@@ -200,6 +208,14 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
         _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
+
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError("Location is required to delete the messaging endpoint.");
+            _logger.LogError("Add a 'location' field to your a365.config.json with the Azure region used during endpoint registration.");
+            _logger.LogError("Example: \"location\": \"eastus\"");
+            return false;
+        }
 
         try
         {

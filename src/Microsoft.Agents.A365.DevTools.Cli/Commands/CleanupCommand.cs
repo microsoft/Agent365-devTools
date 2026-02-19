@@ -729,6 +729,15 @@ public class CleanupCommand
             return false;
         }
 
+        // Location is required by the endpoint registration API
+        if (string.IsNullOrWhiteSpace(config.Location))
+        {
+            logger.LogError("Cannot delete messaging endpoint: 'location' is missing from configuration.");
+            logger.LogError("Add the Azure region that was used when the endpoint was registered.");
+            logger.LogError("Example: add \"location\": \"eastus\" to your a365.config.json.");
+            return false;
+        }
+
         logger.LogInformation("Deleting messaging endpoint registration...");
         var endpointName = EndpointHelper.GetEndpointName(config.BotName);
 
