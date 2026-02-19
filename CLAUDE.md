@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Microsoft Agent 365 DevTools CLI (`a365`) - A .NET 8.0 CLI tool for deploying and managing Microsoft Agent 365 applications on Azure. Supports .NET, Node.js, and Python applications with auto-detection.
+Microsoft Agent 365 DevTools CLI (`a365`) - A .NET CLI tool built on .NET 8.0 with support for running on .NET 8.0 or higher (e.g., .NET 9, 10). Used for deploying and managing Microsoft Agent 365 applications on Azure. Supports .NET, Node.js, and Python applications with auto-detection.
 
 ## Build Commands
 
