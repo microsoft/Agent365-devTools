@@ -178,7 +178,9 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine();
             Console.WriteLine(ErrorMessages.WizardLocationRequiredForExternalHostingNote);
             resourceLocation = PromptForLocation(existingConfig, resourceGroupLocation, ErrorMessages.WizardLocationPromptForEndpointRegistration);
-        }            // Step 7: Get manager email (required for agent creation)
+        }
+
+            // Step 7: Get manager email (required for agent creation)
             var managerEmail = PromptForManagerEmail(existingConfig, accountInfo);
             if (string.IsNullOrWhiteSpace(managerEmail))
             {
