@@ -122,6 +122,29 @@ public static class ErrorMessages
 
     #endregion
 
+    #region Configuration Wizard Messages
+
+    /// <summary>
+    /// Prompt header for region selection when creating a new App Service Plan.
+    /// </summary>
+    public const string WizardLocationPromptForAppServicePlan =
+        "Select Azure region for the new App Service Plan:";
+
+    /// <summary>
+    /// Prompt header for region selection when registering a Bot Framework endpoint without deployment.
+    /// </summary>
+    public const string WizardLocationPromptForEndpointRegistration =
+        "Select Azure region for Bot Framework endpoint registration:";
+
+    /// <summary>
+    /// Note explaining why location is required even for external hosting scenarios.
+    /// </summary>
+    public const string WizardLocationRequiredForExternalHostingNote =
+        "NOTE: An Azure region is required to register the messaging endpoint with the Bot Framework,\n" +
+        "      even when the agent is hosted externally (needDeployment: false).";
+
+    #endregion
+
     #region Client App Validation Messages
 
     public const string ClientAppValidationFailed = 
