@@ -4,6 +4,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
@@ -729,12 +730,13 @@ public class CleanupCommand
             return false;
         }
 
-        // Location is required by the endpoint registration API
+        // Defense-in-depth: BotConfigurator also validates location, but catching it here gives
+        // the user a clearer error before any authentication or HTTP work is attempted.
         if (string.IsNullOrWhiteSpace(config.Location))
         {
-            logger.LogError("Cannot delete messaging endpoint: 'location' is missing from configuration.");
-            logger.LogError("Add the Azure region that was used when the endpoint was registered.");
-            logger.LogError("Example: add \"location\": \"eastus\" to your a365.config.json.");
+            logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
+            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            logger.LogInformation(ErrorMessages.EndpointLocationExample);
             return false;
         }
 

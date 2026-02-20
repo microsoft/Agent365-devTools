@@ -53,9 +53,9 @@ public class BotConfigurator : IBotConfigurator
 
         if (string.IsNullOrWhiteSpace(location))
         {
-            _logger.LogError("Location is required to register the messaging endpoint.");
-            _logger.LogError("Add a 'location' field to your a365.config.json with the target Azure region.");
-            _logger.LogError("Example: \"location\": \"eastus\"");
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
             return EndpointRegistrationResult.Failed;
         }
 
@@ -211,9 +211,9 @@ public class BotConfigurator : IBotConfigurator
 
         if (string.IsNullOrWhiteSpace(location))
         {
-            _logger.LogError("Location is required to delete the messaging endpoint.");
-            _logger.LogError("Add a 'location' field to your a365.config.json with the Azure region used during endpoint registration.");
-            _logger.LogError("Example: \"location\": \"eastus\"");
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
             return false;
         }
 

@@ -546,9 +546,11 @@ public class CleanupCommandTests
     /// Verifies that blueprint cleanup with --endpoint-only flag rejects an empty Location before
     /// calling the API. The endpoint registration API requires Location, so the guard should
     /// prevent an unhelpful 400 BadRequest from the server.
+    /// The command logs an error but returns exit code 0 (System.CommandLine default when no
+    /// exception propagates — the error is communicated through log output, not the exit code).
     /// </summary>
     [Fact]
-    public async Task CleanupBlueprint_WithEndpointOnlyAndMissingLocation_ShouldNotCallApiAndReturnError()
+    public async Task CleanupBlueprint_WithEndpointOnlyAndMissingLocation_ShouldNotCallApiAndLogError()
     {
         // Arrange
         var config = new Agent365Config

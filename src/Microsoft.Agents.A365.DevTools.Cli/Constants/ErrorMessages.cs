@@ -98,11 +98,27 @@ public static class ErrorMessages
 
     #region Configuration Messages
 
-    public const string ConfigFileNotFound = 
+    public const string ConfigFileNotFound =
         "Configuration file not found. Run 'a365 config init' to create one";
 
-    public const string InvalidConfigFormat = 
+    public const string InvalidConfigFormat =
         "Configuration file has invalid JSON format";
+
+    #endregion
+
+    #region Endpoint Registration Messages
+
+    public const string EndpointLocationRequiredForCreate =
+        "Location is required to register the messaging endpoint.";
+
+    public const string EndpointLocationRequiredForDelete =
+        "Location is required to delete the messaging endpoint.";
+
+    public const string EndpointLocationAddToConfig =
+        "Run 'a365 config init' to configure your location.";
+
+    public const string EndpointLocationExample =
+        "Example: \"location\": \"eastus\"";
 
     #endregion
 
