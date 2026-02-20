@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Globalization;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -88,32 +89,40 @@ public class MosTokenServiceCacheTests : IDisposable
     [Fact]
     public async Task AcquireTokenAsync_CachedTokenUtcZSuffix_ParsedAsUtcNotLocalTime()
     {
-        // Regression test for #277: DateTime.TryParse with "Z" suffix was converting
-        // UTC timestamps to local time, causing expired tokens to appear valid on
-        // machines with timezones ahead of UTC (IST +5:30, JST +9, etc.).
-        //
-        // Example on IST machine (old buggy code):
-        //   Stored:     "2026-02-18T12:00:00.0000000Z" (noon UTC, expired)
-        //   Parsed:     DateTime(17:30:00, Kind=Local)  (+5:30 shift)
-        //   Compared:   DateTime.UtcNow(14:00) < 17:28  -> TRUE -> stale token!
-        //
-        // With fix (AdjustToUniversal):
-        //   Parsed:     DateTime(12:00:00, Kind=Utc)    (no shift)
-        //   Compared:   DateTime.UtcNow(14:00) < 11:58  -> FALSE -> cache miss (correct)
-
-        // Arrange - token expired 3 hours ago in UTC
-        // On IST (+5:30), buggy code would shift expiry forward by 5.5 hours,
-        // making it appear valid for ~2.5 more hours
+        // Regression test for #277. Without DateTimeStyles.AdjustToUniversal,
+        // DateTime.TryParse converts the "Z" suffix to local time. On IST (+5:30):
+        //   Stored:  "...12:00:00Z"  Parsed: DateTime(17:30, Kind=Local)
+        //   UtcNow(14:00) < 17:28 -> TRUE -> stale token returned (bug)
+        // Only catches the regression on UTC+ machines; see the Kind test below
+        // for the CI-reliable counterpart.
         var expiredUtc = DateTime.UtcNow.AddHours(-3);
         WriteCacheFile("prod", "stale-tz-token", expiredUtc);
         SetupConfigForCacheMiss();
 
-        // Act
         var result = await _service.AcquireTokenAsync("prod", cancellationToken: CancelledToken());
 
-        // Assert - stale token must NOT be returned regardless of machine timezone
         result.Should().NotBe("stale-tz-token");
         await _mockConfigService.Received(1).LoadAsync();
+    }
+
+    [Fact]
+    public void TryParseUtcTimestamp_WithAdjustToUniversal_ParsedAsUtcKindNotLocalTime()
+    {
+        // CI-reliable regression test for #277. On a UTC machine the buggy code
+        // produces Kind=Local with the same tick value as Kind=Utc, so comparison
+        // passes anyway — the service-level test above misses it. Checking Kind
+        // directly catches the regression on every machine including UTC CI runners.
+        const string utcZTimestamp = "2026-01-01T12:00:00.0000000Z";
+
+        var parsed = DateTime.TryParse(
+            utcZTimestamp,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal,
+            out var result);
+
+        parsed.Should().BeTrue();
+        result.Kind.Should().Be(DateTimeKind.Utc);
+        result.Hour.Should().Be(12);
     }
 
     [Fact]
