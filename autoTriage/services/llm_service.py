@@ -5,15 +5,97 @@
 LLM Service - GitHub Models / Azure OpenAI integration
 """
 import os
+import re
 import json
+import time
 import logging
 from typing import Dict, Any, List, Optional
 from openai import OpenAI, AzureOpenAI
 from models.team_config import PriorityRules, CopilotFixableConfig
 from services.prompt_loader import get_prompt_loader
 
-# Display limits
-MAX_CONTRIBUTORS_TO_SHOW = 3  # Maximum contributors to show per file in commit history
+# Shared constants — defined once and imported here to avoid duplication.
+from constants import MAX_CONTRIBUTORS_TO_SHOW
+
+logger = logging.getLogger(__name__)
+
+# Maximum input lengths for LLM calls (prevents excessive token usage)
+MAX_ISSUE_TITLE_LENGTH = 200
+MAX_ISSUE_BODY_LENGTH = 2000
+
+
+def _sanitise_user_content(text: str, max_length: int = MAX_ISSUE_BODY_LENGTH) -> str:
+    """
+    Sanitise user-supplied content before LLM submission.
+
+    Defends against prompt injection by:
+    - Truncating to a maximum length to bound the attack surface.
+    - Stripping ASCII control characters that have no legitimate place in
+      issue titles/bodies but can confuse tokenisers or inject hidden
+      instructions (keeps \\n and \\t which are meaningful in Markdown).
+
+    Args:
+        text: Raw user-supplied string (issue title, body, etc.)
+        max_length: Maximum number of characters to retain (default MAX_ISSUE_BODY_LENGTH).
+
+    Returns:
+        Sanitised string safe for interpolation into an LLM prompt.
+    """
+    if not text:
+        return ""
+    # Log and truncate if the content exceeds the limit.
+    if len(text) > max_length:
+        logger.info("Truncated input from %d to %d characters", len(text), max_length)
+        text = text[:max_length]
+    # Strip C0 control characters except tab (0x09) and newline (0x0a).
+    # Also strips DEL (0x7f) which has no printable meaning.
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    return text
+
+
+class RateLimiter:
+    """Simple token-bucket rate limiter for LLM API calls.
+
+    Tracks call timestamps over a rolling 60-second window and blocks the
+    calling thread when the configured limit would be exceeded.  This is
+    intentionally synchronous because autoTriage uses synchronous I/O
+    throughout; no asyncio primitives are needed.
+    """
+
+    def __init__(self, max_calls_per_minute: int = 60):
+        self._max_calls = max_calls_per_minute
+        self._calls: List[float] = []
+
+    def wait_if_needed(self) -> None:
+        """Block until a call is allowed under the rate limit."""
+        now = time.monotonic()
+        # Remove timestamps that have aged out of the 60-second window.
+        self._calls = [t for t in self._calls if now - t < 60]
+
+        if len(self._calls) >= self._max_calls:
+            # Sleep until the oldest recorded call falls outside the window.
+            sleep_time = 60 - (now - self._calls[0])
+            if sleep_time > 0:
+                logger.info(
+                    "LLM rate limit reached (%d/%d calls). Waiting %.1fs.",
+                    len(self._calls),
+                    self._max_calls,
+                    sleep_time,
+                )
+                time.sleep(sleep_time)
+            # Refresh the window after sleeping.
+            now = time.monotonic()
+            self._calls = [t for t in self._calls if now - t < 60]
+
+        self._calls.append(time.monotonic())
+
+
+# Module-level rate limiter instance — shared across all LlmService instances
+# within a process.  The limit can be tuned via LLM_MAX_CALLS_PER_MINUTE.
+_rate_limiter = RateLimiter(
+    max_calls_per_minute=int(os.environ.get("LLM_MAX_CALLS_PER_MINUTE", "60"))
+)
+
 
 
 class LlmService:
@@ -57,6 +139,10 @@ class LlmService:
         if not self._client:
             logging.warning("LLM client not initialized - API key missing")
             return None
+
+        # Enforce rate limit before every API call to avoid bursting the
+        # upstream quota (5 LLM calls per issue * N issues = N*5 rapid calls).
+        _rate_limiter.wait_if_needed()
 
         try:
             # Build kwargs dynamically to avoid passing None for response_format
@@ -118,11 +204,18 @@ Classify the issue and respond in JSON format with these fields:
 
         system_prompt = self.prompts.get("classify_issue_system", default_system)
 
+        safe_title = _sanitise_user_content(title, MAX_ISSUE_TITLE_LENGTH)
+        safe_body = _sanitise_user_content(body)
+
         user_prompt = self.prompts.format(
             "classify_issue_user",
-            default=f"Classify this issue:\nTitle: {title}\nBody: {body}",
-            title=title,
-            body=body,
+            default=(
+                f"Classify this issue:\n"
+                f"<issue_title>{safe_title}</issue_title>\n"
+                f"<issue_body>{safe_body}</issue_body>"
+            ),
+            title=safe_title,
+            body=safe_body,
             p1_keywords=', '.join(rules.p1_keywords),
             p2_keywords=', '.join(rules.p2_keywords),
             p3_keywords=', '.join(rules.p3_keywords),
@@ -156,14 +249,31 @@ Classify the issue and respond in JSON format with these fields:
             "confidence": 0.5
         }
 
-    def generate_summary(self, content: str) -> str:
+    def generate_summary(self, title: str, body: str) -> str:
         """
-        Generate a summary of the given content using AI.
+        Generate a summary of the given issue using AI.
+
+        Args:
+            title: Issue title (user-supplied; will be sanitised before LLM submission).
+            body: Issue body/description (user-supplied; will be sanitised before LLM submission).
+
+        Returns:
+            A 1-2 sentence summary string, or a fallback string if the LLM is unavailable.
         """
         default_system = "You are a concise technical writer. Summarize the content in 1-2 sentences."
         system_prompt = self.prompts.get("summary_system", default_system)
-        result = self._call_llm(system_prompt, content)
-        return result if result else f"Summary of {len(content)} characters"
+
+        safe_title = _sanitise_user_content(title, max_length=MAX_ISSUE_TITLE_LENGTH)
+        safe_body = _sanitise_user_content(body, max_length=MAX_ISSUE_BODY_LENGTH)
+
+        user_prompt = (
+            f"Summarize this issue:\n"
+            f"<issue_title>{safe_title}</issue_title>\n"
+            f"<issue_body>{safe_body}</issue_body>"
+        )
+
+        result = self._call_llm(system_prompt, user_prompt)
+        return result if result else f"Summary of issue: {safe_title}"
 
     def is_security_issue(
         self,
@@ -182,7 +292,6 @@ Classify the issue and respond in JSON format with these fields:
         Returns:
             Dict with keys: is_security, confidence, reasoning
         """
-        import re
         combined = f"{title} {body}".lower()
 
         # First pass: keyword matching with word boundaries to avoid false positives
@@ -224,7 +333,14 @@ Consider security issues to include:
 - Insecure configurations or defaults
 - Potential for malicious exploitation"""
 
-        user_prompt = f"Analyze this issue for security concerns:\n\nTitle: {title}\n\nBody: {body}"
+        safe_title = _sanitise_user_content(title, max_length=MAX_ISSUE_TITLE_LENGTH)
+        safe_body = _sanitise_user_content(body, max_length=MAX_ISSUE_BODY_LENGTH)
+
+        user_prompt = (
+            f"Analyze this issue for security concerns:\n\n"
+            f"<issue_title>{safe_title}</issue_title>\n\n"
+            f"<issue_body>{safe_body}</issue_body>"
+        )
 
         result = self._call_llm(system_prompt, user_prompt, json_response=True)
         if result:
@@ -479,11 +595,18 @@ Respond in JSON format with: is_copilot_fixable, confidence, reasoning, suggeste
 
         criteria_text = ", ".join(config.criteria) if config.criteria else "typo, simple fix, documentation"
 
+        safe_title = _sanitise_user_content(title, MAX_ISSUE_TITLE_LENGTH)
+        safe_body = _sanitise_user_content(body) if body else "No description provided"
+
         user_prompt = self.prompts.format(
             "copilot_fixable_user",
-            default=f"Assess if this issue can be fixed by Copilot: {title}",
-            title=title,
-            body=body[:2000] if body else "No description provided",
+            default=(
+                f"Assess if this issue can be fixed by Copilot:\n"
+                f"<issue_title>{safe_title}</issue_title>\n"
+                f"<issue_body>{safe_body}</issue_body>"
+            ),
+            title=safe_title,
+            body=safe_body,
             issue_type=issue_type,
             priority=priority,
             criteria=criteria_text
@@ -583,11 +706,18 @@ Provide 3-5 specific, practical suggestions in JSON format with: suggestions (ar
             test_dirs = "None"
             config_contents_str = "No config files available"
 
+        safe_title = _sanitise_user_content(title, MAX_ISSUE_TITLE_LENGTH)
+        safe_body = _sanitise_user_content(body) if body else "No description provided"
+
         user_prompt = self.prompts.format(
             "fix_suggestions_user",
-            default=f"Generate fix suggestions for: {title}",
-            title=title,
-            body=body[:2000] if body else "No description provided",
+            default=(
+                f"Generate fix suggestions for:\n"
+                f"<issue_title>{safe_title}</issue_title>\n"
+                f"<issue_body>{safe_body}</issue_body>"
+            ),
+            title=safe_title,
+            body=safe_body,
             issue_type=issue_type,
             priority=priority,
             repo_name=repo_name,
@@ -797,11 +927,18 @@ Respond in JSON format with: assignee, rationale, confidence."""
             if contributor_lines:
                 contributor_context = "Recent contributors to files mentioned in this issue:\n" + "\n".join(contributor_lines)
 
+        safe_title = _sanitise_user_content(title, MAX_ISSUE_TITLE_LENGTH)
+        safe_body = _sanitise_user_content(body) if body else "No description provided"
+
         user_prompt = self.prompts.format(
             "select_assignee_user",
-            default=f"Select an assignee for: {title}",
-            title=title,
-            body=body[:2000] if body else "No description provided",  # Limit body length
+            default=(
+                f"Select an assignee for:\n"
+                f"<issue_title>{safe_title}</issue_title>\n"
+                f"<issue_body>{safe_body}</issue_body>"
+            ),
+            title=safe_title,
+            body=safe_body,
             issue_type=issue_type,
             priority=priority,
             engineers_json=json.dumps(engineers_info, indent=2),

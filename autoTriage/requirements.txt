@@ -1,30 +1,46 @@
+# Pinned versions for reproducible builds.
+# Update with: pip install <package>==<new-version>
+# Run Dependabot or manually check for updates monthly.
+#
+# ---------------------------------------------------------------------------
+# Hash verification
+# ---------------------------------------------------------------------------
+# To install with hash verification (recommended for production):
+#   pip install --require-hashes -r requirements.txt
+#
+# To generate hashes (requires pip-tools):
+#   pip-compile --generate-hashes requirements.in -o requirements.txt
+#
+# Hash verification is recommended for production deployments but requires
+# pip-tools to generate. See docs/SECRETS.md for details.
+
 # Azure Functions
-azure-functions
+azure-functions==1.21.3
 
 # FastAPI (local development)
-fastapi>=0.109.0
-uvicorn>=0.27.0
-python-dotenv>=1.0.0
+fastapi==0.115.6
+uvicorn==0.32.1
+python-dotenv==1.0.1
 
 # GitHub API
-PyGithub>=2.1.0
+PyGithub==2.5.0
 
 # Azure DevOps API
 azure-devops==7.1.0b4
 
 # LLM / OpenAI
-openai>=1.0.0
+openai==1.59.4
 
 # HTTP requests
-requests>=2.31.0
-httpx>=0.25.0
+requests==2.32.3
+httpx==0.27.2
 
 # YAML config parsing
-PyYAML>=6.0.1
+PyYAML==6.0.2
 
 # Async support
-aiohttp>=3.9.0
+aiohttp==3.11.11
 
 # Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
+pytest==8.3.4
+pytest-asyncio==0.24.0

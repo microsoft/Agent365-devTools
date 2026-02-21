@@ -19,6 +19,9 @@
     This script only needs to be run ONCE per tenant.
 #>
 
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
 $resourceId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -29,21 +32,21 @@ Write-Host "⚠ IMPORTANT: This requires admin permissions!" -ForegroundColor Ye
 Write-Host "⚠ This only needs to be run ONCE per tenant!" -ForegroundColor Yellow
 Write-Host ""
 
-# Check if Microsoft.Graph module is installed
+# Validate prerequisites — install Microsoft.Graph modules if not present
 Write-Host "Checking for Microsoft.Graph module..." -ForegroundColor Cyan
 if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Applications)) {
     Write-Host "Microsoft.Graph.Applications module not found. Installing..." -ForegroundColor Yellow
-    Install-Module Microsoft.Graph.Applications -Scope CurrentUser -Force
+    Install-Module Microsoft.Graph.Applications -Scope CurrentUser -Force -ErrorAction Stop
 }
 
 if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
     Write-Host "Microsoft.Graph.Authentication module not found. Installing..." -ForegroundColor Yellow
-    Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force
+    Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force -ErrorAction Stop
 }
 
 # Import required modules
-Import-Module Microsoft.Graph.Applications
-Import-Module Microsoft.Graph.Authentication
+Import-Module Microsoft.Graph.Applications -ErrorAction Stop
+Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 
 # Connect to Microsoft Graph
 Write-Host ""

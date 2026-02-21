@@ -1,6 +1,25 @@
-# install-cli.ps1
-# This script installs the Agent 365 CLI from a local NuGet package in the publish folder.
-# Usage: Run this script from the root of the extracted package (where publish/ exists)
+<#
+.SYNOPSIS
+    Installs the Agent 365 CLI from a locally built NuGet package.
+
+.DESCRIPTION
+    Builds the CLI project in Release configuration, packs it into a .nupkg,
+    then installs (or updates) the global dotnet tool. Handles existing
+    installations and locked processes gracefully.
+
+.NOTES
+    Prerequisites: .NET SDK 8.0 or later (dotnet CLI must be on PATH).
+    Run from any directory — the script resolves the repo root automatically.
+#>
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+# Validate prerequisites
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    Write-Error ".NET SDK (dotnet) is required. Install from https://dot.net/download"
+    exit 1
+}
 
 # Get the repository root directory (two levels up from scripts/cli/)
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
