@@ -95,9 +95,22 @@ class GitHubService:
         self._repo_cache: Dict[str, Any] = {}
 
     def _get_repo(self, owner: str, repo: str):
-        """Get repository with caching."""
+        """Get repository with caching.
+
+        Evicts the oldest entry (insertion order) when the cache reaches
+        CACHE_MAX_ENTRIES to prevent unbounded memory growth across long-running
+        processes that touch many repositories.
+        """
         cache_key = f"{owner}/{repo}"
         if cache_key not in self._repo_cache:
+            if len(self._repo_cache) >= CACHE_MAX_ENTRIES:
+                oldest_key = next(iter(self._repo_cache))
+                del self._repo_cache[oldest_key]
+                logger.debug(
+                    "Evicted oldest _repo_cache entry %r to stay under %d limit",
+                    oldest_key,
+                    CACHE_MAX_ENTRIES,
+                )
             self._repo_cache[cache_key] = self.client.get_repo(cache_key)
         return self._repo_cache[cache_key]
 

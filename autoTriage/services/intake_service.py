@@ -15,7 +15,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urlparse
 
 from services.github_service import GitHubService, MAX_CONFIG_FILES
-from services.llm_service import LlmService, MAX_ISSUE_BODY_LENGTH, _sanitise_user_content
+from services.llm_service import LlmService, MAX_ISSUE_BODY_LENGTH, _sanitise_exception, _sanitise_user_content
 from services.config_parser import ConfigParser
 from services.teams_service import TeamsService
 from services.copilot_service import CopilotService
@@ -244,7 +244,7 @@ def _validate_classification(
             classification.suggested_assignee = classification.suggested_assignee[1:]
 
     except Exception as e:
-        validation_result["errors"].append(f"Validation error: {str(e)}")
+        validation_result["errors"].append(f"Validation error: {_sanitise_exception(e)}")
         validation_result["valid"] = False
 
     return validation_result
@@ -423,7 +423,11 @@ This issue has been automatically analyzed and triaged.
                 else:
                     logging.info(f"Copilot coding agent is not enabled for {owner}/{repo}")
             except Exception as e:
-                logging.error(f"Error invoking Copilot for issue #{classification.issue_number}: {e}")
+                logging.error(
+                    "Error invoking Copilot for issue #%d: %s",
+                    classification.issue_number,
+                    _sanitise_exception(e),
+                )
 
         # Apply changes with proper error handling
         results = github_service.apply_triage_result(
@@ -439,8 +443,13 @@ This issue has been automatically analyzed and triaged.
         return results
 
     except Exception as e:
-        logging.error(f"Error applying triage to issue #{classification.issue_number}: {str(e)}")
-        return {"labels": False, "assignee": False, "comment": False, "error": str(e)}
+        safe_err = _sanitise_exception(e)
+        logging.error(
+            "Error applying triage to issue #%d: %s",
+            classification.issue_number,
+            safe_err,
+        )
+        return {"labels": False, "assignee": False, "comment": False, "error": safe_err}
 
 
 def _write_reasoning_log(
