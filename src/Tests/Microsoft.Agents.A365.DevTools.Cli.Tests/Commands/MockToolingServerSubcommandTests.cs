@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Collections.Concurrent;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.MockToolingServer;
@@ -25,20 +26,26 @@ public class MockToolingServerSubcommandTests : IDisposable
         _mockProcessService = Substitute.For<IProcessService>();
 
         // Clear any previous state - this runs before each test
-        _testLogger.LogCalls.Clear();
+        _testLogger.Reset();
         _mockProcessService.ClearReceivedCalls();
     }
 
     public void Dispose()
     {
         // Cleanup after each test if needed
-        _testLogger.LogCalls.Clear();
+        _testLogger.Reset();
     }
 
-    // Test logger that captures calls for verification
+    // Test logger that captures calls for verification.
+    // Uses ConcurrentBag so background threads can Add() while the test thread enumerates.
     private class TestLogger : ILogger
     {
-        public List<(LogLevel Level, string Message, object[] Args)> LogCalls { get; } = new();
+        private ConcurrentBag<(LogLevel Level, string Message, object[] Args)> _logCalls = new();
+
+        public IReadOnlyCollection<(LogLevel Level, string Message, object[] Args)> LogCalls => _logCalls;
+
+        // Replace the bag with a fresh empty one (called between tests — no concurrent access at that point).
+        public void Reset() => _logCalls = new ConcurrentBag<(LogLevel Level, string Message, object[] Args)>();
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
@@ -49,7 +56,7 @@ public class MockToolingServerSubcommandTests : IDisposable
             var args = state is IReadOnlyList<KeyValuePair<string, object?>> kvps
                 ? kvps.Where(kvp => kvp.Key != "{OriginalFormat}").Select(kvp => kvp.Value ?? "").ToArray()
                 : Array.Empty<object>();
-            LogCalls.Add((logLevel, message, args));
+            _logCalls.Add((logLevel, message, args));
         }
     }
 
@@ -255,16 +262,18 @@ public class MockToolingServerSubcommandTests : IDisposable
     [Fact]
     public async Task HandleStartServer_WithNullPort_UsesDefaultPort()
     {
-        // Act - Start task but don't await (will be cancelled by timeout)
-        // We're testing the initial log messages before Server.Start() blocks
-        var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
-        var task = Task.Run(async () =>
-        {
-            await MockToolingServerSubcommand.HandleStartServer(null, false, false, false, _testLogger, _mockProcessService);
-        }, cts.Token);
+        // Start on a dedicated OS thread (LongRunning) so Server.Start() cannot starve the thread pool
+        // when many tests run in parallel.
+        _ = Task.Factory.StartNew(
+            () => MockToolingServerSubcommand.HandleStartServer(null, false, false, false, _testLogger, _mockProcessService).GetAwaiter().GetResult(),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
-        // Wait briefly for initial logging to occur
-        await Task.Delay(100);
+        // Poll until the initial log messages appear (up to 2 s).
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (!_testLogger.LogCalls.Any() && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
 
         // Assert - Should log foreground startup messages with default port
         Assert.NotEmpty(_testLogger.LogCalls);
@@ -284,16 +293,18 @@ public class MockToolingServerSubcommandTests : IDisposable
     [InlineData(65535)]
     public async Task HandleStartServer_WithValidPort_LogsStartingMessage(int validPort)
     {
-        // Act - Start task but don't await (will be cancelled by timeout)
-        // We're testing the initial log messages before Server.Start() blocks
-        var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
-        var task = Task.Run(async () =>
-        {
-            await MockToolingServerSubcommand.HandleStartServer(validPort, false, false, false, _testLogger, _mockProcessService);
-        }, cts.Token);
+        // Start on a dedicated OS thread (LongRunning) so Server.Start() cannot starve the thread pool
+        // when many tests run in parallel.
+        _ = Task.Factory.StartNew(
+            () => MockToolingServerSubcommand.HandleStartServer(validPort, false, false, false, _testLogger, _mockProcessService).GetAwaiter().GetResult(),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
-        // Wait briefly for initial logging to occur
-        await Task.Delay(100);
+        // Poll until the initial log messages appear (up to 2 s).
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (!_testLogger.LogCalls.Any() && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
 
         // Assert - Should log foreground startup messages
         Assert.NotEmpty(_testLogger.LogCalls);

@@ -235,18 +235,21 @@ public class PublishCommand
                 logger.LogInformation("    - Replace 'color.png' and 'outline.png' with your custom branding");
                 logger.LogInformation("");
                 
-                // Ask if user wants to open the file now
-                Console.Write("Open manifest in your default editor now? (Y/n): ");
-                var openResponse = Console.ReadLine()?.Trim().ToLowerInvariant();
-                
-                if (openResponse != "n" && openResponse != "no")
+                // Ask if user wants to open the file now (skip when stdin is not a terminal)
+                if (!Console.IsInputRedirected)
                 {
-                    FileHelper.TryOpenFileInDefaultEditor(manifestPath, logger);
+                    Console.Write("Open manifest in your default editor now? (Y/n): ");
+                    var openResponse = Console.ReadLine()?.Trim().ToLowerInvariant();
+
+                    if (openResponse != "n" && openResponse != "no")
+                    {
+                        FileHelper.TryOpenFileInDefaultEditor(manifestPath, logger);
+                    }
+
+                    Console.Write("Press Enter when you have finished editing the manifest to continue with publish: ");
+                    Console.Out.Flush();
+                    Console.ReadLine();
                 }
-                
-                Console.Write("Press Enter when you have finished editing the manifest to continue with publish: ");
-                Console.Out.Flush();
-                Console.ReadLine();
 
                 logger.LogInformation("Continuing with publish process...");
                 logger.LogInformation("");
