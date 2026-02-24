@@ -202,7 +202,7 @@ public class AgentBlueprintService
 
             foreach (var item in valueArray.EnumerateArray())
             {
-                var parentId = item.TryGetProperty("identityParentId", out var p) ? p.GetString() : null;
+                var parentId = item.TryGetProperty("agentIdentityBlueprintId", out var p) ? p.GetString() : null;
                 if (!string.Equals(parentId, blueprintId, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
