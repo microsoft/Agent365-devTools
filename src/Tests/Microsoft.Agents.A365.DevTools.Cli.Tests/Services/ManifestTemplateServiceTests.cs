@@ -486,6 +486,65 @@ public class ManifestTemplateServiceTests : IDisposable
 
     #endregion
 
+    #region EnsureTemplateFile Tests
+
+    [Fact]
+    public void EnsureTemplateFile_ReturnsTrue_WhenFileAlreadyExists()
+    {
+        // Arrange
+        var existingContent = "existing content";
+        var filePath = Path.Combine(_testDirectory, "agenticUserTemplateManifest.json");
+        File.WriteAllText(filePath, existingContent);
+
+        // Act
+        var result = _service.EnsureTemplateFile(_testDirectory, "agenticUserTemplateManifest.json");
+
+        // Assert
+        result.Should().BeTrue();
+        // Existing file should NOT be overwritten
+        File.ReadAllText(filePath).Should().Be(existingContent);
+    }
+
+    [Fact]
+    public void EnsureTemplateFile_ExtractsFile_WhenFileMissing()
+    {
+        // Arrange - directory exists but file is absent
+        var filePath = Path.Combine(_testDirectory, "agenticUserTemplateManifest.json");
+        File.Exists(filePath).Should().BeFalse();
+
+        // Act
+        var result = _service.EnsureTemplateFile(_testDirectory, "agenticUserTemplateManifest.json");
+
+        // Assert
+        result.Should().BeTrue();
+        File.Exists(filePath).Should().BeTrue();
+        new FileInfo(filePath).Length.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void EnsureTemplateFile_ExtractedFile_ContainsValidJson()
+    {
+        // Act
+        _service.EnsureTemplateFile(_testDirectory, "agenticUserTemplateManifest.json");
+
+        // Assert
+        var content = File.ReadAllText(Path.Combine(_testDirectory, "agenticUserTemplateManifest.json"));
+        var act = () => System.Text.Json.JsonDocument.Parse(content);
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void EnsureTemplateFile_ReturnsFalse_WhenResourceNameIsInvalid()
+    {
+        // Act
+        var result = _service.EnsureTemplateFile(_testDirectory, "nonexistent-file.json");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    #endregion
+
     #region ValidateManifestFormatAsync Tests
 
     [Fact]

@@ -167,6 +167,19 @@ public class PublishCommand
                     logger.LogInformation("Please customize the manifest files before publishing");
                 }
 
+                // Ensure agenticUserTemplateManifest.json exists in the manifest directory.
+                // It may be missing if the manifest directory was created by a previous partial run
+                // or an older CLI version that did not include this file.
+                if (!File.Exists(agenticUserManifestTemplatePath))
+                {
+                    logger.LogInformation("agenticUserTemplateManifest.json not found. Extracting from embedded resources...");
+                    if (!manifestTemplateService.EnsureTemplateFile(manifestDir, "agenticUserTemplateManifest.json"))
+                    {
+                        logger.LogError("Failed to extract agenticUserTemplateManifest.json from embedded resources");
+                        return;
+                    }
+                }
+
                 if (!File.Exists(manifestPath))
                 {
                     logger.LogError("Manifest file not found at {Path}", manifestPath);
@@ -258,9 +271,10 @@ public class PublishCommand
                     try { File.Delete(zipPath); } catch { /* ignore */ }
                 }
 
-                // Identify up to 4 files (manifest.json + icons + any additional up to 4 total)
+                // Identify files to include in zip; agenticUserTemplateManifest.json is explicitly listed
+                // to ensure it is always included regardless of other files present in the directory
                 var expectedFiles = new List<string>();
-                string[] candidateNames = ["manifest.json", "color.png", "outline.png", "logo.png", "icon.png"];
+                string[] candidateNames = ["manifest.json", "agenticUserTemplateManifest.json", "color.png", "outline.png", "logo.png", "icon.png"];
                 foreach (var name in candidateNames)
                 {
                     var p = Path.Combine(manifestDir, name);

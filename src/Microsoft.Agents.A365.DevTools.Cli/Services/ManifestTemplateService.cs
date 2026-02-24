@@ -75,6 +75,47 @@ public class ManifestTemplateService
     }
 
     /// <summary>
+    /// Extracts a single embedded template file to the working directory only if it does not already exist.
+    /// Existing files are not overwritten, preserving any user customizations or previously applied blueprint IDs.
+    /// Use this method to recover missing files from a manifest directory created by an older CLI version
+    /// or a partial previous run, without disturbing other files in the directory.
+    /// </summary>
+    /// <param name="workingDirectory">Directory to extract the template to</param>
+    /// <param name="fileName">Name of the embedded template file (e.g., "agenticUserTemplateManifest.json")</param>
+    /// <returns>True if the file already exists or was successfully extracted</returns>
+    public bool EnsureTemplateFile(string workingDirectory, string fileName)
+    {
+        var targetPath = Path.Combine(workingDirectory, fileName);
+        if (File.Exists(targetPath))
+        {
+            return true;
+        }
+
+        try
+        {
+            var fullResourceName = $"{ResourcePrefix}{fileName}";
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(fullResourceName);
+
+            if (stream == null)
+            {
+                _logger.LogError("Embedded resource not found: {Resource}", fullResourceName);
+                return false;
+            }
+
+            using var fileStream = File.Create(targetPath);
+            stream.CopyTo(fileStream);
+
+            _logger.LogDebug("Extracted template: {File}", fileName);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to extract template file {File}", fileName);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Updates manifest files with agent-specific identifiers.
     /// </summary>
     /// <param name="workingDirectory">Directory containing extracted templates</param>
