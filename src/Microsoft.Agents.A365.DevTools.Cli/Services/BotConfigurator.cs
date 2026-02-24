@@ -51,6 +51,14 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogDebug("   Messaging Endpoint: {Endpoint}", messagingEndpoint);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return EndpointRegistrationResult.Failed;
+        }
+
         try
         {
             // Get subscription info for tenant ID
@@ -200,6 +208,14 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
         _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
+
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return false;
+        }
 
         try
         {

@@ -543,11 +543,14 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// Verifies that blueprint cleanup with --endpoint-only flag handles invalid/empty Location.
-    /// The command should still proceed but may fail when calling the API with invalid location.
+    /// Verifies that blueprint cleanup with --endpoint-only flag rejects an empty Location before
+    /// calling the API. The endpoint registration API requires Location, so the guard should
+    /// prevent an unhelpful 400 BadRequest from the server.
+    /// The command logs an error but returns exit code 0 (System.CommandLine default when no
+    /// exception propagates — the error is communicated through log output, not the exit code).
     /// </summary>
     [Fact]
-    public async Task CleanupBlueprint_WithEndpointOnlyAndInvalidLocation_ShouldPassLocationToApi()
+    public async Task CleanupBlueprint_WithEndpointOnlyAndMissingLocation_ShouldNotCallApiAndLogError()
     {
         // Arrange
         var config = new Agent365Config
@@ -555,7 +558,7 @@ public class CleanupCommandTests
             TenantId = "test-tenant-id",
             SubscriptionId = "test-subscription-id",
             ResourceGroup = "test-rg",
-            Location = string.Empty, // Invalid/empty location
+            Location = string.Empty, // Missing location - not required for needDeployment:false configs
             WebAppName = "test-web-app",
             AppServicePlanName = "test-app-service-plan",
             AgentBlueprintId = "test-blueprint-id",
@@ -564,9 +567,7 @@ public class CleanupCommandTests
             AgentDescription = "test-agent-description"
         };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
-            .Returns(false); // API will likely fail with invalid location
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
         var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--config", "test.json" };
 
@@ -581,12 +582,12 @@ public class CleanupCommandTests
 
             // Assert
             Assert.Equal(0, result);
-            
-            // Verify deletion was attempted with the invalid location
-            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), 
-                string.Empty, // Should pass the empty location
-                config.AgentBlueprintId!,
+
+            // Verify the API is never called when location is empty - the guard should block it
+            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
                 Arg.Any<string?>());
         }
         finally

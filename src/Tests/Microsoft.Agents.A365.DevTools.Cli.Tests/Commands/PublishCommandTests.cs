@@ -7,7 +7,6 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -15,7 +14,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
 /// <summary>
 /// Tests for PublishCommand exit code behavior.
-/// These tests verify that error paths return exit code 1 and normal paths return exit code 0.
+/// Tests are limited to paths that exit before the interactive Console.ReadLine() prompts
+/// in the publish flow. Paths that reach those prompts (--skip-graph, missing tenantId,
+/// missing manifest file) require full HTTP/MOS mocking infrastructure to test reliably.
 /// </summary>
 public class PublishCommandTests
 {
@@ -148,58 +149,6 @@ public class PublishCommandTests
     }
 
     [Fact]
-    public async Task PublishCommand_WithMissingManifestFile_ShouldReturnExitCode1()
-    {
-        // Arrange - Config with valid blueprintId but manifest directory doesn't exist
-        // Create a temp directory that doesn't contain a manifest subdirectory
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(tempDir);
-
-        try
-        {
-            var config = new Agent365Config
-            {
-                AgentBlueprintId = "test-blueprint-id",
-                AgentBlueprintDisplayName = "Test Agent",
-                TenantId = "test-tenant",
-                DeploymentProjectPath = tempDir
-            };
-            _configService.LoadAsync().Returns(config);
-
-            // Don't create manifest directory - let ExtractTemplates run naturally
-            // The real ManifestTemplateService will attempt to extract templates
-            // If extraction succeeds, the test continues; if it fails, we get exit code 1
-
-            var command = PublishCommand.CreateCommand(
-                _logger,
-                _configService,
-                _agentPublishService,
-                _graphApiService,
-                _blueprintService,
-                _manifestTemplateService);
-
-            var root = new RootCommand();
-            root.AddCommand(command);
-
-            // Act
-            var exitCode = await root.InvokeAsync("publish");
-
-            // Assert
-            // This test may succeed (exit code 0) if template extraction works,
-            // or fail (exit code 1) if manifest file is missing after extraction
-            // The key is testing the exit code behavior, not the manifest extraction itself
-            exitCode.Should().BeOneOf(0, 1);
-        }
-        finally
-        {
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, true);
-            }
-        }
-    }
-
-    [Fact]
     public async Task PublishCommand_WithException_ShouldReturnExitCode1()
     {
         // Arrange - Simulate exception during config loading
@@ -232,154 +181,12 @@ public class PublishCommandTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
-    [Fact]
-    public async Task PublishCommand_WithSkipGraph_ShouldReturnExitCode0()
-    {
-        // Arrange - Set up for successful publish with --skip-graph
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var manifestDir = Path.Combine(tempDir, "manifest");
-        Directory.CreateDirectory(manifestDir);
-
-        try
-        {
-            // Create manifest files
-            var manifestPath = Path.Combine(manifestDir, "manifest.json");
-            var agenticUserManifestPath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
-            await File.WriteAllTextAsync(manifestPath, "{\"id\":\"old-id\"}");
-            await File.WriteAllTextAsync(agenticUserManifestPath, "{\"id\":\"old-id\"}");
-
-            var config = new Agent365Config
-            {
-                AgentBlueprintId = "test-blueprint-id",
-                AgentBlueprintDisplayName = "Test Agent",
-                TenantId = "test-tenant",
-                DeploymentProjectPath = tempDir
-            };
-            _configService.LoadAsync().Returns(config);
-
-            // Mock successful publish to MOS (before Graph operations)
-            // Note: This test is simplified - in reality, many more operations happen
-            // The key is that --skip-graph causes early return before Graph API calls
-
-            var command = PublishCommand.CreateCommand(
-                _logger,
-                _configService,
-                _agentPublishService,
-                _graphApiService,
-                _blueprintService,
-                _manifestTemplateService);
-
-            var root = new RootCommand();
-            root.AddCommand(command);
-
-            // Act - Run with --skip-graph option
-            // Note: This test may need adjustment based on actual publish flow
-            // The important part is verifying that --skip-graph results in exit code 0
-            var exitCode = await root.InvokeAsync("publish --skip-graph");
-
-            // Assert
-            // Note: This test might fail if manifest updates fail, which is expected
-            // The key test is that IF we reach the skip-graph check, it returns 0
-            // For a more complete test, we'd need to mock all the publish steps
-            exitCode.Should().BeOneOf(0, 1);
-
-            // If we reached the skip-graph message, verify it was logged
-            if (exitCode == 0)
-            {
-                _logger.Received().Log(
-                    LogLevel.Information,
-                    Arg.Any<EventId>(),
-                    Arg.Is<object>(o => o.ToString()!.Contains("--skip-graph specified")),
-                    Arg.Any<Exception>(),
-                    Arg.Any<Func<object, Exception?, string>>());
-            }
-        }
-        finally
-        {
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, true);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task PublishCommand_WithMissingTenantId_ShouldReturnExitCode0()
-    {
-        // Arrange - Set up scenario where MOS publish succeeds but tenantId is missing
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        var manifestDir = Path.Combine(tempDir, "manifest");
-        Directory.CreateDirectory(manifestDir);
-
-        try
-        {
-            // Create manifest files
-            var manifestPath = Path.Combine(manifestDir, "manifest.json");
-            var agenticUserManifestPath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
-            await File.WriteAllTextAsync(manifestPath, "{\"id\":\"old-id\"}");
-            await File.WriteAllTextAsync(agenticUserManifestPath, "{\"id\":\"old-id\"}");
-
-            var config = new Agent365Config
-            {
-                AgentBlueprintId = "test-blueprint-id",
-                AgentBlueprintDisplayName = "Test Agent",
-                TenantId = string.Empty, // Missing tenantId - should be treated as normal exit after MOS publish
-                DeploymentProjectPath = tempDir
-            };
-            _configService.LoadAsync().Returns(config);
-
-            var command = PublishCommand.CreateCommand(
-                _logger,
-                _configService,
-                _agentPublishService,
-                _graphApiService,
-                _blueprintService,
-                _manifestTemplateService);
-
-            var root = new RootCommand();
-            root.AddCommand(command);
-
-            // Act
-            var exitCode = await root.InvokeAsync("publish");
-
-            // Assert
-            // Note: This test may fail at earlier stages (manifest operations, etc.)
-            // The key assertion is that IF we reach the missing tenantId check after MOS publish,
-            // it should return exit code 0 (normal exit) per the design decision
-            exitCode.Should().BeOneOf(0, 1);
-
-            // Verify warning was logged about missing tenantId
-            _logger.Received().Log(
-                LogLevel.Warning,
-                Arg.Any<EventId>(),
-                Arg.Is<object>(o => o.ToString()!.Contains("tenantId")),
-                Arg.Any<Exception>(),
-                Arg.Any<Func<object, Exception?, string>>());
-        }
-        finally
-        {
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, true);
-            }
-        }
-    }
-
     /// <summary>
-    /// Test that verifies the isNormalExit flag pattern correctly distinguishes
-    /// between normal exits (exit code 0) and error exits (exit code 1).
-    /// This test documents the four normal exit scenarios:
-    /// 1. Dry-run (--dry-run)
-    /// 2. Skip Graph (--skip-graph)
-    /// 3. Missing tenantId (after successful MOS publish)
-    /// 4. Complete success
+    /// Documents the four normal exit scenarios (exit code 0) and the main error scenarios (exit code 1).
     /// </summary>
     [Fact]
     public void PublishCommand_DocumentsNormalExitScenarios()
     {
-        // This is a documentation test that doesn't execute the command
-        // It serves to document the expected behavior for maintainers
-
         var normalExitScenarios = new[]
         {
             "Dry-run: --dry-run specified, manifest updated but not saved",
@@ -398,11 +205,7 @@ public class PublishCommandTests
             "Exception thrown during execution"
         };
 
-        // Assert - Documentation assertions
         normalExitScenarios.Should().HaveCount(4, "there are exactly 4 normal exit scenarios");
         errorExitScenarios.Length.Should().BeGreaterThan(5, "there are many error exit scenarios");
-
-        // This test always passes - it exists to document the exit code behavior
-        Assert.True(true, "This test documents exit code behavior for maintainers");
     }
 }

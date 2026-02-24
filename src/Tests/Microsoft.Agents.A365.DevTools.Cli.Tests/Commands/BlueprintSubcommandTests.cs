@@ -276,7 +276,8 @@ public class BlueprintSubcommandTests
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required for validation
             SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint"
+            AgentBlueprintDisplayName = "Test Blueprint",
+            Location = "eastus" // Required for endpoint registration; location guard runs before Azure validation
         };
 
         var configFile = new FileInfo("test-config.json");
@@ -474,7 +475,8 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint"
+            AgentBlueprintDisplayName = "Test Blueprint",
+            Location = "eastus" // Required for endpoint registration; location guard runs before the header is logged
         };
 
         var configFile = new FileInfo("test-config.json");

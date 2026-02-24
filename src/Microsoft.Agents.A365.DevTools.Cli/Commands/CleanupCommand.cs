@@ -4,6 +4,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
@@ -726,6 +727,16 @@ public class CleanupCommand
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
             logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for deleting endpoint registration.");
+            return false;
+        }
+
+        // Defense-in-depth: BotConfigurator also validates location, but catching it here gives
+        // the user a clearer error before any authentication or HTTP work is attempted.
+        if (string.IsNullOrWhiteSpace(config.Location))
+        {
+            logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
+            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            logger.LogInformation(ErrorMessages.EndpointLocationExample);
             return false;
         }
 

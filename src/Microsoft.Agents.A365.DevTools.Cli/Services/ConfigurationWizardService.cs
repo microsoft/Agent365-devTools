@@ -166,9 +166,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
         }
         else
         {
-            // External hosting - use resource group location for potential RG creation
-            resourceLocation = resourceGroupLocation ?? existingConfig?.Location ?? ConfigConstants.DefaultAzureLocation;
-            
             messagingEndpoint = PromptForMessagingEndpoint(existingConfig);
             if (string.IsNullOrWhiteSpace(messagingEndpoint))
             {
@@ -176,7 +173,14 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 _logger.LogDebug("Messaging endpoint not provided, configuration cancelled");
                 return null;
             }
-        }            // Step 7: Get manager email (required for agent creation)
+
+            // Location is required for Bot Framework endpoint registration even when hosting externally
+            Console.WriteLine();
+            Console.WriteLine(ErrorMessages.WizardLocationRequiredForExternalHostingNote);
+            resourceLocation = PromptForLocation(existingConfig, resourceGroupLocation, ErrorMessages.WizardLocationPromptForEndpointRegistration);
+        }
+
+            // Step 7: Get manager email (required for agent creation)
             var managerEmail = PromptForManagerEmail(existingConfig, accountInfo);
             if (string.IsNullOrWhiteSpace(managerEmail))
             {
@@ -502,10 +506,10 @@ public class ConfigurationWizardService : IConfigurationWizardService
         }
     }
 
-    private string PromptForLocation(Agent365Config? existingConfig, string? resourceGroupLocation)
+    private string PromptForLocation(Agent365Config? existingConfig, string? resourceGroupLocation, string header = ErrorMessages.WizardLocationPromptForAppServicePlan)
     {
         Console.WriteLine();
-        Console.WriteLine("Select Azure region for the new App Service Plan:");
+        Console.WriteLine(header);
         Console.WriteLine();
         
         // Use RG location as default if available, otherwise use existing config or default location
@@ -644,24 +648,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
             "Messaging endpoint URL",
             existingConfig?.MessagingEndpoint ?? "",
             ValidateUrl
-        );
-    }
-
-    private string PromptForLocation(Agent365Config? existingConfig, AzureAccountInfo accountInfo)
-    {
-        // Try to get a smart default location
-        var defaultLocation = existingConfig?.Location;
-        
-        if (string.IsNullOrEmpty(defaultLocation))
-        {
-            // Try to get from resource group or common defaults
-            defaultLocation = "westus"; // Conservative default
-        }
-
-        return PromptWithDefault(
-            "Azure location",
-            defaultLocation,
-            input => !string.IsNullOrWhiteSpace(input) ? (true, "") : (false, "Location cannot be empty")
         );
     }
 

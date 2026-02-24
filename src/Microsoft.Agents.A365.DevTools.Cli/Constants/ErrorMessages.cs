@@ -98,11 +98,50 @@ public static class ErrorMessages
 
     #region Configuration Messages
 
-    public const string ConfigFileNotFound = 
+    public const string ConfigFileNotFound =
         "Configuration file not found. Run 'a365 config init' to create one";
 
-    public const string InvalidConfigFormat = 
+    public const string InvalidConfigFormat =
         "Configuration file has invalid JSON format";
+
+    #endregion
+
+    #region Endpoint Registration Messages
+
+    public const string EndpointLocationRequiredForCreate =
+        "Location is required to register the messaging endpoint.";
+
+    public const string EndpointLocationRequiredForDelete =
+        "Location is required to delete the messaging endpoint.";
+
+    public const string EndpointLocationAddToConfig =
+        "Run 'a365 config init' to configure your location.";
+
+    public const string EndpointLocationExample =
+        "Example: \"location\": \"eastus\"";
+
+    #endregion
+
+    #region Configuration Wizard Messages
+
+    /// <summary>
+    /// Prompt header for region selection when creating a new App Service Plan.
+    /// </summary>
+    public const string WizardLocationPromptForAppServicePlan =
+        "Select Azure region for the new App Service Plan:";
+
+    /// <summary>
+    /// Prompt header for region selection when registering a Bot Framework endpoint without deployment.
+    /// </summary>
+    public const string WizardLocationPromptForEndpointRegistration =
+        "Select Azure region for Bot Framework endpoint registration:";
+
+    /// <summary>
+    /// Note explaining why location is required even for external hosting scenarios.
+    /// </summary>
+    public const string WizardLocationRequiredForExternalHostingNote =
+        "NOTE: An Azure region is required to register the messaging endpoint with the Bot Framework,\n" +
+        "      even when the agent is hosted externally (needDeployment: false).";
 
     #endregion
 
