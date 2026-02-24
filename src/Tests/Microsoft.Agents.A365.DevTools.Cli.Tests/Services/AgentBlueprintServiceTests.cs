@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -322,6 +323,133 @@ public class AgentBlueprintServiceTests
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
+
+    [Fact]
+    public async Task GetAgentInstancesForBlueprintAsync_ReturnsFilteredInstances()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        _mockTokenProvider.GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("test-token");
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        const string blueprintId = "bp-id-123";
+
+        // Returns two SPs; only one matches the blueprint
+        // NOTE: "identityParentId" and "agentUserId" are placeholder property names pending live API verification
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[]
+                {
+                    new { id = "sp-obj-1", displayName = "Instance A", identityParentId = blueprintId, agentUserId = "user-obj-1" },
+                    new { id = "sp-obj-2", displayName = "Instance B", identityParentId = "other-blueprint-id", agentUserId = "user-obj-2" }
+                }
+            }))
+        });
+
+        // Act
+        var instances = await service.GetAgentInstancesForBlueprintAsync("tenant-id", blueprintId);
+
+        // Assert
+        instances.Should().HaveCount(1);
+        instances[0].IdentitySpId.Should().Be("sp-obj-1");
+        instances[0].DisplayName.Should().Be("Instance A");
+        instances[0].AgentUserId.Should().Be("user-obj-1");
+    }
+
+    [Fact]
+    public async Task GetAgentInstancesForBlueprintAsync_ReturnsEmpty_WhenNoneFound()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        _mockTokenProvider.GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("test-token");
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
+        });
+
+        // Act
+        var instances = await service.GetAgentInstancesForBlueprintAsync("tenant-id", "bp-id-123");
+
+        // Assert
+        instances.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DeleteAgentUserAsync_ReturnsTrue_OnSuccess()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        _mockTokenProvider.GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("test-token");
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // Queue HTTP response for DELETE /beta/agentUsers/{userId}
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        // Act
+        var result = await service.DeleteAgentUserAsync("tenant-id", "user-obj-1");
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DeleteAgentUserAsync_ReturnsFalse_OnGraphError()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        _mockTokenProvider.GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // Act
+        var result = await service.DeleteAgentUserAsync("tenant-id", "user-obj-1");
+
+        // Assert
+        result.Should().BeFalse();
+    }
 }
 
 // Simple fake handler that returns queued responses sequentially
@@ -338,5 +466,15 @@ internal class FakeHttpMessageHandler : HttpMessageHandler
 
         var resp = _responses.Dequeue();
         return Task.FromResult(resp);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            while (_responses.Count > 0)
+                _responses.Dequeue().Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

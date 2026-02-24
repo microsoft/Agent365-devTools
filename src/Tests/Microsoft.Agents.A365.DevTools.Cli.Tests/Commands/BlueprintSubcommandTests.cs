@@ -1345,7 +1345,7 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask);
 
             _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
                 .Returns(true);
 
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
@@ -1365,7 +1365,8 @@ public class BlueprintSubcommandTests
             await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
-                config.AgentBlueprintId);
+                config.AgentBlueprintId,
+                Arg.Any<string?>());
 
             await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(),
@@ -1435,7 +1436,7 @@ public class BlueprintSubcommandTests
             .Returns(Task.FromResult(config));
 
         _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(false); // Delete fails
 
         // Act & Assert
@@ -1505,7 +1506,8 @@ public class BlueprintSubcommandTests
             await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
-                Arg.Any<string>());
+                Arg.Any<string>(),
+                Arg.Any<string?>());
 
             // Should still register the new endpoint
             await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(

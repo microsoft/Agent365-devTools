@@ -47,9 +47,10 @@ public class CleanupCommandBotEndpointTests
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         
         _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), 
-            Arg.Any<string>(), 
-            Arg.Any<string>())
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string?>())
             .Returns(Task.FromResult(true));
         
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();

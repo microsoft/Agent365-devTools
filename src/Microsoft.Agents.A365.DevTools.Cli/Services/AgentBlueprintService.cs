@@ -77,7 +77,7 @@ public class AgentBlueprintService
     /// <param name="blueprintId">The blueprint application ID (object ID or app ID)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if deletion succeeded or resource not found; false otherwise</returns>
-    public async Task<bool> DeleteAgentBlueprintAsync(
+    public virtual async Task<bool> DeleteAgentBlueprintAsync(
         string tenantId,
         string blueprintId,
         CancellationToken cancellationToken = default)
@@ -129,14 +129,14 @@ public class AgentBlueprintService
     /// <param name="applicationId">The unique identifier of the agent identity application to delete.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the delete operation.</param>
     /// <returns>True if deletion succeeded or resource not found; false otherwise</returns>
-    public async Task<bool> DeleteAgentIdentityAsync(
+    public virtual async Task<bool> DeleteAgentIdentityAsync(
         string tenantId,
         string applicationId,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            _logger.LogInformation("Deleting agent identity application: {applicationId}", applicationId);
+            _logger.LogInformation("Deleting agent identity application: {ApplicationId}", applicationId);
 
             // Agent Identity deletion requires special delegated permission scope
             var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
@@ -158,6 +158,118 @@ public class AgentBlueprintService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Exception deleting agent identity application");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Queries Entra ID for all agent identity service principals linked to the given blueprint.
+    /// Returns an empty list if the query fails or no instances are found.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID for authentication.</param>
+    /// <param name="blueprintId">The blueprint application ID or object ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of agent instances linked to the blueprint.</returns>
+    public virtual async Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAsync(
+        string tenantId,
+        string blueprintId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // NOTE: "identityParentId" and "agentUserId" are placeholder property names.
+            // Verify the actual Graph beta API response shape before releasing.
+            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            using var doc = await _graphApiService.GraphGetAsync(
+                tenantId,
+                "/beta/servicePrincipals/microsoft.graph.agentIdentity",
+                cancellationToken,
+                requiredScopes);
+
+            if (doc is null)
+            {
+                _logger.LogWarning("Failed to retrieve agent instances from Graph API");
+                return Array.Empty<AgentInstanceInfo>();
+            }
+
+            var results = new List<AgentInstanceInfo>();
+
+            if (!doc.RootElement.TryGetProperty("value", out var valueArray) ||
+                valueArray.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<AgentInstanceInfo>();
+            }
+
+            foreach (var item in valueArray.EnumerateArray())
+            {
+                var parentId = item.TryGetProperty("identityParentId", out var p) ? p.GetString() : null;
+                if (!string.Equals(parentId, blueprintId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var spId = item.TryGetProperty("id", out var id) ? id.GetString() : null;
+                if (string.IsNullOrWhiteSpace(spId))
+                {
+                    continue;
+                }
+
+                var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
+                var agentUserId = item.TryGetProperty("agentUserId", out var uid) ? uid.GetString() : null;
+
+                results.Add(new AgentInstanceInfo
+                {
+                    IdentitySpId = spId,
+                    DisplayName = displayName,
+                    AgentUserId = string.IsNullOrWhiteSpace(agentUserId) ? null : agentUserId
+                });
+            }
+
+            return results;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception querying agent instances for blueprint {BlueprintId}", blueprintId);
+            return Array.Empty<AgentInstanceInfo>();
+        }
+    }
+
+    /// <summary>
+    /// Deletes an agentic user from Entra ID using the agentUsers beta endpoint.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID for authentication.</param>
+    /// <param name="agentUserId">The object ID of the agentic user to delete.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if deletion succeeded or user was not found; false on error.</returns>
+    public virtual async Task<bool> DeleteAgentUserAsync(
+        string tenantId,
+        string agentUserId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting agentic user: {AgentUserId}", agentUserId);
+
+            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            var deletePath = $"/beta/agentUsers/{agentUserId}";
+
+            var success = await _graphApiService.GraphDeleteAsync(
+                tenantId,
+                deletePath,
+                cancellationToken,
+                treatNotFoundAsSuccess: true,
+                scopes: requiredScopes);
+
+            if (success)
+                _logger.LogInformation("Agentic user deleted successfully");
+            else
+                _logger.LogError("Failed to delete agentic user: {AgentUserId}", agentUserId);
+
+            return success;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception deleting agentic user: {AgentUserId}", agentUserId);
             return false;
         }
     }
