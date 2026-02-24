@@ -348,17 +348,27 @@ public class AgentBlueprintServiceTests
 
         const string blueprintId = "bp-id-123";
 
-        // Returns two SPs; only one matches the blueprint
-        // NOTE: "identityParentId" and "agentUserId" are placeholder property names pending live API verification
+        // Response 1: GET /beta/servicePrincipals/microsoft.graph.agentIdentity
+        // Returns two SPs; only one matches the blueprint via agentIdentityBlueprintId
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(new
             {
                 value = new[]
                 {
-                    new { id = "sp-obj-1", displayName = "Instance A", identityParentId = blueprintId, agentUserId = "user-obj-1" },
-                    new { id = "sp-obj-2", displayName = "Instance B", identityParentId = "other-blueprint-id", agentUserId = "user-obj-2" }
+                    new { id = "sp-obj-1", displayName = "Instance A", agentIdentityBlueprintId = blueprintId },
+                    new { id = "sp-obj-2", displayName = "Instance B", agentIdentityBlueprintId = "other-blueprint-id" }
                 }
+            }))
+        });
+
+        // Response 2: GET /beta/users?$filter=identityParentId eq 'sp-obj-1'
+        // Secondary call to resolve the agentic user for the matching SP
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[] { new { id = "user-obj-1" } }
             }))
         });
 

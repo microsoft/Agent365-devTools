@@ -177,8 +177,6 @@ public class AgentBlueprintService
     {
         try
         {
-            // NOTE: "identityParentId" and "agentUserId" are placeholder property names.
-            // Verify the actual Graph beta API response shape before releasing.
             var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
             using var doc = await _graphApiService.GraphGetAsync(
                 tenantId,
@@ -215,7 +213,7 @@ public class AgentBlueprintService
                 }
 
                 var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
-                var agentUserId = item.TryGetProperty("agentUserId", out var uid) ? uid.GetString() : null;
+                var agentUserId = await GetAgentUserIdForSpAsync(tenantId, spId, cancellationToken);
 
                 results.Add(new AgentInstanceInfo
                 {
@@ -231,6 +229,50 @@ public class AgentBlueprintService
         {
             _logger.LogError(ex, "Exception querying agent instances for blueprint {BlueprintId}", blueprintId);
             return Array.Empty<AgentInstanceInfo>();
+        }
+    }
+
+    /// <summary>
+    /// Resolves the agentic user ID associated with a given service principal by querying
+    /// the /beta/users endpoint filtered by identityParentId.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID for authentication.</param>
+    /// <param name="spId">The service principal object ID to look up.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The user object ID if found; null otherwise.</returns>
+    private async Task<string?> GetAgentUserIdForSpAsync(
+        string tenantId,
+        string spId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            using var doc = await _graphApiService.GraphGetAsync(
+                tenantId,
+                $"/beta/users?$filter=identityParentId eq '{spId}'",
+                cancellationToken,
+                requiredScopes);
+
+            if (doc is null)
+            {
+                return null;
+            }
+
+            if (doc.RootElement.TryGetProperty("value", out var valueArray) &&
+                valueArray.ValueKind == JsonValueKind.Array &&
+                valueArray.GetArrayLength() > 0)
+            {
+                var firstUser = valueArray[0];
+                return firstUser.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve agent user ID for service principal {SpId}", spId);
+            return null;
         }
     }
 
