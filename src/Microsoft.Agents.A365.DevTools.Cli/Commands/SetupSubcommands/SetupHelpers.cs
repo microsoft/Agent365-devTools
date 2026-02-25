@@ -496,6 +496,7 @@ internal static class SetupHelpers
             {
                 // Non-Azure hosting: derive from override endpoint host + blueprint ID suffix for uniqueness
                 endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
+                LogLegacyEndpointMigrationHint(logger, overrideUri.Host, endpointName);
             }
 
             logger.LogInformation("   - Using override endpoint URL");
@@ -555,6 +556,7 @@ internal static class SetupHelpers
             // Host alone is not sufficient — multiple users on the same webhook platform
             // (e.g. n8n, Zapier) share the same hostname but have different webhook paths.
             endpointName = EndpointHelper.GetEndpointNameFromHost(uri.Host, setupConfig.AgentBlueprintId);
+            LogLegacyEndpointMigrationHint(logger, uri.Host, endpointName);
         }
 
         if (endpointName.Length < 4)
@@ -590,8 +592,28 @@ internal static class SetupHelpers
         setupConfig.BotId = setupConfig.AgentBlueprintId;
         setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
         setupConfig.BotMessagingEndpoint = messagingEndpoint;
-        
+
         bool alreadyExisted = endpointResult == Models.EndpointRegistrationResult.AlreadyExists;
         return (true, alreadyExisted);
+    }
+
+    /// <summary>
+    /// Logs a debug-level hint when the current endpoint name differs from the legacy
+    /// host-only scheme, so that users who previously ran setup can identify and remove
+    /// the orphaned old registration if needed.
+    /// </summary>
+    private static void LogLegacyEndpointMigrationHint(
+        ILogger logger,
+        string host,
+        string currentEndpointName)
+    {
+        var legacyName = EndpointHelper.GetEndpointName($"{host.Replace('.', '-')}-endpoint");
+        if (legacyName != currentEndpointName)
+        {
+            logger.LogDebug(
+                "Endpoint name scheme updated: '{CurrentName}' (was '{LegacyName}' in older CLI versions). " +
+                "If a previous endpoint with that legacy name exists in Azure Bot Services, delete it manually via the Azure Portal.",
+                currentEndpointName, legacyName);
+        }
     }
 }

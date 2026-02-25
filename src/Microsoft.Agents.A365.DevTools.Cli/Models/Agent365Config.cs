@@ -4,6 +4,7 @@
 using System.Reflection;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Models;
 
@@ -225,9 +226,11 @@ public class Agent365Config
 
     // BotName and BotDisplayName are now derived properties
     /// <summary>
-    /// Gets the internal name for the endpoint registration.
-    /// - For AzureAppService, derived from WebAppName.
-    /// - For non-Azure hosting, derived from MessagingEndpoint host if possible.
+    /// Gets the final, validated endpoint name for registration and deletion.
+    /// Returns an already-processed name — callers must NOT wrap this in
+    /// <see cref="EndpointHelper.GetEndpointName"/> again.
+    /// - Azure App Service: derived from WebAppName.
+    /// - Non-Azure hosting: derived from MessagingEndpoint host + blueprint ID suffix for uniqueness.
     /// </summary>
     [JsonIgnore]
     public string BotName
@@ -236,21 +239,13 @@ public class Agent365Config
         {
             if (!string.IsNullOrWhiteSpace(WebAppName))
             {
-                return $"{WebAppName}-endpoint";
+                return EndpointHelper.GetEndpointName($"{WebAppName}-endpoint");
             }
 
             if (!string.IsNullOrWhiteSpace(MessagingEndpoint) &&
                 Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri))
             {
-                var hostPart = uri.Host.Replace('.', '-');
-                if (!string.IsNullOrWhiteSpace(AgentBlueprintId))
-                {
-                    var cleanId = AgentBlueprintId.Replace("-", "");
-                    var idSuffix = cleanId.Length >= 8 ? cleanId[..8] : cleanId;
-                    var truncatedHost = hostPart.Length > 33 ? hostPart[..33] : hostPart;
-                    return $"{truncatedHost.TrimEnd('-')}-{idSuffix}";
-                }
-                return $"{hostPart}-endpoint";
+                return EndpointHelper.GetEndpointNameFromHost(uri.Host, AgentBlueprintId);
             }
 
             return string.Empty;

@@ -186,7 +186,9 @@ public class EndpointHelperTests
     [Fact]
     public void GetEndpointNameFromHost_WithLongHost_TruncatesHostToFitWithinLimit()
     {
-        // Arrange - host that would exceed 42 chars even before the suffix
+        // Arrange
+        // host (60 chars after dot→dash) truncated to 33: "this-is-a-very-long-hostname-that"
+        // + "-" + "aabbccdd" = 42 chars exactly
         var host = "this-is-a-very-long-hostname-that-exceeds-limits.example.com";
         var blueprintId = "aabbccdd-0000-1111-2222-333344445555";
 
@@ -194,16 +196,19 @@ public class EndpointHelperTests
         var result = EndpointHelper.GetEndpointNameFromHost(host, blueprintId);
 
         // Assert
-        result.Length.Should().BeLessOrEqualTo(42);
-        result.Should().EndWith("-aabbccdd");
-        result.Should().NotEndWith("-", "must not end with hyphen");
+        result.Should().Be("this-is-a-very-long-hostname-that-aabbccdd",
+            "host truncated to 33 chars + '-' + 8-char blueprint suffix = 42 chars total");
+        result.Length.Should().Be(42);
     }
 
-    [Fact]
-    public void GetEndpointNameFromHost_WithNullHost_ThrowsSetupValidationException()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void GetEndpointNameFromHost_WithNullOrWhitespaceHost_ThrowsSetupValidationException(string? host)
     {
         // Act
-        Action act = () => EndpointHelper.GetEndpointNameFromHost(null!, "any-blueprint-id");
+        Action act = () => EndpointHelper.GetEndpointNameFromHost(host!, "any-blueprint-id");
 
         // Assert
         act.Should().Throw<SetupValidationException>()
@@ -222,5 +227,23 @@ public class EndpointHelperTests
 
         // Assert
         result.Length.Should().BeLessOrEqualTo(42);
+    }
+
+    [Fact]
+    public void GetEndpointNameFromHost_WithAllHyphenBlueprintId_ProducesValidEndpointNameWithoutCrashing()
+    {
+        // Arrange - degenerate input: blueprint ID that reduces to empty string after stripping hyphens.
+        // "----" is not whitespace, so the new-scheme branch is taken. ExtractBlueprintIdSuffix returns "".
+        // baseName becomes "myapp-example-com-" (trailing hyphen), which GetEndpointName trims to
+        // "myapp-example-com". The result is valid even though the suffix carries no uniqueness.
+        var host = "myapp.example.com";
+        var blueprintId = "----";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromHost(host, blueprintId);
+
+        // Assert
+        result.Should().Be("myapp-example-com");
+        result.Should().NotEndWith("-");
     }
 }

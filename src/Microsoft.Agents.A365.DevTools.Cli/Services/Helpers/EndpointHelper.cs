@@ -60,12 +60,8 @@ public static class EndpointHelper
 
         if (!string.IsNullOrWhiteSpace(blueprintId))
         {
-            // Use first 8 non-hyphen chars of blueprint GUID as suffix.
-            // This gives ~4 billion combinations — sufficient global uniqueness.
-            var cleanId = blueprintId.Replace("-", "");
-            var idSuffix = cleanId.Length >= 8 ? cleanId[..8] : cleanId;
-
             // Budget: host (max 33) + "-" (1) + suffix (8) = max 42 chars
+            var idSuffix = ExtractBlueprintIdSuffix(blueprintId);
             var truncatedHost = hostPart.Length > 33 ? hostPart[..33] : hostPart;
             var baseName = $"{truncatedHost.TrimEnd('-')}-{idSuffix}";
             return GetEndpointName(baseName);
@@ -73,6 +69,17 @@ public static class EndpointHelper
 
         // Legacy fallback: no blueprint ID available yet
         return GetEndpointName($"{hostPart}-endpoint");
+    }
+
+    /// <summary>
+    /// Extracts the first 8 non-hyphen characters of a blueprint GUID to use as a uniqueness suffix.
+    /// For a standard GUID this yields exactly 8 hex characters. Accepts shorter non-GUID strings
+    /// as a defensive measure.
+    /// </summary>
+    private static string ExtractBlueprintIdSuffix(string blueprintId)
+    {
+        var clean = blueprintId.Replace("-", "");
+        return clean.Length >= 8 ? clean[..8] : clean;
     }
 
     /// <summary>
