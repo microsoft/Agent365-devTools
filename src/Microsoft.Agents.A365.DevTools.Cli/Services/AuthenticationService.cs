@@ -231,33 +231,23 @@ public class AuthenticationService
                 // Device code flow - works in all environments including SSH/remote sessions
                 _logger.LogInformation("Using device code authentication...");
                 _logger.LogInformation("Please sign in with your Microsoft account");
-
-                credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
-                {
-                    TenantId = effectiveTenantId,
-                    ClientId = effectiveClientId,
-                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-                    {
-                        Name = AuthenticationConstants.ApplicationName
-                    },
-                    DeviceCodeCallback = (code, cancellation) =>
-                    {
-                        Console.WriteLine();
-                        Console.WriteLine("==========================================================================");
-                        Console.WriteLine($"To sign in, use a web browser to open the page:");
-                        Console.WriteLine($"    {code.VerificationUri}");
-                        Console.WriteLine();
-                        Console.WriteLine($"And enter the code: {code.UserCode}");
-                        Console.WriteLine("==========================================================================");
-                        Console.WriteLine();
-                        return Task.CompletedTask;
-                    }
-                });
+                credential = CreateDeviceCodeCredential(effectiveTenantId, effectiveClientId);
             }
 
             var tokenRequestContext = new TokenRequestContext(scopes);
-            var tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
+            AccessToken tokenResult;
+            try
+            {
+                tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
+            }
+            catch (MsalAuthenticationFailedException ex) when (useInteractiveBrowser && ex.InnerException is PlatformNotSupportedException)
+            {
+                _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
+                _logger.LogInformation("Using device code authentication...");
+                _logger.LogInformation("Please sign in with your Microsoft account");
+                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveTenantId, effectiveClientId);
+                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
+            }
 
             _logger.LogInformation("Authentication successful!");
 
@@ -521,6 +511,37 @@ public class AuthenticationService
             _logger.LogWarning(ex, "Failed to validate scopes for resource {ResourceUrl}", resourceUrl);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Creates a DeviceCodeCredential configured for interactive device code authentication.
+    /// This flow works in all environments including SSH, remote sessions, and platforms where
+    /// browser-based authentication is unavailable.
+    /// </summary>
+    private DeviceCodeCredential CreateDeviceCodeCredential(string tenantId, string clientId)
+    {
+        return new DeviceCodeCredential(new DeviceCodeCredentialOptions
+        {
+            TenantId = tenantId,
+            ClientId = clientId,
+            AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+            TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+            {
+                Name = AuthenticationConstants.ApplicationName
+            },
+            DeviceCodeCallback = (code, cancellation) =>
+            {
+                Console.WriteLine();
+                Console.WriteLine("==========================================================================");
+                Console.WriteLine($"To sign in, use a web browser to open the page:");
+                Console.WriteLine($"    {code.VerificationUri}");
+                Console.WriteLine();
+                Console.WriteLine($"And enter the code: {code.UserCode}");
+                Console.WriteLine("==========================================================================");
+                Console.WriteLine();
+                return Task.CompletedTask;
+            }
+        });
     }
 
     /// <summary>

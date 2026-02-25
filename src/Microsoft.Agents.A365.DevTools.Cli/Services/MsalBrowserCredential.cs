@@ -313,6 +313,11 @@ public sealed class MsalBrowserCredential : TokenCredential
             _logger?.LogDebug("Successfully acquired token via interactive authentication.");
             return new AccessToken(interactiveResult.AccessToken, interactiveResult.ExpiresOn);
         }
+        catch (PlatformNotSupportedException ex)
+        {
+            _logger?.LogWarning("Browser authentication is not supported on this platform: {Message}", ex.Message);
+            throw new MsalAuthenticationFailedException($"Browser authentication is not supported on this platform ({ex.Message})", ex);
+        }
         catch (MsalException ex)
         {
             _logger?.LogError(ex, "MSAL authentication failed: {Message}", ex.Message);
