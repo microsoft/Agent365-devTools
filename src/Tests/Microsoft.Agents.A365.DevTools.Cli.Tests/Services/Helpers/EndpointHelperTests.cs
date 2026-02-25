@@ -123,4 +123,104 @@ public class EndpointHelperTests
         act.Should().Throw<SetupValidationException>()
             .WithMessage("*becomes too short after processing*");
     }
+
+    // GetEndpointNameFromHost tests
+
+    [Fact]
+    public void GetEndpointNameFromHost_WithBlueprintId_UsesBlueprintSuffixInsteadOfEndpointLiteral()
+    {
+        // Arrange - simulates the n8n.cloud scenario from issue report
+        var host = "microsoftcape.app.n8n.cloud";
+        var blueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromHost(host, blueprintId);
+
+        // Assert - host (dots → dashes) + first 8 non-hyphen chars of blueprint ID
+        result.Should().Be("microsoftcape-app-n8n-cloud-9ab0b58c");
+        result.Should().NotEndWith("-endpoint", "legacy literal suffix should not be used when blueprint ID is available");
+    }
+
+    [Fact]
+    public void GetEndpointNameFromHost_TwoDifferentBlueprintsOnSameHost_ProduceDifferentNames()
+    {
+        // Arrange - two webhooks on same n8n tenant but different workflows
+        var host = "microsoftcape.app.n8n.cloud";
+        var blueprintId1 = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+        var blueprintId2 = "ffffffff-aaaa-bbbb-cccc-dddddddddddd";
+
+        // Act
+        var name1 = EndpointHelper.GetEndpointNameFromHost(host, blueprintId1);
+        var name2 = EndpointHelper.GetEndpointNameFromHost(host, blueprintId2);
+
+        // Assert
+        name1.Should().NotBe(name2, "same host with different blueprints must produce unique endpoint names");
+    }
+
+    [Fact]
+    public void GetEndpointNameFromHost_WithNullBlueprintId_FallsBackToLegacyEndpointSuffix()
+    {
+        // Arrange
+        var host = "myapp.example.com";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromHost(host, null);
+
+        // Assert
+        result.Should().Be("myapp-example-com-endpoint");
+    }
+
+    [Fact]
+    public void GetEndpointNameFromHost_WithEmptyBlueprintId_FallsBackToLegacyEndpointSuffix()
+    {
+        // Arrange
+        var host = "myapp.example.com";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromHost(host, "");
+
+        // Assert
+        result.Should().Be("myapp-example-com-endpoint");
+    }
+
+    [Fact]
+    public void GetEndpointNameFromHost_WithLongHost_TruncatesHostToFitWithinLimit()
+    {
+        // Arrange - host that would exceed 42 chars even before the suffix
+        var host = "this-is-a-very-long-hostname-that-exceeds-limits.example.com";
+        var blueprintId = "aabbccdd-0000-1111-2222-333344445555";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromHost(host, blueprintId);
+
+        // Assert
+        result.Length.Should().BeLessOrEqualTo(42);
+        result.Should().EndWith("-aabbccdd");
+        result.Should().NotEndWith("-", "must not end with hyphen");
+    }
+
+    [Fact]
+    public void GetEndpointNameFromHost_WithNullHost_ThrowsSetupValidationException()
+    {
+        // Act
+        Action act = () => EndpointHelper.GetEndpointNameFromHost(null!, "any-blueprint-id");
+
+        // Assert
+        act.Should().Throw<SetupValidationException>()
+            .WithMessage("*Hostname cannot be null or whitespace*");
+    }
+
+    [Fact]
+    public void GetEndpointNameFromHost_ResultIsAlwaysWithin42CharLimit()
+    {
+        // Arrange - very long host, valid blueprint ID
+        var host = "extremely-long-subdomain.another-long-part.and-another.example.com";
+        var blueprintId = "12345678-1234-1234-1234-123456789012";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromHost(host, blueprintId);
+
+        // Assert
+        result.Length.Should().BeLessOrEqualTo(42);
+    }
 }

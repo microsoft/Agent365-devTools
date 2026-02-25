@@ -242,7 +242,15 @@ public class Agent365Config
             if (!string.IsNullOrWhiteSpace(MessagingEndpoint) &&
                 Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri))
             {
-                return $"{uri.Host.Replace('.', '-')}-endpoint";
+                var hostPart = uri.Host.Replace('.', '-');
+                if (!string.IsNullOrWhiteSpace(AgentBlueprintId))
+                {
+                    var cleanId = AgentBlueprintId.Replace("-", "");
+                    var idSuffix = cleanId.Length >= 8 ? cleanId[..8] : cleanId;
+                    var truncatedHost = hostPart.Length > 33 ? hostPart[..33] : hostPart;
+                    return $"{truncatedHost.TrimEnd('-')}-{idSuffix}";
+                }
+                return $"{hostPart}-endpoint";
             }
 
             return string.Empty;

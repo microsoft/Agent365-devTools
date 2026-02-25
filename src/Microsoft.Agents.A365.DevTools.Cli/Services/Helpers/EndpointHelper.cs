@@ -37,6 +37,45 @@ public static class EndpointHelper
     }
 
     /// <summary>
+    /// Derives a globally unique endpoint name from a URL hostname and an agent blueprint ID.
+    /// </summary>
+    /// <remarks>
+    /// For non-Azure hosted endpoints (e.g. n8n, Zapier, ngrok), the hostname alone is not a
+    /// unique identifier because many users can share the same host (same platform, same tenant
+    /// subdomain) while pointing to different webhook paths. Appending the first 8 non-hyphen
+    /// characters of the blueprint GUID as a suffix provides per-blueprint uniqueness within
+    /// the global Azure Bot Service namespace while staying within the 42-character limit.
+    ///
+    /// When blueprintId is null or empty, the method falls back to the legacy
+    /// <c>{host}-endpoint</c> scheme for backwards compatibility.
+    /// </remarks>
+    public static string GetEndpointNameFromHost(string host, string? blueprintId)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            throw new SetupValidationException("Hostname cannot be null or whitespace when deriving endpoint name.");
+        }
+
+        var hostPart = host.Replace('.', '-');
+
+        if (!string.IsNullOrWhiteSpace(blueprintId))
+        {
+            // Use first 8 non-hyphen chars of blueprint GUID as suffix.
+            // This gives ~4 billion combinations — sufficient global uniqueness.
+            var cleanId = blueprintId.Replace("-", "");
+            var idSuffix = cleanId.Length >= 8 ? cleanId[..8] : cleanId;
+
+            // Budget: host (max 33) + "-" (1) + suffix (8) = max 42 chars
+            var truncatedHost = hostPart.Length > 33 ? hostPart[..33] : hostPart;
+            var baseName = $"{truncatedHost.TrimEnd('-')}-{idSuffix}";
+            return GetEndpointName(baseName);
+        }
+
+        // Legacy fallback: no blueprint ID available yet
+        return GetEndpointName($"{hostPart}-endpoint");
+    }
+
+    /// <summary>
     /// Get create endpoint URL based on environment
     /// </summary>
     public static string GetCreateEndpointUrl(string environment)
