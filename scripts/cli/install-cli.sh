@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+set -u
 # install-cli.sh
 # This script installs the Agent 365 CLI from a local NuGet package.
 # Usage: Run this script from the repo root, or directly from scripts/cli/
@@ -97,7 +100,7 @@ echo "Version: $VERSION"
 
 # Try update first (which forces reinstall), fall back to install if not already installed
 echo "Attempting to update tool..."
-if ! dotnet tool update -g Microsoft.Agents.A365.DevTools.Cli --add-source "$OUTPUT_DIR" --version "$VERSION" > /dev/null 2>&1; then
+if ! dotnet tool update -g Microsoft.Agents.A365.DevTools.Cli --add-source "$OUTPUT_DIR" --version "$VERSION"; then
     echo "Update failed, attempting fresh install..."
     dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli --add-source "$OUTPUT_DIR" --version "$VERSION"
 fi

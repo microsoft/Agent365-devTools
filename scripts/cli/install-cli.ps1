@@ -10,7 +10,7 @@ if (-not (Test-Path $shScript)) {
 
 # Find bash: Git Bash on Windows (ships with Git for Windows), system bash elsewhere
 $bash = $null
-if ($IsWindows) {
+if ($env:OS -eq 'Windows_NT') {
     # Locate bash.exe from git's install directory (Git for Windows always ships bash alongside git)
     $gitExe = Get-Command git -ErrorAction SilentlyContinue
     if ($gitExe) {
