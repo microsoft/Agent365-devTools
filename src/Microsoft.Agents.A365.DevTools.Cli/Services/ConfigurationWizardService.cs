@@ -324,6 +324,19 @@ public class ConfigurationWizardService : IConfigurationWizardService
     {
         var defaultPath = existingConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory;
 
+        Console.WriteLine();
+        Console.WriteLine("=================================================================");
+        Console.WriteLine(" Deployment Project Path");
+        Console.WriteLine("=================================================================");
+        Console.WriteLine("The path to your agent application's source code directory.");
+        Console.WriteLine("This is used to detect your project type (.NET, Node.js, or Python)");
+        Console.WriteLine("and as the source directory for Azure App Service deployment.");
+        Console.WriteLine();
+        Console.WriteLine("  Use '.' if you are already running this command from your project folder.");
+        Console.WriteLine(@"  Example: /home/user/my-agent  or  C:\Projects\my-agent");
+        Console.WriteLine("=================================================================");
+        Console.WriteLine();
+
         var path = PromptWithDefault(
             "Deployment project path",
             defaultPath,

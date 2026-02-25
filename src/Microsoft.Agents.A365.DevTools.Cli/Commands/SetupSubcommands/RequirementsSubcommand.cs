@@ -178,4 +178,35 @@ internal static class RequirementsSubcommand
             // Additional checks can be added here
         };
     }
+
+    /// <summary>
+    /// Gets system-level requirement checks that do not depend on configuration.
+    /// These can be run before the configuration wizard to surface blockers early.
+    /// </summary>
+    public static List<IRequirementCheck> GetSystemRequirementChecks()
+    {
+        return new List<IRequirementCheck>
+        {
+            // Frontier Preview Program enrollment check
+            new FrontierPreviewRequirementCheck(),
+
+            // PowerShell modules required for Microsoft Graph operations
+            new PowerShellModulesRequirementCheck(),
+        };
+    }
+
+    /// <summary>
+    /// Gets configuration-dependent requirement checks that must run after the configuration is loaded.
+    /// </summary>
+    public static List<IRequirementCheck> GetConfigRequirementChecks(IClientAppValidator clientAppValidator)
+    {
+        return new List<IRequirementCheck>
+        {
+            // Location configuration — required for endpoint registration
+            new LocationRequirementCheck(),
+
+            // Client app configuration validation
+            new ClientAppRequirementCheck(clientAppValidator),
+        };
+    }
 }

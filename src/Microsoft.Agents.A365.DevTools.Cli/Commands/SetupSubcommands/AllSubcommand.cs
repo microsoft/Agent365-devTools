@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
@@ -128,31 +129,23 @@ internal static class AllSubcommand
 
             try
             {
-                // Load configuration
-                var setupConfig = await configService.LoadAsync(config.FullName);
-                
-                // Configure GraphApiService with custom client app ID if available
-                // This ensures inheritable permissions operations use the validated custom app
-                if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-                {
-                    graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-                }
-
-                // PHASE 0: CHECK REQUIREMENTS (if not skipped)
+                // PHASE 0a: CHECK SYSTEM REQUIREMENTS before loading config (if not skipped)
+                // Runs config-independent checks (PowerShell, Frontier Preview) so blockers
+                // are surfaced before the user is asked to fill in the configuration wizard.
                 if (!skipRequirements)
                 {
                     logger.LogDebug("Validating system prerequisites...");
 
                     try
                     {
-                        var result = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
-                            setupConfig,
+                        var systemResult = await RequirementsSubcommand.RunRequirementChecksAsync(
+                            RequirementsSubcommand.GetSystemRequirementChecks(),
+                            new Agent365Config(),
                             logger,
                             category: null,
                             CancellationToken.None);
 
-                        if (!result)
+                        if (!systemResult)
                         {
                             logger.LogError("");
                             logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
@@ -170,6 +163,46 @@ internal static class AllSubcommand
                 else
                 {
                     logger.LogDebug("Skipping requirements validation (--skip-requirements flag used)");
+                }
+
+                // PHASE 0b: Load configuration (may trigger interactive wizard)
+                var setupConfig = await configService.LoadAsync(config.FullName);
+
+                // Configure GraphApiService with custom client app ID if available
+                // This ensures inheritable permissions operations use the validated custom app
+                if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+                {
+                    graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+                }
+
+                // PHASE 0c: CHECK CONFIG-DEPENDENT REQUIREMENTS after the wizard
+                if (!skipRequirements)
+                {
+                    logger.LogDebug("Validating configuration prerequisites...");
+
+                    try
+                    {
+                        var configResult = await RequirementsSubcommand.RunRequirementChecksAsync(
+                            RequirementsSubcommand.GetConfigRequirementChecks(clientAppValidator),
+                            setupConfig,
+                            logger,
+                            category: null,
+                            CancellationToken.None);
+
+                        if (!configResult)
+                        {
+                            logger.LogError("");
+                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
+                            ExceptionHandler.ExitWithCleanup(1);
+                            return;
+                        }
+                    }
+                    catch (Exception reqEx)
+                    {
+                        logger.LogWarning(reqEx, "Requirements check encountered an error: {Message}", reqEx.Message);
+                        logger.LogWarning("Continuing with setup, but some prerequisites may be missing.");
+                        logger.LogWarning("");
+                    }
                 }
 
                 // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
@@ -427,6 +460,11 @@ internal static class AllSubcommand
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
                 Environment.Exit(1);
+            }
+            catch (FileNotFoundException fnfEx)
+            {
+                logger.LogError("Setup failed: {Message}", fnfEx.Message);
+                ExceptionHandler.ExitWithCleanup(1);
             }
             catch (Exception ex)
             {

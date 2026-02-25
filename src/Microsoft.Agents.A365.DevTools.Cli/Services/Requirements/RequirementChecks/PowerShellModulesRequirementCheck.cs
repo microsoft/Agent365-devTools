@@ -49,9 +49,20 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         var powerShellAvailable = await CheckPowerShellAvailabilityAsync(logger, cancellationToken);
         if (!powerShellAvailable)
         {
+            bool isWsl = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WSL_DISTRO_NAME"))
+                         || await IsWslEnvironmentAsync(cancellationToken);
+
+            var resolution = isWsl
+                ? "Install PowerShell 7+ in WSL:\n" +
+                  "  sudo apt-get update && sudo apt-get install -y wget apt-transport-https software-properties-common\n" +
+                  "  source /etc/os-release && wget -q https://packages.microsoft.com/config/ubuntu/$VERSION_ID/packages-microsoft-prod.deb\n" +
+                  "  sudo dpkg -i packages-microsoft-prod.deb && sudo apt-get update && sudo apt-get install -y powershell\n" +
+                  "  See: https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu"
+                : "Install PowerShell 7+ from https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell";
+
             return RequirementCheckResult.Failure(
                 errorMessage: "PowerShell is not available on this system",
-                resolutionGuidance: "Install PowerShell 7+ from https://docs.microsoft.com/powershell/scripting/install/installing-powershell",
+                resolutionGuidance: resolution,
                 details: "PowerShell is required for Microsoft Graph operations and Azure authentication"
             );
         }
@@ -96,6 +107,26 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
                     $"Missing: {missingModuleNames}. " +
                     $"Installed: {string.Join(", ", installedModules.Select(m => m.Name))}"
         );
+    }
+
+    /// <summary>
+    /// Detects whether the process is running inside WSL (Windows Subsystem for Linux)
+    /// by checking the WSL_DISTRO_NAME environment variable or /proc/version content.
+    /// </summary>
+    private static async Task<bool> IsWslEnvironmentAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists("/proc/version"))
+                return false;
+
+            var procVersion = await File.ReadAllTextAsync("/proc/version", cancellationToken);
+            return procVersion.Contains("microsoft", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
