@@ -229,6 +229,8 @@ public class AuthenticationService
             else
             {
                 // Device code flow - works in all environments including SSH/remote sessions
+                _logger.LogInformation("Using device code authentication...");
+                _logger.LogInformation("Please sign in with your Microsoft account");
                 credential = CreateDeviceCodeCredential(effectiveTenantId, effectiveClientId);
             }
 
@@ -241,6 +243,8 @@ public class AuthenticationService
             catch (MsalAuthenticationFailedException ex) when (useInteractiveBrowser && ex.InnerException is PlatformNotSupportedException)
             {
                 _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
+                _logger.LogInformation("Using device code authentication...");
+                _logger.LogInformation("Please sign in with your Microsoft account");
                 var deviceCodeCredential = CreateDeviceCodeCredential(effectiveTenantId, effectiveClientId);
                 tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
             }
@@ -516,9 +520,6 @@ public class AuthenticationService
     /// </summary>
     private DeviceCodeCredential CreateDeviceCodeCredential(string tenantId, string clientId)
     {
-        _logger.LogInformation("Using device code authentication...");
-        _logger.LogInformation("Please sign in with your Microsoft account");
-
         return new DeviceCodeCredential(new DeviceCodeCredentialOptions
         {
             TenantId = tenantId,

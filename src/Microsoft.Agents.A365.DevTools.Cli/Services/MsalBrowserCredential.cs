@@ -315,7 +315,7 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
         catch (PlatformNotSupportedException ex)
         {
-            _logger?.LogError(ex, "Browser authentication is not supported on this platform: {Message}", ex.Message);
+            _logger?.LogWarning("Browser authentication is not supported on this platform: {Message}", ex.Message);
             throw new MsalAuthenticationFailedException($"Browser authentication is not supported on this platform ({ex.Message})", ex);
         }
         catch (MsalException ex)
