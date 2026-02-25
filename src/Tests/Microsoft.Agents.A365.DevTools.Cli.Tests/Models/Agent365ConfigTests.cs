@@ -673,8 +673,9 @@ public class Agent365ConfigTests
     }
 
     [Fact]
-    public void BotName_WebAppNameTakesPrecedenceOverMessagingEndpoint()
+    public void BotName_WhenNeedDeploymentTrue_WebAppNameTakesPrecedenceOverMessagingEndpoint()
     {
+        // NeedDeployment defaults to true — Azure App Service path should be used
         var config = new Agent365Config
         {
             WebAppName = "my-webapp",
@@ -683,7 +684,42 @@ public class Agent365ConfigTests
         config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
 
         config.BotName.Should().Be("my-webapp-endpoint",
-            "WebAppName path takes precedence over MessagingEndpoint path");
+            "when NeedDeployment=true, Azure App Service path (WebAppName) is used regardless of MessagingEndpoint");
+    }
+
+    [Fact]
+    public void BotName_WhenNeedDeploymentFalse_MessagingEndpointTakesPrecedenceOverWebAppName()
+    {
+        // When NeedDeployment=false, setup registers from MessagingEndpoint host.
+        // BotName must agree so cleanup targets the same endpoint that setup registered.
+        var config = new Agent365Config
+        {
+            NeedDeployment = false,
+            WebAppName = "my-webapp",
+            MessagingEndpoint = "https://microsoftcape.app.n8n.cloud/webhook/abc123/webhook"
+        };
+        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        config.BotName.Should().Be("microsoftcape-app-n8n-cloud-9ab0b58c",
+            "when NeedDeployment=false, MessagingEndpoint path is used to match what SetupHelpers registers");
+    }
+
+    [Theory]
+    [InlineData("not-a-url")]
+    [InlineData("/relative/path")]
+    [InlineData("")]
+    public void BotName_WithInvalidOrRelativeMessagingEndpoint_ReturnsEmpty(string endpoint)
+    {
+        // Uri.TryCreate fails for non-absolute URIs — BotName falls through to empty
+        var config = new Agent365Config
+        {
+            NeedDeployment = false,
+            MessagingEndpoint = endpoint
+        };
+        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        config.BotName.Should().BeEmpty(
+            "invalid or relative URI falls through to empty — caller must handle this case");
     }
 
     #endregion

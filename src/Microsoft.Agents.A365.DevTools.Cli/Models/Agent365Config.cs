@@ -229,15 +229,17 @@ public class Agent365Config
     /// Gets the final, validated endpoint name for registration and deletion.
     /// Returns an already-processed name — callers must NOT wrap this in
     /// <see cref="EndpointHelper.GetEndpointName"/> again.
-    /// - Azure App Service: derived from WebAppName.
-    /// - Non-Azure hosting: derived from MessagingEndpoint host + blueprint ID suffix for uniqueness.
+    /// - Azure App Service (NeedDeployment=true): derived from WebAppName.
+    /// - Non-Azure hosting (NeedDeployment=false): derived from MessagingEndpoint host + blueprint ID suffix.
+    /// This mirrors the routing logic in SetupHelpers so that cleanup always targets the same
+    /// endpoint name that setup registered.
     /// </summary>
     [JsonIgnore]
     public string BotName
     {
         get
         {
-            if (!string.IsNullOrWhiteSpace(WebAppName))
+            if (NeedDeployment && !string.IsNullOrWhiteSpace(WebAppName))
             {
                 return EndpointHelper.GetEndpointName($"{WebAppName}-endpoint");
             }

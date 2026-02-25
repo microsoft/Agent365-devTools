@@ -610,10 +610,11 @@ internal static class SetupHelpers
         var legacyName = EndpointHelper.GetEndpointName($"{host.Replace('.', '-')}-endpoint");
         if (legacyName != currentEndpointName)
         {
-            logger.LogDebug(
-                "Endpoint name scheme updated: '{CurrentName}' (was '{LegacyName}' in older CLI versions). " +
-                "If a previous endpoint with that legacy name exists in Azure Bot Services, delete it manually via the Azure Portal.",
-                currentEndpointName, legacyName);
+            logger.LogInformation(
+                "Note: Endpoint name updated from '{LegacyName}' to '{CurrentName}' (CLI version upgrade). " +
+                "If a previous registration under the old name exists in Azure Bot Services, " +
+                "delete it manually via the Azure Portal to avoid orphaned resources.",
+                legacyName, currentEndpointName);
         }
     }
 }

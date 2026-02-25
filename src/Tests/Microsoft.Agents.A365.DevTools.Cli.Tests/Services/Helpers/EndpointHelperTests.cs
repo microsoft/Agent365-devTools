@@ -246,4 +246,21 @@ public class EndpointHelperTests
         result.Should().Be("myapp-example-com");
         result.Should().NotEndWith("-");
     }
+
+    [Fact]
+    public void GetEndpointNameFromHost_WithShortBlueprintId_UsesAvailableCharsAsSuffix()
+    {
+        // Arrange - blueprint ID with fewer than 8 non-hyphen chars (e.g. a non-GUID short string).
+        // ExtractBlueprintIdSuffix returns the available chars rather than 8.
+        // The uniqueness guarantee is reduced but the result is still valid.
+        var host = "myapp.example.com";
+        var blueprintId = "ab-cd"; // 4 non-hyphen chars
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromHost(host, blueprintId);
+
+        // Assert - suffix is "abcd" (4 chars), shorter than the 8-char uniqueness target
+        result.Should().Be("myapp-example-com-abcd");
+        result.Should().NotEndWith("-");
+    }
 }
