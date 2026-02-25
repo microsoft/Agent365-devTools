@@ -245,7 +245,8 @@ public class Agent365Config
             }
 
             if (!string.IsNullOrWhiteSpace(MessagingEndpoint) &&
-                Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri))
+                Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri) &&
+                !string.IsNullOrWhiteSpace(uri.Host))
             {
                 return EndpointHelper.GetEndpointNameFromHost(uri.Host, AgentBlueprintId);
             }
