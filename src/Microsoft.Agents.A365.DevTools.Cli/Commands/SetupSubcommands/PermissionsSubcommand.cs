@@ -235,7 +235,7 @@ internal static class PermissionsSubcommand
                 setupConfig.CustomBlueprintPermissions.Count == 0)
             {
                 logger.LogWarning("No custom blueprint permissions configured in a365.config.json");
-                logger.LogInformation("Run 'a365 config init --custom-blueprint-permissions --resourceAppId <guid> --scopes <scopes>' to configure custom permissions.");
+                logger.LogInformation("Run 'a365 config permissions --resource-app-id <guid> --scopes <scopes>' to configure custom permissions.");
                 Environment.Exit(0);
             }
 

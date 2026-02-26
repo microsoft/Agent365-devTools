@@ -4,7 +4,6 @@
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
-using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services.Helpers;
 
