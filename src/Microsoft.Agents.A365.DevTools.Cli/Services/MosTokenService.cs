@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Globalization;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
@@ -189,7 +190,7 @@ public class MosTokenService
                 var token = envElement.TryGetProperty("token", out var t) ? t.GetString() : null;
                 var expiryStr = envElement.TryGetProperty("expiry", out var e) ? e.GetString() : null;
 
-                if (!string.IsNullOrWhiteSpace(token) && DateTime.TryParse(expiryStr, out var expiry))
+                if (!string.IsNullOrWhiteSpace(token) && DateTime.TryParse(expiryStr, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var expiry))
                 {
                     // Return cached token if valid for at least 2 more minutes
                     if (DateTime.UtcNow < expiry.AddMinutes(-2))

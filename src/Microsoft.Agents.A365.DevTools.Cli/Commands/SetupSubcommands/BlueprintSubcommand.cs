@@ -179,6 +179,13 @@ internal static class BlueprintSubcommand
 
             var setupConfig = await configService.LoadAsync(config.FullName);
 
+            // Configure GraphApiService with custom client app ID if available
+            // This ensures inheritable permissions operations use the validated custom app
+            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+            {
+                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+            }
+
             // Handle --update-endpoint flag
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
             {
@@ -330,17 +337,32 @@ internal static class BlueprintSubcommand
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
+        // Validate location before logging the header — prevents confusing output where the heading
+        // appears but setup immediately fails due to a missing config value.
+        if (!skipEndpointRegistration && string.IsNullOrWhiteSpace(setupConfig.Location))
+        {
+            logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return new BlueprintCreationResult
+            {
+                BlueprintCreated = false,
+                EndpointRegistered = false,
+                EndpointRegistrationAttempted = false
+            };
+        }
+
         logger.LogInformation("");
         logger.LogInformation("==> Creating Agent Blueprint");
 
         // Validate Azure authentication
         if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
         {
-            return new BlueprintCreationResult 
-            { 
-                BlueprintCreated = false, 
-                EndpointRegistered = false, 
-                EndpointRegistrationAttempted = false 
+            return new BlueprintCreationResult
+            {
+                BlueprintCreated = false,
+                EndpointRegistered = false,
+                EndpointRegistrationAttempted = false
             };
         }
 
@@ -1692,6 +1714,15 @@ internal static class BlueprintSubcommand
         if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
         {
             logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
+            Environment.Exit(1);
+        }
+
+        // Location is required by the endpoint registration API for both Azure and external hosting
+        if (string.IsNullOrWhiteSpace(setupConfig.Location))
+        {
+            logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            logger.LogInformation(ErrorMessages.EndpointLocationExample);
             Environment.Exit(1);
         }
 

@@ -11,8 +11,9 @@ using NSubstitute;
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
 /// <summary>
-/// Unit tests for MosTokenService
+/// Unit tests for MosTokenService.
 /// </summary>
+[Collection("MosTokenCacheTests")]
 public class MosTokenServiceTests
 {
     private readonly ILogger<MosTokenService> _mockLogger;

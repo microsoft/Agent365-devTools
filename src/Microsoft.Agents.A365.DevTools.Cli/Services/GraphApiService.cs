@@ -23,6 +23,23 @@ public class GraphApiService
     private readonly CommandExecutor _executor;
     private readonly HttpClient _httpClient;
     private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
+
+    // Azure CLI token cache to avoid spawning az subprocess for every Graph API call.
+    // Tokens acquired via 'az account get-access-token' are typically valid for 60+ minutes;
+    // we cache them for a shorter window so the CLI still picks up token refreshes promptly.
+    private string? _cachedAzCliToken;
+    private string? _cachedAzCliTenantId;
+    private DateTimeOffset _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
+    internal static readonly TimeSpan AzCliTokenCacheDuration = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Expiry time for the cached Azure CLI token. Internal for testing purposes.
+    /// </summary>
+    internal DateTimeOffset CachedAzCliTokenExpiry
+    {
+        get => _cachedAzCliTokenExpiry;
+        set => _cachedAzCliTokenExpiry = value;
+    }
     
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
@@ -212,16 +229,37 @@ public class GraphApiService
         else
         {
             // Use Azure CLI token (default fallback for operations that don't need special scopes)
-            _logger.LogDebug("Acquiring Graph token via Azure CLI (no specific scopes required)");
-            token = await GetGraphAccessTokenAsync(tenantId, ct);
-
-            if (string.IsNullOrWhiteSpace(token))
+            // Check if we have a cached token for this tenant that hasn't expired
+            if (_cachedAzCliToken != null
+                && string.Equals(_cachedAzCliTenantId, tenantId, StringComparison.OrdinalIgnoreCase)
+                && DateTimeOffset.UtcNow < _cachedAzCliTokenExpiry)
             {
-                _logger.LogError("Failed to acquire Graph token via Azure CLI. Ensure 'az login' is completed.");
-                return false;
+                _logger.LogDebug("Using cached Azure CLI Graph token (expires in {Minutes:F1} minutes)",
+                    (_cachedAzCliTokenExpiry - DateTimeOffset.UtcNow).TotalMinutes);
+                token = _cachedAzCliToken;
             }
+            else
+            {
+                _logger.LogDebug("Acquiring Graph token via Azure CLI (no specific scopes required)");
+                token = await GetGraphAccessTokenAsync(tenantId, ct);
 
-            _logger.LogDebug("Successfully acquired Graph token via Azure CLI");
+                if (string.IsNullOrWhiteSpace(token))
+                {
+                    // Clear cache on failure to ensure clean state
+                    _cachedAzCliToken = null;
+                    _cachedAzCliTenantId = null;
+                    _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
+
+                    _logger.LogError("Failed to acquire Graph token via Azure CLI. Ensure 'az login' is completed.");
+                    return false;
+                }
+
+                // Cache the token for subsequent calls within the same command execution
+                _cachedAzCliToken = token;
+                _cachedAzCliTenantId = tenantId;
+                _cachedAzCliTokenExpiry = DateTimeOffset.UtcNow.Add(AzCliTokenCacheDuration);
+                _logger.LogDebug("Cached Azure CLI Graph token for {Duration} minutes", AzCliTokenCacheDuration.TotalMinutes);
+            }
         }
 
         // Remove all newline characters and trim whitespace to prevent header validation errors

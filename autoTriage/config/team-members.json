@@ -5,47 +5,26 @@
       "role": "Tech Lead",
       "login": "sellakumaran",
       "contributions": 20,
-      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "system design", "security"]
+      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "system design", "security", "documentation"]
     },
     {
-      "name": "Johan Broberg",
-      "role": "Tech Lead",
-      "login": "pontemonti",
-      "contributions": 12,
-      "expertise": ["backend", "infrastructure", "DevOps", "deployment", "Azure", "architecture", "security"]
+      "name": "Grant Harris",
+      "role": "Team Member",
+      "login": "gwharris7",
+      "contributions": 10,
+      "expertise": ["backend", "testing", "CLI", "dotnet", "csharp", "Azure"]
     },
     {
-      "name": "Josh Oratz",
-      "role": "Backend Engineer",
-      "login": "joratz",
-      "contributions": 18,
-      "expertise": ["backend", "CLI", "dotnet", "csharp", "testing", "Azure"]
-    },
-    {
-      "name": "Mengyi Xu",
-      "role": "Backend Engineer",
-      "login": "mengyimicro",
-      "contributions": 15,
-      "expertise": ["backend", "python", "automation", "GitHub Actions", "AI", "LLM integration"]
-    },
-    {
-      "name": "Mrunal Hirve",
-      "role": "Backend Engineer",
-      "login": "mrunalhirve128",
-      "contributions": 25,
-      "expertise": ["backend", "Azure", "AI", "automation", "project management", "testing", "test"]
-    },
-    {
-      "name": "Tahir Sousa",
+      "name": "Alastair Fehr",
       "role": "Engineering Manager",
-      "login": "tmlsousa",
+      "login": "ajmfehr",
       "contributions": 5,
       "expertise": ["management", "planning", "coordination", "strategic planning"]
     }
   ],
   "escalation_chain": {
-    "lead": ["sellakumaran", "pontemonti"],
-    "manager": "tmlsousa"
+    "lead": ["sellakumaran"],
+    "manager": "ajmfehr"
   },
   "sla_hours": {
     "P0": 24,
@@ -63,7 +42,7 @@
       "secrets exposed", "credential leak", "token leak", "API key exposed",
       "insecure", "unsafe", "malicious", "attack", "breach"
     ],
-    "assignee": "pontemonti",
+    "assignee": "sellakumaran",
     "default_priority": "P1"
   }
 }

@@ -26,6 +26,7 @@ public static class PublishHelpers
         CancellationToken ct)
     {
         // Check 1: Verify all required service principals exist
+        // Cache SP IDs so Check 3 can reuse them without redundant Graph API lookups.
         var firstPartyClientSpId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, 
             MosConstants.TpsAppServicesClientAppId, ct);
         if (string.IsNullOrWhiteSpace(firstPartyClientSpId))
@@ -37,6 +38,7 @@ public static class PublishHelpers
         logger.LogDebug("Verified service principal for {ConstantName} ({AppId})", 
             nameof(MosConstants.TpsAppServicesClientAppId), MosConstants.TpsAppServicesClientAppId);
 
+        var resourceSpIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var resourceAppId in MosConstants.AllResourceAppIds)
         {
             var spId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct);
@@ -45,6 +47,7 @@ public static class PublishHelpers
                 logger.LogDebug("Service principal for {ResourceAppId} not found - configuration needed", resourceAppId);
                 return false;
             }
+            resourceSpIds[resourceAppId] = spId;
             logger.LogDebug("Verified service principal for resource app ({ResourceAppId})", resourceAppId);
         }
 
@@ -96,15 +99,15 @@ public static class PublishHelpers
         }
 
         // Check 3: Verify admin consent is granted for all MOS resources
+        // Reuse SP IDs cached from Check 1 to avoid redundant Graph API lookups.
         var mosResourceScopes = MosConstants.ResourcePermissions.GetAll()
             .ToDictionary(p => p.ResourceAppId, p => p.ScopeName);
 
         foreach (var (resourceAppId, scopeName) in mosResourceScopes)
         {
-            var resourceSpId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, resourceAppId, ct);
-            if (string.IsNullOrWhiteSpace(resourceSpId))
+            if (!resourceSpIds.TryGetValue(resourceAppId, out var resourceSpId))
             {
-                logger.LogDebug("Service principal for {ResourceAppId} not found - configuration needed", resourceAppId);
+                logger.LogWarning("Service principal for {ResourceAppId} not found in cache (unexpected - should have been cached by Check 1)", resourceAppId);
                 return false;
             }
 

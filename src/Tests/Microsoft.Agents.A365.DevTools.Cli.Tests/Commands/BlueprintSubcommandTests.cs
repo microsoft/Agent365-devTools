@@ -276,7 +276,8 @@ public class BlueprintSubcommandTests
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required for validation
             SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint"
+            AgentBlueprintDisplayName = "Test Blueprint",
+            Location = "eastus" // Required for endpoint registration; location guard runs before Azure validation
         };
 
         var configFile = new FileInfo("test-config.json");
@@ -474,7 +475,8 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint"
+            AgentBlueprintDisplayName = "Test Blueprint",
+            Location = "eastus" // Required for endpoint registration; location guard runs before the header is logged
         };
 
         var configFile = new FileInfo("test-config.json");
@@ -1520,6 +1522,115 @@ public class BlueprintSubcommandTests
             if (File.Exists(generatedPath)) File.Delete(generatedPath);
             if (File.Exists(configPath)) File.Delete(configPath);
         }
+    }
+
+    #endregion
+
+    #region CustomClientAppId Configuration Tests
+
+    [Fact]
+    public async Task SetHandler_WithClientAppId_ShouldConfigureGraphApiService()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            AgentBlueprintDisplayName = "Test Blueprint"
+        };
+
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(config));
+
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockBotConfigurator,
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        await parser.InvokeAsync("--dry-run", testConsole);
+
+        // Assert - Verify CustomClientAppId was set on GraphApiService
+        _mockGraphApiService.CustomClientAppId.Should().Be(config.ClientAppId,
+            "CustomClientAppId must be set to ensure inheritable permissions use the correct client app");
+    }
+
+    [Fact]
+    public async Task SetHandler_WithoutClientAppId_ShouldNotConfigureGraphApiService()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant",
+            ClientAppId = "", // No client app ID
+            AgentBlueprintDisplayName = "Test Blueprint"
+        };
+
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(config));
+
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockBotConfigurator,
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        await parser.InvokeAsync("--dry-run", testConsole);
+
+        // Assert - Verify CustomClientAppId was NOT set (remains null)
+        _mockGraphApiService.CustomClientAppId.Should().BeNullOrEmpty(
+            "CustomClientAppId should not be set when config does not have a ClientAppId");
+    }
+
+    [Fact]
+    public async Task SetHandler_WithWhitespaceClientAppId_ShouldNotConfigureGraphApiService()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant",
+            ClientAppId = "   ", // Whitespace only
+            AgentBlueprintDisplayName = "Test Blueprint"
+        };
+
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(config));
+
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockBotConfigurator,
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        await parser.InvokeAsync("--dry-run", testConsole);
+
+        // Assert - Verify CustomClientAppId was NOT set
+        _mockGraphApiService.CustomClientAppId.Should().BeNullOrEmpty(
+            "CustomClientAppId should not be set when config has whitespace-only ClientAppId");
     }
 
     #endregion

@@ -163,6 +163,9 @@ internal static class RequirementsSubcommand
     {
         return new List<IRequirementCheck>
         {
+            // Location configuration — required for endpoint registration
+            new LocationRequirementCheck(),
+
             // Frontier Preview Program enrollment check
             new FrontierPreviewRequirementCheck(),
 

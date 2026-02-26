@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Microsoft.Agents.A365.DevTools.Cli\Microsoft.Agents.A365.DevTools.Cli.csproj" />
+    <ProjectReference Include="..\..\Microsoft.Agents.A365.DevTools.MockToolingServer\Microsoft.Agents.A365.DevTools.MockToolingServer.csproj" />
   </ItemGroup>
 
 </Project>
