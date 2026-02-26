@@ -93,4 +93,31 @@ public class CustomResourcePermission
 
         return (errors.Count == 0, errors);
     }
+
+    /// <summary>
+    /// Adds a new permission or updates the scopes of an existing one in the given list.
+    /// </summary>
+    /// <returns>True if the permission was added; false if an existing entry was updated.</returns>
+    public static bool AddOrUpdate(
+        List<CustomResourcePermission> permissions,
+        string resourceAppId,
+        List<string> scopes)
+    {
+        var existing = permissions.FirstOrDefault(
+            p => p.ResourceAppId.Equals(resourceAppId, StringComparison.OrdinalIgnoreCase));
+
+        if (existing != null)
+        {
+            existing.Scopes = scopes;
+            return false;
+        }
+
+        permissions.Add(new CustomResourcePermission
+        {
+            ResourceAppId = resourceAppId,
+            ResourceName = null,
+            Scopes = scopes
+        });
+        return true;
+    }
 }

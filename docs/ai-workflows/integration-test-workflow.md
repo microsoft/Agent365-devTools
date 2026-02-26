@@ -157,8 +157,8 @@ a365 config init --global
 #### Test 2.5: Configure Custom Blueprint Permissions
 ```bash
 # Add Microsoft Graph extended permissions
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
 
 # Expected: NO PROMPTS - permission added directly to a365.config.json
@@ -167,14 +167,14 @@ a365 config init --custom-blueprint-permissions \
 # Record: Custom permission added (Yes/No)
 
 # View configured permissions
-a365 config init --custom-blueprint-permissions
+a365 config permissions
 
 # Expected: Lists all configured custom permissions (may show appId only until setup runs)
 # Record: Permissions displayed correctly (Yes/No)
 
 # Add second custom resource
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 12345678-1234-1234-1234-123456789012 \
+a365 config permissions \
+  --resource-app-id 12345678-1234-1234-1234-123456789012 \
   --scopes CustomScope.Read,CustomScope.Write
 
 # Expected: NO PROMPTS - second permission added directly

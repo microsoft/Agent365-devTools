@@ -11,8 +11,8 @@ The `a365 setup permissions custom` command applies custom API permissions to yo
 
 ```bash
 # Step 1: Configure custom permissions in config
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
 
 # Step 2: Apply permissions to blueprint
@@ -34,24 +34,24 @@ a365 setup all
 ## Prerequisites
 
 1. **Blueprint Created**: Run `a365 setup blueprint` first to create the agent blueprint
-2. **Custom Permissions Configured**: Add custom permissions to `a365.config.json` using `a365 config init --custom-blueprint-permissions`
+2. **Custom Permissions Configured**: Add custom permissions to `a365.config.json` using `a365 config permissions`
 3. **Global Administrator**: You must have Global Administrator role to grant admin consent
 
 ## Configuration
 
 ### Step 1: Add Custom Permissions to Config
 
-Use the `a365 config init --custom-blueprint-permissions` command to add custom permissions:
+Use the `a365 config permissions` command to add custom permissions:
 
 ```bash
 # Add Microsoft Graph extended permissions
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All,Chat.Read
 
 # Add custom API permissions
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId abcd1234-5678-90ab-cdef-1234567890ab \
+a365 config permissions \
+  --resource-app-id abcd1234-5678-90ab-cdef-1234567890ab \
   --scopes CustomScope.Read,CustomScope.Write
 ```
 
@@ -171,8 +171,8 @@ a365 setup all
 **Solution**:
 ```bash
 # Configure Microsoft Graph extended permissions
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
 ```
 
@@ -187,8 +187,8 @@ a365 config init --custom-blueprint-permissions \
 **Solution**:
 ```bash
 # Configure Teams Chat permissions
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Chat.Read,Chat.ReadWrite,ChatMessage.Send
 ```
 
@@ -204,8 +204,8 @@ a365 config init --custom-blueprint-permissions \
 **Solution**:
 ```bash
 # Configure custom API permissions
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId YOUR-CUSTOM-API-APP-ID \
+a365 config permissions \
+  --resource-app-id YOUR-CUSTOM-API-APP-ID \
   --scopes api://your-api/Read,api://your-api/Write
 ```
 
@@ -221,13 +221,13 @@ a365 config init --custom-blueprint-permissions \
 **Solution**:
 ```bash
 # Add first resource
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
 
 # Add second resource (run command again)
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId YOUR-CUSTOM-API-APP-ID \
+a365 config permissions \
+  --resource-app-id YOUR-CUSTOM-API-APP-ID \
   --scopes CustomScope.Read
 
 # Apply all permissions
@@ -240,7 +240,7 @@ a365 setup permissions custom
 
 ```bash
 # View all configured custom permissions
-a365 config init --custom-blueprint-permissions
+a365 config permissions
 ```
 
 **Output**:
@@ -256,8 +256,8 @@ Current custom blueprint permissions:
 
 ```bash
 # Update scopes for an existing resource
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All,Chat.Read
 ```
 
@@ -276,7 +276,7 @@ Configuration saved to: C:\Users\user\a365.config.json
 
 ```bash
 # Clear all custom permissions from config
-a365 config init --custom-blueprint-permissions --reset
+a365 config permissions --reset
 ```
 
 **Output**:
@@ -292,7 +292,7 @@ The CLI validates custom permissions at multiple stages:
 
 ### Config Validation
 
-When adding permissions via `a365 config init`:
+When adding permissions via `a365 config permissions` (or the `a365 config init` wizard):
 - ✅ **GUID Format**: Resource App ID must be a valid GUID
 - ✅ **Required Fields**: Resource App ID (GUID) and scopes are required; resource name is optional and will be auto-resolved during setup if not provided
 - ✅ **Scopes**: At least one scope must be specified
@@ -313,10 +313,10 @@ When applying permissions via `a365 setup permissions custom`:
 
 ```
 WARNING: No custom blueprint permissions configured in a365.config.json
-Run 'a365 config init --custom-blueprint-permissions --resourceAppId <guid> --scopes <scopes>' to configure custom permissions.
+Run 'a365 config permissions --resource-app-id <guid> --scopes <scopes>' to configure custom permissions.
 ```
 
-**Solution**: Add custom permissions to config first using `a365 config init --custom-blueprint-permissions`
+**Solution**: Add custom permissions to config first using `a365 config permissions`
 
 ### Error: Blueprint Not Found
 
@@ -340,7 +340,7 @@ ERROR: Invalid resourceAppId 'not-a-guid'. Must be a valid GUID format.
 ### Error: Invalid Permission Configuration
 
 ```
-ERROR: Invalid custom permission configuration: resourceAppId must be a valid GUID, resourceName is required, At least one scope is required
+ERROR: Invalid custom permission configuration: resourceAppId must be a valid GUID, At least one scope is required
 ```
 
 **Solution**: Ensure all required fields are properly configured in `a365.config.json`
@@ -494,7 +494,7 @@ After configuring custom permissions:
 
 1. **Test the agent**: Verify it can access the custom resources
 2. **Monitor usage**: Check Azure Portal for API call patterns
-3. **Update as needed**: Add or remove scopes using `a365 config init --custom-blueprint-permissions`
+3. **Update as needed**: Add or remove scopes using `a365 config permissions`
 4. **Deploy updates**: Run `a365 setup permissions custom` to apply changes
 
 ## Additional Resources

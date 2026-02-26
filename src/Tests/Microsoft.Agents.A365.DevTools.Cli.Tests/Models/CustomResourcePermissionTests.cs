@@ -3,7 +3,6 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
-using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Models;
 
@@ -278,5 +277,88 @@ public class CustomResourcePermissionTests
         // Assert
         isValid.Should().BeTrue();
         errors.Should().BeEmpty();
+    }
+
+    // --- AddOrUpdate tests ---
+
+    [Fact]
+    public void AddOrUpdate_NewEntry_AddsAndReturnsTrue()
+    {
+        // Arrange
+        var permissions = new List<CustomResourcePermission>();
+        var id = "00000003-0000-0000-c000-000000000000";
+        var scopes = new List<string> { "User.Read" };
+
+        // Act
+        var added = CustomResourcePermission.AddOrUpdate(permissions, id, scopes);
+
+        // Assert
+        added.Should().BeTrue();
+        permissions.Should().HaveCount(1);
+        permissions[0].ResourceAppId.Should().Be(id);
+        permissions[0].Scopes.Should().BeEquivalentTo(scopes);
+    }
+
+    [Fact]
+    public void AddOrUpdate_ExistingEntry_UpdatesScopesAndReturnsFalse()
+    {
+        // Arrange
+        var id = "00000003-0000-0000-c000-000000000000";
+        var permissions = new List<CustomResourcePermission>
+        {
+            new CustomResourcePermission { ResourceAppId = id, Scopes = new List<string> { "User.Read" } }
+        };
+        var newScopes = new List<string> { "Mail.Send", "Files.Read.All" };
+
+        // Act
+        var added = CustomResourcePermission.AddOrUpdate(permissions, id, newScopes);
+
+        // Assert
+        added.Should().BeFalse();
+        permissions.Should().HaveCount(1);
+        permissions[0].Scopes.Should().BeEquivalentTo(newScopes);
+    }
+
+    [Fact]
+    public void AddOrUpdate_ExistingEntryMatchesCaseInsensitive_Updates()
+    {
+        // Arrange
+        var id = "00000003-0000-0000-c000-000000000000";
+        var permissions = new List<CustomResourcePermission>
+        {
+            new CustomResourcePermission { ResourceAppId = id.ToUpperInvariant(), Scopes = new List<string> { "User.Read" } }
+        };
+        var newScopes = new List<string> { "Mail.Send" };
+
+        // Act
+        var added = CustomResourcePermission.AddOrUpdate(permissions, id.ToLowerInvariant(), newScopes);
+
+        // Assert
+        added.Should().BeFalse();
+        permissions.Should().HaveCount(1);
+        permissions[0].Scopes.Should().BeEquivalentTo(newScopes);
+    }
+
+    [Fact]
+    public void AddOrUpdate_MultipleEntries_OnlyUpdatesMatchingOne()
+    {
+        // Arrange
+        var id1 = "00000003-0000-0000-c000-000000000000";
+        var id2 = "11111111-1111-1111-1111-111111111111";
+        var permissions = new List<CustomResourcePermission>
+        {
+            new CustomResourcePermission { ResourceAppId = id1, Scopes = new List<string> { "User.Read" } },
+            new CustomResourcePermission { ResourceAppId = id2, Scopes = new List<string> { "Mail.Send" } }
+        };
+        var newScopes = new List<string> { "Files.Read.All" };
+
+        // Act
+        var added = CustomResourcePermission.AddOrUpdate(permissions, id1, newScopes);
+
+        // Assert
+        added.Should().BeFalse();
+        permissions.Should().HaveCount(2);
+        permissions.First(p => p.ResourceAppId == id1).Scopes.Should().BeEquivalentTo(newScopes);
+        permissions.First(p => p.ResourceAppId == id2).Scopes.Should().BeEquivalentTo(new[] { "Mail.Send" });
     }
 }

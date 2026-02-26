@@ -190,7 +190,31 @@ Azure location [westus]:
 
 **Smart Defaults**: Uses location from existing config or Azure account
 
-### Step 9: Configuration Summary
+### Step 9: Custom Blueprint Permissions (Optional)
+
+Optionally configure custom resource permissions for your agent:
+
+```
+=== Optional: Custom Blueprint Permissions ===
+If your agent needs access to additional external resources
+(e.g. Teams presence, OneDrive files, custom APIs) beyond
+standard permissions, you can configure them here.
+Most agents do not require this.
+
+Configure custom blueprint permissions? (y/N): y
+
+Resource App ID (GUID) - press Enter when done: 00000003-0000-0000-c000-000000000000
+Scopes (comma-separated, e.g. Presence.ReadWrite,Files.Read.All): Presence.ReadWrite,Files.Read.All
+Permission added.
+
+Resource App ID (GUID) - press Enter when done:
+```
+
+Press **Enter** with no input to finish and proceed.
+
+> **Tip**: You can also add or update permissions after initial setup using `a365 config permissions`.
+
+### Step 10: Configuration Summary
 
 Review all settings before saving:
 
@@ -212,11 +236,12 @@ App Service Plan       : a365agent-app-plan
 Location               : westus
 Subscription           : My Subscription (e09e22f2-9193-4f54-a335-01f59575eefd)
 Tenant                 : adfa4542-3e1e-46f5-9c70-3df0b15b3f6c
+Custom Permissions     : 1 configured
 
 Do you want to customize any derived names? (y/N):
 ```
 
-### Step 10: Name Customization (Optional)
+### Step 11: Name Customization (Optional)
 
 Optionally customize generated names:
 
@@ -230,7 +255,7 @@ Agent User Principal Name [agent.myagent.11140916@yourdomain.onmicrosoft.com]:
 Agent User Display Name [myagent Agent User]:
 ```
 
-### Step 11: Confirmation
+### Step 12: Confirmation
 
 Final confirmation to save:
 
