@@ -53,11 +53,9 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
                          || await IsWslEnvironmentAsync(cancellationToken);
 
             var resolution = isWsl
-                ? "Install PowerShell 7+ in WSL:\n" +
-                  "  sudo apt-get update && sudo apt-get install -y wget apt-transport-https software-properties-common\n" +
-                  "  source /etc/os-release && wget -q https://packages.microsoft.com/config/ubuntu/$VERSION_ID/packages-microsoft-prod.deb\n" +
-                  "  sudo dpkg -i packages-microsoft-prod.deb && sudo apt-get update && sudo apt-get install -y powershell\n" +
-                  "  See: https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu"
+                ? "Install PowerShell 7+ in your WSL distribution.\n" +
+                  "Installation steps vary by Linux distribution. Follow the official guidance for your distro:\n" +
+                  "  https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux"
                 : "Install PowerShell 7+ from https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell";
 
             return RequirementCheckResult.Failure(
@@ -113,7 +111,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     /// Detects whether the process is running inside WSL (Windows Subsystem for Linux)
     /// by checking the WSL_DISTRO_NAME environment variable or /proc/version content.
     /// </summary>
-    private static async Task<bool> IsWslEnvironmentAsync(CancellationToken cancellationToken)
+    internal static async Task<bool> IsWslEnvironmentAsync(CancellationToken cancellationToken)
     {
         try
         {

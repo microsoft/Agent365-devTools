@@ -68,6 +68,7 @@ public static class ExceptionHandler
     /// Use this instead of Environment.Exit to ensure logger output is visible.
     /// </summary>
     /// <param name="exitCode">The exit code to return (0 for success, non-zero for errors)</param>
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     public static void ExitWithCleanup(int exitCode)
     {
         Console.Out.Flush();

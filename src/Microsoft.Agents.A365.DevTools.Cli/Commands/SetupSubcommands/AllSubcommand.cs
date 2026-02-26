@@ -147,17 +147,16 @@ internal static class AllSubcommand
 
                         if (!systemResult)
                         {
-                            logger.LogError("");
                             logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
                             ExceptionHandler.ExitWithCleanup(1);
-                            return;
                         }
                     }
                     catch (Exception reqEx)
                     {
-                        logger.LogWarning(reqEx, "Requirements check encountered an error: {Message}", reqEx.Message);
-                        logger.LogWarning("Continuing with setup, but some prerequisites may be missing.");
-                        logger.LogWarning("");
+                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
+                        logger.LogError("Setup cannot proceed because system requirement validation failed unexpectedly.");
+                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                        ExceptionHandler.ExitWithCleanup(1);
                     }
                 }
                 else
@@ -191,17 +190,16 @@ internal static class AllSubcommand
 
                         if (!configResult)
                         {
-                            logger.LogError("");
                             logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
                             ExceptionHandler.ExitWithCleanup(1);
-                            return;
                         }
                     }
                     catch (Exception reqEx)
                     {
-                        logger.LogWarning(reqEx, "Requirements check encountered an error: {Message}", reqEx.Message);
-                        logger.LogWarning("Continuing with setup, but some prerequisites may be missing.");
-                        logger.LogWarning("");
+                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
+                        logger.LogError("Setup cannot proceed because configuration requirement validation failed unexpectedly.");
+                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                        ExceptionHandler.ExitWithCleanup(1);
                     }
                 }
 
@@ -252,17 +250,14 @@ internal static class AllSubcommand
                 // Stop if any validation failed
                 if (allErrors.Count > 0)
                 {
-                    logger.LogError("");
                     logger.LogError("Setup cannot proceed due to validation failures:");
                     foreach (var error in allErrors)
                     {
                         logger.LogError("  - {Error}", error);
                     }
-                    logger.LogError("");
                     logger.LogError("Please fix the errors above and try again");
                     setupResults.Errors.AddRange(allErrors);
                     ExceptionHandler.ExitWithCleanup(1);
-                    return;
                 }
 
                 logger.LogDebug("All validations passed. Starting setup execution...");
