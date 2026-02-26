@@ -15,6 +15,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// wizard step that collects optional custom blueprint permissions.
 /// Uses reflection (same pattern as ConfigurationWizardServiceWebAppNameTests) to invoke the private method.
 /// </summary>
+[Collection("ConfigTests")]
 public class ConfigurationWizardServicePermissionsTests
 {
     private static readonly string ValidGuid = "00000003-0000-0000-c000-000000000000";

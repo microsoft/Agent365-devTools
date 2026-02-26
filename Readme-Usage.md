@@ -56,15 +56,14 @@ a365 config init --global
 **Configure custom blueprint permissions:**
 ```bash
 # Add custom API permissions for your agent
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
 
 # View configured permissions
-a365 config init --custom-blueprint-permissions
+a365 config permissions
 
 # Clear all custom permissions
-a365 config init --custom-blueprint-permissions --reset
+a365 config permissions --reset
 ```
 
 **Minimum required configuration:**
@@ -145,8 +144,7 @@ If your agent needs additional API permissions beyond the standard set (e.g., Pr
 
 ```bash
 # Add custom permissions to config
-a365 config init --custom-blueprint-permissions \
-  --resourceAppId 00000003-0000-0000-c000-000000000000 \
+a365 config permissions --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
 
 # Then run setup (custom permissions applied automatically)
