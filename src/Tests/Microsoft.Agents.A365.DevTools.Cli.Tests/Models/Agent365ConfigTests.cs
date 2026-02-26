@@ -4,6 +4,7 @@
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using System.Text.Json;
 using Xunit;
 
@@ -607,6 +608,118 @@ public class Agent365ConfigTests
 
         // Assert
         errors.Should().NotContain(e => e.Contains("clientAppId"));
+    }
+
+    #endregion
+
+    #region BotName derived property tests
+
+    [Fact]
+    public void BotName_WithWebAppName_ReturnsWebAppNameEndpoint()
+    {
+        var config = new Agent365Config { WebAppName = "my-webapp" };
+        config.BotName.Should().Be("my-webapp-endpoint");
+    }
+
+    [Fact]
+    public void BotName_WithMessagingEndpointAndBlueprintId_UsesHostPlusBlueprintSuffix()
+    {
+        var config = new Agent365Config
+        {
+            MessagingEndpoint = "https://microsoftcape.app.n8n.cloud/webhook/abc123/webhook"
+        };
+        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        config.BotName.Should().Be("microsoftcape-app-n8n-cloud-9ab0b58c");
+    }
+
+    [Fact]
+    public void BotName_AgreesWithGetEndpointNameFromHost_ForNonAzureConfig()
+    {
+        // This is the contract test: BotName must always return exactly what
+        // GetEndpointNameFromHost returns for the same inputs, because cleanup
+        // derives the delete target from BotName while setup registers via GetEndpointNameFromHost.
+        var config = new Agent365Config
+        {
+            MessagingEndpoint = "https://microsoftcape.app.n8n.cloud/webhook/abc123/webhook"
+        };
+        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        var expected = EndpointHelper.GetEndpointNameFromHost(
+            new Uri(config.MessagingEndpoint).Host,
+            config.AgentBlueprintId);
+
+        config.BotName.Should().Be(expected,
+            "BotName and GetEndpointNameFromHost must agree or cleanup will target the wrong endpoint");
+    }
+
+    [Fact]
+    public void BotName_WithMessagingEndpointAndNullBlueprintId_UsesLegacyHostEndpointSuffix()
+    {
+        var config = new Agent365Config
+        {
+            MessagingEndpoint = "https://myapp.example.com/api/messages"
+        };
+        // AgentBlueprintId not set
+
+        config.BotName.Should().Be("myapp-example-com-endpoint");
+    }
+
+    [Fact]
+    public void BotName_WithNoWebAppOrMessagingEndpoint_ReturnsEmpty()
+    {
+        var config = new Agent365Config();
+        config.BotName.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BotName_WhenNeedDeploymentTrue_WebAppNameTakesPrecedenceOverMessagingEndpoint()
+    {
+        // NeedDeployment defaults to true — Azure App Service path should be used
+        var config = new Agent365Config
+        {
+            WebAppName = "my-webapp",
+            MessagingEndpoint = "https://other.example.com/webhook"
+        };
+        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        config.BotName.Should().Be("my-webapp-endpoint",
+            "when NeedDeployment=true, Azure App Service path (WebAppName) is used regardless of MessagingEndpoint");
+    }
+
+    [Fact]
+    public void BotName_WhenNeedDeploymentFalse_MessagingEndpointTakesPrecedenceOverWebAppName()
+    {
+        // When NeedDeployment=false, setup registers from MessagingEndpoint host.
+        // BotName must agree so cleanup targets the same endpoint that setup registered.
+        var config = new Agent365Config
+        {
+            NeedDeployment = false,
+            WebAppName = "my-webapp",
+            MessagingEndpoint = "https://microsoftcape.app.n8n.cloud/webhook/abc123/webhook"
+        };
+        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        config.BotName.Should().Be("microsoftcape-app-n8n-cloud-9ab0b58c",
+            "when NeedDeployment=false, MessagingEndpoint path is used to match what SetupHelpers registers");
+    }
+
+    [Theory]
+    [InlineData("not-a-url")]
+    [InlineData("/relative/path")]
+    [InlineData("")]
+    public void BotName_WithInvalidOrRelativeMessagingEndpoint_ReturnsEmpty(string endpoint)
+    {
+        // Uri.TryCreate fails for non-absolute URIs — BotName falls through to empty
+        var config = new Agent365Config
+        {
+            NeedDeployment = false,
+            MessagingEndpoint = endpoint
+        };
+        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
+
+        config.BotName.Should().BeEmpty(
+            "invalid or relative URI falls through to empty — caller must handle this case");
     }
 
     #endregion

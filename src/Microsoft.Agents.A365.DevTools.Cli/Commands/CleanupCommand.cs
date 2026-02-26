@@ -741,7 +741,7 @@ public class CleanupCommand
         }
 
         logger.LogInformation("Deleting messaging endpoint registration...");
-        var endpointName = EndpointHelper.GetEndpointName(config.BotName);
+        var endpointName = config.BotName; // BotName already returns a final, validated name
 
         var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
             endpointName,
@@ -787,8 +787,8 @@ public class CleanupCommand
             return;
         }
 
-        // Get the actual endpoint name that will be used for deletion (truncated to 42 chars)
-        var endpointName = EndpointHelper.GetEndpointName(config.BotName);
+        // BotName already returns a final, validated name — no further processing needed
+        var endpointName = config.BotName;
 
         logger.LogInformation("");
         logger.LogInformation("Endpoint Cleanup Preview:");

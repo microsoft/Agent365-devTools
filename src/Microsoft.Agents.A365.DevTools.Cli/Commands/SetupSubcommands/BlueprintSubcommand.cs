@@ -1829,7 +1829,7 @@ internal static class BlueprintSubcommand
                 logger.LogError("Location not found. Please confirm location is in the config file.");
                 throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
             }
-            var endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
+            var endpointName = setupConfig.BotName; // BotName already returns a final, validated name
             var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
 
             var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
