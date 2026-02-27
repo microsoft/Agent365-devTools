@@ -261,7 +261,14 @@ public class AgentBlueprintService
 
             if (doc is null)
             {
-                break;
+                _logger.LogError(
+                    "Failed to retrieve data from Microsoft Graph for tenant '{TenantId}' and request path '{RequestPath}'. " +
+                    "GraphGetAsync returned null, which likely indicates a non-success response or authentication issue.",
+                    tenantId,
+                    requestPath);
+
+                throw new InvalidOperationException(
+                    "Failed to retrieve data from Microsoft Graph. See logs for details about the underlying request failure.");
             }
 
             if (doc.RootElement.TryGetProperty("value", out var valueArray) &&
