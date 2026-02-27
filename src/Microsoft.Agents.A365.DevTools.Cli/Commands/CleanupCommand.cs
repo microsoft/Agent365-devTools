@@ -845,14 +845,20 @@ public class CleanupCommand
 
     /// <summary>
     /// Resolves the Azure Bot Service endpoint name from config.
-    /// For needsDeployment=false, derives the name from the MessagingEndpoint URL to match the name
-    /// used during registration. BotName is not used in this case because it may prioritize WebAppName,
-    /// producing a different name than what was registered.
+    /// For needsDeployment=false, prefers BotMessagingEndpoint (updated after each registration)
+    /// over MessagingEndpoint (static) so that delete targets the currently registered endpoint.
     /// </summary>
     private static string ResolveEndpointName(Agent365Config config)
     {
-        return (!config.NeedDeployment && !string.IsNullOrWhiteSpace(config.MessagingEndpoint))
-            ? EndpointHelper.GetEndpointNameFromUrl(config.MessagingEndpoint)
-            : EndpointHelper.GetEndpointName(config.BotName);
+        if (!config.NeedDeployment)
+        {
+            // Use BotMessagingEndpoint (updated by registration) over MessagingEndpoint (static).
+            var urlForName = !string.IsNullOrWhiteSpace(config.BotMessagingEndpoint)
+                ? config.BotMessagingEndpoint
+                : config.MessagingEndpoint;
+            if (!string.IsNullOrWhiteSpace(urlForName))
+                return EndpointHelper.GetEndpointNameFromUrl(urlForName, config.AgentBlueprintId);
+        }
+        return EndpointHelper.GetEndpointName(config.BotName);
     }
 }

@@ -1837,13 +1837,17 @@ internal static class BlueprintSubcommand
                 throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
             }
 
-            // For needsDeployment=false, always derive the endpoint name from the MessagingEndpoint URL,
-            // matching the name used during registration. BotName is not used here because it may
-            // prioritize WebAppName when needsDeployment=false, producing a different name.
+            // For needsDeployment=false, derive the endpoint name from the currently registered URL.
+            // BotMessagingEndpoint (generated config) is updated after every successful registration,
+            // so it reflects the actual registered endpoint name after any --update-endpoint calls.
+            // Fall back to MessagingEndpoint (static config) if BotMessagingEndpoint is not yet set.
             string endpointName;
-            if (!setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
+            if (!setupConfig.NeedDeployment && (!string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint)))
             {
-                endpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(setupConfig.MessagingEndpoint);
+                var urlForName = !string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint)
+                    ? setupConfig.BotMessagingEndpoint
+                    : setupConfig.MessagingEndpoint;
+                endpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(urlForName, setupConfig.AgentBlueprintId);
             }
             else
             {

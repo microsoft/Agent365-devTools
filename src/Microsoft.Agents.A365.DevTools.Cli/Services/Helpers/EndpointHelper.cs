@@ -41,7 +41,7 @@ public static class EndpointHelper
     /// Used for non-Azure-hosted agents (needsDeployment=false) to ensure the same
     /// name is used consistently across setup, update, and cleanup operations.
     /// </summary>
-    public static string GetEndpointNameFromUrl(string url)
+    public static string GetEndpointNameFromUrl(string url, string? blueprintId = null)
     {
         if (string.IsNullOrWhiteSpace(url))
         {
@@ -55,8 +55,53 @@ public static class EndpointHelper
                 $"Cannot derive endpoint name: '{url}' is not a valid absolute URL.");
         }
 
-        var hostPart = uri.Host.Replace('.', '-');
+        return GetEndpointNameFromHost(uri.Host, blueprintId);
+    }
+
+    /// <summary>
+    /// Derives a globally unique endpoint name from a URL hostname and an agent blueprint ID.
+    /// </summary>
+    /// <remarks>
+    /// For non-Azure hosted endpoints (e.g. n8n, Zapier, ngrok), the hostname alone is not a
+    /// unique identifier because many users can share the same host (same platform, same tenant
+    /// subdomain) while pointing to different webhook paths. Appending the first 8 non-hyphen
+    /// characters of the blueprint GUID as a suffix provides per-blueprint uniqueness within
+    /// the global Azure Bot Service namespace while staying within the 42-character limit.
+    ///
+    /// When blueprintId is null or empty, the method falls back to the legacy
+    /// <c>{host}-endpoint</c> scheme for backwards compatibility.
+    /// </remarks>
+    public static string GetEndpointNameFromHost(string host, string? blueprintId)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            throw new SetupValidationException("Hostname cannot be null or whitespace when deriving endpoint name.");
+        }
+
+        var hostPart = host.Replace('.', '-');
+
+        if (!string.IsNullOrWhiteSpace(blueprintId))
+        {
+            // Budget: host (max 33) + "-" (1) + suffix (8) = max 42 chars
+            var idSuffix = ExtractBlueprintIdSuffix(blueprintId);
+            var truncatedHost = hostPart.Length > 33 ? hostPart[..33] : hostPart;
+            var baseName = $"{truncatedHost.TrimEnd('-')}-{idSuffix}";
+            return GetEndpointName(baseName);
+        }
+
+        // Legacy fallback: no blueprint ID available yet
         return GetEndpointName($"{hostPart}-endpoint");
+    }
+
+    /// <summary>
+    /// Extracts the first 8 non-hyphen characters of a blueprint GUID to use as a uniqueness suffix.
+    /// For a standard GUID this yields exactly 8 hex characters. Accepts shorter non-GUID strings
+    /// as a defensive measure.
+    /// </summary>
+    private static string ExtractBlueprintIdSuffix(string blueprintId)
+    {
+        var clean = blueprintId.Replace("-", "");
+        return clean.Length >= 8 ? clean[..8] : clean;
     }
 
     /// <summary>

@@ -494,10 +494,8 @@ internal static class SetupHelpers
             }
             else
             {
-                // Non-Azure hosting: derive from override endpoint host
-                var hostPart = overrideUri.Host.Replace('.', '-');
-                var baseEndpointName = $"{hostPart}-endpoint";
-                endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
+                // Non-Azure hosting: derive from override endpoint host + blueprint ID suffix for uniqueness
+                endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
             }
 
             logger.LogInformation("   - Using override endpoint URL");
@@ -553,10 +551,10 @@ internal static class SetupHelpers
 
             messagingEndpoint = setupConfig.MessagingEndpoint;
 
-            // Derive endpoint name from host when there's no WebAppName
-            var hostPart = uri.Host.Replace('.', '-');
-            var baseEndpointName = $"{hostPart}-endpoint";
-            endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
+            // Derive endpoint name from host + blueprint ID suffix for uniqueness.
+            // Host alone is not sufficient — multiple users on the same webhook platform
+            // (e.g. n8n, Zapier) share the same hostname but have different webhook paths.
+            endpointName = EndpointHelper.GetEndpointNameFromHost(uri.Host, setupConfig.AgentBlueprintId);
         }
 
         if (endpointName.Length < 4)
@@ -592,8 +590,9 @@ internal static class SetupHelpers
         setupConfig.BotId = setupConfig.AgentBlueprintId;
         setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
         setupConfig.BotMessagingEndpoint = messagingEndpoint;
-        
+
         bool alreadyExisted = endpointResult == Models.EndpointRegistrationResult.AlreadyExists;
         return (true, alreadyExisted);
     }
+
 }
