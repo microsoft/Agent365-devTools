@@ -445,6 +445,62 @@ public class CleanupCommandTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
+    /// <summary>
+    /// Verifies that when instances are deleted successfully but the blueprint deletion fails,
+    /// a warning is logged about the incomplete cleanup state.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WhenBlueprintDeletionFailsWithInstances_LogsWarning()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        var expectedBlueprintId = config.AgentBlueprintId!;
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(true);
+
+        var instances = new List<AgentInstanceInfo>
+        {
+            new() { IdentitySpId = "sp-id-1", DisplayName = "Instance A", AgentUserId = "user-id-1" }
+        };
+        var spyService = CreateStubbedBlueprintService(
+            instances: instances,
+            deleteUserResult: true,
+            deleteIdentityResult: true,
+            deleteBlueprintResult: false);
+
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBotConfigurator,
+            _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService);
+        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0);
+
+        await spyService.Received(1).DeleteAgentUserAsync(
+            config.TenantId, "user-id-1", Arg.Any<CancellationToken>());
+
+        await spyService.Received(1).DeleteAgentIdentityAsync(
+            config.TenantId, "sp-id-1", Arg.Any<CancellationToken>());
+
+        await spyService.Received(1).DeleteAgentBlueprintAsync(
+            config.TenantId, expectedBlueprintId, Arg.Any<CancellationToken>());
+
+        // Verify that a warning was logged about the blueprint deletion failure
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint deletion failed")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
     private static Agent365Config CreateValidConfig()
     {
         return new Agent365Config

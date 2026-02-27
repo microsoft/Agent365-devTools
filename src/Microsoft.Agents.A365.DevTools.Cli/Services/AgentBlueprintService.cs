@@ -178,50 +178,60 @@ public class AgentBlueprintService
         try
         {
             var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
-            using var doc = await _graphApiService.GraphGetAsync(
-                tenantId,
-                "/beta/servicePrincipals/microsoft.graph.agentIdentity",
-                cancellationToken,
-                requiredScopes);
-
-            if (doc is null)
-            {
-                _logger.LogWarning("Failed to retrieve agent instances from Graph API");
-                return Array.Empty<AgentInstanceInfo>();
-            }
-
             var results = new List<AgentInstanceInfo>();
 
-            if (!doc.RootElement.TryGetProperty("value", out var valueArray) ||
-                valueArray.ValueKind != JsonValueKind.Array)
-            {
-                return Array.Empty<AgentInstanceInfo>();
-            }
+            var encodedId = Uri.EscapeDataString(blueprintId);
+            var firstPagePath = $"/beta/servicePrincipals/microsoft.graph.agentIdentity" +
+                                $"?$filter=agentIdentityBlueprintId eq '{encodedId}'";
+            string? nextPageUrl = null;
+            var isFirstPage = true;
 
-            foreach (var item in valueArray.EnumerateArray())
+            do
             {
-                var parentId = item.TryGetProperty("agentIdentityBlueprintId", out var p) ? p.GetString() : null;
-                if (!string.Equals(parentId, blueprintId, StringComparison.OrdinalIgnoreCase))
+                var requestPath = isFirstPage ? firstPagePath : nextPageUrl!;
+                isFirstPage = false;
+
+                using var doc = await _graphApiService.GraphGetAsync(
+                    tenantId,
+                    requestPath,
+                    cancellationToken,
+                    requiredScopes);
+
+                if (doc is null)
                 {
-                    continue;
+                    _logger.LogWarning("Failed to retrieve agent instances from Graph API");
+                    return results.Count > 0 ? results : Array.Empty<AgentInstanceInfo>();
                 }
 
-                var spId = item.TryGetProperty("id", out var id) ? id.GetString() : null;
-                if (string.IsNullOrWhiteSpace(spId))
+                if (doc.RootElement.TryGetProperty("value", out var valueArray) &&
+                    valueArray.ValueKind == JsonValueKind.Array)
                 {
-                    continue;
+                    foreach (var item in valueArray.EnumerateArray())
+                    {
+                        var spId = item.TryGetProperty("id", out var id) ? id.GetString() : null;
+                        if (string.IsNullOrWhiteSpace(spId))
+                        {
+                            continue;
+                        }
+
+                        var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
+                        var agentUserId = await GetAgentUserIdForSpAsync(tenantId, spId, cancellationToken);
+
+                        results.Add(new AgentInstanceInfo
+                        {
+                            IdentitySpId = spId,
+                            DisplayName = displayName,
+                            AgentUserId = string.IsNullOrWhiteSpace(agentUserId) ? null : agentUserId
+                        });
+                    }
                 }
 
-                var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
-                var agentUserId = await GetAgentUserIdForSpAsync(tenantId, spId, cancellationToken);
-
-                results.Add(new AgentInstanceInfo
-                {
-                    IdentitySpId = spId,
-                    DisplayName = displayName,
-                    AgentUserId = string.IsNullOrWhiteSpace(agentUserId) ? null : agentUserId
-                });
+                // Handle pagination via @odata.nextLink
+                nextPageUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
+                    ? nextLink.GetString()
+                    : null;
             }
+            while (!string.IsNullOrEmpty(nextPageUrl));
 
             return results;
         }

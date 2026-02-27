@@ -13,6 +13,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
 public class CleanupCommand
 {
+    private const string AgenticUsersKey = "agentic users";
+    private const string IdentitySpsKey = "identity SPs";
+
     public static Command CreateCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
@@ -152,8 +155,8 @@ public class CleanupCommand
                 // Delete instances first (warn and continue on failure)
                 var failedResources = new Dictionary<string, List<string>>
                 {
-                    ["agentic users"] = new List<string>(),
-                    ["identity SPs"] = new List<string>()
+                    [AgenticUsersKey] = new List<string>(),
+                    [IdentitySpsKey] = new List<string>()
                 };
 
                 foreach (var instance in instances)
@@ -171,7 +174,7 @@ public class CleanupCommand
                         if (!userDeleted)
                         {
                             logger.LogWarning("Failed to delete agentic user {UserId} -- will continue", instance.AgentUserId);
-                            failedResources["agentic users"].Add(instance.AgentUserId!);
+                            failedResources[AgenticUsersKey].Add(instance.AgentUserId!);
                         }
                         else
                         {
@@ -190,7 +193,7 @@ public class CleanupCommand
                     if (!spDeleted)
                     {
                         logger.LogWarning("Failed to delete agent identity SP {SpId} -- will continue", instance.IdentitySpId);
-                        failedResources["identity SPs"].Add(instance.IdentitySpId);
+                        failedResources[IdentitySpsKey].Add(instance.IdentitySpId);
                     }
                     else
                     {
@@ -252,12 +255,9 @@ public class CleanupCommand
                 await configService.SaveStateAsync(config);
                 logger.LogInformation("Local configuration cleared");
 
-                // Emit orphan summary if any instance deletions failed
-                if (HasOrphanedResources(failedResources))
-                {
-                    PrintOrphanSummary(logger, failedResources);
-                }
-                else
+                // Emit orphan summary if any instance deletions failed (PrintOrphanSummary returns early if none)
+                PrintOrphanSummary(logger, failedResources);
+                if (!HasOrphanedResources(failedResources))
                 {
                     logger.LogInformation("");
                     logger.LogInformation("Blueprint cleanup completed successfully!");
@@ -885,7 +885,7 @@ public class CleanupCommand
     /// </summary>
     private static bool HasOrphanedResources(Dictionary<string, List<string>> failedResources)
     {
-        return failedResources["agentic users"].Count + failedResources["identity SPs"].Count > 0;
+        return failedResources[AgenticUsersKey].Count + failedResources[IdentitySpsKey].Count > 0;
     }
 
     /// <summary>
@@ -905,9 +905,9 @@ public class CleanupCommand
         Console.WriteLine();
         logger.LogWarning("Blueprint cleanup completed with warnings.");
         logger.LogWarning("The following resources could not be deleted and remain orphaned in Entra ID:");
-        foreach (var userId in failedResources["agentic users"])
+        foreach (var userId in failedResources[AgenticUsersKey])
             logger.LogWarning("  Orphaned agentic user: {ResourceId}", userId);
-        foreach (var spId in failedResources["identity SPs"])
+        foreach (var spId in failedResources[IdentitySpsKey])
             logger.LogWarning("  Orphaned identity SP: {ResourceId}", spId);
         logger.LogWarning("Delete them manually via the Entra portal or Graph API.");
     }
