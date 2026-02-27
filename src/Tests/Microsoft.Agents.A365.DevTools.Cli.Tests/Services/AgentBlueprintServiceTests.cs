@@ -345,13 +345,13 @@ public class AgentBlueprintServiceTests
             }))
         });
 
-        // Response 2: GET /beta/users?$filter=identityParentId eq 'sp-obj-1'
-        // Secondary call to resolve the agentic user for the matching SP
+        // Response 2: GET /beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '...'
+        // Bulk query returns all agent users for the blueprint; correlated via identityParentId
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(new
             {
-                value = new[] { new { id = "user-obj-1" } }
+                value = new[] { new { id = "user-obj-1", identityParentId = "sp-obj-1" } }
             }))
         });
 
@@ -373,6 +373,13 @@ public class AgentBlueprintServiceTests
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
 
+        // Response 1: SPs query returns empty
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
+        });
+
+        // Response 2: Users query returns empty (both run in parallel)
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))

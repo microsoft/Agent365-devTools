@@ -178,60 +178,56 @@ public class AgentBlueprintService
         try
         {
             var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
-            var results = new List<AgentInstanceInfo>();
-
             var encodedId = Uri.EscapeDataString(blueprintId);
-            var firstPagePath = $"/beta/servicePrincipals/microsoft.graph.agentIdentity" +
-                                $"?$filter=agentIdentityBlueprintId eq '{encodedId}'";
-            string? nextPageUrl = null;
-            var isFirstPage = true;
 
-            do
+            // Fetch agent identity SPs and agent users for this blueprint in parallel (2 calls total)
+            var spTask = FetchAllPagesAsync(
+                tenantId,
+                $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'",
+                requiredScopes,
+                cancellationToken);
+
+            var userTask = FetchAllPagesAsync(
+                tenantId,
+                $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'",
+                requiredScopes,
+                cancellationToken);
+
+            var spItems = await spTask;
+            var userItems = await userTask;
+
+            // Build lookup: identityParentId (SP object ID) -> user object ID
+            var userBySpId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var user in userItems)
             {
-                var requestPath = isFirstPage ? firstPagePath : nextPageUrl!;
-                isFirstPage = false;
-
-                using var doc = await _graphApiService.GraphGetAsync(
-                    tenantId,
-                    requestPath,
-                    cancellationToken,
-                    requiredScopes);
-
-                if (doc is null)
+                var parentId = user.TryGetProperty("identityParentId", out var p) ? p.GetString() : null;
+                var userId = user.TryGetProperty("id", out var uid) ? uid.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(parentId) && !string.IsNullOrWhiteSpace(userId))
                 {
-                    _logger.LogWarning("Failed to retrieve agent instances from Graph API");
-                    return results.Count > 0 ? results : Array.Empty<AgentInstanceInfo>();
+                    userBySpId[parentId] = userId;
                 }
-
-                if (doc.RootElement.TryGetProperty("value", out var valueArray) &&
-                    valueArray.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in valueArray.EnumerateArray())
-                    {
-                        var spId = item.TryGetProperty("id", out var id) ? id.GetString() : null;
-                        if (string.IsNullOrWhiteSpace(spId))
-                        {
-                            continue;
-                        }
-
-                        var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
-                        var agentUserId = await GetAgentUserIdForSpAsync(tenantId, spId, cancellationToken);
-
-                        results.Add(new AgentInstanceInfo
-                        {
-                            IdentitySpId = spId,
-                            DisplayName = displayName,
-                            AgentUserId = string.IsNullOrWhiteSpace(agentUserId) ? null : agentUserId
-                        });
-                    }
-                }
-
-                // Handle pagination via @odata.nextLink
-                nextPageUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
-                    ? nextLink.GetString()
-                    : null;
             }
-            while (!string.IsNullOrEmpty(nextPageUrl));
+
+            // Correlate SPs with their agent users
+            var results = new List<AgentInstanceInfo>();
+            foreach (var item in spItems)
+            {
+                var spId = item.TryGetProperty("id", out var id) ? id.GetString() : null;
+                if (string.IsNullOrWhiteSpace(spId))
+                {
+                    continue;
+                }
+
+                var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
+                userBySpId.TryGetValue(spId, out var agentUserId);
+
+                results.Add(new AgentInstanceInfo
+                {
+                    IdentitySpId = spId,
+                    DisplayName = displayName,
+                    AgentUserId = string.IsNullOrWhiteSpace(agentUserId) ? null : agentUserId
+                });
+            }
 
             return results;
         }
@@ -243,47 +239,51 @@ public class AgentBlueprintService
     }
 
     /// <summary>
-    /// Resolves the agentic user ID associated with a given service principal by querying
-    /// the /beta/users endpoint filtered by identityParentId.
+    /// Fetches all pages of a Graph API collection, following @odata.nextLink pagination.
+    /// Returns the deserialized "value" array items from all pages.
     /// </summary>
-    /// <param name="tenantId">The tenant ID for authentication.</param>
-    /// <param name="spId">The service principal object ID to look up.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The user object ID if found; null otherwise.</returns>
-    private async Task<string?> GetAgentUserIdForSpAsync(
+    private async Task<List<JsonElement>> FetchAllPagesAsync(
         string tenantId,
-        string spId,
+        string initialPath,
+        string[] requiredScopes,
         CancellationToken cancellationToken)
     {
-        try
+        var items = new List<JsonElement>();
+        string? nextPageUrl = null;
+        var isFirstPage = true;
+
+        do
         {
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            var requestPath = isFirstPage ? initialPath : nextPageUrl!;
+            isFirstPage = false;
+
             using var doc = await _graphApiService.GraphGetAsync(
                 tenantId,
-                $"/beta/users?$filter=identityParentId eq '{spId}'",
+                requestPath,
                 cancellationToken,
                 requiredScopes);
 
             if (doc is null)
             {
-                return null;
+                break;
             }
 
             if (doc.RootElement.TryGetProperty("value", out var valueArray) &&
-                valueArray.ValueKind == JsonValueKind.Array &&
-                valueArray.GetArrayLength() > 0)
+                valueArray.ValueKind == JsonValueKind.Array)
             {
-                var firstUser = valueArray[0];
-                return firstUser.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                foreach (var item in valueArray.EnumerateArray())
+                {
+                    items.Add(item.Clone());
+                }
             }
 
-            return null;
+            nextPageUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
+                ? nextLink.GetString()
+                : null;
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to resolve agent user ID for service principal {SpId}", spId);
-            return null;
-        }
+        while (!string.IsNullOrEmpty(nextPageUrl));
+
+        return items;
     }
 
     /// <summary>
