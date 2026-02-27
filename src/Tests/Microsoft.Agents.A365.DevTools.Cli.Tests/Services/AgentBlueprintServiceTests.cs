@@ -167,35 +167,35 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            const string tenantId = "12345678-1234-1234-1234-123456789012";
+            const string identityId = "identity-sp-id-123";
 
-        const string tenantId = "12345678-1234-1234-1234-123456789012";
-        const string identityId = "identity-sp-id-123";
+            // Override with specific scope assertion
+            _mockTokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId,
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
+                false,
+                Arg.Any<string?>(),
+                Arg.Any<CancellationToken>())
+                .Returns("fake-delegated-token");
 
-        // Override with specific scope assertion
-        _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            tenantId,
-            Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
-            false,
-            Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
-            .Returns("fake-delegated-token");
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
 
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+            // Act
+            var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
 
-        // Act
-        var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
+            // Assert
+            result.Should().BeTrue();
 
-        // Assert
-        result.Should().BeTrue();
-
-        await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
-            tenantId,
-            Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
-            false,
-            Arg.Any<string?>(),
-            Arg.Any<CancellationToken>());
-
-        handler.Dispose();
+            await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
+                tenantId,
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
+                false,
+                Arg.Any<string?>(),
+                Arg.Any<CancellationToken>());
+        }
     }
 
     [Fact]
@@ -203,29 +203,29 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-
-        const string tenantId = "12345678-1234-1234-1234-123456789012";
-        const string identityId = "non-existent-identity";
-
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound)
+        using (handler)
         {
-            Content = new StringContent("{\"error\": {\"code\": \"Request_ResourceNotFound\"}}")
-        });
+            const string tenantId = "12345678-1234-1234-1234-123456789012";
+            const string identityId = "non-existent-identity";
 
-        // Act
-        var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent("{\"error\": {\"code\": \"Request_ResourceNotFound\"}}")
+            });
 
-        // Assert
-        result.Should().BeTrue("404 should be treated as success for idempotent deletion");
+            // Act
+            var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
 
-        handler.Dispose();
+            // Assert
+            result.Should().BeTrue("404 should be treated as success for idempotent deletion");
+        }
     }
 
     [Fact]
     public async Task DeleteAgentIdentityAsync_WhenTokenProviderIsNull_ReturnsFalse()
     {
         // Arrange
-        var handler = new FakeHttpMessageHandler();
+        using var handler = new FakeHttpMessageHandler();
         var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, tokenProvider: null);
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
@@ -251,29 +251,29 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-
-        const string tenantId = "12345678-1234-1234-1234-123456789012";
-        const string identityId = "identity-123";
-
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        using (handler)
         {
-            Content = new StringContent("{\"error\": {\"code\": \"Authorization_RequestDenied\"}}")
-        });
+            const string tenantId = "12345678-1234-1234-1234-123456789012";
+            const string identityId = "identity-123";
 
-        // Act
-        var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\": {\"code\": \"Authorization_RequestDenied\"}}")
+            });
 
-        // Assert
-        result.Should().BeFalse();
+            // Act
+            var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
 
-        _mockGraphLogger.Received().Log(
-            LogLevel.Error,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Graph DELETE") && o.ToString()!.Contains("403")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+            // Assert
+            result.Should().BeFalse();
 
-        handler.Dispose();
+            _mockGraphLogger.Received().Log(
+                LogLevel.Error,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Graph DELETE") && o.ToString()!.Contains("403")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
     }
 
     [Fact]
@@ -281,33 +281,33 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            const string tenantId = "12345678-1234-1234-1234-123456789012";
+            const string identityId = "identity-123";
 
-        const string tenantId = "12345678-1234-1234-1234-123456789012";
-        const string identityId = "identity-123";
+            // Override token provider to throw
+            _mockTokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(),
+                Arg.Any<IEnumerable<string>>(),
+                Arg.Any<bool>(),
+                Arg.Any<string?>(),
+                Arg.Any<CancellationToken>())
+                .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
-        // Override token provider to throw
-        _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(),
-            Arg.Any<bool>(),
-            Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
+            // Act
+            var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
 
-        // Act
-        var result = await service.DeleteAgentIdentityAsync(tenantId, identityId);
+            // Assert
+            result.Should().BeFalse();
 
-        // Assert
-        result.Should().BeFalse();
-
-        _mockLogger.Received().Log(
-            LogLevel.Error,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Exception deleting agent identity")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
-
-        handler.Dispose();
+            _mockLogger.Received().Log(
+                LogLevel.Error,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Exception deleting agent identity")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
     }
 
     [Fact]
@@ -315,42 +315,42 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-
-        const string blueprintId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-
-        // Response 1: GET /beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '...'
-        // Server-side filtered response returns only matching SPs
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        using (handler)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new
+            const string blueprintId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
+            // Response 1: GET /beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '...'
+            // Server-side filtered response returns only matching SPs
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                value = new[]
+                Content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    new { id = "sp-obj-1", displayName = "Instance A", agentIdentityBlueprintId = blueprintId }
-                }
-            }))
-        });
+                    value = new[]
+                    {
+                        new { id = "sp-obj-1", displayName = "Instance A", agentIdentityBlueprintId = blueprintId }
+                    }
+                }))
+            });
 
-        // Response 2: GET /beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '...'
-        // Bulk query returns all agent users for the blueprint; correlated via identityParentId
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(new
+            // Response 2: GET /beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '...'
+            // Bulk query returns all agent users for the blueprint; correlated via identityParentId
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                value = new[] { new { id = "user-obj-1", identityParentId = "sp-obj-1" } }
-            }))
-        });
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    value = new[] { new { id = "user-obj-1", identityParentId = "sp-obj-1" } }
+                }))
+            });
 
-        // Act
-        var instances = await service.GetAgentInstancesForBlueprintAsync("tenant-id", blueprintId);
+            // Act
+            var instances = await service.GetAgentInstancesForBlueprintAsync("tenant-id", blueprintId);
 
-        // Assert
-        instances.Should().HaveCount(1);
-        instances[0].IdentitySpId.Should().Be("sp-obj-1");
-        instances[0].DisplayName.Should().Be("Instance A");
-        instances[0].AgentUserId.Should().Be("user-obj-1");
-
-        handler.Dispose();
+            // Assert
+            instances.Should().HaveCount(1);
+            instances[0].IdentitySpId.Should().Be("sp-obj-1");
+            instances[0].DisplayName.Should().Be("Instance A");
+            instances[0].AgentUserId.Should().Be("user-obj-1");
+        }
     }
 
     [Fact]
@@ -358,26 +358,26 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-
-        // Response 1: SPs query returns empty
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        using (handler)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
-        });
+            // Response 1: SPs query returns empty
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
+            });
 
-        // Response 2: Users query returns empty (both run in parallel)
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
-        });
+            // Response 2: Users query returns empty (both run in parallel)
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
+            });
 
-        // Act
-        var instances = await service.GetAgentInstancesForBlueprintAsync("tenant-id", "b2c3d4e5-f6a7-8901-bcde-f12345678901");
+            // Act
+            var instances = await service.GetAgentInstancesForBlueprintAsync("tenant-id", "b2c3d4e5-f6a7-8901-bcde-f12345678901");
 
-        // Assert
-        instances.Should().BeEmpty();
-
-        handler.Dispose();
+            // Assert
+            instances.Should().BeEmpty();
+        }
     }
 
     [Fact]
@@ -385,17 +385,17 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // Queue HTTP response for DELETE /beta/agentUsers/{userId}
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
 
-        // Queue HTTP response for DELETE /beta/agentUsers/{userId}
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+            // Act
+            var result = await service.DeleteAgentUserAsync("tenant-id", "user-obj-1");
 
-        // Act
-        var result = await service.DeleteAgentUserAsync("tenant-id", "user-obj-1");
-
-        // Assert
-        result.Should().BeTrue();
-
-        handler.Dispose();
+            // Assert
+            result.Should().BeTrue();
+        }
     }
 
     [Fact]
@@ -403,19 +403,19 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // Override token provider to throw
+            _mockTokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
-        // Override token provider to throw
-        _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
+            // Act
+            var result = await service.DeleteAgentUserAsync("tenant-id", "user-obj-1");
 
-        // Act
-        var result = await service.DeleteAgentUserAsync("tenant-id", "user-obj-1");
-
-        // Assert
-        result.Should().BeFalse();
-
-        handler.Dispose();
+            // Assert
+            result.Should().BeFalse();
+        }
     }
 
     private (AgentBlueprintService service, FakeHttpMessageHandler handler) CreateServiceWithFakeHandler()
