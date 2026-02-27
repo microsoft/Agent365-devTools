@@ -13,9 +13,13 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+[CollectionDefinition("AuthTests", DisableParallelization = true)]
+public class AuthTestCollection { }
+
 /// <summary>
 /// Unit tests for AuthenticationService
 /// </summary>
+[Collection("AuthTests")]
 public class AuthenticationServiceTests : IDisposable
 {
     private readonly ILogger<AuthenticationService> _mockLogger;
@@ -799,7 +803,7 @@ public class AuthenticationServiceTests : IDisposable
         protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId)
             => _browserCredential;
 
-        protected override TokenCredential CreateDeviceCodeCredential(string tenantId, string clientId)
+        protected override TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
             => _deviceCodeCredential;
     }
 
