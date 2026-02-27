@@ -13,12 +13,19 @@ using Xunit;
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
 /// <summary>
+/// Tests must run sequentially because some tests redirect Console.In (global state).
+/// </summary>
+[CollectionDefinition("PublishCommandTests", DisableParallelization = true)]
+public class PublishCommandTestCollection { }
+
+/// <summary>
 /// Tests for PublishCommand exit code behavior.
 /// Tests are limited to paths that exit before the interactive Console.ReadLine() prompts
 /// in the publish flow. Paths that reach those prompts (--skip-graph, missing tenantId,
 /// missing manifest file) require full HTTP/MOS mocking infrastructure to test reliably.
 /// </summary>
-public class PublishCommandTests
+[Collection("PublishCommandTests")]
+public class PublishCommandTests : IDisposable
 {
     private readonly ILogger<PublishCommand> _logger;
     private readonly IConfigService _configService;
@@ -26,6 +33,7 @@ public class PublishCommandTests
     private readonly GraphApiService _graphApiService;
     private readonly AgentBlueprintService _blueprintService;
     private readonly ManifestTemplateService _manifestTemplateService;
+    private readonly TextReader _originalConsoleIn = Console.In;
 
     public PublishCommandTests()
     {
@@ -49,7 +57,14 @@ public class PublishCommandTests
         // ManifestTemplateService needs only ILogger
         _manifestTemplateService = Substitute.ForPartsOf<ManifestTemplateService>(
             Substitute.For<ILogger<ManifestTemplateService>>());
+
+        // Auto-answer any Console.ReadLine prompts so tests do not block in environments
+        // where stdin is not redirected (e.g. Visual Studio Test Explorer).
+        // Answers: "n" = don't open editor, "" = press Enter to continue.
+        Console.SetIn(new StringReader("n\n\n"));
     }
+
+    public void Dispose() => Console.SetIn(_originalConsoleIn);
 
     [Fact]
     public async Task PublishCommand_WithMissingBlueprintId_ShouldReturnExitCode1()

@@ -854,7 +854,7 @@ internal static class BlueprintSubcommand
                 };
             }
 
-            var graphToken = await GetTokenFromGraphClient(logger, graphClient, tenantId, setupConfig.ClientAppId);
+            var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
@@ -884,15 +884,15 @@ internal static class BlueprintSubcommand
             {
                 var errorContent = await appResponse.Content.ReadAsStringAsync(ct);
 
-                // If sponsors/owners fields cause error (Bad Request 400), retry without them
+                // If sponsors/owners fields cause error (Bad Request 400), retry selectively.
+                // First drop only sponsors — this preserves ownership if sponsors was the sole cause.
+                // Only drop owners as a last resort, since losing ownership breaks addPassword for non-admins.
                 if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest &&
                     !string.IsNullOrEmpty(sponsorUserId))
                 {
-                    logger.LogWarning("Agent Blueprint creation with sponsors and owners failed (Bad Request). Retrying without sponsors/owners...");
-
-                    // Remove sponsors and owners fields and retry
+                    logger.LogWarning("Blueprint creation failed (Bad Request). Error: {Error}. Retrying without sponsors field...", errorContent);
                     appManifest.Remove("sponsors@odata.bind");
-                    appManifest.Remove("owners@odata.bind");
+                    appResponse.Dispose();
 
                     appResponse = await httpClient.PostAsync(
                         createAppUrl,
@@ -902,18 +902,46 @@ internal static class BlueprintSubcommand
                     if (!appResponse.IsSuccessStatusCode)
                     {
                         errorContent = await appResponse.Content.ReadAsStringAsync(ct);
-                        logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                        return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+
+                        if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                        {
+                            logger.LogWarning("Blueprint creation without sponsors also failed (Bad Request). Error: {Error}. Retrying without owners field...", errorContent);
+                            appManifest.Remove("owners@odata.bind");
+                            appResponse.Dispose();
+
+                            appResponse = await httpClient.PostAsync(
+                                createAppUrl,
+                                new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                                ct);
+
+                            if (!appResponse.IsSuccessStatusCode)
+                            {
+                                errorContent = await appResponse.Content.ReadAsStringAsync(ct);
+                                logger.LogError("Failed to create application (all fallbacks exhausted): {Status} - {Error}", appResponse.StatusCode, errorContent);
+                                appResponse.Dispose();
+                                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                            }
+
+                            logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation will fail unless the custom client app has Application.ReadWrite.All permission or you have Application Administrator role in your Entra tenant.");
+                        }
+                        else
+                        {
+                            logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
+                            appResponse.Dispose();
+                            return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                        }
                     }
                 }
                 else
                 {
                     logger.LogError("Failed to create application: {Status} - {Error}", appResponse.StatusCode, errorContent);
+                    appResponse.Dispose();
                     return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
                 }
             }
 
             var appJson = await appResponse.Content.ReadAsStringAsync(ct);
+            appResponse.Dispose();
             var app = JsonNode.Parse(appJson)!.AsObject();
             var appId = app["appId"]!.GetValue<string>();
             var objectId = app["id"]!.GetValue<string>();
@@ -1431,14 +1459,15 @@ internal static class BlueprintSubcommand
     }
 
     /// <summary>
-    /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
-    /// This uses MsalBrowserCredential, which performs platform-appropriate interactive authentication (WAM on Windows, browser-based flow on other platforms).
+    /// Acquires a Microsoft Graph access token using MSAL interactive authentication
+    /// (WAM on Windows, browser-based flow on other platforms).
+    /// The token carries the delegated permissions of the custom client app, including
+    /// Application.ReadWrite.All, which is required for operations such as addPassword.
     /// </summary>
-    private static async Task<string?> GetTokenFromGraphClient(ILogger logger, GraphServiceClient graphClient, string tenantId, string clientAppId)
+    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default)
     {
         try
         {
-            // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
             var credential = new MsalBrowserCredential(
                 clientAppId,
                 tenantId,
@@ -1446,13 +1475,13 @@ internal static class BlueprintSubcommand
                 logger);
 
             var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
-            var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
+            var token = await credential.GetTokenAsync(tokenRequestContext, ct);
 
             return token.Token;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to get access token");
+            logger.LogError(ex, "Failed to acquire MSAL Graph access token");
             return null;
         }
     }
@@ -1528,12 +1557,17 @@ internal static class BlueprintSubcommand
         {
             logger.LogInformation("Creating client secret for Agent Blueprint using Graph API...");
 
-            var graphToken = await graphService.GetGraphAccessTokenAsync(
-                setupConfig.TenantId ?? string.Empty, ct);
+            // Use the MSAL token (carries Application.ReadWrite.All from the custom client app).
+            // This works for any user with a properly configured custom client app, regardless of
+            // whether they are an owner of the blueprint app registration.
+            var graphToken = await AcquireMsalGraphTokenAsync(
+                setupConfig.TenantId ?? string.Empty,
+                setupConfig.ClientAppId ?? string.Empty,
+                logger, ct);
 
             if (string.IsNullOrWhiteSpace(graphToken))
             {
-                logger.LogError("Failed to acquire Graph API access token");
+                logger.LogError("Failed to acquire MSAL Graph access token for client secret creation");
                 throw new InvalidOperationException("Cannot create client secret without Graph API token");
             }
 
@@ -1594,13 +1628,21 @@ internal static class BlueprintSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to create client secret: {Message}", ex.Message);
-            logger.LogInformation("You can create a client secret manually:");
-            logger.LogInformation("  1. Go to Azure Portal > App Registrations");
-            logger.LogInformation("  2. Find your Agent Blueprint: {AppId}", blueprintAppId);
-            logger.LogInformation("  3. Navigate to Certificates & secrets > Client secrets");
-            logger.LogInformation("  4. Click 'New client secret' and save the value");
-            logger.LogInformation("  5. Add it to a365.generated.config.json as 'agentBlueprintClientSecret'");
+            logger.LogWarning(ex, "Failed to create client secret automatically: {Message}", ex.Message);
+            logger.LogWarning("To create the secret manually you need one of the following on the blueprint app registration:");
+            logger.LogWarning("  - Owner of the app registration");
+            logger.LogWarning("  - Application Administrator, Cloud Application Administrator, or Global Administrator role in your Entra tenant");
+            logger.LogWarning("See: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#application-administrator");
+            logger.LogInformation("Manual steps to create and add the secret:");
+            logger.LogInformation("  1. Go to Microsoft Entra admin center (https://entra.microsoft.com)");
+            logger.LogInformation("  2. Navigate to App registrations > All applications");
+            logger.LogInformation("  3. Find your blueprint app by ID: {AppId}", blueprintAppId);
+            logger.LogInformation("  4. Open Certificates & secrets > Client secrets > New client secret");
+            logger.LogInformation("  5. Copy the Value (not the Secret ID) - it is only shown once");
+            logger.LogInformation("  6. Add both fields to a365.generated.config.json:");
+            logger.LogInformation("       \"agentBlueprintClientSecret\": \"<your secret value>\"");
+            logger.LogInformation("       \"agentBlueprintClientSecretProtected\": false");
+            logger.LogInformation("  7. Re-run: a365 setup all");
         }
     }
 

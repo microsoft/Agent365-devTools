@@ -1635,6 +1635,143 @@ public class BlueprintSubcommandTests
 
     #endregion
 
+    #region Issue-279 Regression Tests — Client Secret Creation
+
+    // NOTE: Retry logic tests (sponsors-only fallback, owners fallback, all-fallbacks-exhausted,
+    // non-400 on retry 1) require HTTP call mocking. They are covered by integration tests.
+    // The tests below cover the observable surface: catch block logging and MSAL token path.
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_WhenTokenAcquisitionFails_ShouldLogPermissionsGuidance()
+    {
+        // Arrange — empty TenantId/ClientAppId causes AcquireMsalGraphTokenAsync to return null,
+        // which throws InvalidOperationException inside the try block, triggering the catch block.
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act — should not throw; the catch block handles it
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — all required permission guidance must be logged
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Application Administrator")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Cloud Application Administrator")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_WhenTokenAcquisitionFails_ShouldLogConfigFieldGuidance()
+    {
+        // Arrange
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — agentBlueprintClientSecretProtected: false must be mentioned
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("agentBlueprintClientSecretProtected")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_WhenTokenAcquisitionFails_ShouldLogReRunInstruction()
+    {
+        // Arrange
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — re-run instruction must be logged
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("a365 setup all")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_ShouldNotCallAzureCliGraphToken()
+    {
+        // Regression test for Issue #279 bug #2:
+        // CreateBlueprintClientSecretAsync must NOT call GetGraphAccessTokenAsync (Azure CLI token).
+        // It must use AcquireMsalGraphTokenAsync (MSAL token) instead.
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — Azure CLI token path must NOT be taken
+        await _mockGraphApiService.DidNotReceiveWithAnyArgs().GetGraphAccessTokenAsync(default!, default);
+    }
+
+    #endregion
+
     #region Mutually Exclusive Options Tests
 
     [Theory]
