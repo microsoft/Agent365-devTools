@@ -350,6 +350,49 @@ Create a **blocking** architectural finding if:
 - ✅ Be BALANCED: Praise good work alongside constructive criticism
 - ✅ Be ACCURATE: Only report real issues you can verify in the diff
 
+### Verification Rules (MANDATORY — prevent false positives)
+
+#### Rule 1: Mismatch Claims Require Quoted Evidence from Both Sides
+Before reporting ANY claim of the form "X doesn't match Y", "property name mismatch",
+"test uses different value than production code", or similar:
+1. Quote the **exact line from the diff** for side A (e.g. production code)
+2. Quote the **exact line from the diff** for side B (e.g. test code)
+3. Only then state whether they match or not
+
+If you cannot quote both sides verbatim from the diff, do NOT make the claim.
+
+#### Rule 2: Replacement Suggestions Must Acknowledge Behavioral Differences
+When suggesting "replace X with Y", always state explicitly whether X and Y are
+behaviorally equivalent. If they are NOT equivalent, describe the difference.
+
+Example of what NOT to do:
+  "Replace Console.WriteLine() with logger.LogInformation("")"
+  ← Wrong: these are not equivalent (logging pipeline vs. direct stdout)
+
+Example of correct form:
+  "Replace Console.WriteLine() with logger.LogInformation("") for consistency.
+   Note: these differ — Console.WriteLine always writes to stdout; LogInformation
+   is filtered by log level and can be suppressed or redirected by the logging provider."
+
+#### Rule 3: Code Suggestions Must Use Idiomatic .NET Patterns
+When suggesting a refactor to replace weak-typed constructs (e.g. string-keyed
+dictionaries, magic strings, parallel arrays), prefer the most idiomatic C# solution:
+- A small `record` or `sealed class` over two separate typed lists
+- Constants as a minimal alternative when structure change is not warranted
+- Never suggest two parallel variables/lists when a single typed container is cleaner
+
+Example:
+  ❌ Weak suggestion: "Use two typed lists: var orphanedUsers = ...; var orphanedSps = ...;"
+  ✅ Better suggestion: "Use a typed record: private sealed record OrphanedResources(...)"
+
+#### Rule 4: Blocking/High Severity Requires Verifiable Concrete Evidence
+Before marking an issue as `blocking` or `high`:
+1. You must be able to point to a specific line in the diff that demonstrates the problem
+2. For logic bugs: trace the execution path in the code to confirm the bug occurs
+3. For test failures: quote both the assertion AND the value it will actually receive
+4. If any step requires assumption or inference, lower severity to `medium` or add
+   a qualifier like "if X is true, then..." to the description
+
 ### Context Awareness
 
 Differentiate between:
