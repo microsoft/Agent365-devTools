@@ -183,13 +183,13 @@ public class AgentBlueprintService
             // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers
             var spItems = await FetchAllPagesAsync(
                 tenantId,
-                $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'",
+                $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,displayName",
                 requiredScopes,
                 cancellationToken);
 
             var userItems = await FetchAllPagesAsync(
                 tenantId,
-                $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'",
+                $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,identityParentId",
                 requiredScopes,
                 cancellationToken);
             // Build lookup: identityParentId (SP object ID) -> user object ID
