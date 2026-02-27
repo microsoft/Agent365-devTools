@@ -112,8 +112,7 @@ internal static class SetupHelpers
         }
         if (results.CustomPermissionsConfigured)
         {
-            var status = results.CustomPermissionsAlreadyExisted ? "verified" : "configured";
-            logger.LogInformation("  [OK] Custom blueprint permissions {Status}", status);
+            logger.LogInformation("  [OK] Custom blueprint permissions configured");
         }
         if (results.MessagingEndpointRegistered)
         {
@@ -167,7 +166,7 @@ internal static class SetupHelpers
                 logger.LogInformation("  - Microsoft Graph Permissions: Run 'a365 setup blueprint' to retry");
             }
 
-            if (!results.CustomPermissionsConfigured)
+            if (!results.CustomPermissionsConfigured && results.Errors.Any(e => e.Contains("custom", StringComparison.OrdinalIgnoreCase)))
             {
                 logger.LogInformation("  - Custom Blueprint Permissions: Run 'a365 setup permissions custom' to retry");
             }

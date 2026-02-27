@@ -394,7 +394,7 @@ public class GraphApiServiceTests
     public async Task GetServicePrincipalDisplayNameAsync_SuccessfulLookup_ReturnsDisplayName()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
@@ -431,7 +431,7 @@ public class GraphApiServiceTests
     public async Task GetServicePrincipalDisplayNameAsync_ServicePrincipalNotFound_ReturnsNull()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
@@ -467,7 +467,7 @@ public class GraphApiServiceTests
     public async Task GetServicePrincipalDisplayNameAsync_NullResponse_ReturnsNull()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
@@ -502,7 +502,7 @@ public class GraphApiServiceTests
     public async Task GetServicePrincipalDisplayNameAsync_MissingDisplayNameProperty_ReturnsNull()
     {
         // Arrange
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 

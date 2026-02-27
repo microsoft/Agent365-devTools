@@ -28,6 +28,7 @@ a365 setup all
 - **OAuth2 Grants**: Automatically configures delegated permission grants with admin consent
 - **Inheritable Permissions**: Enables agent users to inherit permissions from the blueprint
 - **Portal Visibility**: Permissions appear in Azure Portal under API permissions
+- **Reconciling**: Removes permissions from Azure AD when they are removed from config
 - **Idempotent**: Safe to run multiple times - skips already-configured permissions
 - **Dry Run Support**: Preview changes before applying with `--dry-run`
 
@@ -95,7 +96,7 @@ Check your `a365.config.json` file:
 }
 ```
 
-> **Note**: The `resourceName` field is set to `null` initially and will be auto-resolved from Azure when you run `a365 setup permissions custom`.
+> **Note**: The `resourceName` field is optional and can be left as `null`. The display name is auto-resolved from Azure during `a365 setup permissions custom` for logging purposes only — the resolved name is not written back to any config file.
 
 ## Usage
 
@@ -128,8 +129,6 @@ Configuring Contoso Custom API (abcd1234-5678-90ab-cdef-1234567890ab)...
   - Contoso Custom API configured successfully
 
 Custom blueprint permissions configured successfully
-
-Configuration changes saved to a365.generated.config.json
 ```
 
 ### Dry Run Output
@@ -272,18 +271,38 @@ Permission updated successfully.
 Configuration saved to: C:\Users\user\a365.config.json
 ```
 
-### Remove All Custom Permissions
+### Remove Custom Permissions
+
+To fully remove a custom permission — from both config and Azure AD — run the two-step process:
 
 ```bash
-# Clear all custom permissions from config
+# Step 1: Remove from config (one specific resource, or all)
 a365 config permissions --reset
+
+# Step 2: Reconcile Azure AD with the updated config
+a365 setup permissions custom
+# OR equivalently:
+a365 setup blueprint
 ```
 
-**Output**:
+`config permissions --reset` only updates `a365.config.json`. The second command detects the removed entries and cleans them up from Azure AD (both inheritable permissions and the OAuth2 grant).
+
+**Step 1 output** (`config permissions --reset`):
 ```
 Clearing all custom blueprint permissions...
 
 Configuration saved to: C:\Users\user\a365.config.json
+```
+
+**Step 2 output** (`setup permissions custom`):
+```
+Configuring custom blueprint permissions...
+
+Removing 1 stale custom permission(s) no longer in config...
+  Removing stale permission for 00000003-0000-0ff1-ce00-000000000000...
+  - Inheritable permissions removed for 00000003-0000-0ff1-ce00-000000000000
+  - OAuth2 grant revoked for 00000003-0000-0ff1-ce00-000000000000
+No custom blueprint permissions configured.
 ```
 
 ## Validation
@@ -308,15 +327,6 @@ When applying permissions via `a365 setup permissions custom`:
 - ✅ **Scope Availability**: Validates scopes are exposed by the API
 
 ## Error Handling
-
-### Error: No Custom Permissions Configured
-
-```
-WARNING: No custom blueprint permissions configured in a365.config.json
-Run 'a365 config permissions --resource-app-id <guid> --scopes <scopes>' to configure custom permissions.
-```
-
-**Solution**: Add custom permissions to config first using `a365 config permissions`
 
 ### Error: Blueprint Not Found
 
@@ -345,20 +355,35 @@ ERROR: Invalid custom permission configuration: resourceAppId must be a valid GU
 
 **Solution**: Ensure all required fields are properly configured in `a365.config.json`
 
-## Idempotency
+## Idempotency and Reconciliation
 
-The `a365 setup permissions custom` command is idempotent:
+The `a365 setup permissions custom` command is **reconciling**: it syncs Azure AD to match the current config — adding what is configured and removing what is not.
+
 - ✅ Safe to run multiple times
-- ✅ Skips already-configured permissions
-- ✅ Only applies new or updated permissions
-- ✅ Tracks configuration state in `a365.generated.config.json`
+- ✅ Skips already-configured permissions (no-op if nothing changed)
+- ✅ Applies new or updated permissions
+- ✅ Removes permissions that were deleted from config
+- ✅ Standard permissions (MCP, Bot API, Graph) are never removed
 
-**Rerun Behavior**:
+**Rerun with no changes**:
 ```
+Configuring custom blueprint permissions...
+
 Configuring Microsoft Graph Extended (00000003-0000-0000-c000-000000000000)...
-  - OAuth2 grants already exist, skipping...
-  - Inheritable permissions already configured, skipping...
-  - Microsoft Graph Extended configured successfully (no changes)
+  - Inheritable permissions already configured for Microsoft Graph Extended
+  - Microsoft Graph Extended configured successfully
+Custom blueprint permissions configured successfully
+```
+
+**After removing a permission from config**:
+```
+Configuring custom blueprint permissions...
+
+Removing 1 stale custom permission(s) no longer in config...
+  Removing stale permission for 00000003-0000-0ff1-ce00-000000000000...
+  - Inheritable permissions removed for 00000003-0000-0ff1-ce00-000000000000
+  - OAuth2 grant revoked for 00000003-0000-0ff1-ce00-000000000000
+No custom blueprint permissions configured.
 ```
 
 ## Troubleshooting

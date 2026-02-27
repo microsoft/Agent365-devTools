@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Models;
 

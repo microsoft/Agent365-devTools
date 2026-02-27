@@ -10,6 +10,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 

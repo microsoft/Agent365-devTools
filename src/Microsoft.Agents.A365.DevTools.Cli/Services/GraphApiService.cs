@@ -410,7 +410,7 @@ public class GraphApiService
     /// <summary>
     /// Looks up the display name of a service principal by its application ID.
     /// Returns null if the service principal is not found.
-    /// Virtual to allow mocking in unit tests using Moq.
+    /// Virtual to allow substitution in unit tests using NSubstitute.
     /// </summary>
     public virtual async Task<string?> GetServicePrincipalDisplayNameAsync(
         string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)

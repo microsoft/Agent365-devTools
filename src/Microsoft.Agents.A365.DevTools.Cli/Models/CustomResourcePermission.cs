@@ -35,7 +35,9 @@ public class CustomResourcePermission
     public List<string> Scopes
     {
         get => _scopes;
-        set => _scopes = value ?? new(); // Null protection at boundary
+        set => _scopes = value != null
+            ? value.Select(s => s?.Trim() ?? string.Empty).ToList()
+            : new(); // Null protection and whitespace normalization at boundary
     }
 
     /// <summary>

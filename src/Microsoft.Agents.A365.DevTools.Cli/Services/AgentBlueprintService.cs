@@ -270,6 +270,67 @@ public class AgentBlueprintService
     }
 
     /// <summary>
+    /// Returns all current inheritable permission entries for the blueprint as structured data.
+    /// Each entry contains the resource app ID and its list of scopes.
+    /// Returns an empty list if none are configured or if retrieval fails.
+    /// </summary>
+    public virtual async Task<List<(string ResourceAppId, List<string> Scopes)>> ListInheritablePermissionsAsync(
+        string tenantId,
+        string blueprintId,
+        IEnumerable<string>? requiredScopes = null,
+        CancellationToken ct = default)
+    {
+        var results = new List<(string ResourceAppId, List<string> Scopes)>();
+        try
+        {
+            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
+            var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
+            var doc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, requiredScopes);
+            if (doc != null && doc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in value.EnumerateArray())
+                {
+                    var resourceAppId = item.TryGetProperty("resourceAppId", out var r) ? r.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(resourceAppId)) continue;
+
+                    var scopes = ParseInheritableScopesFromJson(item);
+                    results.Add((resourceAppId, scopes));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Failed to list inheritable permissions: {Error}", ex.Message);
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Removes inheritable permissions for a specific resource app ID from the blueprint.
+    /// Returns true if the entry was deleted or did not exist, false on failure.
+    /// </summary>
+    public virtual async Task<bool> RemoveInheritablePermissionsAsync(
+        string tenantId,
+        string blueprintId,
+        string resourceAppId,
+        IEnumerable<string>? requiredScopes = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
+            var deletePath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions/{resourceAppId}";
+            return await _graphApiService.GraphDeleteAsync(tenantId, deletePath, ct, treatNotFoundAsSuccess: true, scopes: requiredScopes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("Failed to remove inheritable permissions for {ResourceAppId}: {Error}", resourceAppId, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Verifies that inheritable permissions are correctly configured for a resource
     /// </summary>
     public virtual async Task<(bool exists, string[] scopes, string? error)> VerifyInheritablePermissionsAsync(

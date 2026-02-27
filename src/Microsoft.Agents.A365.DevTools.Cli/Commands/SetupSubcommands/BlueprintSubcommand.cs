@@ -610,10 +610,11 @@ internal static class BlueprintSubcommand
         // Display verification info and summary
         await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
 
-        // Apply custom blueprint permissions if configured — these are explicitly declared in
-        // a365.config.json so they should be applied automatically when the blueprint is set up.
+        // Reconcile custom blueprint permissions — apply desired and remove stale entries.
+        // Always run (even when config is empty) so that permissions removed from config are
+        // also removed from Azure AD.
         // (When isSetupAll, AllSubcommand handles this at Step 5 — do not apply twice.)
-        if (!isSetupAll && setupConfig.CustomBlueprintPermissions != null && setupConfig.CustomBlueprintPermissions.Count > 0)
+        if (!isSetupAll)
         {
             await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
                 config.FullName,

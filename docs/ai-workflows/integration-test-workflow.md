@@ -325,7 +325,7 @@ a365 setup permissions custom
 # - Inheritable permissions configured
 # - Permissions visible in Azure Portal under API permissions
 # - Success messages for each configured resource
-# - ResourceName populated in a365.generated.config.json
+# - Note: ResourceName is resolved in-memory for logging only; it is NOT persisted to any config file
 
 # IMPORTANT: Verify auto-lookup messages appear in output
 # If resource not found in Azure, should show fallback: "Custom-{first 8 chars}"

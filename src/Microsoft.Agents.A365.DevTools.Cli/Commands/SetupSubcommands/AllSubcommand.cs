@@ -446,31 +446,28 @@ internal static class AllSubcommand
                     logger.LogWarning("Bot permissions failed: {Message}. Setup will continue, but Bot API permissions must be configured manually", botPermEx.Message);
                 }
 
-                // Step 5: Custom Blueprint Permissions (if configured)
-                if (setupConfig.CustomBlueprintPermissions != null &&
-                    setupConfig.CustomBlueprintPermissions.Count > 0)
+                // Step 5: Reconcile custom blueprint permissions — apply desired and remove stale entries.
+                // Always run (even when config is empty) to clean up any permissions no longer in config.
+                try
                 {
-                    try
-                    {
-                        bool customPermissionsSetup = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
-                            config.FullName,
-                            logger,
-                            configService,
-                            executor,
-                            graphApiService,
-                            blueprintService,
-                            setupConfig,
-                            true,
-                            setupResults);
+                    bool customPermissionsSetup = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
+                        config.FullName,
+                        logger,
+                        configService,
+                        executor,
+                        graphApiService,
+                        blueprintService,
+                        setupConfig,
+                        true,
+                        setupResults);
 
-                        setupResults.CustomPermissionsConfigured = customPermissionsSetup;
-                    }
-                    catch (Exception customPermEx)
-                    {
-                        setupResults.CustomPermissionsConfigured = false;
-                        setupResults.Errors.Add($"Custom Blueprint Permissions: {customPermEx.Message}");
-                        logger.LogWarning("Custom permissions failed: {Message}. Setup will continue, but custom permissions must be configured manually", customPermEx.Message);
-                    }
+                    setupResults.CustomPermissionsConfigured = customPermissionsSetup;
+                }
+                catch (Exception customPermEx)
+                {
+                    setupResults.CustomPermissionsConfigured = false;
+                    setupResults.Errors.Add($"Custom Blueprint Permissions: {customPermEx.Message}");
+                    logger.LogWarning("Custom permissions failed: {Message}. Setup will continue, but custom permissions must be configured manually", customPermEx.Message);
                 }
 
                 // Display setup summary
