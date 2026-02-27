@@ -180,22 +180,18 @@ public class AgentBlueprintService
             var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
             var encodedId = Uri.EscapeDataString(blueprintId);
 
-            // Fetch agent identity SPs and agent users for this blueprint in parallel (2 calls total)
-            var spTask = FetchAllPagesAsync(
+            // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers
+            var spItems = await FetchAllPagesAsync(
                 tenantId,
                 $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'",
                 requiredScopes,
                 cancellationToken);
 
-            var userTask = FetchAllPagesAsync(
+            var userItems = await FetchAllPagesAsync(
                 tenantId,
                 $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'",
                 requiredScopes,
                 cancellationToken);
-
-            var spItems = await spTask;
-            var userItems = await userTask;
-
             // Build lookup: identityParentId (SP object ID) -> user object ID
             var userBySpId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var user in userItems)
