@@ -92,3 +92,8 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+
+# Local diagnostics and code review artifacts (never commit)
+diagnostics/
+.codereviews/
+nul
