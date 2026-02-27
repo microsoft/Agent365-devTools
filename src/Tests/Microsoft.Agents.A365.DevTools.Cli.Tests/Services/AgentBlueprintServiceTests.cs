@@ -166,13 +166,12 @@ public class AgentBlueprintServiceTests
     public async Task DeleteAgentIdentityAsync_WithValidIdentity_ReturnsTrue()
     {
         // Arrange
-        var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, _mockTokenProvider);
-        var service = new AgentBlueprintService(_mockLogger, graphService);
+        var (service, handler) = CreateServiceWithFakeHandler();
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
         const string identityId = "identity-sp-id-123";
 
+        // Override with specific scope assertion
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
             tenantId,
             Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
@@ -195,26 +194,18 @@ public class AgentBlueprintServiceTests
             false,
             Arg.Any<string?>(),
             Arg.Any<CancellationToken>());
+
+        handler.Dispose();
     }
 
     [Fact]
     public async Task DeleteAgentIdentityAsync_WhenResourceNotFound_ReturnsTrueIdempotent()
     {
         // Arrange
-        var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, _mockTokenProvider);
-        var service = new AgentBlueprintService(_mockLogger, graphService);
+        var (service, handler) = CreateServiceWithFakeHandler();
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
         const string identityId = "non-existent-identity";
-
-        _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(),
-            Arg.Any<bool>(),
-            Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
-            .Returns("fake-token");
 
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound)
         {
@@ -226,6 +217,8 @@ public class AgentBlueprintServiceTests
 
         // Assert
         result.Should().BeTrue("404 should be treated as success for idempotent deletion");
+
+        handler.Dispose();
     }
 
     [Fact]
@@ -257,20 +250,10 @@ public class AgentBlueprintServiceTests
     public async Task DeleteAgentIdentityAsync_WhenDeletionFails_ReturnsFalse()
     {
         // Arrange
-        var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, _mockTokenProvider);
-        var service = new AgentBlueprintService(_mockLogger, graphService);
+        var (service, handler) = CreateServiceWithFakeHandler();
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
         const string identityId = "identity-123";
-
-        _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(),
-            Arg.Any<bool>(),
-            Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
-            .Returns("fake-token");
 
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
         {
@@ -289,19 +272,20 @@ public class AgentBlueprintServiceTests
             Arg.Is<object>(o => o.ToString()!.Contains("Graph DELETE") && o.ToString()!.Contains("403")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
+
+        handler.Dispose();
     }
 
     [Fact]
     public async Task DeleteAgentIdentityAsync_WhenExceptionThrown_ReturnsFalse()
     {
         // Arrange
-        var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, _mockTokenProvider);
-        var service = new AgentBlueprintService(_mockLogger, graphService);
+        var (service, handler) = CreateServiceWithFakeHandler();
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
         const string identityId = "identity-123";
 
+        // Override token provider to throw
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
             Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(),
@@ -322,6 +306,8 @@ public class AgentBlueprintServiceTests
             Arg.Is<object>(o => o.ToString()!.Contains("Exception deleting agent identity")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
+
+        handler.Dispose();
     }
 
     [Fact]
@@ -416,20 +402,12 @@ public class AgentBlueprintServiceTests
     public async Task DeleteAgentUserAsync_ReturnsFalse_OnGraphError()
     {
         // Arrange
-        var handler = new FakeHttpMessageHandler();
+        var (service, handler) = CreateServiceWithFakeHandler();
 
+        // Override token provider to throw
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
-
-        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
-        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
-            Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new CommandResult
-                { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
-
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
-        var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // Act
         var result = await service.DeleteAgentUserAsync("tenant-id", "user-obj-1");
