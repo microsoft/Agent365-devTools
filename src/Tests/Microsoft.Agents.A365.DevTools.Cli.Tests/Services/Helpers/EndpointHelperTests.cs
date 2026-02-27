@@ -124,6 +124,48 @@ public class EndpointHelperTests
             .WithMessage("*becomes too short after processing*");
     }
 
+    [Fact]
+    public void GetEndpointNameFromUrl_WithDevTunnelUrl_ReturnsHostBasedName()
+    {
+        // Arrange - dev tunnel URL (the customer's scenario)
+        var url = "https://x23kz7ll-3979-inc1-devtunnels-ms.devtunnels.ms/api/messages";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromUrl(url);
+
+        // Assert - full pre-truncation string: "x23kz7ll-3979-inc1-devtunnels-ms-devtunnels-ms-endpoint" (55 chars)
+        // Truncated to 42 chars: "x23kz7ll-3979-inc1-devtunnels-ms-devtunnel" (no trailing hyphen to strip)
+        result.Should().Be("x23kz7ll-3979-inc1-devtunnels-ms-devtunnel");
+        result.Length.Should().Be(42);
+    }
+
+    [Fact]
+    public void GetEndpointNameFromUrl_WithSimpleUrl_ReturnsExpectedName()
+    {
+        // Arrange
+        var url = "https://myapp.azurewebsites.net/api/messages";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromUrl(url);
+
+        // Assert
+        result.Should().Be("myapp-azurewebsites-net-endpoint");
+    }
+
+    [Fact]
+    public void GetEndpointNameFromUrl_WithNgrokUrl_ReturnsExpectedName()
+    {
+        // Arrange - ngrok free domain
+        var url = "https://distressingly-gnathonic-alonzo.ngrok-free.app/api/messages";
+
+        // Act
+        var result = EndpointHelper.GetEndpointNameFromUrl(url);
+
+        // Assert - same result as going through GetEndpointName with the host-based name
+        var expected = EndpointHelper.GetEndpointName("distressingly-gnathonic-alonzo-ngrok-free-app-endpoint");
+        result.Should().Be(expected);
+    }
+
     // GetEndpointNameFromHost tests
 
     [Fact]
@@ -199,6 +241,22 @@ public class EndpointHelperTests
         result.Should().Be("this-is-a-very-long-hostname-that-aabbccdd",
             "host truncated to 33 chars + '-' + 8-char blueprint suffix = 42 chars total");
         result.Length.Should().Be(42);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-url")]
+    [InlineData("relative/path")]
+    public void GetEndpointNameFromUrl_WithInvalidUrl_ShouldThrowSetupValidationException(string? input)
+    {
+        // Act
+        // input! suppresses the nullable warning intentionally — tests runtime null/invalid handling
+        // even though the parameter is declared non-nullable.
+        Action act = () => EndpointHelper.GetEndpointNameFromUrl(input!);
+
+        // Assert
+        act.Should().Throw<SetupValidationException>();
     }
 
     [Theory]

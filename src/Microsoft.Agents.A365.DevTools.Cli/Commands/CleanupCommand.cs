@@ -741,7 +741,7 @@ public class CleanupCommand
         }
 
         logger.LogInformation("Deleting messaging endpoint registration...");
-        var endpointName = config.BotName; // BotName already returns a final, validated name
+        var endpointName = ResolveEndpointName(config);
 
         var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
             endpointName,
@@ -787,8 +787,8 @@ public class CleanupCommand
             return;
         }
 
-        // BotName already returns a final, validated name — no further processing needed
-        var endpointName = config.BotName;
+        // Get the actual endpoint name that will be used for deletion (truncated to 42 chars).
+        var endpointName = ResolveEndpointName(config);
 
         logger.LogInformation("");
         logger.LogInformation("Endpoint Cleanup Preview:");
@@ -841,5 +841,24 @@ public class CleanupCommand
             logger.LogError(ex, "Failed to load configuration: {Message}", ex.Message);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Resolves the Azure Bot Service endpoint name from config.
+    /// For needsDeployment=false, prefers BotMessagingEndpoint (updated after each registration)
+    /// over MessagingEndpoint (static) so that delete targets the currently registered endpoint.
+    /// </summary>
+    private static string ResolveEndpointName(Agent365Config config)
+    {
+        if (!config.NeedDeployment)
+        {
+            // Use BotMessagingEndpoint (updated by registration) over MessagingEndpoint (static).
+            var urlForName = !string.IsNullOrWhiteSpace(config.BotMessagingEndpoint)
+                ? config.BotMessagingEndpoint
+                : config.MessagingEndpoint;
+            if (!string.IsNullOrWhiteSpace(urlForName))
+                return EndpointHelper.GetEndpointNameFromUrl(urlForName, config.AgentBlueprintId);
+        }
+        return EndpointHelper.GetEndpointName(config.BotName);
     }
 }

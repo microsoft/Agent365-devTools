@@ -199,10 +199,17 @@ internal static class BlueprintSubcommand
                         botConfigurator: botConfigurator,
                         platformDetector: platformDetector);
                 }
+                catch (Agent365Exception ex)
+                {
+                    var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
+                    ExceptionHandler.HandleAgent365Exception(ex, logger: logger, logFilePath: logFilePath);
+                    ExceptionHandler.ExitWithCleanup(ex.ExitCode);
+                }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Endpoint update failed: {Message}", ex.Message);
-                    Environment.Exit(1);
+                    logger.LogError("Endpoint update failed: {Message}", ex.Message);
+                    logger.LogDebug(ex, "Endpoint update failed - stack trace");
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
                 return;
             }
@@ -1821,7 +1828,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("");
 
         // Step 1: Delete existing endpoint if it exists
-        if (!string.IsNullOrWhiteSpace(setupConfig.BotName))
+        if (!string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.BotName))
         {
             logger.LogInformation("Deleting existing messaging endpoint...");
             if (string.IsNullOrWhiteSpace(setupConfig.Location))
@@ -1829,7 +1836,26 @@ internal static class BlueprintSubcommand
                 logger.LogError("Location not found. Please confirm location is in the config file.");
                 throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
             }
-            var endpointName = setupConfig.BotName; // BotName already returns a final, validated name
+
+            // For needsDeployment=false, derive the endpoint name from the currently registered URL.
+            // BotMessagingEndpoint (generated config) is updated after every successful registration,
+            // so it reflects the actual registered endpoint name after any --update-endpoint calls.
+            // Fall back to MessagingEndpoint (static config) if BotMessagingEndpoint is not yet set.
+            string endpointName;
+            if (!setupConfig.NeedDeployment && (!string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint)))
+            {
+                var urlForName = !string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint)
+                    ? setupConfig.BotMessagingEndpoint
+                    : setupConfig.MessagingEndpoint;
+                endpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(urlForName, setupConfig.AgentBlueprintId);
+            }
+            else
+            {
+                // When NeedDeployment=true, BotName is always non-empty (derived from WebAppName),
+                // so GetEndpointName(BotName) is safe here.
+                endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
+            }
+
             var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
 
             var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(

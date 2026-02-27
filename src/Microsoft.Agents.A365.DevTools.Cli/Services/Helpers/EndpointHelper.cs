@@ -37,6 +37,28 @@ public static class EndpointHelper
     }
 
     /// <summary>
+    /// Derives the Azure Bot Service endpoint name from a messaging URL.
+    /// Used for non-Azure-hosted agents (needsDeployment=false) to ensure the same
+    /// name is used consistently across setup, update, and cleanup operations.
+    /// </summary>
+    public static string GetEndpointNameFromUrl(string url, string? blueprintId = null)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new SetupValidationException(
+                "Cannot derive endpoint name: URL must not be null or empty.");
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            throw new SetupValidationException(
+                $"Cannot derive endpoint name: '{url}' is not a valid absolute URL.");
+        }
+
+        return GetEndpointNameFromHost(uri.Host, blueprintId);
+    }
+
+    /// <summary>
     /// Derives a globally unique endpoint name from a URL hostname and an agent blueprint ID.
     /// </summary>
     /// <remarks>
