@@ -1,0 +1,138 @@
+{
+  "$schema": "mock-snapshot-schema",
+  "capturedAt": "2026-02-28T17:53:31Z",
+  "serverName": "mcp_KnowledgeTools",
+  "tools": [
+    {
+      "name": "configure_federated_knowledge",
+      "description": "CREATE: Register new federated knowledge configuration.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "consumerId": {
+            "type": "string",
+            "description": "The unique ID of the consumer (e.g., agent) associated with the federated knowledge source."
+          },
+          "knowledgeConfig": {
+            "type": "string",
+            "description": "The federated knowledge configuration details"
+          },
+          "sourceType": {
+            "type": "string",
+            "description": "The federated knowledge source type (e.g. SharePoint, OneDrive)"
+          },
+          "hints": {
+            "type": "string",
+            "description": "Instructions instructions or prompt-style text to guide AI models in selecting the appropriate MCP tool."
+          },
+          "displayName": {
+            "type": "string",
+            "description": "The federated knowledge source display name."
+          },
+          "description": {
+            "type": "string",
+            "description": "Knowledge source descrption"
+          }
+        },
+        "required": [
+          "consumerId",
+          "knowledgeConfig",
+          "sourceType",
+          "displayName",
+          "description"
+        ]
+      }
+    },
+    {
+      "name": "delete_federated_knowledge",
+      "description": "DELETE: Remove a federated knowledge configuration.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "searchConfigurationId": {
+            "type": "string",
+            "description": "The federated knowledge configuration uniqie id"
+          },
+          "consumerId": {
+            "type": "string",
+            "description": "The unique ID of the consumer (e.g., agent) associated with the federated knowledge source."
+          }
+        },
+        "required": [
+          "searchConfigurationId",
+          "consumerId"
+        ]
+      }
+    },
+    {
+      "name": "ingest_federated_knowledge",
+      "description": "SYNC: Trigger (re)ingestion of a federated knowledge configuration.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "consumerId": {
+            "type": "string",
+            "description": "The unique ID of the consumer (e.g., agent) associated with the federated knowledge source."
+          },
+          "searchConfigurationId": {
+            "type": "string",
+            "description": "The federated knowledge configuration uniqie id"
+          }
+        },
+        "required": [
+          "consumerId",
+          "searchConfigurationId"
+        ]
+      }
+    },
+    {
+      "name": "query_federated_knowledge",
+      "description": "SEARCH: Query content in federated knowledge configurations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "maxResults": {
+            "type": "integer",
+            "description": "The max results to return"
+          },
+          "consumerId": {
+            "type": "string",
+            "description": "The unique ID of the consumer (e.g., agent) associated with the federated knowledge source."
+          },
+          "summarize": {
+            "type": "boolean",
+            "description": "Indicate whether the results should include summarization or not."
+          },
+          "query": {
+            "type": "string",
+            "description": "The query to search against the knowledge sources"
+          },
+          "searchConfigs": {
+            "type": "string",
+            "description": "List of search config to query against"
+          }
+        },
+        "required": [
+          "consumerId",
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "retrieve_federated_knowledge",
+      "description": "LIST: Return all federated knowledge configurations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "consumerId": {
+            "type": "string",
+            "description": "The unique ID of the consumer (e.g., agent) associated with the federated knowledge source."
+          }
+        },
+        "required": [
+          "consumerId"
+        ]
+      }
+    }
+  ]
+}

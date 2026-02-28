@@ -1,6 +1,6 @@
 [
   {
-    "name": "AddDraftAttachmentsAsync",
+    "name": "AddDraftAttachments",
     "description": "Add attachments (URI) to an existing draft message.",
     "inputSchema": {
       "type": "object",
@@ -29,7 +29,7 @@
     "enabled": true
   },
   {
-    "name": "UpdateDraftAsync",
+    "name": "UpdateDraft",
     "description": "Update a draft's recipients, subject, body, and attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
     "inputSchema": {
       "type": "object",
@@ -112,7 +112,7 @@
     "enabled": true
   },
   {
-    "name": "SendEmailWithAttachmentsAsync",
+    "name": "SendEmailWithAttachments",
     "description": "Create and send an email with optional attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
     "inputSchema": {
       "type": "object",
@@ -189,7 +189,7 @@
     "enabled": true
   },
   {
-    "name": "CreateDraftMessageAsync",
+    "name": "CreateDraftMessage",
     "description": "Create a draft email in the signed-in user's mailbox without sending it. IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
     "inputSchema": {
       "type": "object",
@@ -237,7 +237,7 @@
     "enabled": true
   },
   {
-    "name": "GetMessageAsync",
+    "name": "GetMessage",
     "description": "Get a message by ID from the signed-in user's mailbox.",
     "inputSchema": {
       "type": "object",
@@ -262,7 +262,7 @@
     "enabled": true
   },
   {
-    "name": "UpdateMessageAsync",
+    "name": "UpdateMessage",
     "description": "Update a message's mutable properties (subject, body, categories, importance).",
     "inputSchema": {
       "type": "object",
@@ -306,7 +306,37 @@
     "enabled": true
   },
   {
-    "name": "DeleteMessageAsync",
+    "name": "FlagEmail",
+    "description": "Update the flag status on an email message. Supports flagging, completing, or clearing a flag.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Id of the email to be flagged."
+        },
+        "flagStatus": {
+          "type": "string",
+          "description": "Flag status to set: NotFlagged, Complete, or Flagged."
+        },
+        "mailboxAddress": {
+          "type": "string",
+          "description": "Address of the shared mailbox to update mail."
+        }
+      },
+      "required": [
+        "messageId",
+        "flagStatus"
+      ]
+    },
+    "responseTemplate": "Message '{{messageId}}' flag status updated to '{{flagStatus}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "DeleteMessage",
     "description": "Delete a message from the signed-in user's mailbox.",
     "inputSchema": {
       "type": "object",
@@ -327,7 +357,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyToMessageAsync",
+    "name": "ReplyToMessage",
     "description": "Send a reply to an existing message.",
     "inputSchema": {
       "type": "object",
@@ -377,7 +407,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyAllToMessageAsync",
+    "name": "ReplyAllToMessage",
     "description": "Send a reply-all to an existing message.",
     "inputSchema": {
       "type": "object",
@@ -427,7 +457,7 @@
     "enabled": true
   },
   {
-    "name": "SendDraftMessageAsync",
+    "name": "SendDraftMessage",
     "description": "Send an existing draft message by ID.",
     "inputSchema": {
       "type": "object",
@@ -448,7 +478,7 @@
     "enabled": true
   },
   {
-    "name": "SearchMessagesAsync",
+    "name": "SearchMessages",
     "description": "Search Outlook messages using Microsoft Graph Search API with KQL-style queries.",
     "inputSchema": {
       "type": "object",
@@ -483,7 +513,7 @@
     "enabled": true
   },
   {
-    "name": "GetAttachmentsAsync",
+    "name": "GetAttachments",
     "description": "Get all attachments from a message, returning attachment metadata (ID, name, size, type).",
     "inputSchema": {
       "type": "object",
@@ -504,7 +534,7 @@
     "enabled": true
   },
   {
-    "name": "DownloadAttachmentAsync",
+    "name": "DownloadAttachment",
     "description": "Download attachment content from a message. Returns the content as base64-encoded string.",
     "inputSchema": {
       "type": "object",
@@ -530,7 +560,7 @@
     "enabled": true
   },
   {
-    "name": "UploadAttachmentAsync",
+    "name": "UploadAttachment",
     "description": "Upload a small file attachment (less than 3 MB) to a message. File content must be base64-encoded.",
     "inputSchema": {
       "type": "object",
@@ -565,7 +595,7 @@
     "enabled": true
   },
   {
-    "name": "UploadLargeAttachmentAsync",
+    "name": "UploadLargeAttachment",
     "description": "Upload a large file attachment (3-150 MB) to a message using chunked upload. File content must be base64-encoded.",
     "inputSchema": {
       "type": "object",
@@ -600,7 +630,7 @@
     "enabled": true
   },
   {
-    "name": "DeleteAttachmentAsync",
+    "name": "DeleteAttachment",
     "description": "Delete an attachment from a message.",
     "inputSchema": {
       "type": "object",
@@ -626,7 +656,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyWithFullThreadAsync",
+    "name": "ReplyWithFullThread",
     "description": "Reply (or reply-all) adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
     "inputSchema": {
       "type": "object",
@@ -684,7 +714,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyAllWithFullThreadAsync",
+    "name": "ReplyAllWithFullThread",
     "description": "Reply-all adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
     "inputSchema": {
       "type": "object",
@@ -738,7 +768,7 @@
     "enabled": true
   },
   {
-    "name": "ForwardMessageWithFullThreadAsync",
+    "name": "ForwardMessageWithFullThread",
     "description": "Forward a message adding new recipients and an optional intro comment while preserving full quoted thread; returns sensitivity label.",
     "inputSchema": {
       "type": "object",
@@ -792,7 +822,7 @@
     "enabled": true
   },
   {
-    "name": "ForwardMessageAsync",
+    "name": "ForwardMessage",
     "description": "Forward an existing message, optionally adding a comment, recipients, and new attachments while preserving the quoted thread.",
     "inputSchema": {
       "type": "object",

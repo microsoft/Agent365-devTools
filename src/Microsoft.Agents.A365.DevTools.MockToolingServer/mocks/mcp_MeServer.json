@@ -1,6 +1,6 @@
 [
   {
-    "name": "getMyProfile",
+    "name": "GetMyDetails",
     "description": "Get the profile of the currently signed-in user, including their display name, email address, job title, and other basic information.",
     "inputSchema": {
       "type": "object",
@@ -19,7 +19,7 @@
     "enabled": true
   },
   {
-    "name": "listUsers",
+    "name": "GetMultipleUsersDetails",
     "description": "Search for users in the organization directory. Use this to find a person's email address when you only know their name. Supports filtering by displayName, mail, userPrincipalName, and other properties.",
     "inputSchema": {
       "type": "object",
@@ -54,7 +54,7 @@
     "enabled": true
   },
   {
-    "name": "getUser",
+    "name": "GetUserDetails",
     "description": "Get the profile of a specific user by their ID or userPrincipalName.",
     "inputSchema": {
       "type": "object",
@@ -77,7 +77,7 @@
     "enabled": true
   },
   {
-    "name": "getManager",
+    "name": "GetManagerDetails",
     "description": "Get the manager of a specific user or the currently signed-in user.",
     "inputSchema": {
       "type": "object",
@@ -96,7 +96,7 @@
     "enabled": true
   },
   {
-    "name": "getDirectReports",
+    "name": "GetDirectReportsDetails",
     "description": "Get the direct reports of a specific user or the currently signed-in user.",
     "inputSchema": {
       "type": "object",
@@ -119,4 +119,3 @@
     "enabled": true
   }
 ]
-

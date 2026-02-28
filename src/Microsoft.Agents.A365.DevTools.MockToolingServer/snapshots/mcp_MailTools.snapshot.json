@@ -1,0 +1,810 @@
+{
+  "$schema": "mock-snapshot-schema",
+  "capturedAt": "2026-02-28T17:53:30Z",
+  "serverName": "mcp_MailTools",
+  "tools": [
+    {
+      "name": "AddDraftAttachments",
+      "description": "Add attachments (URI) to an existing draft message.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Graph message ID (draft) to update."
+          },
+          "attachmentUris": {
+            "type": "array",
+            "description": "List of direct file URIs to attach (must be Microsoft 365 file links: OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id}).",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "messageId",
+          "attachmentUris"
+        ]
+      }
+    },
+    {
+      "name": "UpdateDraft",
+      "description": "Update a draft's recipients, subject, body, and attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). Recipients can be provided as names or email addresses - names will be automatically resolved to email addresses using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Graph message ID (draft) to update."
+          },
+          "to": {
+            "type": "array",
+            "description": "List of To recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "description": "List of Cc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bcc": {
+            "type": "array",
+            "description": "List of Bcc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject of the draft"
+          },
+          "body": {
+            "type": "string",
+            "description": "Body of the draft"
+          },
+          "attachmentUris": {
+            "type": "array",
+            "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
+            "items": {
+              "type": "string"
+            }
+          },
+          "directAttachments": {
+            "type": "array",
+            "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
+            "items": {
+              "type": "object",
+              "properties": {
+                "FileName": {
+                  "type": "string",
+                  "description": ""
+                },
+                "ContentBase64": {
+                  "type": "string",
+                  "description": ""
+                },
+                "ContentType": {
+                  "type": "string",
+                  "description": ""
+                }
+              },
+              "required": []
+            }
+          },
+          "directAttachmentFilePaths": {
+            "type": "array",
+            "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      }
+    },
+    {
+      "name": "SendEmailWithAttachments",
+      "description": "Create and send an email with optional attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). Recipients can be provided as names or email addresses - names will be automatically resolved to email addresses using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "array",
+            "description": "List of To recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "description": "List of Cc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bcc": {
+            "type": "array",
+            "description": "List of Bcc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject of the email"
+          },
+          "body": {
+            "type": "string",
+            "description": "Body of the email"
+          },
+          "attachmentUris": {
+            "type": "array",
+            "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
+            "items": {
+              "type": "string"
+            }
+          },
+          "directAttachments": {
+            "type": "array",
+            "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
+            "items": {
+              "type": "object",
+              "properties": {
+                "FileName": {
+                  "type": "string",
+                  "description": ""
+                },
+                "ContentBase64": {
+                  "type": "string",
+                  "description": ""
+                },
+                "ContentType": {
+                  "type": "string",
+                  "description": ""
+                }
+              },
+              "required": []
+            }
+          },
+          "directAttachmentFilePaths": {
+            "type": "array",
+            "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "CreateDraftMessage",
+      "description": "Create a draft email in the signed-in user's mailbox without sending it. Recipients can be provided as names or email addresses - names will be automatically resolved to email addresses using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Subject of the email"
+          },
+          "body": {
+            "type": "string",
+            "description": "Body of the email"
+          },
+          "to": {
+            "type": "array",
+            "description": "List of To recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "description": "List of Cc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bcc": {
+            "type": "array",
+            "description": "List of Bcc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "contentType": {
+            "type": "string",
+            "description": "Body content type: Text or HTML"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "GetMessage",
+      "description": "Get a message by ID from the signed-in user's mailbox.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Message ID"
+          },
+          "preferHtml": {
+            "type": "boolean",
+            "description": "If true, request HTML body format"
+          },
+          "bodyPreviewOnly": {
+            "type": "boolean",
+            "description": "If true, returns only the body preview (~255 chars) instead of the full body. Useful for reducing payload size."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "UpdateMessage",
+      "description": "Update a message's mutable properties (subject, body, categories, importance).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Message ID"
+          },
+          "subject": {
+            "type": "string",
+            "description": "New subject"
+          },
+          "body": {
+            "type": "string",
+            "description": "New body content"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "Body content type: Text or HTML"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Message categories",
+            "items": {
+              "type": "string"
+            }
+          },
+          "importance": {
+            "type": "string",
+            "description": "Importance level: Low, Normal, or High"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "FlagEmail",
+      "description": "Update the flag status on an email message. Supports flagging, completing, or clearing a flag.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Id of the email to be flagged."
+          },
+          "flagStatus": {
+            "type": "string",
+            "description": "Flag status to set: NotFlagged, Complete, or Flagged."
+          },
+          "mailboxAddress": {
+            "type": "string",
+            "description": "Address of the shared mailbox to update mail."
+          }
+        },
+        "required": [
+          "messageId",
+          "flagStatus"
+        ]
+      }
+    },
+    {
+      "name": "DeleteMessage",
+      "description": "Delete a message from the signed-in user's mailbox.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Message ID"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "ReplyToMessage",
+      "description": "Send a reply to an existing message. Recipients can be provided as names or email addresses - names will be automatically resolved using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Message ID to reply to"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Reply text content"
+          },
+          "preferHtml": {
+            "type": "boolean",
+            "description": "If true, treat comment as HTML"
+          },
+          "toRecipients": {
+            "type": "array",
+            "description": "Optional override list of To recipients (can be names or email addresses - names will be automatically resolved). If provided, a reply draft is created and patched before sending.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ccRecipients": {
+            "type": "array",
+            "description": "Optional override list of Cc recipients (can be names or email addresses - names will be automatically resolved). Used only when modifying recipients.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bccRecipients": {
+            "type": "array",
+            "description": "Optional override list of Bcc recipients (can be names or email addresses - names will be automatically resolved). Used only when modifying recipients.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "ReplyAllToMessage",
+      "description": "Send a reply-all to an existing message. Recipients can be provided as names or email addresses - names will be automatically resolved using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Message ID to reply-all to"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Reply text content"
+          },
+          "preferHtml": {
+            "type": "boolean",
+            "description": "If true, treat comment as HTML"
+          },
+          "toRecipients": {
+            "type": "array",
+            "description": "Optional override list of To recipients (can be names or email addresses - names will be automatically resolved). If provided, a reply-all draft is created and patched before sending.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ccRecipients": {
+            "type": "array",
+            "description": "Optional override list of Cc recipients (can be names or email addresses - names will be automatically resolved). Used only when modifying recipients.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bccRecipients": {
+            "type": "array",
+            "description": "Optional override list of Bcc recipients (can be names or email addresses - names will be automatically resolved). Used only when modifying recipients.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "SendDraftMessage",
+      "description": "Send an existing draft message by ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Draft message ID to send"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "SearchMessages",
+      "description": "Search for email messages using natural language queries powered by Microsoft 365 Copilot. This tool searches across your mailbox to find relevant emails. Use natural language to describe what you're looking for (e.g., 'emails from Sarah about the budget', 'unread messages from this week', 'messages with attachments about the project'). The search focuses specifically on email content and metadata.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Natural language search query for finding emails (e.g., 'emails from John about the project', 'unread messages from last week')"
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "Existing conversation id (GUID). Auto-created if missing."
+          }
+        },
+        "required": [
+          "message"
+        ]
+      }
+    },
+    {
+      "name": "GetAttachments",
+      "description": "Get all attachments from a message, returning attachment metadata (ID, name, size, type).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Message ID"
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      }
+    },
+    {
+      "name": "DownloadAttachment",
+      "description": "Download attachment content from a message. Returns the content as base64-encoded string.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Message ID"
+          },
+          "attachmentId": {
+            "type": "string",
+            "description": "Attachment ID"
+          }
+        },
+        "required": [
+          "messageId",
+          "attachmentId"
+        ]
+      }
+    },
+    {
+      "name": "UploadAttachment",
+      "description": "Upload a small file attachment (less than 3 MB) to a message. File content must be base64-encoded.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Message ID to attach to"
+          },
+          "fileName": {
+            "type": "string",
+            "description": "File name"
+          },
+          "contentBase64": {
+            "type": "string",
+            "description": "Base64-encoded file content"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "MIME type (optional)"
+          }
+        },
+        "required": [
+          "messageId",
+          "fileName",
+          "contentBase64"
+        ]
+      }
+    },
+    {
+      "name": "UploadLargeAttachment",
+      "description": "Upload a large file attachment (3-150 MB) to a message using chunked upload. File content must be base64-encoded.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Message ID to attach to"
+          },
+          "fileName": {
+            "type": "string",
+            "description": "File name"
+          },
+          "contentBase64": {
+            "type": "string",
+            "description": "Base64-encoded file content"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "MIME type (optional)"
+          }
+        },
+        "required": [
+          "messageId",
+          "fileName",
+          "contentBase64"
+        ]
+      }
+    },
+    {
+      "name": "DeleteAttachment",
+      "description": "Delete an attachment from a message.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Message ID"
+          },
+          "attachmentId": {
+            "type": "string",
+            "description": "Attachment ID"
+          }
+        },
+        "required": [
+          "messageId",
+          "attachmentId"
+        ]
+      }
+    },
+    {
+      "name": "ReplyWithFullThread",
+      "description": "Reply (or reply-all) adding new recipients while preserving full quoted thread and optionally re-attaching original files. Recipients can be provided as names or email addresses - names will be automatically resolved using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Original message ID to reply to"
+          },
+          "introComment": {
+            "type": "string",
+            "description": "Introductory comment placed above quoted thread"
+          },
+          "preferHtml": {
+            "type": "boolean",
+            "description": "If true, introComment is treated as HTML"
+          },
+          "additionalTo": {
+            "type": "array",
+            "description": "Additional To recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalCc": {
+            "type": "array",
+            "description": "Additional Cc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalBcc": {
+            "type": "array",
+            "description": "Additional Bcc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "replyAll": {
+            "type": "boolean",
+            "description": "If true, perform reply-all; otherwise a direct reply"
+          },
+          "includeOriginalNonInlineAttachments": {
+            "type": "boolean",
+            "description": "If true, re-attach original non-inline attachments (files)"
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      }
+    },
+    {
+      "name": "ReplyAllWithFullThread",
+      "description": "Reply-all adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Original message ID to reply-all to"
+          },
+          "introComment": {
+            "type": "string",
+            "description": "Introductory comment placed above quoted thread"
+          },
+          "preferHtml": {
+            "type": "boolean",
+            "description": "If true, introComment is treated as HTML"
+          },
+          "additionalTo": {
+            "type": "array",
+            "description": "Additional To recipients (email addresses)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalCc": {
+            "type": "array",
+            "description": "Additional Cc recipients (email addresses)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalBcc": {
+            "type": "array",
+            "description": "Additional Bcc recipients (email addresses)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "includeOriginalNonInlineAttachments": {
+            "type": "boolean",
+            "description": "If true, re-attach original non-inline attachments (files)"
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      }
+    },
+    {
+      "name": "ForwardMessageWithFullThread",
+      "description": "Forward a message adding new recipients and an optional intro comment while preserving full quoted thread; returns sensitivity label. Recipients can be provided as names or email addresses - names will be automatically resolved using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Original message ID to forward"
+          },
+          "introComment": {
+            "type": "string",
+            "description": "Introductory comment placed above quoted thread"
+          },
+          "preferHtml": {
+            "type": "boolean",
+            "description": "If true, introComment is treated as HTML"
+          },
+          "additionalTo": {
+            "type": "array",
+            "description": "Additional To recipients (can be names or email addresses - names will be automatically resolved) - required",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalCc": {
+            "type": "array",
+            "description": "Additional Cc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalBcc": {
+            "type": "array",
+            "description": "Additional Bcc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "includeOriginalNonInlineAttachments": {
+            "type": "boolean",
+            "description": "If true, re-attach original non-inline attachments (files)"
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      }
+    },
+    {
+      "name": "ForwardMessage",
+      "description": "Forward an existing message, optionally adding a comment, recipients, and new attachments while preserving the quoted thread. Recipients can be provided as names or email addresses - names will be automatically resolved using Microsoft Graph.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Original message ID to forward"
+          },
+          "introComment": {
+            "type": "string",
+            "description": "Introductory comment placed above quoted thread"
+          },
+          "preferHtml": {
+            "type": "boolean",
+            "description": "If true, introComment is treated as HTML"
+          },
+          "additionalTo": {
+            "type": "array",
+            "description": "Additional To recipients (can be names or email addresses - names will be automatically resolved) - required",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalCc": {
+            "type": "array",
+            "description": "Additional Cc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "additionalBcc": {
+            "type": "array",
+            "description": "Additional Bcc recipients (can be names or email addresses - names will be automatically resolved)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attachmentUris": {
+            "type": "array",
+            "description": "List of file URIs to attach (OneDrive, SharePoint, Teams, or Graph /drives/{id}/items/{id})",
+            "items": {
+              "type": "string"
+            }
+          },
+          "directAttachments": {
+            "type": "array",
+            "description": "List of direct file attachments with format: [{\"fileName\": \"file.pdf\", \"contentBase64\": \"base64data\", \"contentType\": \"application/pdf\"}]",
+            "items": {
+              "type": "object",
+              "properties": {
+                "FileName": {
+                  "type": "string",
+                  "description": ""
+                },
+                "ContentBase64": {
+                  "type": "string",
+                  "description": ""
+                },
+                "ContentType": {
+                  "type": "string",
+                  "description": ""
+                }
+              },
+              "required": []
+            }
+          },
+          "directAttachmentFilePaths": {
+            "type": "array",
+            "description": "List of local file system paths to attach; will be read and base64 encoded automatically.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      }
+    }
+  ]
+}
