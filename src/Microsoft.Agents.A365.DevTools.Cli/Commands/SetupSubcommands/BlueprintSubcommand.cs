@@ -499,6 +499,8 @@ internal static class BlueprintSubcommand
             ["identifierUri"] = $"api://{blueprintAppId}",
             ["tenantId"] = setupConfig.TenantId,
             ["resourceConsents"] = generatedConfig["resourceConsents"]?.DeepClone() ?? new JsonArray(),
+            ["agentBlueprintClientSecret"] = generatedConfig["agentBlueprintClientSecret"]?.DeepClone(),
+            ["agentBlueprintClientSecretProtected"] = generatedConfig["agentBlueprintClientSecretProtected"]?.DeepClone(),
         };
 
         await File.WriteAllTextAsync(generatedConfigPath, camelCaseConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
