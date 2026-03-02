@@ -1887,6 +1887,12 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Updating messaging endpoint...");
         logger.LogInformation("");
 
+        // Normalize location once; used by both Step 1 and Step 1.5.
+        // Null-coalescing is intentional: Location is only validated inside the Step 1 block (not here),
+        // so it may still be null at this point. The empty-string fallback is never passed to any API —
+        // Step 1 throws before using it, and Step 1.5 guards on !IsNullOrWhiteSpace(Location).
+        var normalizedLocation = setupConfig.Location?.Replace(" ", "").ToLowerInvariant() ?? string.Empty;
+
         // Step 1: Delete existing endpoint if it exists
         if (!string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.BotName))
         {
@@ -1916,8 +1922,6 @@ internal static class BlueprintSubcommand
                 endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
             }
 
-            var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
-
             var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
                 endpointName,
                 normalizedLocation,
@@ -1943,9 +1947,14 @@ internal static class BlueprintSubcommand
         if (!setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.Location))
         {
             var targetEndpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, setupConfig.AgentBlueprintId);
-            var targetLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
             logger.LogInformation("Removing target endpoint '{EndpointName}' to ensure a clean state before registration.", targetEndpointName);
-            await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, targetLocation, setupConfig.AgentBlueprintId);
+            var preCleanupDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, normalizedLocation, setupConfig.AgentBlueprintId);
+            if (!preCleanupDeleted)
+            {
+                // Not fatal — proceed and let Step 2 surface the error if the partially-provisioned
+                // endpoint is still blocking. The warning helps diagnose production issues.
+                logger.LogWarning("Pre-create cleanup for '{EndpointName}' did not confirm deletion. Proceeding anyway.", targetEndpointName);
+            }
         }
 
         // Step 2: Register new endpoint with the provided URL

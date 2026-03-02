@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using System.CommandLine;
@@ -1490,6 +1491,10 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
+            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(true)); // NotFound = success for pre-create cleanup
+
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
                 .Returns(EndpointRegistrationResult.Created);
@@ -1506,12 +1511,97 @@ public class BlueprintSubcommandTests
             // Assert - Step 1 (delete old) is skipped — no existing endpoint to delete.
             // Step 1.5 (pre-create cleanup) still calls delete exactly once with the TARGET endpoint name,
             // so there is exactly one delete call total.
+            var expectedTargetName = EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, config.AgentBlueprintId);
             await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                "newhost-example-com-blueprin",
+                expectedTargetName,
                 "eastus",
                 config.AgentBlueprintId);
 
             // Should still register the new endpoint
+            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                newEndpointUrl,
+                Arg.Any<string>(),
+                config.AgentBlueprintId);
+        }
+        finally
+        {
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+            if (File.Exists(configPath)) File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateEndpointAsync_WithExistingOldEndpointAndPartiallyProvisionedTarget_ShouldCallDeleteTwice()
+    {
+        // Regression: when a prior --update-endpoint failed during the create step, Azure may have
+        // partially provisioned the new endpoint. On the next run, BOTH Step 1 (delete old) and
+        // Step 1.5 (pre-create cleanup of target) must fire, targeting different endpoint names.
+        var currentlyRegisteredUrl = "https://currently-registered-3979.inc1.devtunnels.ms/api/messages";
+        var newEndpointUrl         = "https://newtunnel-3979.inc1.devtunnels.ms/api/messages";
+
+        var config = new Agent365Config
+        {
+            TenantId             = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId     = "blueprint-123",
+            MessagingEndpoint    = currentlyRegisteredUrl, // static config (original tunnel)
+            BotMessagingEndpoint = currentlyRegisteredUrl, // generated config (last successful registration)
+            Location             = "eastus",
+            NeedDeployment       = false,
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var testId        = Guid.NewGuid().ToString();
+        var configPath    = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(true));
+
+            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(EndpointRegistrationResult.Created);
+
+            // Act
+            await BlueprintSubcommand.UpdateEndpointAsync(
+                configPath,
+                newEndpointUrl,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector);
+
+            // Assert — exactly two delete calls with distinct endpoint names
+            var oldEndpointName    = EndpointHelper.GetEndpointNameFromUrl(currentlyRegisteredUrl, config.AgentBlueprintId);
+            var targetEndpointName = EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, config.AgentBlueprintId);
+
+            oldEndpointName.Should().NotBe(targetEndpointName, "Step 1 and Step 1.5 must target different endpoints");
+
+            // Step 1: delete the currently-registered (old) endpoint
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                oldEndpointName, "eastus", config.AgentBlueprintId);
+
+            // Step 1.5: pre-create cleanup of the partially-provisioned target endpoint
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                targetEndpointName, "eastus", config.AgentBlueprintId);
+
+            // Total: exactly two delete calls
+            await _mockBotConfigurator.Received(2).DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+
+            // Step 2: register the new endpoint
             await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
