@@ -1462,7 +1462,7 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public async Task UpdateEndpointAsync_WithNoExistingEndpoint_ShouldSkipDeleteAndRegister()
+    public async Task UpdateEndpointAsync_WithNoExistingOldEndpoint_ShouldOnlyCallPreCreateCleanup()
     {
         // Arrange - Config without BotName (no existing endpoint)
         var config = new Agent365Config
@@ -1503,11 +1503,13 @@ public class BlueprintSubcommandTests
                 _mockBotConfigurator,
                 _mockPlatformDetector);
 
-            // Assert - Should NOT call delete (no existing endpoint)
-            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>());
+            // Assert - Step 1 (delete old) is skipped — no existing endpoint to delete.
+            // Step 1.5 (pre-create cleanup) still calls delete exactly once with the TARGET endpoint name,
+            // so there is exactly one delete call total.
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                "newhost-example-com-blueprin",
+                "eastus",
+                config.AgentBlueprintId);
 
             // Should still register the new endpoint
             await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(

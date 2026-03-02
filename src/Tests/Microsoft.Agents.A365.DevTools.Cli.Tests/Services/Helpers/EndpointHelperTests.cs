@@ -165,6 +165,23 @@ public class EndpointHelperTests
         result.Should().Be(expected);
     }
 
+    [Fact]
+    public void GetEndpointNameFromUrl_DifferentDevTunnelUrls_ProduceDifferentNames()
+    {
+        // Regression: second --update-endpoint must delete the currently registered endpoint,
+        // not the original MessagingEndpoint. Different URLs must yield different names so
+        // the delete step targets the right Azure resource.
+        var originalUrl = "https://x23kz7ll-3979.inc1.devtunnels.ms/api/messages"; // MessagingEndpoint (static)
+        var updatedUrl  = "https://w3jv62pr-3979.inc1.devtunnels.ms/api/messages"; // BotMessagingEndpoint (after first update)
+        var blueprintId = "e412c0fa-7127-4615-9bef-1a7ba99e76af";
+
+        var originalName = EndpointHelper.GetEndpointNameFromUrl(originalUrl, blueprintId);
+        var updatedName  = EndpointHelper.GetEndpointNameFromUrl(updatedUrl,  blueprintId);
+
+        updatedName.Should().NotBe(originalName, "deletion must target the currently registered URL, not the static MessagingEndpoint");
+        updatedName.Should().Be("w3jv62pr-3979-inc1-devtunnels-ms-e412c0fa");
+    }
+
     // GetEndpointNameFromHost tests
 
     [Fact]

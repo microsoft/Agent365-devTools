@@ -1936,6 +1936,18 @@ internal static class BlueprintSubcommand
             logger.LogInformation("No existing endpoint found. Proceeding with registration.");
         }
 
+        // Step 1.5: Pre-create cleanup of the target endpoint name.
+        // If a previous --update-endpoint failed during the create step, Azure may have
+        // partially provisioned the new endpoint and left it in a bad state that blocks
+        // subsequent creates with InternalServerError. Delete it now to ensure a clean slate.
+        if (!setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.Location))
+        {
+            var targetEndpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, setupConfig.AgentBlueprintId);
+            var targetLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
+            logger.LogInformation("Removing target endpoint '{EndpointName}' to ensure a clean state before registration.", targetEndpointName);
+            await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, targetLocation, setupConfig.AgentBlueprintId);
+        }
+
         // Step 2: Register new endpoint with the provided URL
         logger.LogInformation("");
         logger.LogInformation("Registering new messaging endpoint...");
