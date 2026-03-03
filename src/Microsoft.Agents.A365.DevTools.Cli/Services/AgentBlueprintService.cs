@@ -164,74 +164,68 @@ public class AgentBlueprintService
 
     /// <summary>
     /// Queries Entra ID for all agent identity service principals linked to the given blueprint.
-    /// Returns an empty list if the query fails or no instances are found.
+    /// Returns an empty list when no instances are found.
+    /// Throws if the query fails so callers can distinguish a true "no instances" result from a query error.
     /// </summary>
     /// <param name="tenantId">The tenant ID for authentication.</param>
     /// <param name="blueprintId">The blueprint application ID or object ID.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>List of agent instances linked to the blueprint.</returns>
+    /// <exception cref="Exception">Thrown when the Graph query fails.</exception>
     public virtual async Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAsync(
         string tenantId,
         string blueprintId,
         CancellationToken cancellationToken = default)
     {
-        try
+        var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+        var encodedId = Uri.EscapeDataString(blueprintId);
+
+        // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers
+        var spItems = await FetchAllPagesAsync(
+            tenantId,
+            $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,displayName",
+            requiredScopes,
+            cancellationToken);
+
+        var userItems = await FetchAllPagesAsync(
+            tenantId,
+            $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,identityParentId",
+            requiredScopes,
+            cancellationToken);
+        // Build lookup: identityParentId (SP object ID) -> user object ID
+        var userBySpId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var user in userItems)
         {
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
-            var encodedId = Uri.EscapeDataString(blueprintId);
-
-            // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers
-            var spItems = await FetchAllPagesAsync(
-                tenantId,
-                $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,displayName",
-                requiredScopes,
-                cancellationToken);
-
-            var userItems = await FetchAllPagesAsync(
-                tenantId,
-                $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,identityParentId",
-                requiredScopes,
-                cancellationToken);
-            // Build lookup: identityParentId (SP object ID) -> user object ID
-            var userBySpId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var user in userItems)
+            var parentId = user.TryGetProperty("identityParentId", out var p) ? p.GetString() : null;
+            var userId = user.TryGetProperty("id", out var uid) ? uid.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(parentId) && !string.IsNullOrWhiteSpace(userId))
             {
-                var parentId = user.TryGetProperty("identityParentId", out var p) ? p.GetString() : null;
-                var userId = user.TryGetProperty("id", out var uid) ? uid.GetString() : null;
-                if (!string.IsNullOrWhiteSpace(parentId) && !string.IsNullOrWhiteSpace(userId))
-                {
-                    userBySpId[parentId] = userId;
-                }
+                userBySpId[parentId] = userId;
+            }
+        }
+
+        // Correlate SPs with their agent users
+        var results = new List<AgentInstanceInfo>();
+        foreach (var item in spItems)
+        {
+            var spId = item.TryGetProperty("id", out var id) ? id.GetString() : null;
+            if (string.IsNullOrWhiteSpace(spId))
+            {
+                continue;
             }
 
-            // Correlate SPs with their agent users
-            var results = new List<AgentInstanceInfo>();
-            foreach (var item in spItems)
+            var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
+            userBySpId.TryGetValue(spId, out var agentUserId);
+
+            results.Add(new AgentInstanceInfo
             {
-                var spId = item.TryGetProperty("id", out var id) ? id.GetString() : null;
-                if (string.IsNullOrWhiteSpace(spId))
-                {
-                    continue;
-                }
-
-                var displayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
-                userBySpId.TryGetValue(spId, out var agentUserId);
-
-                results.Add(new AgentInstanceInfo
-                {
-                    IdentitySpId = spId,
-                    DisplayName = displayName,
-                    AgentUserId = string.IsNullOrWhiteSpace(agentUserId) ? null : agentUserId
-                });
-            }
-
-            return results;
+                IdentitySpId = spId,
+                DisplayName = displayName,
+                AgentUserId = string.IsNullOrWhiteSpace(agentUserId) ? null : agentUserId
+            });
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception querying agent instances for blueprint {BlueprintId}", blueprintId);
-            return Array.Empty<AgentInstanceInfo>();
-        }
+
+        return results;
     }
 
     /// <summary>
