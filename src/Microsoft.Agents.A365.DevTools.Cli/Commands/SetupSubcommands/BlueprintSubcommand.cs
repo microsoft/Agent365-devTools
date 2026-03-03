@@ -197,7 +197,8 @@ internal static class BlueprintSubcommand
                         logger: logger,
                         configService: configService,
                         botConfigurator: botConfigurator,
-                        platformDetector: platformDetector);
+                        platformDetector: platformDetector,
+                        correlationId: correlationId);
                 }
                 catch (Agent365Exception ex)
                 {
@@ -1859,13 +1860,15 @@ internal static class BlueprintSubcommand
     /// <param name="configService">Configuration service</param>
     /// <param name="botConfigurator">Bot configurator service</param>
     /// <param name="platformDetector">Platform detector service</param>
+    /// <param name="correlationId">Optional correlation ID for tracing</param>
     public static async Task UpdateEndpointAsync(
         string configPath,
         string newEndpointUrl,
         ILogger logger,
         IConfigService configService,
         IBotConfigurator botConfigurator,
-        PlatformDetector platformDetector)
+        PlatformDetector platformDetector,
+        string? correlationId = null)
     {
         var setupConfig = await configService.LoadAsync(configPath);
 
@@ -1925,7 +1928,8 @@ internal static class BlueprintSubcommand
             var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
                 endpointName,
                 normalizedLocation,
-                setupConfig.AgentBlueprintId);
+                setupConfig.AgentBlueprintId,
+                correlationId: correlationId);
 
             if (!deleted)
             {
@@ -1948,7 +1952,7 @@ internal static class BlueprintSubcommand
         {
             var targetEndpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, setupConfig.AgentBlueprintId);
             logger.LogInformation("Removing target endpoint '{EndpointName}' (derived from {Url}) to ensure a clean state before registration.", targetEndpointName, newEndpointUrl);
-            var preCleanupDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, normalizedLocation, setupConfig.AgentBlueprintId);
+            var preCleanupDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, normalizedLocation, setupConfig.AgentBlueprintId, correlationId: correlationId);
             if (!preCleanupDeleted)
             {
                 // Not fatal — proceed and let Step 2 surface the error if the partially-provisioned
@@ -1962,7 +1966,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Registering new messaging endpoint...");
 
         var (endpointRegistered, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator, newEndpointUrl);
+            setupConfig, logger, botConfigurator, newEndpointUrl, correlationId: correlationId);
 
         if (!endpointRegistered)
         {

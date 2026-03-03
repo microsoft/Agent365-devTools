@@ -40,17 +40,18 @@ public class CleanupCommand
         cleanupCommand.AddOption(configOption);
         cleanupCommand.AddOption(verboseOption);
 
-        // Generate correlation ID at workflow entry point
-        var correlationId = HttpClientFactory.GenerateCorrelationId();
-
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (configFile, verbose) =>
         {
+            // Generate correlation ID at workflow entry point
+            var correlationId = HttpClientFactory.GenerateCorrelationId();
+            logger.LogInformation("Starting cleanup (CorrelationId: {CorrelationId})", correlationId);
+            
             await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, correlationId: correlationId);
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, federatedCredentialService, correlationId: correlationId));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, federatedCredentialService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -63,8 +64,7 @@ public class CleanupCommand
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
-        FederatedCredentialService federatedCredentialService,
-        string? correlationId = null)
+        FederatedCredentialService federatedCredentialService)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -91,6 +91,10 @@ public class CleanupCommand
         {
             try
             {
+                // Generate correlation ID at workflow entry point
+                var correlationId = HttpClientFactory.GenerateCorrelationId();
+                logger.LogInformation("Starting blueprint cleanup (CorrelationId: {CorrelationId})", correlationId);
+                
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
                 
