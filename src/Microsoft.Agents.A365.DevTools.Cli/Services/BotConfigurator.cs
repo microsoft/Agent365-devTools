@@ -293,7 +293,7 @@ public class BotConfigurator : IBotConfigurator
                 _logger.LogInformation("   AppId: {AppId}", agentBlueprintId);
                 _logger.LogInformation("   TenantId: {TenantId}", tenantId);
                 _logger.LogInformation("   Location: {Location}", normalizedLocation);
-                _logger.LogInformation("   Environment: {Environment}", EndpointHelper.GetDeploymentEnvironment(_config.Environment));
+                _logger.LogInformation("   Environment: {Environment}", EndpointHelper.GetDeploymentEnvironment(config.Environment));
 
                 using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
                 request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
