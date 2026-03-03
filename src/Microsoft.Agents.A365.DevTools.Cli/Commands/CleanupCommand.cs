@@ -121,12 +121,12 @@ public class CleanupCommand
 
                 // Query for agent instances linked to this blueprint before showing preview
                 logger.LogInformation("Querying for agent instances linked to blueprint...");
-                List<AgentInstance> instances;
+                List<AgentInstanceInfo> instances;
                 try
                 {
                     instances = (await agentBlueprintService.GetAgentInstancesForBlueprintAsync(
                         config.TenantId,
-                        config.AgentBlueprintId))?.ToList() ?? new List<AgentInstance>();
+                        config.AgentBlueprintId))?.ToList() ?? new List<AgentInstanceInfo>();
                 }
                 catch (Exception ex)
                 {
