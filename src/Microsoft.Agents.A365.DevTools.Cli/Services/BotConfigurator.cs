@@ -206,8 +206,8 @@ public class BotConfigurator : IBotConfigurator
         string? correlationId = null)
     {
         _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
-        _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
-        _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
+        _logger.LogInformation("   Endpoint Name: {EndpointName}", endpointName);
+        _logger.LogInformation("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
         if (string.IsNullOrWhiteSpace(location))
         {
@@ -288,6 +288,12 @@ public class BotConfigurator : IBotConfigurator
 
                 // Call the endpoint
                 _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
+                _logger.LogInformation("Delete request payload:");
+                _logger.LogInformation("   AzureBotServiceInstanceName: {Name}", endpointName);
+                _logger.LogInformation("   AppId: {AppId}", agentBlueprintId);
+                _logger.LogInformation("   TenantId: {TenantId}", tenantId);
+                _logger.LogInformation("   Location: {Location}", normalizedLocation);
+                _logger.LogInformation("   Environment: {Environment}", EndpointHelper.GetDeploymentEnvironment(_config.Environment));
 
                 using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
                 request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");

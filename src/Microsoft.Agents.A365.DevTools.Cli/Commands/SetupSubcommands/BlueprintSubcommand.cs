@@ -1947,7 +1947,7 @@ internal static class BlueprintSubcommand
         if (!setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.Location))
         {
             var targetEndpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, setupConfig.AgentBlueprintId);
-            logger.LogInformation("Removing target endpoint '{EndpointName}' to ensure a clean state before registration.", targetEndpointName);
+            logger.LogInformation("Removing target endpoint '{EndpointName}' (derived from {Url}) to ensure a clean state before registration.", targetEndpointName, newEndpointUrl);
             var preCleanupDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, normalizedLocation, setupConfig.AgentBlueprintId);
             if (!preCleanupDeleted)
             {
