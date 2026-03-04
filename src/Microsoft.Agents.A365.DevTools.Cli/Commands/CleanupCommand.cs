@@ -121,9 +121,18 @@ public class CleanupCommand
 
                 // Query for agent instances linked to this blueprint before showing preview
                 logger.LogInformation("Querying for agent instances linked to blueprint...");
-                var instances = await agentBlueprintService.GetAgentInstancesForBlueprintAsync(
-                    config.TenantId,
-                    config.AgentBlueprintId);
+                List<AgentInstanceInfo> instances;
+                try
+                {
+                    instances = (await agentBlueprintService.GetAgentInstancesForBlueprintAsync(
+                        config.TenantId,
+                        config.AgentBlueprintId))?.ToList() ?? new List<AgentInstanceInfo>();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to query agent instances for blueprint {BlueprintId}. Aborting cleanup.", config.AgentBlueprintId);
+                    return;
+                }
 
                 // Show preview
                 logger.LogInformation("");

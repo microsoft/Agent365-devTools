@@ -381,6 +381,22 @@ public class AgentBlueprintServiceTests
     }
 
     [Fact]
+    public async Task GetAgentInstancesForBlueprintAsync_Throws_WhenGraphQueryFails()
+    {
+        // Arrange
+        var (service, _) = CreateServiceWithFakeHandler();
+
+        // Override token provider to throw so the Graph call fails
+        _mockTokenProvider.GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
+
+        // Act & Assert - exception must propagate so callers can abort rather than proceeding with 0 instances
+        await service.Invoking(s => s.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id"))
+            .Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
     public async Task DeleteAgentUserAsync_ReturnsTrue_OnSuccess()
     {
         // Arrange
