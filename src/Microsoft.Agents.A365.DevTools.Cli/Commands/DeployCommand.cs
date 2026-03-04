@@ -414,8 +414,9 @@ public class DeployCommand
 
         var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
 
-        // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation
-        var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
+        // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation.
+        // Use RequiredPermissionGrantScopes so all callers share the same PS token cache key.
+        var requiredPermissions = AuthenticationConstants.RequiredPermissionGrantScopes;
 
         var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
             config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);

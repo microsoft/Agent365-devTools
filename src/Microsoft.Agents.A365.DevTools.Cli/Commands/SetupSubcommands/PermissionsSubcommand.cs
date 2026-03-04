@@ -508,7 +508,10 @@ internal static class PermissionsSubcommand
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };
 
-        var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
+        // Must match RequiredPermissionGrantScopes exactly so the PowerShell token acquired
+        // for inheritable permissions is reused (same cache key) rather than triggering
+        // a second Connect-MgGraph prompt.
+        var requiredPermissions = AuthenticationConstants.RequiredPermissionGrantScopes;
 
         List<(string ResourceAppId, List<string> Scopes)> currentPermissions;
         try

@@ -3,6 +3,7 @@
 
 using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Xunit;
@@ -43,7 +44,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var configPath = Path.Combine(_testDirectory, "nonexistent.json");
 
         // Act & Assert
-        await Assert.ThrowsAsync<FileNotFoundException>(
+        await Assert.ThrowsAsync<ConfigFileNotFoundException>(
             () => _service.LoadAsync(configPath));
     }
 
