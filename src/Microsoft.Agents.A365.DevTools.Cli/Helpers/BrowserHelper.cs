@@ -14,7 +14,9 @@ public static class BrowserHelper
 {
     /// <summary>
     /// Opens a URL in the system's default browser in a cross-platform way.
-    /// Non-fatal: logs a warning and prints the URL if the browser cannot be launched.
+    /// Non-fatal: if the browser cannot be launched, logs a warning via <paramref name="logger"/>
+    /// when provided, or writes to <see cref="Console.Error"/> when logger is null.
+    /// The fallback URL is always emitted so the user can open it manually.
     /// </summary>
     /// <param name="url">The URL to open.</param>
     /// <param name="logger">Optional logger for diagnostic messages.</param>

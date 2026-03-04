@@ -224,7 +224,9 @@ internal static class BlueprintSubcommand
             // Run all requirements checks: system checks (PowerShell modules, Frontier Preview)
             // and config checks (Location, ClientApp — includes isFallbackPublicClient auto-fix
             // required for device code auth on macOS/Linux/WSL).
-            if (!skipRequirements)
+            // Skip when dryRun is true: ClientAppRequirementCheck can mutate the app registration
+            // (e.g., set isFallbackPublicClient), which violates dry-run semantics.
+            if (!skipRequirements && !dryRun)
             {
                 try
                 {
