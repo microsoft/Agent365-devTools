@@ -341,7 +341,14 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             return null;
         }
 
-        var token = result.StandardOutput?.Trim();
+        // The script ends with `$token`, which outputs the JWT as the last line.
+        // Connect-MgGraph may also write informational messages (e.g. device code prompt)
+        // to stdout in non-interactive environments. Extract only the last non-empty line
+        // so those messages do not contaminate the token.
+        var token = result.StandardOutput?
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Trim())
+            .LastOrDefault(l => !string.IsNullOrWhiteSpace(l));
 
         if (string.IsNullOrWhiteSpace(token))
         {

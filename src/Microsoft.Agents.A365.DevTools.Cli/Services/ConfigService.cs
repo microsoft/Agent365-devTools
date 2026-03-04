@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -241,7 +242,7 @@ public class ConfigService : IConfigService
         if (!File.Exists(resolvedConfigPath))
         {
             _logger?.LogError("Static configuration file not found: {ConfigPath}", resolvedConfigPath);
-            throw new FileNotFoundException($"{ErrorMessages.ConfigFileNotFound} (Path: {resolvedConfigPath})");
+            throw new ConfigFileNotFoundException(resolvedConfigPath);
         }
 
         // Load static configuration (required)
