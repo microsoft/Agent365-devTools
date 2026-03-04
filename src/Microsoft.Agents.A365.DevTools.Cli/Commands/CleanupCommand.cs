@@ -253,9 +253,21 @@ public class CleanupCommand
 
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
-                // Handle endpoint deletion if needed using shared helper
-                if (!await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId))
+                bool endpointDeleted = false;
+                try
+                {
+                    endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
+                }
+                finally
+                {
+                    // Always emit orphan summary before returning, regardless of endpoint deletion outcome
+                    PrintOrphanSummary(logger, failedResources);
+                }
+
+                if (!endpointDeleted)
+                {
                     return;
+                }
 
                 // Clear configuration after successful blueprint deletion
                 logger.LogInformation("");
@@ -268,8 +280,6 @@ public class CleanupCommand
                 await configService.SaveStateAsync(config);
                 logger.LogInformation("Local configuration cleared");
 
-                // Emit orphan summary if any instance deletions failed (PrintOrphanSummary returns early if none)
-                PrintOrphanSummary(logger, failedResources);
                 if (!HasOrphanedResources(failedResources))
                 {
                     logger.LogInformation("");
