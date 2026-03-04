@@ -157,22 +157,44 @@ internal static class RequirementsSubcommand
     }
 
     /// <summary>
-    /// Gets all available requirement checks
+    /// Gets all available requirement checks.
+    /// Derived from the union of system and config checks to keep a single source of truth.
     /// </summary>
     public static List<IRequirementCheck> GetRequirementChecks(IClientAppValidator clientAppValidator)
+    {
+        return GetSystemRequirementChecks()
+            .Concat(GetConfigRequirementChecks(clientAppValidator))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Gets system-level requirement checks that do not depend on configuration.
+    /// These can be run before the configuration wizard to surface blockers early.
+    /// </summary>
+    public static List<IRequirementCheck> GetSystemRequirementChecks()
     {
         return new List<IRequirementCheck>
         {
             // Frontier Preview Program enrollment check
             new FrontierPreviewRequirementCheck(),
 
-            // Client app configuration validation
-            new ClientAppRequirementCheck(clientAppValidator),
-
             // PowerShell modules required for Microsoft Graph operations
             new PowerShellModulesRequirementCheck(),
+        };
+    }
 
-            // Additional checks can be added here
+    /// <summary>
+    /// Gets configuration-dependent requirement checks that must run after the configuration is loaded.
+    /// </summary>
+    public static List<IRequirementCheck> GetConfigRequirementChecks(IClientAppValidator clientAppValidator)
+    {
+        return new List<IRequirementCheck>
+        {
+            // Location configuration — required for endpoint registration
+            new LocationRequirementCheck(),
+
+            // Client app configuration validation
+            new ClientAppRequirementCheck(clientAppValidator),
         };
     }
 }

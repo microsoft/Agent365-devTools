@@ -51,6 +51,14 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogDebug("   Messaging Endpoint: {Endpoint}", messagingEndpoint);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return EndpointRegistrationResult.Failed;
+        }
+
         try
         {
             // Get subscription info for tenant ID
@@ -198,8 +206,16 @@ public class BotConfigurator : IBotConfigurator
         string? correlationId = null)
     {
         _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
-        _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
-        _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
+        _logger.LogInformation("   Endpoint Name: {EndpointName}", endpointName);
+        _logger.LogInformation("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
+
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return false;
+        }
 
         try
         {
@@ -272,6 +288,12 @@ public class BotConfigurator : IBotConfigurator
 
                 // Call the endpoint
                 _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
+                _logger.LogInformation("Delete request payload:");
+                _logger.LogInformation("   AzureBotServiceInstanceName: {Name}", endpointName);
+                _logger.LogInformation("   AppId: {AppId}", agentBlueprintId);
+                _logger.LogInformation("   TenantId: {TenantId}", tenantId);
+                _logger.LogInformation("   Location: {Location}", normalizedLocation);
+                _logger.LogInformation("   Environment: {Environment}", EndpointHelper.GetDeploymentEnvironment(config.Environment));
 
                 using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
                 request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");

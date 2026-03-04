@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Azure.Core;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using NSubstitute;
@@ -11,9 +13,13 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+[CollectionDefinition("AuthTests", DisableParallelization = true)]
+public class AuthTestCollection { }
+
 /// <summary>
 /// Unit tests for AuthenticationService
 /// </summary>
+[Collection("AuthTests")]
 public class AuthenticationServiceTests : IDisposable
 {
     private readonly ILogger<AuthenticationService> _mockLogger;
@@ -737,4 +743,181 @@ public class AuthenticationServiceTests : IDisposable
     // Note: Testing GetAccessTokenAsync requires interactive browser authentication
     // which is not suitable for automated unit tests. This should be tested with integration tests
     // or manual testing.
+
+    #region Browser Auth Platform Fallback Tests
+
+    /// <summary>
+    /// A TokenCredential that always throws the provided exception.
+    /// Used to simulate MSAL browser auth failures without launching a browser.
+    /// </summary>
+    private sealed class ThrowingTokenCredential : TokenCredential
+    {
+        private readonly Exception _exception;
+
+        public ThrowingTokenCredential(Exception exception) => _exception = exception;
+
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+            => throw _exception;
+
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+            => throw _exception;
+    }
+
+    /// <summary>
+    /// A TokenCredential that returns a fixed token without any interactive prompt.
+    /// Used to simulate a successful device code flow in tests.
+    /// </summary>
+    private sealed class StubTokenCredential : TokenCredential
+    {
+        private readonly AccessToken _token;
+
+        public StubTokenCredential(string token, DateTimeOffset expiresOn)
+            => _token = new AccessToken(token, expiresOn);
+
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+            => _token;
+
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+            => new(_token);
+    }
+
+    /// <summary>
+    /// Subclass of AuthenticationService that overrides credential factory methods
+    /// to inject test doubles without touching the file system or launching auth UIs.
+    /// </summary>
+    private sealed class TestableAuthenticationService : AuthenticationService
+    {
+        private readonly TokenCredential _browserCredential;
+        private readonly TokenCredential _deviceCodeCredential;
+
+        public TestableAuthenticationService(
+            ILogger<AuthenticationService> logger,
+            TokenCredential browserCredential,
+            TokenCredential deviceCodeCredential)
+            : base(logger)
+        {
+            _browserCredential = browserCredential;
+            _deviceCodeCredential = deviceCodeCredential;
+        }
+
+        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId)
+            => _browserCredential;
+
+        protected override TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
+            => _deviceCodeCredential;
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenBrowserThrowsPlatformNotSupported_FallsBackToDeviceCode()
+    {
+        // Arrange — browser credential throws PlatformNotSupportedException (macOS 15.x MSAL behavior)
+        var inner = new PlatformNotSupportedException("macOS 15.3.1");
+        var browserCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException("Browser authentication is not supported on this platform (macOS 15.3.1)", inner));
+
+        var expectedToken = "device-code-fallback-token";
+        var deviceCodeCredential = new StubTokenCredential(expectedToken, DateTimeOffset.UtcNow.AddHours(1));
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
+
+        try
+        {
+            // Act
+            var result = await sut.GetAccessTokenAsync(
+                "https://agent365.svc.cloud.microsoft",
+                forceRefresh: true,
+                useInteractiveBrowser: true);
+
+            // Assert — device code fallback token returned
+            result.Should().Be(expectedToken);
+        }
+        finally
+        {
+            sut.ClearCache();
+        }
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenBrowserThrowsPlatformNotSupported_LogsWarning()
+    {
+        // Arrange
+        var inner = new PlatformNotSupportedException("macOS 15.3.1");
+        var browserCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException("Browser authentication is not supported on this platform (macOS 15.3.1)", inner));
+
+        var deviceCodeCredential = new StubTokenCredential("token", DateTimeOffset.UtcNow.AddHours(1));
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
+
+        try
+        {
+            // Act
+            await sut.GetAccessTokenAsync(
+                "https://agent365.svc.cloud.microsoft",
+                forceRefresh: true,
+                useInteractiveBrowser: true);
+
+            // Assert — warning logged for platform fallback
+            logger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Browser authentication is not supported")),
+                Arg.Any<Exception?>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            sut.ClearCache();
+        }
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenBrowserThrowsPlatformNotSupportedAndDeviceCodeFails_ThrowsAzureAuthenticationException()
+    {
+        // Arrange — both browser and device code fail
+        var inner = new PlatformNotSupportedException("macOS 15.3.1");
+        var browserCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException("Browser auth failed", inner));
+
+        var deviceCodeCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException("Device code auth also failed"));
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
+
+        // Act
+        Func<Task> act = async () => await sut.GetAccessTokenAsync(
+            "https://agent365.svc.cloud.microsoft",
+            forceRefresh: true,
+            useInteractiveBrowser: true);
+
+        // Assert — outer error handler wraps as AzureAuthenticationException
+        await act.Should().ThrowAsync<AzureAuthenticationException>();
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenBrowserThrowsNonPlatformException_DoesNotFallBack()
+    {
+        // Arrange — browser fails with a non-platform exception (e.g., user cancelled)
+        var browserCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException("User cancelled authentication"));
+
+        var deviceCodeCredential = new StubTokenCredential("should-not-be-used", DateTimeOffset.UtcNow.AddHours(1));
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
+
+        // Act
+        Func<Task> act = async () => await sut.GetAccessTokenAsync(
+            "https://agent365.svc.cloud.microsoft",
+            forceRefresh: true,
+            useInteractiveBrowser: true);
+
+        // Assert — no fallback; error propagates as AzureAuthenticationException
+        await act.Should().ThrowAsync<AzureAuthenticationException>();
+    }
+
+    #endregion
 }

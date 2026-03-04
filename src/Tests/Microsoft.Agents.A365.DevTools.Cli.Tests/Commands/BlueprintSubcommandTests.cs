@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using System.CommandLine;
@@ -276,7 +277,8 @@ public class BlueprintSubcommandTests
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required for validation
             SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint"
+            AgentBlueprintDisplayName = "Test Blueprint",
+            Location = "eastus" // Required for endpoint registration; location guard runs before Azure validation
         };
 
         var configFile = new FileInfo("test-config.json");
@@ -474,7 +476,8 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint"
+            AgentBlueprintDisplayName = "Test Blueprint",
+            Location = "eastus" // Required for endpoint registration; location guard runs before the header is logged
         };
 
         var configFile = new FileInfo("test-config.json");
@@ -1461,7 +1464,7 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public async Task UpdateEndpointAsync_WithNoExistingEndpoint_ShouldSkipDeleteAndRegister()
+    public async Task UpdateEndpointAsync_WithNoExistingOldEndpoint_ShouldOnlyCallPreCreateCleanup()
     {
         // Arrange - Config without BotName (no existing endpoint)
         var config = new Agent365Config
@@ -1489,6 +1492,10 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
+            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(true)); // NotFound = success for pre-create cleanup
+
             _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
                 .Returns(EndpointRegistrationResult.Created);
@@ -1502,14 +1509,100 @@ public class BlueprintSubcommandTests
                 _mockBotConfigurator,
                 _mockPlatformDetector);
 
-            // Assert - Should NOT call delete (no existing endpoint)
-            await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string?>());
+            // Assert - Step 1 (delete old) is skipped — no existing endpoint to delete.
+            // Step 1.5 (pre-create cleanup) still calls delete exactly once with the TARGET endpoint name,
+            // so there is exactly one delete call total.
+            var expectedTargetName = EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, config.AgentBlueprintId);
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                expectedTargetName,
+                "eastus",
+                config.AgentBlueprintId);
 
             // Should still register the new endpoint
+            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                newEndpointUrl,
+                Arg.Any<string>(),
+                config.AgentBlueprintId);
+        }
+        finally
+        {
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+            if (File.Exists(configPath)) File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateEndpointAsync_WithExistingOldEndpointAndPartiallyProvisionedTarget_ShouldCallDeleteTwice()
+    {
+        // Regression: when a prior --update-endpoint failed during the create step, Azure may have
+        // partially provisioned the new endpoint. On the next run, BOTH Step 1 (delete old) and
+        // Step 1.5 (pre-create cleanup of target) must fire, targeting different endpoint names.
+        var currentlyRegisteredUrl = "https://currently-registered-3979.inc1.devtunnels.ms/api/messages";
+        var newEndpointUrl         = "https://newtunnel-3979.inc1.devtunnels.ms/api/messages";
+
+        var config = new Agent365Config
+        {
+            TenantId             = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId     = "blueprint-123",
+            MessagingEndpoint    = currentlyRegisteredUrl, // static config (original tunnel)
+            BotMessagingEndpoint = currentlyRegisteredUrl, // generated config (last successful registration)
+            Location             = "eastus",
+            NeedDeployment       = false,
+            DeploymentProjectPath = Path.GetTempPath()
+        };
+
+        var testId        = Guid.NewGuid().ToString();
+        var configPath    = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+
+        await File.WriteAllTextAsync(generatedPath, "{}");
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+
+            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(true));
+
+            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+                .Returns(EndpointRegistrationResult.Created);
+
+            // Act
+            await BlueprintSubcommand.UpdateEndpointAsync(
+                configPath,
+                newEndpointUrl,
+                _mockLogger,
+                _mockConfigService,
+                _mockBotConfigurator,
+                _mockPlatformDetector);
+
+            // Assert — exactly two delete calls with distinct endpoint names
+            var oldEndpointName    = EndpointHelper.GetEndpointNameFromUrl(currentlyRegisteredUrl, config.AgentBlueprintId);
+            var targetEndpointName = EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, config.AgentBlueprintId);
+
+            oldEndpointName.Should().NotBe(targetEndpointName, "Step 1 and Step 1.5 must target different endpoints");
+
+            // Step 1: delete the currently-registered (old) endpoint
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                oldEndpointName, "eastus", config.AgentBlueprintId);
+
+            // Step 1.5: pre-create cleanup of the partially-provisioned target endpoint
+            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
+                targetEndpointName, "eastus", config.AgentBlueprintId);
+
+            // Total: exactly two delete calls
+            await _mockBotConfigurator.Received(2).DeleteEndpointWithAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+
+            // Step 2: register the new endpoint
             await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
@@ -1631,6 +1724,143 @@ public class BlueprintSubcommandTests
         // Assert - Verify CustomClientAppId was NOT set
         _mockGraphApiService.CustomClientAppId.Should().BeNullOrEmpty(
             "CustomClientAppId should not be set when config has whitespace-only ClientAppId");
+    }
+
+    #endregion
+
+    #region Issue-279 Regression Tests — Client Secret Creation
+
+    // NOTE: Retry logic tests (sponsors-only fallback, owners fallback, all-fallbacks-exhausted,
+    // non-400 on retry 1) require HTTP call mocking. They are covered by integration tests.
+    // The tests below cover the observable surface: catch block logging and MSAL token path.
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_WhenTokenAcquisitionFails_ShouldLogPermissionsGuidance()
+    {
+        // Arrange — empty TenantId/ClientAppId causes AcquireMsalGraphTokenAsync to return null,
+        // which throws InvalidOperationException inside the try block, triggering the catch block.
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act — should not throw; the catch block handles it
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — all required permission guidance must be logged
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Application Administrator")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Cloud Application Administrator")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_WhenTokenAcquisitionFails_ShouldLogConfigFieldGuidance()
+    {
+        // Arrange
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — agentBlueprintClientSecretProtected: false must be mentioned
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("agentBlueprintClientSecretProtected")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_WhenTokenAcquisitionFails_ShouldLogReRunInstruction()
+    {
+        // Arrange
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — re-run instruction must be logged
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("a365 setup all")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecretAsync_ShouldNotCallAzureCliGraphToken()
+    {
+        // Regression test for Issue #279 bug #2:
+        // CreateBlueprintClientSecretAsync must NOT call GetGraphAccessTokenAsync (Azure CLI token).
+        // It must use AcquireMsalGraphTokenAsync (MSAL token) instead.
+        var setupConfig = new Agent365Config
+        {
+            TenantId = string.Empty,
+            ClientAppId = string.Empty,
+        };
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "00000000-0000-0000-0000-000000000001",
+            blueprintAppId: "00000000-0000-0000-0000-000000000002",
+            graphService: _mockGraphApiService,
+            setupConfig: setupConfig,
+            configService: _mockConfigService,
+            logger: _mockLogger);
+
+        // Assert — Azure CLI token path must NOT be taken
+        await _mockGraphApiService.DidNotReceiveWithAnyArgs().GetGraphAccessTokenAsync(default!, default);
     }
 
     #endregion

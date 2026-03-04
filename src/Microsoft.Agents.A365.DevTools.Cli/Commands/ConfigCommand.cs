@@ -24,6 +24,7 @@ public static class ConfigCommand
         // Always add init command - it supports both wizard and direct import (-c option)
         command.AddCommand(CreateInitSubcommand(logger, directory, wizardService, clientAppValidator));
         command.AddCommand(CreateDisplaySubcommand(logger, directory));
+        command.AddCommand(ConfigSubcommands.ConfigPermissionsSubcommand.CreateCommand(logger, directory));
 
         return command;
     }
@@ -33,7 +34,7 @@ public static class ConfigCommand
         var cmd = new Command("init", "Interactive wizard to configure Agent 365 with Azure CLI integration and smart defaults")
         {
             new Option<string?>(new[] { "-c", "--configfile" }, "Path to an existing config file to import"),
-            new Option<bool>(new[] { "--global", "-g" }, "Create config in global directory (AppData) instead of current directory")
+            new Option<bool>(new[] { "--global", "-g" }, "Create config in global directory (AppData) instead of current directory"),
         };
 
         cmd.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>

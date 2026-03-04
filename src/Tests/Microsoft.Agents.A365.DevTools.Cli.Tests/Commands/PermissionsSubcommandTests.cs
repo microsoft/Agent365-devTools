@@ -91,9 +91,10 @@ public class PermissionsSubcommandTests
             _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(3);
+        command.Subcommands.Should().HaveCount(4);
         command.Subcommands.Should().Contain(s => s.Name == "mcp");
         command.Subcommands.Should().Contain(s => s.Name == "bot");
+        command.Subcommands.Should().Contain(s => s.Name == "custom");
         command.Subcommands.Should().Contain(s => s.Name == "copilotstudio");
     }
 
@@ -110,7 +111,7 @@ public class PermissionsSubcommandTests
         // Assert
         command.Should().NotBeNull();
         command.Name.Should().Be("permissions");
-        command.Subcommands.Should().HaveCount(3);
+        command.Subcommands.Should().HaveCount(4);
     }
 
     #endregion
@@ -533,6 +534,80 @@ public class PermissionsSubcommandTests
         botSubcommand.Description.Should().Contain("MCP permissions",
             "MCP permissions should be configured before bot permissions");
     }
+
+    #endregion
+
+    #region ConfigureCustomPermissionsAsync Tests
+
+    [Fact]
+    public async Task ConfigureCustomPermissionsAsync_WithNoCustomPermissions_SkipsGracefully()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            CustomBlueprintPermissions = null
+        };
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
+            "test-config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            config,
+            false);
+
+        // Assert
+        result.Should().BeTrue("no custom permissions should result in success");
+    }
+
+    [Fact]
+    public async Task ConfigureCustomPermissionsAsync_WithEmptyList_SkipsGracefully()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            CustomBlueprintPermissions = new List<CustomResourcePermission>()
+        };
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
+            "test-config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            config,
+            false);
+
+        // Assert
+        result.Should().BeTrue("empty custom permissions list should result in success");
+    }
+
+    // NOTE: Integration tests for ConfigureCustomPermissionsAsync auto-lookup behavior
+    // are not included as unit tests because they require extensive mocking of
+    // SetupHelpers.EnsureResourcePermissionsAsync (static method) and other services.
+    //
+    // These behaviors should be tested via:
+    // 1. Manual testing: See MANUAL_TEST_COMMANDS.md (Test 6)
+    // 2. Integration tests: See docs/ai-workflows/integration-test-workflow.md (Test 4.5)
+    // 3. Real Azure environment testing
+    //
+    // Expected behaviors documented for integration testing:
+    // - Auto-lookup succeeds and populates ResourceName
+    // - Auto-lookup fails and uses fallback name (Custom-{first8chars})
+    // - Auto-lookup throws exception and uses fallback name
+    // - ResourceName already provided, no lookup performed
+    // - Multiple permissions with mixed lookup results
+    // - Invalid permission validation
+    // - SetupResults tracking for custom permissions
 
     #endregion
 }

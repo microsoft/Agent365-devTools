@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
@@ -128,9 +129,44 @@ internal static class AllSubcommand
 
             try
             {
-                // Load configuration
+                // PHASE 0a: CHECK SYSTEM REQUIREMENTS before loading config (if not skipped)
+                // Runs config-independent checks (PowerShell, Frontier Preview) so blockers
+                // are surfaced before the user is asked to fill in the configuration wizard.
+                if (!skipRequirements)
+                {
+                    logger.LogDebug("Validating system prerequisites...");
+
+                    try
+                    {
+                        var systemResult = await RequirementsSubcommand.RunRequirementChecksAsync(
+                            RequirementsSubcommand.GetSystemRequirementChecks(),
+                            new Agent365Config(),
+                            logger,
+                            category: null,
+                            CancellationToken.None);
+
+                        if (!systemResult)
+                        {
+                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
+                            ExceptionHandler.ExitWithCleanup(1);
+                        }
+                    }
+                    catch (Exception reqEx)
+                    {
+                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
+                        logger.LogError("Setup cannot proceed because system requirement validation failed unexpectedly.");
+                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                        ExceptionHandler.ExitWithCleanup(1);
+                    }
+                }
+                else
+                {
+                    logger.LogDebug("Skipping requirements validation (--skip-requirements flag used)");
+                }
+
+                // PHASE 0b: Load configuration (may trigger interactive wizard)
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                
+
                 // Configure GraphApiService with custom client app ID if available
                 // This ensures inheritable permissions operations use the validated custom app
                 if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
@@ -138,38 +174,33 @@ internal static class AllSubcommand
                     graphApiService.CustomClientAppId = setupConfig.ClientAppId;
                 }
 
-                // PHASE 0: CHECK REQUIREMENTS (if not skipped)
+                // PHASE 0c: CHECK CONFIG-DEPENDENT REQUIREMENTS after the wizard
                 if (!skipRequirements)
                 {
-                    logger.LogDebug("Validating system prerequisites...");
+                    logger.LogDebug("Validating configuration prerequisites...");
 
                     try
                     {
-                        var result = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
+                        var configResult = await RequirementsSubcommand.RunRequirementChecksAsync(
+                            RequirementsSubcommand.GetConfigRequirementChecks(clientAppValidator),
                             setupConfig,
                             logger,
                             category: null,
                             CancellationToken.None);
 
-                        if (!result)
+                        if (!configResult)
                         {
-                            logger.LogError("");
                             logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
                             ExceptionHandler.ExitWithCleanup(1);
-                            return;
                         }
                     }
                     catch (Exception reqEx)
                     {
-                        logger.LogWarning(reqEx, "Requirements check encountered an error: {Message}", reqEx.Message);
-                        logger.LogWarning("Continuing with setup, but some prerequisites may be missing.");
-                        logger.LogWarning("");
+                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
+                        logger.LogError("Setup cannot proceed because configuration requirement validation failed unexpectedly.");
+                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                        ExceptionHandler.ExitWithCleanup(1);
                     }
-                }
-                else
-                {
-                    logger.LogDebug("Skipping requirements validation (--skip-requirements flag used)");
                 }
 
                 // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
@@ -219,17 +250,14 @@ internal static class AllSubcommand
                 // Stop if any validation failed
                 if (allErrors.Count > 0)
                 {
-                    logger.LogError("");
                     logger.LogError("Setup cannot proceed due to validation failures:");
                     foreach (var error in allErrors)
                     {
                         logger.LogError("  - {Error}", error);
                     }
-                    logger.LogError("");
                     logger.LogError("Please fix the errors above and try again");
                     setupResults.Errors.AddRange(allErrors);
                     ExceptionHandler.ExitWithCleanup(1);
-                    return;
                 }
 
                 logger.LogDebug("All validations passed. Starting setup execution...");
@@ -418,6 +446,30 @@ internal static class AllSubcommand
                     logger.LogWarning("Bot permissions failed: {Message}. Setup will continue, but Bot API permissions must be configured manually", botPermEx.Message);
                 }
 
+                // Step 5: Reconcile custom blueprint permissions — apply desired and remove stale entries.
+                // Always run (even when config is empty) to clean up any permissions no longer in config.
+                try
+                {
+                    bool customPermissionsSetup = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
+                        config.FullName,
+                        logger,
+                        configService,
+                        executor,
+                        graphApiService,
+                        blueprintService,
+                        setupConfig,
+                        true,
+                        setupResults);
+
+                    setupResults.CustomPermissionsConfigured = customPermissionsSetup;
+                }
+                catch (Exception customPermEx)
+                {
+                    setupResults.CustomPermissionsConfigured = false;
+                    setupResults.Errors.Add($"Custom Blueprint Permissions: {customPermEx.Message}");
+                    logger.LogWarning("Custom permissions failed: {Message}. Setup will continue, but custom permissions must be configured manually", customPermEx.Message);
+                }
+
                 // Display setup summary
                 logger.LogInformation("");
                 SetupHelpers.DisplaySetupSummary(setupResults, logger);
@@ -427,6 +479,11 @@ internal static class AllSubcommand
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
                 Environment.Exit(1);
+            }
+            catch (FileNotFoundException fnfEx)
+            {
+                logger.LogError("Setup failed: {Message}", fnfEx.Message);
+                ExceptionHandler.ExitWithCleanup(1);
             }
             catch (Exception ex)
             {

@@ -166,9 +166,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
         }
         else
         {
-            // External hosting - use resource group location for potential RG creation
-            resourceLocation = resourceGroupLocation ?? existingConfig?.Location ?? ConfigConstants.DefaultAzureLocation;
-            
             messagingEndpoint = PromptForMessagingEndpoint(existingConfig);
             if (string.IsNullOrWhiteSpace(messagingEndpoint))
             {
@@ -176,7 +173,14 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 _logger.LogDebug("Messaging endpoint not provided, configuration cancelled");
                 return null;
             }
-        }            // Step 7: Get manager email (required for agent creation)
+
+            // Location is required for Bot Framework endpoint registration even when hosting externally
+            Console.WriteLine();
+            Console.WriteLine(ErrorMessages.WizardLocationRequiredForExternalHostingNote);
+            resourceLocation = PromptForLocation(existingConfig, resourceGroupLocation, ErrorMessages.WizardLocationPromptForEndpointRegistration);
+        }
+
+            // Step 7: Get manager email (required for agent creation)
             var managerEmail = PromptForManagerEmail(existingConfig, accountInfo);
             if (string.IsNullOrWhiteSpace(managerEmail))
             {
@@ -185,14 +189,18 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 return null;
             }
 
-            // Step 8: Show configuration summary and allow override
+            // Step 8: Optional custom blueprint permissions (before summary so they appear in it)
+            var customPermissions = PromptForCustomBlueprintPermissions(
+                existingConfig?.CustomBlueprintPermissions);
+
+            // Step 9: Show configuration summary and allow override
             Console.WriteLine();
             Console.WriteLine("=================================================================");
             Console.WriteLine(" Configuration Summary");
             Console.WriteLine("=================================================================");
             Console.WriteLine($"Client App ID          : {clientAppId}");
             Console.WriteLine($"Agent Name             : {agentName}");
-            
+
             if (string.IsNullOrWhiteSpace(messagingEndpoint))
             {
                 Console.WriteLine($"Web App Name           : {derivedNames.WebAppName}");
@@ -213,6 +221,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine($"Location               : {resourceLocation}");
             Console.WriteLine($"Subscription           : {accountInfo.Name} ({accountInfo.Id})");
             Console.WriteLine($"Tenant                 : {accountInfo.TenantId}");
+            Console.WriteLine($"Custom Permissions     : {(customPermissions.Count > 0 ? $"{customPermissions.Count} configured" : "None")}");
             Console.WriteLine();
 
             // Step 10: Allow customization of derived names
@@ -252,7 +261,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 ManagerEmail = managerEmail,
                 AgentUserUsageLocation = GetUsageLocationFromAccount(accountInfo),
                 DeploymentProjectPath = deploymentPath,
-                AgentDescription = $"{agentName} - Agent 365 Agent"
+                AgentDescription = $"{agentName} - Agent 365 Agent",
+                CustomBlueprintPermissions = customPermissions.Count > 0 ? customPermissions : null
             };
 
             _logger.LogInformation("Configuration wizard completed successfully");
@@ -319,6 +329,19 @@ public class ConfigurationWizardService : IConfigurationWizardService
     private string PromptForDeploymentPath(Agent365Config? existingConfig)
     {
         var defaultPath = existingConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory;
+
+        Console.WriteLine();
+        Console.WriteLine("=================================================================");
+        Console.WriteLine(" Deployment Project Path");
+        Console.WriteLine("=================================================================");
+        Console.WriteLine("The path to your agent application's source code directory.");
+        Console.WriteLine("This is used to detect your project type (.NET, Node.js, or Python)");
+        Console.WriteLine("and as the source directory for Azure App Service deployment.");
+        Console.WriteLine();
+        Console.WriteLine("  Use '.' if you are already running this command from your project folder.");
+        Console.WriteLine(@"  Example: /home/user/my-agent  or  C:\Projects\my-agent");
+        Console.WriteLine("=================================================================");
+        Console.WriteLine();
 
         var path = PromptWithDefault(
             "Deployment project path",
@@ -502,10 +525,10 @@ public class ConfigurationWizardService : IConfigurationWizardService
         }
     }
 
-    private string PromptForLocation(Agent365Config? existingConfig, string? resourceGroupLocation)
+    private string PromptForLocation(Agent365Config? existingConfig, string? resourceGroupLocation, string header = ErrorMessages.WizardLocationPromptForAppServicePlan)
     {
         Console.WriteLine();
-        Console.WriteLine("Select Azure region for the new App Service Plan:");
+        Console.WriteLine(header);
         Console.WriteLine();
         
         // Use RG location as default if available, otherwise use existing config or default location
@@ -647,24 +670,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
         );
     }
 
-    private string PromptForLocation(Agent365Config? existingConfig, AzureAccountInfo accountInfo)
-    {
-        // Try to get a smart default location
-        var defaultLocation = existingConfig?.Location;
-        
-        if (string.IsNullOrEmpty(defaultLocation))
-        {
-            // Try to get from resource group or common defaults
-            defaultLocation = "westus"; // Conservative default
-        }
-
-        return PromptWithDefault(
-            "Azure location",
-            defaultLocation,
-            input => !string.IsNullOrWhiteSpace(input) ? (true, "") : (false, "Location cannot be empty")
-        );
-    }
-
     private static string GenerateValidWebAppName(string cleanName, string timestamp)
     {
         // Reserve 9 chars for "-webapp-" and 9 for "-endpoint" (total 18), so max cleanName+timestamp is 33
@@ -715,9 +720,97 @@ public class ConfigurationWizardService : IConfigurationWizardService
         };
     }
 
+    private List<CustomResourcePermission> PromptForCustomBlueprintPermissions(
+        List<CustomResourcePermission>? existing)
+    {
+        Console.WriteLine();
+        Console.WriteLine("=== Optional: Custom Blueprint Permissions ===");
+        Console.WriteLine("If your agent needs access to additional external resources");
+        Console.WriteLine("(e.g. Teams presence, OneDrive files, custom APIs) beyond");
+        Console.WriteLine("standard permissions, you can configure them here.");
+        Console.WriteLine("Most agents do not require this.");
+
+        if (existing?.Count > 0)
+        {
+            Console.WriteLine("\nCurrently configured:");
+            foreach (var p in existing)
+            {
+                var name = string.IsNullOrWhiteSpace(p.ResourceName)
+                    ? p.ResourceAppId
+                    : $"{p.ResourceName} ({p.ResourceAppId})";
+                Console.WriteLine($"  - {name}: {string.Join(", ", p.Scopes)}");
+            }
+        }
+
+        Console.Write("\nConfigure custom blueprint permissions? (y/N): ");
+        var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+        if (response != "y" && response != "yes")
+            return existing ?? new List<CustomResourcePermission>();
+
+        var permissions = existing != null
+            ? new List<CustomResourcePermission>(existing)
+            : new List<CustomResourcePermission>();
+
+        while (true)
+        {
+            Console.WriteLine();
+            Console.Write("Resource App ID (GUID) - press Enter when done: ");
+            var resourceAppId = Console.ReadLine()?.Trim();
+            if (string.IsNullOrWhiteSpace(resourceAppId))
+                break;
+
+            if (!Guid.TryParse(resourceAppId, out _))
+            {
+                Console.WriteLine("ERROR: Must be a valid GUID format (e.g. 00000003-0000-0000-c000-000000000000)");
+                continue;
+            }
+
+            // Inner loop: re-prompt scopes only (GUID is already valid)
+            List<string> scopesList;
+            while (true)
+            {
+                Console.Write("Scopes (comma-separated, e.g. Presence.ReadWrite,Files.Read.All): ");
+                var scopesInput = Console.ReadLine()?.Trim();
+                scopesList = scopesInput?
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToList() ?? new List<string>();
+
+                if (scopesList.Count == 0)
+                {
+                    Console.WriteLine("ERROR: At least one scope is required.");
+                    continue;
+                }
+
+                var permission = new CustomResourcePermission
+                {
+                    ResourceAppId = resourceAppId,
+                    ResourceName = null,
+                    Scopes = scopesList
+                };
+
+                var (isValid, errors) = permission.Validate();
+                if (!isValid)
+                {
+                    foreach (var error in errors)
+                        Console.WriteLine($"ERROR: {error}");
+                    continue;
+                }
+
+                break;
+            }
+
+            var added = CustomResourcePermission.AddOrUpdate(permissions, resourceAppId, scopesList);
+            Console.WriteLine(added ? "Permission added." : "Permission updated.");
+        }
+
+        return permissions;
+    }
+
     private string PromptWithDefault(
-        string prompt, 
-        string defaultValue = "", 
+        string prompt,
+        string defaultValue = "",
         Func<string, (bool isValid, string error)>? validator = null)
     {
         // Azure CLI style: "Prompt [default]: "

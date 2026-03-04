@@ -28,6 +28,42 @@ public class BotConfiguratorTests
 
 
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateEndpointWithAgentBlueprintAsync_EmptyLocation_ReturnsFailedWithoutCallingExecutor(string emptyLocation)
+    {
+        // Arrange - no executor setup needed; the guard fires before any async work
+
+        // Act
+        var result = await _configurator.CreateEndpointWithAgentBlueprintAsync(
+            "test-bot", emptyLocation, "https://test.example.com/api/messages", "desc", "blueprint-id");
+
+        // Assert
+        Assert.Equal(EndpointRegistrationResult.Failed, result);
+        await _executor.DidNotReceive().ExecuteAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task DeleteEndpointWithAgentBlueprintAsync_EmptyLocation_ReturnsFalseWithoutCallingExecutor(string emptyLocation)
+    {
+        // Arrange - no executor setup needed; the guard fires before any async work
+
+        // Act
+        var result = await _configurator.DeleteEndpointWithAgentBlueprintAsync(
+            "test-bot", emptyLocation, "blueprint-id");
+
+        // Assert
+        Assert.False(result);
+        await _executor.DidNotReceive().ExecuteAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task CreateEndpointWithAgentBlueprintAsync_IdentityDoesNotExist_ReturnsFalse()
     {

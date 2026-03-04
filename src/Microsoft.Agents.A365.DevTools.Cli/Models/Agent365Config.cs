@@ -4,6 +4,7 @@
 using System.Reflection;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Models;
 
@@ -52,6 +53,32 @@ public class Agent365Config
 
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
         if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
+
+        // Validate custom blueprint permissions
+        if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
+        {
+            for (int i = 0; i < CustomBlueprintPermissions.Count; i++)
+            {
+                var (isValid, permErrors) = CustomBlueprintPermissions[i].Validate();
+                if (!isValid)
+                {
+                    errors.Add($"customBlueprintPermissions[{i}]: {string.Join(", ", permErrors)}");
+                }
+            }
+
+            // Check for duplicate resourceAppIds
+            var duplicates = CustomBlueprintPermissions
+                .Where(p => !string.IsNullOrWhiteSpace(p.ResourceAppId))
+                .GroupBy(p => p.ResourceAppId.ToLowerInvariant())
+                .Where(g => g.Count() > 1)
+                .Select(g => g.Key)
+                .ToList();
+
+            if (duplicates.Any())
+            {
+                errors.Add($"Duplicate resourceAppId found in customBlueprintPermissions: {string.Join(", ", duplicates)}");
+            }
+        }
 
         return errors;
     }
@@ -225,24 +252,29 @@ public class Agent365Config
 
     // BotName and BotDisplayName are now derived properties
     /// <summary>
-    /// Gets the internal name for the endpoint registration.
-    /// - For AzureAppService, derived from WebAppName.
-    /// - For non-Azure hosting, derived from MessagingEndpoint host if possible.
+    /// Gets the final, validated endpoint name for registration and deletion.
+    /// Returns an already-processed name — callers must NOT wrap this in
+    /// <see cref="EndpointHelper.GetEndpointName"/> again.
+    /// - Azure App Service (NeedDeployment=true): derived from WebAppName.
+    /// - Non-Azure hosting (NeedDeployment=false): derived from MessagingEndpoint host + blueprint ID suffix.
+    /// This mirrors the routing logic in SetupHelpers so that cleanup always targets the same
+    /// endpoint name that setup registered.
     /// </summary>
     [JsonIgnore]
     public string BotName
     {
         get
         {
-            if (!string.IsNullOrWhiteSpace(WebAppName))
+            if (NeedDeployment && !string.IsNullOrWhiteSpace(WebAppName))
             {
-                return $"{WebAppName}-endpoint";
+                return EndpointHelper.GetEndpointName($"{WebAppName}-endpoint");
             }
 
             if (!string.IsNullOrWhiteSpace(MessagingEndpoint) &&
-                Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri))
+                Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri) &&
+                !string.IsNullOrWhiteSpace(uri.Host))
             {
-                return $"{uri.Host.Replace('.', '-')}-endpoint";
+                return EndpointHelper.GetEndpointNameFromHost(uri.Host, AgentBlueprintId);
             }
 
             return string.Empty;
@@ -297,6 +329,14 @@ public class Agent365Config
     /// </summary>
     [JsonPropertyName("mcpDefaultServers")]
     public List<McpServerConfig>? McpDefaultServers { get; init; }
+
+    /// <summary>
+    /// List of custom API permissions to grant to the agent blueprint.
+    /// These permissions are in addition to the standard permissions required for agent operation.
+    /// Each custom permission will receive OAuth2 grants and inheritable permissions configuration.
+    /// </summary>
+    [JsonPropertyName("customBlueprintPermissions")]
+    public List<CustomResourcePermission>? CustomBlueprintPermissions { get; init; }
 
     #endregion
 
@@ -586,6 +626,40 @@ public class Agent365Config
         }
 
         return config;
+    }
+
+    /// <summary>
+    /// Creates a new Agent365Config instance with the same static properties but updated CustomBlueprintPermissions.
+    /// This method handles the complexity of cloning init-only properties when updating custom permissions.
+    /// </summary>
+    /// <param name="permissions">The updated custom blueprint permissions list</param>
+    /// <returns>A new Agent365Config instance with updated permissions</returns>
+    public Agent365Config WithCustomBlueprintPermissions(List<CustomResourcePermission>? permissions)
+    {
+        return new Agent365Config
+        {
+            TenantId = this.TenantId,
+            SubscriptionId = this.SubscriptionId,
+            ResourceGroup = this.ResourceGroup,
+            Location = this.Location,
+            Environment = this.Environment,
+            MessagingEndpoint = this.MessagingEndpoint,
+            NeedDeployment = this.NeedDeployment,
+            ClientAppId = this.ClientAppId,
+            AppServicePlanName = this.AppServicePlanName,
+            AppServicePlanSku = this.AppServicePlanSku,
+            WebAppName = this.WebAppName,
+            AgentIdentityDisplayName = this.AgentIdentityDisplayName,
+            AgentBlueprintDisplayName = this.AgentBlueprintDisplayName,
+            AgentUserPrincipalName = this.AgentUserPrincipalName,
+            AgentUserDisplayName = this.AgentUserDisplayName,
+            ManagerEmail = this.ManagerEmail,
+            AgentUserUsageLocation = this.AgentUserUsageLocation,
+            DeploymentProjectPath = this.DeploymentProjectPath,
+            AgentDescription = this.AgentDescription,
+            McpDefaultServers = this.McpDefaultServers,
+            CustomBlueprintPermissions = permissions,
+        };
     }
 
     /// <summary>

@@ -189,6 +189,53 @@ The CLI leverages Azure CLI for:
 
 ---
 
+## Recent Features
+
+### Custom Blueprint Permissions (Issue #194)
+
+**Added**: February 2026
+
+The CLI now supports configuring custom API permissions for agent blueprints beyond the standard set required for agent operation. This enables agents to access additional Microsoft Graph scopes (Presence, Files, Chat, etc.) or custom APIs.
+
+**Key Components**:
+- **Configuration Model**: `CustomResourcePermission` with GUID validation, scope validation, and duplicate detection
+- **Configuration Command**: `a365 config permissions` to add/update/reset custom permissions in `a365.config.json`
+- **Setup Commands**: `a365 setup permissions custom` and integration with `a365 setup all`
+- **Storage**: Custom permissions stored in `a365.config.json` (static configuration)
+
+**Architecture**:
+```
+User configures → a365.config.json → Setup applies → OAuth2 grants + Inheritable permissions
+```
+
+**Usage**:
+```bash
+# Configure custom permissions
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
+  --scopes Presence.ReadWrite,Files.Read.All
+
+# Apply to blueprint
+a365 setup permissions custom
+
+# Or use setup all (auto-applies if configured)
+a365 setup all
+```
+
+**Design Highlights**:
+- **Generic**: Supports Microsoft Graph, custom APIs, and first-party services
+- **Idempotent**: Safe to run multiple times
+- **Validated**: GUID format, scope presence, duplicate detection
+- **Integrated**: Uses same `SetupHelpers.EnsureResourcePermissionsAsync` as standard permissions
+- **Portal Visible**: Permissions appear in Azure Portal API permissions list
+
+**Documentation**:
+- Design: [design-custom-resource-permissions.md](./design-custom-resource-permissions.md)
+- Command Reference: [setup-permissions-custom.md](./commands/setup-permissions-custom.md)
+- GitHub Issue: [#194](https://github.com/microsoft/Agent365-devTools/issues/194)
+
+---
+
 ## Cross-References
 
 - **[CLI Design](../src/Microsoft.Agents.A365.DevTools.Cli/design.md)** - Detailed CLI architecture, folder structure, configuration system

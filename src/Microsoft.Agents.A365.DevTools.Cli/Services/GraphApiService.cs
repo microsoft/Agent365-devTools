@@ -415,6 +415,29 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Looks up the display name of a service principal by its application ID.
+    /// Returns null if the service principal is not found.
+    /// Virtual to allow substitution in unit tests using NSubstitute.
+    /// </summary>
+    public virtual async Task<string?> GetServicePrincipalDisplayNameAsync(
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        // Validate GUID format to prevent OData injection
+        if (!Guid.TryParse(appId, out var validGuid))
+        {
+            _logger.LogWarning("Invalid appId format for service principal lookup: {AppId}", appId);
+            return null;
+        }
+
+        // Use validated GUID in normalized format to prevent OData injection
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{validGuid:D}'&$select=displayName", ct, scopes);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+        if (!value[0].TryGetProperty("displayName", out var displayName)) return null;
+        return displayName.GetString();
+    }
+
+    /// <summary>
     /// Ensures a service principal exists for the given application ID.
     /// Creates the service principal if it doesn't already exist.
     /// Virtual to allow mocking in unit tests using Moq.

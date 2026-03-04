@@ -34,6 +34,10 @@
     <PackageVersion Include="Azure.ResourceManager.AppService" Version="1.2.0" />
     <!-- Microsoft Graph -->
     <PackageVersion Include="Microsoft.Graph" Version="5.36.0" />
+    <!-- Transitive pin: resolves NU1107 conflict between Microsoft.Extensions.Http 9.x (needs >= 9.0.8)
+         and Microsoft.Kiota.Abstractions 1.7.2 (needs < 9.0.0). CentralPackageTransitivePinningEnabled
+         allows this pin to override the Kiota upper bound. -->
+    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.8" />
     <!-- Testing packages -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageVersion Include="xunit" Version="2.9.2" />

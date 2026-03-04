@@ -53,6 +53,19 @@ a365 config init -c path/to/config.json
 a365 config init --global
 ```
 
+**Configure custom blueprint permissions:**
+```bash
+# Add custom API permissions for your agent
+a365 config permissions --resource-app-id 00000003-0000-0000-c000-000000000000 \
+  --scopes Presence.ReadWrite,Files.Read.All
+
+# View configured permissions
+a365 config permissions
+
+# Clear all custom permissions
+a365 config permissions --reset
+```
+
 **Minimum required configuration:**
 ```json
 {
@@ -122,8 +135,26 @@ a365 setup infrastructure
 a365 setup blueprint
 a365 setup permissions mcp
 a365 setup permissions bot
+a365 setup permissions custom          # Configure custom blueprint permissions (if configured)
 a365 setup permissions copilotstudio  # Configure Copilot Studio permissions
 ```
+
+**Custom Blueprint Permissions:**
+If your agent needs additional API permissions beyond the standard set (e.g., Presence, Files, Chat, or custom APIs), configure them before running setup:
+
+```bash
+# Add custom permissions to config
+a365 config permissions --resource-app-id 00000003-0000-0000-c000-000000000000 \
+  --scopes Presence.ReadWrite,Files.Read.All
+
+# Then run setup (custom permissions applied automatically)
+a365 setup all
+
+# Or apply custom permissions separately
+a365 setup permissions custom
+```
+
+See [Custom Permissions Guide](docs/commands/setup-permissions-custom.md) for detailed examples.
 
 ### Publish & Deploy
 ```bash

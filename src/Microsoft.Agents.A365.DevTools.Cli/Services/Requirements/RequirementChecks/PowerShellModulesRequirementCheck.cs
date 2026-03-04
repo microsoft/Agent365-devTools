@@ -49,9 +49,18 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         var powerShellAvailable = await CheckPowerShellAvailabilityAsync(logger, cancellationToken);
         if (!powerShellAvailable)
         {
+            bool isWsl = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WSL_DISTRO_NAME"))
+                         || await IsWslEnvironmentAsync(cancellationToken);
+
+            var resolution = isWsl
+                ? "Install PowerShell 7+ in your WSL distribution.\n" +
+                  "Installation steps vary by Linux distribution. Follow the official guidance for your distro:\n" +
+                  "  https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux"
+                : "Install PowerShell 7+ from https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell";
+
             return RequirementCheckResult.Failure(
                 errorMessage: "PowerShell is not available on this system",
-                resolutionGuidance: "Install PowerShell 7+ from https://docs.microsoft.com/powershell/scripting/install/installing-powershell",
+                resolutionGuidance: resolution,
                 details: "PowerShell is required for Microsoft Graph operations and Azure authentication"
             );
         }
@@ -96,6 +105,26 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
                     $"Missing: {missingModuleNames}. " +
                     $"Installed: {string.Join(", ", installedModules.Select(m => m.Name))}"
         );
+    }
+
+    /// <summary>
+    /// Detects whether the process is running inside WSL (Windows Subsystem for Linux)
+    /// by checking the WSL_DISTRO_NAME environment variable or /proc/version content.
+    /// </summary>
+    internal static async Task<bool> IsWslEnvironmentAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists("/proc/version"))
+                return false;
+
+            var procVersion = await File.ReadAllTextAsync("/proc/version", cancellationToken);
+            return procVersion.Contains("microsoft", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

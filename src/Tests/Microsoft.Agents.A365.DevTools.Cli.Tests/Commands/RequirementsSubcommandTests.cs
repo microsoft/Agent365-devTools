@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -149,6 +150,43 @@ public class RequirementsSubcommandTests
         result.Should().NotBeNull();
         result.Passed.Should().BeFalse();
         result.Details.Should().BeNull();
+    }
+
+    #endregion
+
+    #region GetRequirementChecks Composition Tests
+
+    [Fact]
+    public void GetRequirementChecks_ContainsAllExpectedCheckTypes()
+    {
+        // GetRequirementChecks is now derived from GetSystemRequirementChecks + GetConfigRequirementChecks.
+        // This test guards against a check being accidentally added to one sub-list but not propagated.
+        var mockValidator = Substitute.For<IClientAppValidator>();
+
+        var checks = RequirementsSubcommand.GetRequirementChecks(mockValidator);
+
+        checks.Should().HaveCount(4, "system (2) + config (2) checks");
+        checks.Should().ContainSingle(c => c is FrontierPreviewRequirementCheck);
+        checks.Should().ContainSingle(c => c is PowerShellModulesRequirementCheck);
+        checks.Should().ContainSingle(c => c is LocationRequirementCheck);
+        checks.Should().ContainSingle(c => c is ClientAppRequirementCheck);
+    }
+
+    [Fact]
+    public void GetRequirementChecks_IsUnionOfSystemAndConfigChecks()
+    {
+        // GetRequirementChecks must exactly equal GetSystemRequirementChecks + GetConfigRequirementChecks.
+        var mockValidator = Substitute.For<IClientAppValidator>();
+
+        var all = RequirementsSubcommand.GetRequirementChecks(mockValidator);
+        var system = RequirementsSubcommand.GetSystemRequirementChecks();
+        var config = RequirementsSubcommand.GetConfigRequirementChecks(mockValidator);
+
+        all.Should().HaveCount(system.Count + config.Count);
+        all.Select(c => c.GetType()).Should().StartWith(system.Select(c => c.GetType()),
+            "system checks run before config checks");
+        all.Select(c => c.GetType()).Should().EndWith(config.Select(c => c.GetType()),
+            "config checks follow system checks");
     }
 
     #endregion

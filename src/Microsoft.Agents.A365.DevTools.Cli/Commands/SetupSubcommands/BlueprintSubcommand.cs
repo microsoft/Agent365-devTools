@@ -197,12 +197,20 @@ internal static class BlueprintSubcommand
                         logger: logger,
                         configService: configService,
                         botConfigurator: botConfigurator,
-                        platformDetector: platformDetector);
+                        platformDetector: platformDetector,
+                        correlationId: correlationId);
+                }
+                catch (Agent365Exception ex)
+                {
+                    var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
+                    ExceptionHandler.HandleAgent365Exception(ex, logger: logger, logFilePath: logFilePath);
+                    ExceptionHandler.ExitWithCleanup(ex.ExitCode);
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Endpoint update failed: {Message}", ex.Message);
-                    Environment.Exit(1);
+                    logger.LogError("Endpoint update failed: {Message}", ex.Message);
+                    logger.LogDebug(ex, "Endpoint update failed - stack trace");
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
                 return;
             }
@@ -337,17 +345,32 @@ internal static class BlueprintSubcommand
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
+        // Validate location before logging the header — prevents confusing output where the heading
+        // appears but setup immediately fails due to a missing config value.
+        if (!skipEndpointRegistration && string.IsNullOrWhiteSpace(setupConfig.Location))
+        {
+            logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return new BlueprintCreationResult
+            {
+                BlueprintCreated = false,
+                EndpointRegistered = false,
+                EndpointRegistrationAttempted = false
+            };
+        }
+
         logger.LogInformation("");
         logger.LogInformation("==> Creating Agent Blueprint");
 
         // Validate Azure authentication
         if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
         {
-            return new BlueprintCreationResult 
-            { 
-                BlueprintCreated = false, 
-                EndpointRegistered = false, 
-                EndpointRegistrationAttempted = false 
+            return new BlueprintCreationResult
+            {
+                BlueprintCreated = false,
+                EndpointRegistered = false,
+                EndpointRegistrationAttempted = false
             };
         }
 
@@ -587,6 +610,24 @@ internal static class BlueprintSubcommand
 
         // Display verification info and summary
         await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
+
+        // Reconcile custom blueprint permissions — apply desired and remove stale entries.
+        // Always run (even when config is empty) so that permissions removed from config are
+        // also removed from Azure AD.
+        // (When isSetupAll, AllSubcommand handles this at Step 5 — do not apply twice.)
+        if (!isSetupAll)
+        {
+            await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
+                config.FullName,
+                logger,
+                configService,
+                executor,
+                graphApiService,
+                blueprintService,
+                setupConfig,
+                isSetupAll: false,
+                cancellationToken: cancellationToken);
+        }
 
         if (!isSetupAll)
         {
@@ -832,7 +873,7 @@ internal static class BlueprintSubcommand
                 };
             }
 
-            var graphToken = await GetTokenFromGraphClient(logger, graphClient, tenantId, setupConfig.ClientAppId);
+            var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
@@ -862,15 +903,15 @@ internal static class BlueprintSubcommand
             {
                 var errorContent = await appResponse.Content.ReadAsStringAsync(ct);
 
-                // If sponsors/owners fields cause error (Bad Request 400), retry without them
+                // If sponsors/owners fields cause error (Bad Request 400), retry selectively.
+                // First drop only sponsors — this preserves ownership if sponsors was the sole cause.
+                // Only drop owners as a last resort, since losing ownership breaks addPassword for non-admins.
                 if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest &&
                     !string.IsNullOrEmpty(sponsorUserId))
                 {
-                    logger.LogWarning("Agent Blueprint creation with sponsors and owners failed (Bad Request). Retrying without sponsors/owners...");
-
-                    // Remove sponsors and owners fields and retry
+                    logger.LogWarning("Blueprint creation failed (Bad Request). Error: {Error}. Retrying without sponsors field...", errorContent);
                     appManifest.Remove("sponsors@odata.bind");
-                    appManifest.Remove("owners@odata.bind");
+                    appResponse.Dispose();
 
                     appResponse = await httpClient.PostAsync(
                         createAppUrl,
@@ -880,18 +921,46 @@ internal static class BlueprintSubcommand
                     if (!appResponse.IsSuccessStatusCode)
                     {
                         errorContent = await appResponse.Content.ReadAsStringAsync(ct);
-                        logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                        return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+
+                        if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                        {
+                            logger.LogWarning("Blueprint creation without sponsors also failed (Bad Request). Error: {Error}. Retrying without owners field...", errorContent);
+                            appManifest.Remove("owners@odata.bind");
+                            appResponse.Dispose();
+
+                            appResponse = await httpClient.PostAsync(
+                                createAppUrl,
+                                new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                                ct);
+
+                            if (!appResponse.IsSuccessStatusCode)
+                            {
+                                errorContent = await appResponse.Content.ReadAsStringAsync(ct);
+                                logger.LogError("Failed to create application (all fallbacks exhausted): {Status} - {Error}", appResponse.StatusCode, errorContent);
+                                appResponse.Dispose();
+                                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                            }
+
+                            logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation will fail unless the custom client app has Application.ReadWrite.All permission or you have Application Administrator role in your Entra tenant.");
+                        }
+                        else
+                        {
+                            logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
+                            appResponse.Dispose();
+                            return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
+                        }
                     }
                 }
                 else
                 {
                     logger.LogError("Failed to create application: {Status} - {Error}", appResponse.StatusCode, errorContent);
+                    appResponse.Dispose();
                     return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null);
                 }
             }
 
             var appJson = await appResponse.Content.ReadAsStringAsync(ct);
+            appResponse.Dispose();
             var app = JsonNode.Parse(appJson)!.AsObject();
             var appId = app["appId"]!.GetValue<string>();
             var objectId = app["id"]!.GetValue<string>();
@@ -1409,14 +1478,15 @@ internal static class BlueprintSubcommand
     }
 
     /// <summary>
-    /// Extracts the access token from a GraphServiceClient for use in direct HTTP calls.
-    /// This uses MsalBrowserCredential, which performs platform-appropriate interactive authentication (WAM on Windows, browser-based flow on other platforms).
+    /// Acquires a Microsoft Graph access token using MSAL interactive authentication
+    /// (WAM on Windows, browser-based flow on other platforms).
+    /// The token carries the delegated permissions of the custom client app, including
+    /// Application.ReadWrite.All, which is required for operations such as addPassword.
     /// </summary>
-    private static async Task<string?> GetTokenFromGraphClient(ILogger logger, GraphServiceClient graphClient, string tenantId, string clientAppId)
+    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default)
     {
         try
         {
-            // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
             var credential = new MsalBrowserCredential(
                 clientAppId,
                 tenantId,
@@ -1424,13 +1494,13 @@ internal static class BlueprintSubcommand
                 logger);
 
             var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
-            var token = await credential.GetTokenAsync(tokenRequestContext, CancellationToken.None);
+            var token = await credential.GetTokenAsync(tokenRequestContext, ct);
 
             return token.Token;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to get access token");
+            logger.LogError(ex, "Failed to acquire MSAL Graph access token");
             return null;
         }
     }
@@ -1506,12 +1576,17 @@ internal static class BlueprintSubcommand
         {
             logger.LogInformation("Creating client secret for Agent Blueprint using Graph API...");
 
-            var graphToken = await graphService.GetGraphAccessTokenAsync(
-                setupConfig.TenantId ?? string.Empty, ct);
+            // Use the MSAL token (carries Application.ReadWrite.All from the custom client app).
+            // This works for any user with a properly configured custom client app, regardless of
+            // whether they are an owner of the blueprint app registration.
+            var graphToken = await AcquireMsalGraphTokenAsync(
+                setupConfig.TenantId ?? string.Empty,
+                setupConfig.ClientAppId ?? string.Empty,
+                logger, ct);
 
             if (string.IsNullOrWhiteSpace(graphToken))
             {
-                logger.LogError("Failed to acquire Graph API access token");
+                logger.LogError("Failed to acquire MSAL Graph access token for client secret creation");
                 throw new InvalidOperationException("Cannot create client secret without Graph API token");
             }
 
@@ -1572,13 +1647,21 @@ internal static class BlueprintSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to create client secret: {Message}", ex.Message);
-            logger.LogInformation("You can create a client secret manually:");
-            logger.LogInformation("  1. Go to Azure Portal > App Registrations");
-            logger.LogInformation("  2. Find your Agent Blueprint: {AppId}", blueprintAppId);
-            logger.LogInformation("  3. Navigate to Certificates & secrets > Client secrets");
-            logger.LogInformation("  4. Click 'New client secret' and save the value");
-            logger.LogInformation("  5. Add it to a365.generated.config.json as 'agentBlueprintClientSecret'");
+            logger.LogWarning(ex, "Failed to create client secret automatically: {Message}", ex.Message);
+            logger.LogWarning("To create the secret manually you need one of the following on the blueprint app registration:");
+            logger.LogWarning("  - Owner of the app registration");
+            logger.LogWarning("  - Application Administrator, Cloud Application Administrator, or Global Administrator role in your Entra tenant");
+            logger.LogWarning("See: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#application-administrator");
+            logger.LogInformation("Manual steps to create and add the secret:");
+            logger.LogInformation("  1. Go to Microsoft Entra admin center (https://entra.microsoft.com)");
+            logger.LogInformation("  2. Navigate to App registrations > All applications");
+            logger.LogInformation("  3. Find your blueprint app by ID: {AppId}", blueprintAppId);
+            logger.LogInformation("  4. Open Certificates & secrets > Client secrets > New client secret");
+            logger.LogInformation("  5. Copy the Value (not the Secret ID) - it is only shown once");
+            logger.LogInformation("  6. Add both fields to a365.generated.config.json:");
+            logger.LogInformation("       \"agentBlueprintClientSecret\": \"<your secret value>\"");
+            logger.LogInformation("       \"agentBlueprintClientSecretProtected\": false");
+            logger.LogInformation("  7. Re-run: a365 setup all");
         }
     }
 
@@ -1702,6 +1785,15 @@ internal static class BlueprintSubcommand
             Environment.Exit(1);
         }
 
+        // Location is required by the endpoint registration API for both Azure and external hosting
+        if (string.IsNullOrWhiteSpace(setupConfig.Location))
+        {
+            logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            Environment.Exit(1);
+        }
+
         logger.LogInformation("Registering blueprint messaging endpoint...");
         logger.LogInformation("");
 
@@ -1768,13 +1860,15 @@ internal static class BlueprintSubcommand
     /// <param name="configService">Configuration service</param>
     /// <param name="botConfigurator">Bot configurator service</param>
     /// <param name="platformDetector">Platform detector service</param>
+    /// <param name="correlationId">Optional correlation ID for tracing</param>
     public static async Task UpdateEndpointAsync(
         string configPath,
         string newEndpointUrl,
         ILogger logger,
         IConfigService configService,
         IBotConfigurator botConfigurator,
-        PlatformDetector platformDetector)
+        PlatformDetector platformDetector,
+        string? correlationId = null)
     {
         var setupConfig = await configService.LoadAsync(configPath);
 
@@ -1796,8 +1890,14 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Updating messaging endpoint...");
         logger.LogInformation("");
 
+        // Normalize location once; used by both Step 1 and Step 1.5.
+        // Null-coalescing is intentional: Location is only validated inside the Step 1 block (not here),
+        // so it may still be null at this point. The empty-string fallback is never passed to any API —
+        // Step 1 throws before using it, and Step 1.5 guards on !IsNullOrWhiteSpace(Location).
+        var normalizedLocation = setupConfig.Location?.Replace(" ", "").ToLowerInvariant() ?? string.Empty;
+
         // Step 1: Delete existing endpoint if it exists
-        if (!string.IsNullOrWhiteSpace(setupConfig.BotName))
+        if (!string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.BotName))
         {
             logger.LogInformation("Deleting existing messaging endpoint...");
             if (string.IsNullOrWhiteSpace(setupConfig.Location))
@@ -1805,13 +1905,31 @@ internal static class BlueprintSubcommand
                 logger.LogError("Location not found. Please confirm location is in the config file.");
                 throw new Exceptions.SetupValidationException("Location is required to delete the existing messaging endpoint.");
             }
-            var endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
-            var normalizedLocation = setupConfig.Location.Replace(" ", "").ToLowerInvariant();
+
+            // For needsDeployment=false, derive the endpoint name from the currently registered URL.
+            // BotMessagingEndpoint (generated config) is updated after every successful registration,
+            // so it reflects the actual registered endpoint name after any --update-endpoint calls.
+            // Fall back to MessagingEndpoint (static config) if BotMessagingEndpoint is not yet set.
+            string endpointName;
+            if (!setupConfig.NeedDeployment && (!string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint)))
+            {
+                var urlForName = !string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint)
+                    ? setupConfig.BotMessagingEndpoint
+                    : setupConfig.MessagingEndpoint;
+                endpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(urlForName, setupConfig.AgentBlueprintId);
+            }
+            else
+            {
+                // When NeedDeployment=true, BotName is always non-empty (derived from WebAppName),
+                // so GetEndpointName(BotName) is safe here.
+                endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
+            }
 
             var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
                 endpointName,
                 normalizedLocation,
-                setupConfig.AgentBlueprintId);
+                setupConfig.AgentBlueprintId,
+                correlationId: correlationId);
 
             if (!deleted)
             {
@@ -1826,12 +1944,29 @@ internal static class BlueprintSubcommand
             logger.LogInformation("No existing endpoint found. Proceeding with registration.");
         }
 
+        // Step 1.5: Pre-create cleanup of the target endpoint name.
+        // If a previous --update-endpoint failed during the create step, Azure may have
+        // partially provisioned the new endpoint and left it in a bad state that blocks
+        // subsequent creates with InternalServerError. Delete it now to ensure a clean slate.
+        if (!setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.Location))
+        {
+            var targetEndpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, setupConfig.AgentBlueprintId);
+            logger.LogInformation("Removing target endpoint '{EndpointName}' (derived from {Url}) to ensure a clean state before registration.", targetEndpointName, newEndpointUrl);
+            var preCleanupDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, normalizedLocation, setupConfig.AgentBlueprintId, correlationId: correlationId);
+            if (!preCleanupDeleted)
+            {
+                // Not fatal — proceed and let Step 2 surface the error if the partially-provisioned
+                // endpoint is still blocking. The warning helps diagnose production issues.
+                logger.LogWarning("Pre-create cleanup for '{EndpointName}' did not confirm deletion. Proceeding anyway.", targetEndpointName);
+            }
+        }
+
         // Step 2: Register new endpoint with the provided URL
         logger.LogInformation("");
         logger.LogInformation("Registering new messaging endpoint...");
 
         var (endpointRegistered, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator, newEndpointUrl);
+            setupConfig, logger, botConfigurator, newEndpointUrl, correlationId: correlationId);
 
         if (!endpointRegistered)
         {

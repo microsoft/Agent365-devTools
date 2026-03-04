@@ -154,7 +154,35 @@ a365 config init --global
 # Record: Global config created (Yes/No)
 ```
 
-**Section 2 Status**: ✅ Pass | ❌ Fail  
+#### Test 2.5: Configure Custom Blueprint Permissions
+```bash
+# Add Microsoft Graph extended permissions
+a365 config permissions \
+  --resource-app-id 00000003-0000-0000-c000-000000000000 \
+  --scopes Presence.ReadWrite,Files.Read.All
+
+# Expected: NO PROMPTS - permission added directly to a365.config.json
+# Resource name will be auto-resolved during 'a365 setup permissions custom'
+# Verify customBlueprintPermissions array exists in config file
+# Record: Custom permission added (Yes/No)
+
+# View configured permissions
+a365 config permissions
+
+# Expected: Lists all configured custom permissions (may show appId only until setup runs)
+# Record: Permissions displayed correctly (Yes/No)
+
+# Add second custom resource
+a365 config permissions \
+  --resource-app-id 12345678-1234-1234-1234-123456789012 \
+  --scopes CustomScope.Read,CustomScope.Write
+
+# Expected: NO PROMPTS - second permission added directly
+# Resource names will be auto-resolved during setup
+# Record: Second permission added (Yes/No)
+```
+
+**Section 2 Status**: ✅ Pass | ❌ Fail
 **Notes**:
 
 ---
@@ -284,7 +312,84 @@ a365 setup permissions bot
 # Record: Bot permissions set (Yes/No)
 ```
 
-**Section 4 Status**: ✅ Pass | ❌ Fail  
+#### Test 4.5: Blueprint Permissions - Custom Resources (with Auto-Lookup)
+```bash
+# Configure custom permissions (requires Test 2.5 completed)
+a365 setup permissions custom
+
+# Expected:
+# - AUTO-LOOKUP: CLI queries Azure to resolve resource display names
+# - Output shows: "Resource name not provided, attempting auto-lookup for {appId}..."
+# - Output shows: "Auto-resolved resource name: Microsoft Graph" (or similar)
+# - OAuth2 grants created for each custom resource
+# - Inheritable permissions configured
+# - Permissions visible in Azure Portal under API permissions
+# - Success messages for each configured resource
+# - Note: ResourceName is resolved in-memory for logging only; it is NOT persisted to any config file
+
+# IMPORTANT: Verify auto-lookup messages appear in output
+# If resource not found in Azure, should show fallback: "Custom-{first 8 chars}"
+
+# Record: Custom permissions configured (Yes/No)
+# Record: Number of custom resources configured
+# Record: Auto-lookup succeeded (Yes/No)
+```
+
+#### Test 4.6: Verify Custom Permissions in Azure Portal
+```bash
+# Query blueprint application to verify custom permissions
+az ad app show --id <blueprint-app-id> --query "requiredResourceAccess[].{ResourceAppId:resourceAppId, Scopes:resourceAccess[].id}"
+
+# Expected: Shows custom resource permissions configured
+# - Microsoft Graph (00000003-0000-0000-c000-000000000000) with extended scopes
+# - Custom API resource (if configured)
+
+# Alternatively, verify in Azure Portal:
+# Navigate to: Entra ID → Applications → [Blueprint App] → API permissions
+# Verify custom permissions are listed with "Granted" status
+
+# Record: Custom permissions visible in portal (Yes/No)
+```
+
+#### Test 4.7: Verify Inheritable Permissions via Graph API
+```powershell
+# Get blueprint object ID from config
+$blueprintObjectId = (Get-Content a365.generated.config.json | ConvertFrom-Json).agentBlueprintObjectId
+
+# Get access token
+$token = az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv
+
+# Query inheritable permissions (this is what the CLI verifies internally)
+$headers = @{ Authorization = "Bearer $token" }
+$uri = "https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/$blueprintObjectId/inheritablePermissions"
+$response = Invoke-RestMethod -Uri $uri -Headers $headers
+$response | ConvertTo-Json -Depth 10
+
+# Expected response format:
+# {
+#   "value": [
+#     {
+#       "resourceAppId": "00000003-0000-0000-c000-000000000000",
+#       "resourceName": "Microsoft Graph",
+#       "scopes": ["Presence.ReadWrite", "Files.Read.All"]
+#     }
+#   ]
+# }
+
+# Verify:
+# - Each custom resource appears in the "value" array
+# - resourceAppId matches configured permissions
+# - resourceName is populated (auto-resolved during setup)
+# - All requested scopes are present
+
+# Note: This is the SAME endpoint the CLI uses to verify permissions were set correctly
+# If this query succeeds, inheritable permissions are working properly
+
+# Record: Inheritable permissions verified via Graph API (Yes/No)
+# Record: Number of resources found in response
+```
+
+**Section 4 Status**: ✅ Pass | ❌ Fail
 **Notes**:
 
 ---
@@ -306,10 +411,18 @@ a365 setup all
 # Expected:
 # - Infrastructure created
 # - Blueprint created
-# - Permissions configured
+# - MCP permissions configured
+# - Bot API permissions configured
+# - Custom blueprint permissions configured (if present in config)
+# - Messaging endpoint registered
 # - All steps completed successfully
 
+# Verify custom permissions were configured (if Test 2.5 was completed):
+# - Check output for "Configuring custom blueprint permissions..."
+# - Verify each custom resource shows "configured successfully"
+
 # Record: Setup all completed (Yes/No)
+# Record: Custom permissions included (Yes/No/N/A)
 # Record: Time taken (approximate)
 ```
 

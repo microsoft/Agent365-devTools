@@ -387,6 +387,154 @@ public class GraphApiServiceTests
         hasPrivileges.Should().BeTrue("User has Application Administrator role");
         roles.Should().Contain("Application Administrator");
     }
+
+    #region GetServicePrincipalDisplayNameAsync Tests
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_SuccessfulLookup_ReturnsDisplayName()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        // Mock az CLI token acquisition
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, handler);
+
+        // Queue successful response with Microsoft Graph service principal
+        var spResponse = new { value = new[] { new { displayName = "Microsoft Graph" } } };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(spResponse))
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "00000003-0000-0000-c000-000000000000");
+
+        // Assert
+        displayName.Should().Be("Microsoft Graph");
+    }
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_ServicePrincipalNotFound_ReturnsNull()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, handler);
+
+        // Queue response with empty array (service principal not found)
+        var spResponse = new { value = Array.Empty<object>() };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(spResponse))
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "12345678-1234-1234-1234-123456789012");
+
+        // Assert
+        displayName.Should().BeNull("service principal with unknown appId should not be found");
+    }
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_NullResponse_ReturnsNull()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, handler);
+
+        // Queue error response (simulating network error or Graph API error)
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("Internal Server Error")
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "00000003-0000-0000-c000-000000000000");
+
+        // Assert
+        displayName.Should().BeNull("failed Graph API call should return null");
+    }
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_MissingDisplayNameProperty_ReturnsNull()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, handler);
+
+        // Queue response with malformed object (missing displayName)
+        var spResponse = new { value = new[] { new { id = "sp-id-123", appId = "00000003-0000-0000-c000-000000000000" } } };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(spResponse))
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "00000003-0000-0000-c000-000000000000");
+
+        // Assert
+        displayName.Should().BeNull("malformed response missing displayName should return null");
+    }
+
+    #endregion
 }
 
 // Simple test handler that returns queued responses sequentially

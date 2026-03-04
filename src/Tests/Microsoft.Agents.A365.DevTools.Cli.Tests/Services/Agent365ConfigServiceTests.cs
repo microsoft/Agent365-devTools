@@ -13,6 +13,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// Unit tests for ConfigService class with the new Agent365Config two-file model.
 /// Tests LoadAsync (merge), SaveStateAsync (split), validation, and file operations.
 /// </summary>
+[Collection("ConfigTests")]
 public class Agent365ConfigServiceTests : IDisposable
 {
     private readonly string _testDirectory;
