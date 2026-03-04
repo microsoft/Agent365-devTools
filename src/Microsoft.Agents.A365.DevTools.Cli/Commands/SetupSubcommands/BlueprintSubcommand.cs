@@ -1428,7 +1428,8 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Requesting admin consent for application");
         logger.LogInformation("  - Application scopes: {Scopes}", string.Join(", ", applicationScopes));
         logger.LogInformation("Opening browser for Graph API admin consent...");
-        BrowserHelper.TryOpenUrl(consentUrlGraph);
+        logger.LogInformation("If the browser does not open automatically, navigate to this URL to grant consent: {ConsentUrl}", consentUrlGraph);
+        BrowserHelper.TryOpenUrl(consentUrlGraph, logger);
 
         var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
 

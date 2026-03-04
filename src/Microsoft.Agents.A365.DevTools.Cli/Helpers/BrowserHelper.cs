@@ -40,8 +40,16 @@ public static class BrowserHelper
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "Failed to open browser automatically");
-            logger?.LogInformation("Please manually open: {Url}", url);
+            if (logger != null)
+            {
+                logger.LogWarning(ex, "Failed to open browser automatically");
+                logger.LogInformation("Please manually open: {Url}", url);
+            }
+            else
+            {
+                Console.Error.WriteLine($"Failed to open browser automatically: {ex.Message}");
+                Console.Error.WriteLine($"Please manually open: {url}");
+            }
         }
     }
 }

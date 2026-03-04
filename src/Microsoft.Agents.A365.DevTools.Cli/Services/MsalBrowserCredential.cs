@@ -315,40 +315,54 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
         catch (PlatformNotSupportedException ex)
         {
+            // macOS: MSAL throws PlatformNotSupportedException when no browser is available
             _logger?.LogWarning("Browser authentication is not supported on this platform: {Message}", ex.Message);
-            _logger?.LogInformation("Falling back to device code authentication...");
-            _logger?.LogInformation("Please sign in with your Microsoft account");
-
-            try
-            {
-                var deviceCodeResult = await _publicClientApp
-                    .AcquireTokenWithDeviceCode(scopes, deviceCode =>
-                    {
-                        _logger?.LogInformation("");
-                        _logger?.LogInformation("==========================================================================");
-                        _logger?.LogInformation("To sign in, use a web browser to open the page:");
-                        _logger?.LogInformation("    {VerificationUrl}", deviceCode.VerificationUrl);
-                        _logger?.LogInformation("");
-                        _logger?.LogInformation("And enter the code: {UserCode}", deviceCode.UserCode);
-                        _logger?.LogInformation("==========================================================================");
-                        _logger?.LogInformation("");
-                        return Task.CompletedTask;
-                    })
-                    .ExecuteAsync(cancellationToken);
-
-                _logger?.LogDebug("Successfully acquired token via device code authentication.");
-                return new AccessToken(deviceCodeResult.AccessToken, deviceCodeResult.ExpiresOn);
-            }
-            catch (MsalException msalEx)
-            {
-                _logger?.LogError(msalEx, "Device code authentication failed: {Message}", msalEx.Message);
-                throw new MsalAuthenticationFailedException($"Device code authentication failed: {msalEx.Message}", msalEx);
-            }
+            return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
+        }
+        catch (MsalClientException ex) when (ex.ErrorCode == "linux_xdg_open_failed")
+        {
+            // Linux/WSL: MSAL throws MsalClientException when xdg-open and friends are unavailable
+            _logger?.LogWarning("Browser cannot be opened on this platform: {Message}", ex.Message);
+            return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
         }
         catch (MsalException ex)
         {
             _logger?.LogError(ex, "MSAL authentication failed: {Message}", ex.Message);
             throw new MsalAuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
+        }
+    }
+
+    private async Task<AccessToken> AcquireTokenWithDeviceCodeFallbackAsync(
+        string[] scopes,
+        CancellationToken cancellationToken)
+    {
+        _logger?.LogInformation("Falling back to device code authentication...");
+        _logger?.LogInformation("Please sign in with your Microsoft account");
+
+        try
+        {
+            var deviceCodeResult = await _publicClientApp
+                .AcquireTokenWithDeviceCode(scopes, deviceCode =>
+                {
+                    _logger?.LogInformation("");
+                    _logger?.LogInformation("==========================================================================");
+                    _logger?.LogInformation("To sign in, use a web browser to open the page:");
+                    _logger?.LogInformation("    {VerificationUrl}", deviceCode.VerificationUrl);
+                    _logger?.LogInformation("");
+                    _logger?.LogInformation("And enter the code: {UserCode}", deviceCode.UserCode);
+                    _logger?.LogInformation("==========================================================================");
+                    _logger?.LogInformation("");
+                    return Task.CompletedTask;
+                })
+                .ExecuteAsync(cancellationToken);
+
+            _logger?.LogDebug("Successfully acquired token via device code authentication.");
+            return new AccessToken(deviceCodeResult.AccessToken, deviceCodeResult.ExpiresOn);
+        }
+        catch (MsalException msalEx)
+        {
+            _logger?.LogError(msalEx, "Device code authentication failed: {Message}", msalEx.Message);
+            throw new MsalAuthenticationFailedException($"Device code authentication failed: {msalEx.Message}", msalEx);
         }
     }
 }
