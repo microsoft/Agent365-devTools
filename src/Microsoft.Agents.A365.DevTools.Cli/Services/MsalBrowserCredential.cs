@@ -316,7 +316,34 @@ public sealed class MsalBrowserCredential : TokenCredential
         catch (PlatformNotSupportedException ex)
         {
             _logger?.LogWarning("Browser authentication is not supported on this platform: {Message}", ex.Message);
-            throw new MsalAuthenticationFailedException($"Browser authentication is not supported on this platform ({ex.Message})", ex);
+            _logger?.LogInformation("Falling back to device code authentication...");
+            _logger?.LogInformation("Please sign in with your Microsoft account");
+
+            try
+            {
+                var deviceCodeResult = await _publicClientApp
+                    .AcquireTokenWithDeviceCode(scopes, deviceCode =>
+                    {
+                        _logger?.LogInformation("");
+                        _logger?.LogInformation("==========================================================================");
+                        _logger?.LogInformation("To sign in, use a web browser to open the page:");
+                        _logger?.LogInformation("    {VerificationUrl}", deviceCode.VerificationUrl);
+                        _logger?.LogInformation("");
+                        _logger?.LogInformation("And enter the code: {UserCode}", deviceCode.UserCode);
+                        _logger?.LogInformation("==========================================================================");
+                        _logger?.LogInformation("");
+                        return Task.CompletedTask;
+                    })
+                    .ExecuteAsync(cancellationToken);
+
+                _logger?.LogDebug("Successfully acquired token via device code authentication.");
+                return new AccessToken(deviceCodeResult.AccessToken, deviceCodeResult.ExpiresOn);
+            }
+            catch (MsalException msalEx)
+            {
+                _logger?.LogError(msalEx, "Device code authentication failed: {Message}", msalEx.Message);
+                throw new MsalAuthenticationFailedException($"Device code authentication failed: {msalEx.Message}", msalEx);
+            }
         }
         catch (MsalException ex)
         {

@@ -2,10 +2,10 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -1046,7 +1046,7 @@ public sealed class A365CreateInstanceRunner
         _logger.LogInformation("URL: {Url}", consentUrl);
 
         // Open browser
-        TryOpenBrowser(consentUrl);
+        BrowserHelper.TryOpenUrl(consentUrl, _logger);
 
         _logger.LogInformation("");
         _logger.LogInformation("Waiting for admin consent (timeout: {Timeout} seconds)...", timeoutSeconds);
@@ -1131,24 +1131,6 @@ public sealed class A365CreateInstanceRunner
         return false;
     }
 
-    private void TryOpenBrowser(string url)
-    {
-        try
-        {
-            using var process = new System.Diagnostics.Process();
-            process.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true
-            };
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to open browser automatically");
-            _logger.LogInformation("Please manually open: {Url}", url);
-        }
-    }
 
     /// <summary>
     /// Verify that a service principal exists in Azure AD for the given app ID.

@@ -1428,7 +1428,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Requesting admin consent for application");
         logger.LogInformation("  - Application scopes: {Scopes}", string.Join(", ", applicationScopes));
         logger.LogInformation("Opening browser for Graph API admin consent...");
-        TryOpenBrowser(consentUrlGraph);
+        BrowserHelper.TryOpenUrl(consentUrlGraph);
 
         var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
 
@@ -1541,23 +1541,6 @@ internal static class BlueprintSubcommand
         }
     }
 
-    private static void TryOpenBrowser(string url)
-    {
-        try
-        {
-            using var p = new System.Diagnostics.Process();
-            p.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true
-            };
-            p.Start();
-        }
-        catch
-        {
-            // non-fatal
-        }
-    }
 
     /// <summary>
     /// Creates client secret for Agent Blueprint (Phase 2.5)

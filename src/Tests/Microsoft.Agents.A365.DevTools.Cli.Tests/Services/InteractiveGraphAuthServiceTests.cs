@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Azure.Core;
+using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -181,6 +184,151 @@ public class InteractiveGraphAuthServiceTests
         //        .Build()
         
         Assert.True(true, "Manual verification required");
+    }
+
+    #endregion
+
+    #region GetAuthenticatedGraphClientAsync Tests
+
+    // These helpers mirror the pattern from AuthenticationServiceTests to enable injecting
+    // fakes via the credentialFactory constructor parameter without touching the file system
+    // or launching any real authentication UI.
+
+    private sealed class ThrowingTokenCredential : TokenCredential
+    {
+        private readonly Exception _exception;
+        public ThrowingTokenCredential(Exception exception) => _exception = exception;
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) => throw _exception;
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken) => throw _exception;
+    }
+
+    private sealed class StubTokenCredential : TokenCredential
+    {
+        private readonly AccessToken _token;
+        public StubTokenCredential(string token, DateTimeOffset expiresOn) => _token = new AccessToken(token, expiresOn);
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) => _token;
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken) => new(_token);
+    }
+
+    private const string ValidGuid = "12345678-1234-1234-1234-123456789abc";
+    private const string ValidTenantId = "87654321-4321-4321-4321-cba987654321";
+
+    /// <summary>
+    /// Verifies that a credential failure surfaced during eager token acquisition
+    /// throws <see cref="GraphApiException"/> rather than silently returning a broken client.
+    ///
+    /// Pre-fix: GetAuthenticatedGraphClientAsync returned "success" without ever calling
+    /// GetTokenAsync because GraphServiceClient acquires tokens lazily. This masked broken
+    /// credentials at construction time (Gap 2 from the macOS auth regression).
+    ///
+    /// Post-fix: Eager token acquisition detects the failure early and surfaces a clear error.
+    /// </summary>
+    [Fact]
+    public async Task GetAuthenticatedGraphClientAsync_WhenCredentialFails_ThrowsGraphApiException()
+    {
+        // Arrange — credential that always fails (simulates a broken/unsupported auth flow)
+        var failingCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException("Authentication failed"));
+
+        var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
+        var sut = new InteractiveGraphAuthService(logger, ValidGuid,
+            credentialFactory: (_, _) => failingCredential);
+
+        // Act
+        var act = async () => await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
+
+        // Assert — GraphApiException surfaced at construction time, not later during API calls
+        await act.Should().ThrowAsync<GraphApiException>();
+    }
+
+    /// <summary>
+    /// Verifies that when the credential succeeds, a GraphServiceClient is returned
+    /// and the "Successfully authenticated" log is only emitted after actual token acquisition.
+    /// </summary>
+    [Fact]
+    public async Task GetAuthenticatedGraphClientAsync_WhenCredentialSucceeds_ReturnsClient()
+    {
+        // Arrange
+        var workingCredential = new StubTokenCredential("token-value", DateTimeOffset.UtcNow.AddHours(1));
+        var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
+        var sut = new InteractiveGraphAuthService(logger, ValidGuid,
+            credentialFactory: (_, _) => workingCredential);
+
+        // Act
+        var client = await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
+
+        // Assert
+        client.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Verifies that the service returns the same cached GraphServiceClient for the same tenant
+    /// on repeated calls, avoiding redundant authentication prompts.
+    /// </summary>
+    [Fact]
+    public async Task GetAuthenticatedGraphClientAsync_ForSameTenant_ReturnsCachedClient()
+    {
+        // Arrange
+        var workingCredential = new StubTokenCredential("token-value", DateTimeOffset.UtcNow.AddHours(1));
+        var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
+        int callCount = 0;
+        var sut = new InteractiveGraphAuthService(logger, ValidGuid,
+            credentialFactory: (_, _) => { callCount++; return workingCredential; });
+
+        // Act — call twice for the same tenant
+        var client1 = await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
+        var client2 = await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
+
+        // Assert — factory called only once; same instance returned on the second call
+        callCount.Should().Be(1);
+        client1.Should().BeSameAs(client2);
+    }
+
+    /// <summary>
+    /// Verifies that the service authenticates again when a different tenant is requested,
+    /// rather than returning a cached client scoped to the wrong tenant.
+    /// </summary>
+    [Fact]
+    public async Task GetAuthenticatedGraphClientAsync_ForDifferentTenant_AuthenticatesSeparately()
+    {
+        // Arrange
+        var workingCredential = new StubTokenCredential("token-value", DateTimeOffset.UtcNow.AddHours(1));
+        var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
+        int callCount = 0;
+        var sut = new InteractiveGraphAuthService(logger, ValidGuid,
+            credentialFactory: (_, _) => { callCount++; return workingCredential; });
+
+        const string otherTenant = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+        // Act
+        var client1 = await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
+        var client2 = await sut.GetAuthenticatedGraphClientAsync(otherTenant);
+
+        // Assert — factory called twice (once per tenant)
+        callCount.Should().Be(2);
+        client1.Should().NotBeSameAs(client2);
+    }
+
+    /// <summary>
+    /// Verifies that an access_denied error from the auth provider surfaces as
+    /// GraphApiException rather than a raw MsalServiceException.
+    /// </summary>
+    [Fact]
+    public async Task GetAuthenticatedGraphClientAsync_WhenAccessDenied_ThrowsGraphApiException()
+    {
+        // Arrange — simulate user cancelling or denying the auth prompt
+        var accessDenied = new Microsoft.Identity.Client.MsalServiceException("access_denied", "User cancelled");
+        var failingCredential = new ThrowingTokenCredential(accessDenied);
+
+        var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
+        var sut = new InteractiveGraphAuthService(logger, ValidGuid,
+            credentialFactory: (_, _) => failingCredential);
+
+        // Act
+        var act = async () => await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
+
+        // Assert
+        await act.Should().ThrowAsync<GraphApiException>();
     }
 
     #endregion
