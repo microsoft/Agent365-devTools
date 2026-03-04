@@ -85,6 +85,15 @@ internal static class PermissionsSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
+            // Verify system requirements (PowerShell modules are required for Graph operations)
+            var mcpSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+            if (!mcpSystemChecksOk)
+            {
+                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                Environment.Exit(1);
+            }
+
             if (dryRun)
             {
                 // Read scopes from ToolingManifest.json
@@ -163,6 +172,15 @@ internal static class PermissionsSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
+            // Verify system requirements (PowerShell modules are required for Graph operations)
+            var botSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+            if (!botSystemChecksOk)
+            {
+                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                Environment.Exit(1);
+            }
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Configure Bot API Permissions");
@@ -235,6 +253,15 @@ internal static class PermissionsSubcommand
             if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
             {
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+            }
+
+            // Verify system requirements (PowerShell modules are required for Graph operations)
+            var customSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+            if (!customSystemChecksOk)
+            {
+                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                Environment.Exit(1);
             }
 
             if (dryRun)

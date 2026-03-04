@@ -221,14 +221,15 @@ internal static class BlueprintSubcommand
                 return;
             }
 
-            // Run config-dependent requirements checks (includes ClientAppRequirementCheck which
-            // auto-fixes isFallbackPublicClient required for device code auth on macOS/Linux/WSL).
+            // Run all requirements checks: system checks (PowerShell modules, Frontier Preview)
+            // and config checks (Location, ClientApp — includes isFallbackPublicClient auto-fix
+            // required for device code auth on macOS/Linux/WSL).
             if (!skipRequirements)
             {
                 try
                 {
                     var requirementsResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                        RequirementsSubcommand.GetConfigRequirementChecks(clientAppValidator),
+                        RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
                         setupConfig,
                         logger,
                         category: null,

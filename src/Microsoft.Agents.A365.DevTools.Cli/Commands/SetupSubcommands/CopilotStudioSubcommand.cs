@@ -72,6 +72,15 @@ internal static class CopilotStudioSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
+            // Verify system requirements (PowerShell modules are required for Graph operations)
+            var systemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+            if (!systemChecksOk)
+            {
+                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                Environment.Exit(1);
+            }
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Configure CopilotStudio Permissions");
