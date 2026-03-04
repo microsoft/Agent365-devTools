@@ -154,14 +154,20 @@ internal static class BlueprintSubcommand
             "--update-endpoint",
             description: "Delete the existing messaging endpoint and register a new one with the specified URL");
 
+        var skipRequirementsOption = new Option<bool>(
+            "--skip-requirements",
+            description: "Skip requirements validation check\n" +
+                        "Use with caution: setup may fail if prerequisites are not met");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
         command.AddOption(updateEndpointOption);
+        command.AddOption(skipRequirementsOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, updateEndpoint) =>
+        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, updateEndpoint, skipRequirements) =>
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -213,6 +219,34 @@ internal static class BlueprintSubcommand
                     ExceptionHandler.ExitWithCleanup(1);
                 }
                 return;
+            }
+
+            // Run config-dependent requirements checks (includes ClientAppRequirementCheck which
+            // auto-fixes isFallbackPublicClient required for device code auth on macOS/Linux/WSL).
+            if (!skipRequirements)
+            {
+                try
+                {
+                    var requirementsResult = await RequirementsSubcommand.RunRequirementChecksAsync(
+                        RequirementsSubcommand.GetConfigRequirementChecks(clientAppValidator),
+                        setupConfig,
+                        logger,
+                        category: null,
+                        CancellationToken.None);
+
+                    if (!requirementsResult)
+                    {
+                        logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
+                        logger.LogError("Use the resolution guidance provided for each failed check.");
+                        ExceptionHandler.ExitWithCleanup(1);
+                    }
+                }
+                catch (Exception reqEx)
+                {
+                    logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
+                    logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                    ExceptionHandler.ExitWithCleanup(1);
+                }
             }
 
             if (dryRun)
@@ -281,7 +315,7 @@ internal static class BlueprintSubcommand
                 correlationId: correlationId
                 );
 
-        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, updateEndpointOption);
+        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, updateEndpointOption, skipRequirementsOption);
 
         return command;
     }

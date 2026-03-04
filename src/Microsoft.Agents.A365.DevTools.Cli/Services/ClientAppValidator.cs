@@ -113,6 +113,9 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Step 6: Verify and fix redirect URIs
             await EnsureRedirectUrisAsync(clientAppId, graphToken, ct);
 
+            // Step 7: Verify and fix public client flows (required for device code fallback on non-Windows)
+            await EnsurePublicClientFlowsEnabledAsync(clientAppId, graphToken, ct);
+
             _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
         }
         catch (ClientAppValidationException)
@@ -234,6 +237,82 @@ public sealed class ClientAppValidator : IClientAppValidator
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error ensuring redirect URIs (non-fatal)");
+        }
+    }
+
+    /// <summary>
+    /// Ensures the app registration has "Allow public client flows" enabled.
+    /// This setting is required for MSAL device code authentication fallback on non-Windows
+    /// platforms where interactive browser auth is unavailable (macOS headless, Linux, WSL).
+    /// Automatically enables it if disabled (self-healing).
+    /// </summary>
+    private async Task EnsurePublicClientFlowsEnabledAsync(
+        string clientAppId,
+        string graphToken,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            _logger.LogDebug("Checking 'Allow public client flows' for client app {ClientAppId}", clientAppId);
+
+            var appCheckResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,isFallbackPublicClient\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
+                cancellationToken: ct);
+
+            if (!appCheckResult.Success)
+            {
+                _logger.LogWarning("Could not check 'Allow public client flows': {Error}", appCheckResult.StandardError);
+                return;
+            }
+
+            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(appCheckResult.StandardOutput);
+            var response = JsonNode.Parse(sanitizedOutput);
+            var apps = response?["value"]?.AsArray();
+
+            if (apps == null || apps.Count == 0)
+            {
+                _logger.LogWarning("Client app not found when checking 'Allow public client flows'");
+                return;
+            }
+
+            var app = apps[0]!.AsObject();
+            var objectId = app["id"]?.GetValue<string>();
+
+            if (string.IsNullOrWhiteSpace(objectId))
+            {
+                _logger.LogWarning("Could not get application object ID when checking 'Allow public client flows'");
+                return;
+            }
+
+            var isFallbackPublicClient = app["isFallbackPublicClient"]?.GetValue<bool>() ?? false;
+            if (isFallbackPublicClient)
+            {
+                _logger.LogDebug("'Allow public client flows' is already enabled");
+                return;
+            }
+
+            _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback on macOS/Linux).");
+            _logger.LogInformation("Run 'a365 setup requirements' at any time to re-verify and auto-fix this setting.");
+
+            var patchBody = "{\"isFallbackPublicClient\":true}";
+            var escapedBody = patchBody.Replace("\"", "\"\"");
+            var patchResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method PATCH --url \"{GraphApiBaseUrl}/applications/{CommandStringHelper.EscapePowerShellString(objectId)}\" --headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" --body \"{escapedBody}\"",
+                cancellationToken: ct);
+
+            if (!patchResult.Success)
+            {
+                _logger.LogWarning("Failed to enable 'Allow public client flows': {Error}", patchResult.StandardError);
+                return;
+            }
+
+            _logger.LogInformation("Successfully enabled 'Allow public client flows' on app registration.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error ensuring 'Allow public client flows' is enabled (non-fatal)");
         }
     }
 

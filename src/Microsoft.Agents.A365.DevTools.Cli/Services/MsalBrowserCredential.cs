@@ -359,6 +359,20 @@ public sealed class MsalBrowserCredential : TokenCredential
             _logger?.LogDebug("Successfully acquired token via device code authentication.");
             return new AccessToken(deviceCodeResult.AccessToken, deviceCodeResult.ExpiresOn);
         }
+        catch (MsalException msalEx) when (
+            msalEx.Message.Contains("AADSTS7000218") ||
+            (msalEx is MsalServiceException svcEx && svcEx.ErrorCode == "invalid_client" &&
+             msalEx.Message.Contains("client_assertion")))
+        {
+            // Do NOT pass msalEx as logger argument — avoids printing the full stack trace.
+            // This error means "Allow public client flows" is disabled on the app registration.
+            _logger?.LogError("Device code authentication failed: 'Allow public client flows' is not enabled on the app registration.");
+            _logger?.LogError("Run 'a365 setup requirements' to detect and auto-fix this automatically.");
+            _logger?.LogError("Or fix manually: Azure Portal > App registrations > Authentication > Settings > Enable 'Allow public client flows' > Save.");
+            throw new MsalAuthenticationFailedException(
+                "Device code authentication requires 'Allow public client flows' to be enabled. Run 'a365 setup requirements' to auto-fix, or enable it manually in Azure Portal > App registrations > Authentication.",
+                msalEx);
+        }
         catch (MsalException msalEx)
         {
             _logger?.LogError(msalEx, "Device code authentication failed: {Message}", msalEx.Message);

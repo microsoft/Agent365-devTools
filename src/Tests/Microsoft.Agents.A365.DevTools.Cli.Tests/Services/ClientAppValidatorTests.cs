@@ -508,6 +508,94 @@ public class ClientAppValidatorTests
 
     #endregion
 
+    #region EnsurePublicClientFlowsEnabledAsync Tests
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenPublicClientFlowsAlreadyEnabled_DoesNotPatchPublicClientFlows()
+    {
+        // Arrange
+        var token = "fake-token-123";
+        SetupTokenAcquisition(token);
+        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
+        SetupAdminConsentGranted(ValidClientAppId);
+        SetupPublicClientFlowsCheck(enabled: true);
+
+        // Act
+        await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
+
+        // Assert - PATCH for isFallbackPublicClient should NOT be called
+        await _executor.DidNotReceive().ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenPublicClientFlowsDisabled_PatchesPublicClientFlows()
+    {
+        // Arrange
+        var token = "fake-token-123";
+        SetupTokenAcquisition(token);
+        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
+        SetupAdminConsentGranted(ValidClientAppId);
+        SetupPublicClientFlowsCheck(enabled: false);
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+
+        // Act - should not throw (non-fatal)
+        await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
+
+        // Assert - PATCH for isFallbackPublicClient should be called once
+        await _executor.Received(1).ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
+            cancellationToken: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenPublicClientFlowsPatchFails_DoesNotThrow()
+    {
+        // Arrange
+        var token = "fake-token-123";
+        SetupTokenAcquisition(token);
+        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
+        SetupAdminConsentGranted(ValidClientAppId);
+        SetupPublicClientFlowsCheck(enabled: false);
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Forbidden" });
+
+        // Act - should not throw (non-fatal operation)
+        await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
+    }
+
+    private void SetupPublicClientFlowsCheck(bool enabled)
+    {
+        var appJson = $$"""
+        {
+            "value": [{
+                "id": "object-id-123",
+                "isFallbackPublicClient": {{(enabled ? "true" : "false")}}
+            }]
+        }
+        """;
+
+        _executor.ExecuteAsync(
+            Arg.Is<string>(s => s == "az"),
+            Arg.Is<string>(s => s.Contains("isFallbackPublicClient")),
+            cancellationToken: Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appJson, StandardError = string.Empty });
+    }
+
+    #endregion
+
     #region EnsureRedirectUrisAsync Tests
 
     [Fact]

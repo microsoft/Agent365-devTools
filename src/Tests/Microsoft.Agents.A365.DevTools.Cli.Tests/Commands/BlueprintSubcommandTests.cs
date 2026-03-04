@@ -152,6 +152,26 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
+    public void CreateCommand_ShouldHaveSkipRequirementsOption()
+    {
+        // Act
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockAzureValidator,
+            _mockWebAppCreator,
+            _mockPlatformDetector,
+            _mockBotConfigurator,
+            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+
+        // Assert
+        var skipRequirementsOption = command.Options.FirstOrDefault(o => o.Name == "skip-requirements");
+        skipRequirementsOption.Should().NotBeNull();
+        skipRequirementsOption!.Aliases.Should().Contain("--skip-requirements");
+    }
+
+    [Fact]
     public async Task DryRun_ShouldLoadConfigAndNotExecute()
     {
         // Arrange
