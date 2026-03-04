@@ -284,8 +284,13 @@ public class GraphApiService
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
-        var resp = await _httpClient.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode) return null;
+        using var resp = await _httpClient.GetAsync(url, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            var errorBody = await resp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, errorBody);
+            return null;
+        }
         var json = await resp.Content.ReadAsStringAsync(ct);
 
         return JsonDocument.Parse(json);
@@ -298,9 +303,13 @@ public class GraphApiService
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var resp = await _httpClient.PostAsync(url, content, ct);
+        using var resp = await _httpClient.PostAsync(url, content, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode) return null;
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogError("Graph POST {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+            return null;
+        }
 
         return string.IsNullOrWhiteSpace(body) ? null : JsonDocument.Parse(body);
     }
@@ -320,7 +329,7 @@ public class GraphApiService
             : $"https://graph.microsoft.com{relativePath}";
 
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var resp = await _httpClient.PostAsync(url, content, ct);
+        using var resp = await _httpClient.PostAsync(url, content, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
 
         JsonDocument? json = null;
@@ -350,8 +359,8 @@ public class GraphApiService
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
-        var resp = await _httpClient.SendAsync(request, ct);
+        using var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
+        using var resp = await _httpClient.SendAsync(request, ct);
 
         // Many PATCH calls return 204 NoContent on success
         if (!resp.IsSuccessStatusCode)
@@ -359,7 +368,7 @@ public class GraphApiService
             var body = await resp.Content.ReadAsStringAsync(ct);
             _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
         }
-        
+
         return resp.IsSuccessStatusCode;
     }
 

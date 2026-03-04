@@ -496,7 +496,15 @@ public class CleanupCommandTests
         _mockLogger.Received().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint deletion failed")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint deletion failed. The blueprint still exists in Entra ID.")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        // Verify that the retry guidance message is also logged
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("All agent instances were deleted. Retry 'a365 cleanup blueprint'")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

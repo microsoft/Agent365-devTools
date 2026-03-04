@@ -232,9 +232,13 @@ public class CleanupCommand
 
                 if (!deleted)
                 {
-                    Console.WriteLine();
-                    logger.LogWarning("Blueprint deletion failed.");
+                    logger.LogWarning("");
+                    logger.LogWarning("Blueprint deletion failed. The blueprint still exists in Entra ID.");
                     PrintOrphanSummary(logger, failedResources);
+                    if (!HasOrphanedResources(failedResources))
+                    {
+                        logger.LogWarning("All agent instances were deleted. Retry 'a365 cleanup blueprint' or delete the blueprint manually via the Entra portal or Graph API.");
+                    }
                     return;
                 }
 
@@ -902,7 +906,6 @@ public class CleanupCommand
             return;
         }
 
-        Console.WriteLine();
         logger.LogWarning("Blueprint cleanup completed with warnings.");
         logger.LogWarning("The following resources could not be deleted and remain orphaned in Entra ID:");
         foreach (var userId in failedResources[AgenticUsersKey])

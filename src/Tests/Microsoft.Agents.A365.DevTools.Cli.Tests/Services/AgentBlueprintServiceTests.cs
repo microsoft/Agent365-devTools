@@ -439,15 +439,21 @@ public class AgentBlueprintServiceTests
 internal class FakeHttpMessageHandler : HttpMessageHandler
 {
     private readonly Queue<HttpResponseMessage> _responses = new();
+    private readonly List<HttpResponseMessage> _sentResponses = new();
 
     public void QueueResponse(HttpResponseMessage resp) => _responses.Enqueue(resp);
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (_responses.Count == 0)
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("") });
+        {
+            var fallback = new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("") };
+            _sentResponses.Add(fallback);
+            return Task.FromResult(fallback);
+        }
 
         var resp = _responses.Dequeue();
+        _sentResponses.Add(resp);
         return Task.FromResult(resp);
     }
 
@@ -455,6 +461,10 @@ internal class FakeHttpMessageHandler : HttpMessageHandler
     {
         if (disposing)
         {
+            foreach (var resp in _sentResponses)
+                resp.Dispose();
+            _sentResponses.Clear();
+
             while (_responses.Count > 0)
                 _responses.Dequeue().Dispose();
         }
