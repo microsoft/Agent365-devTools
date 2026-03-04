@@ -104,14 +104,17 @@ public static class AuthenticationConstants
     };
 
     /// <summary>
-    /// Required scopes for oauth2 permission grants to service principals.
-    /// These scopes enable the service principals to operate correctly with the necessary permissions.
-    /// All scopes require admin consent.
+    /// Required scopes for all PowerShell-based Microsoft Graph operations (OAuth2 grants,
+    /// service principal lookups, and inheritable permissions).
+    /// Using a single unified set ensures Connect-MgGraph authenticates once and the resulting
+    /// token is reused from the in-process cache for all downstream Graph operations.
+    /// All scopes require admin consent and are included in RequiredClientAppPermissions.
     /// </summary>
     public static readonly string[] RequiredPermissionGrantScopes = new[]
     {
         "Application.ReadWrite.All",
-        "DelegatedPermissionGrant.ReadWrite.All"
+        "DelegatedPermissionGrant.ReadWrite.All",
+        "AgentIdentityBlueprint.UpdateAuthProperties.All"
     };
 
     /// <summary>

@@ -306,11 +306,11 @@ internal static class SetupHelpers
             logger.LogInformation("   - Configuring inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
                 config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
-            // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation
-            var requiredPermissions = new[] { "AgentIdentityBlueprint.UpdateAuthProperties.All", "Application.ReadWrite.All" };
-            
+            // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation.
+            // Reuse permissionGrantScopes (which already includes AgentIdentityBlueprint.UpdateAuthProperties.All)
+            // so all Graph PowerShell calls in this method share a single Connect-MgGraph session/cache entry.
             var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
-                config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: requiredPermissions, ct);
+                config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: permissionGrantScopes, ct);
 
             if (!ok && !alreadyExists)
             {
@@ -340,7 +340,7 @@ internal static class SetupHelpers
                     operation: async (ct) =>
                     {
                         var (exists, verifiedScopes, verifyError) = await blueprintService.VerifyInheritablePermissionsAsync(
-                            config.TenantId, config.AgentBlueprintId, resourceAppId, ct, requiredPermissions);
+                            config.TenantId, config.AgentBlueprintId, resourceAppId, ct, permissionGrantScopes);
                         return (exists, verifiedScopes, verifyError);
                     },
                     shouldRetry: (result) =>

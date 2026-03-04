@@ -204,23 +204,19 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             ? $" -ClientId '{CommandStringHelper.EscapePowerShellString(clientAppId)}'" 
             : "";
 
-        // Workaround for older Microsoft.Graph versions that don't have Get-MgAccessToken
-        // We make a dummy Graph request and extract the token from the Authorization header
+        // Extract the access token from the Authorization header of a live Graph request.
+        // $ctx.AccessToken is NOT used because Microsoft.Graph.Authentication v2+ returns an
+        // opaque (non-JWT) value that is rejected when used as a Bearer token in Graph API calls.
+        // The Authorization header on an actual request always contains the real JWT Bearer token.
         return
             $"Import-Module Microsoft.Graph.Authentication -ErrorAction Stop; " +
             $"Connect-MgGraph -TenantId '{escapedTenantId}'{clientIdParam} -Scopes {scopesArray} {authMethod} -NoWelcome -ErrorAction Stop; " +
             $"$ctx = Get-MgContext; " +
             $"if ($null -eq $ctx) {{ throw 'Failed to establish Graph context' }}; " +
-            // Try to get token directly if available (newer versions)
-            $"if ($ctx.PSObject.Properties.Name -contains 'AccessToken' -and -not [string]::IsNullOrWhiteSpace($ctx.AccessToken)) {{ " +
-            $"  $ctx.AccessToken " +
-            $"}} else {{ " +
-            // Fallback: Extract token from a test Graph request (older versions)
-            $"  $response = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/$metadata' -OutputType HttpResponseMessage -ErrorAction Stop; " +
-            $"  $token = $response.RequestMessage.Headers.Authorization.Parameter; " +
-            $"  if ([string]::IsNullOrWhiteSpace($token)) {{ throw 'Failed to extract access token from request' }}; " +
-            $"  $token " +
-            $"}}";
+            $"$response = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/$metadata' -OutputType HttpResponseMessage -ErrorAction Stop; " +
+            $"$token = $response.RequestMessage.Headers.Authorization.Parameter; " +
+            $"if ([string]::IsNullOrWhiteSpace($token)) {{ throw 'Failed to extract access token from Graph request headers' }}; " +
+            $"$token";
     }
 
     private static string BuildScopesArray(string[] scopes)
