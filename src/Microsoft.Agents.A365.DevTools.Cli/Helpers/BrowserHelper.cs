@@ -42,7 +42,7 @@ public static class BrowserHelper
         {
             if (logger != null)
             {
-                logger.LogWarning(ex, "Failed to open browser automatically");
+                logger.LogWarning("Failed to open browser automatically: {Message}", ex.Message);
                 logger.LogInformation("Please manually open: {Url}", url);
             }
             else

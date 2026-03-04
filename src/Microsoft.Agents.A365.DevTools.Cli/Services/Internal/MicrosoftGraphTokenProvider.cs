@@ -280,6 +280,16 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             _logger.LogError(
                 "Failed to acquire Microsoft Graph access token. Error: {Error}",
                 result.StandardError);
+
+            var error = result.StandardError ?? string.Empty;
+            if (error.Contains("module", StringComparison.OrdinalIgnoreCase) &&
+                (error.Contains("was not loaded", StringComparison.OrdinalIgnoreCase) ||
+                 error.Contains("not found in any module", StringComparison.OrdinalIgnoreCase)))
+            {
+                _logger.LogError(
+                    "Required PowerShell module is not installed. Run 'a365 setup requirements' to install missing modules.");
+            }
+
             return null;
         }
 

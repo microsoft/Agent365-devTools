@@ -244,7 +244,9 @@ internal static class SetupHelpers
         {
             throw new SetupValidationException(
                 "Failed to authenticate to Microsoft Graph with delegated permissions. " +
-                "Please sign in when prompted and ensure your account has the required roles and permission scopes.");
+                "Check the errors above for the specific cause. Common causes: " +
+                "missing PowerShell module (run 'a365 setup requirements' to install), " +
+                "insufficient permissions, or sign-in was cancelled.");
         }
 
         var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct, permissionGrantScopes);

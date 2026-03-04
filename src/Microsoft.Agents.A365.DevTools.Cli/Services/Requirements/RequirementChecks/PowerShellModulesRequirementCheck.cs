@@ -87,7 +87,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             }
         }
 
-        // Return results
+        // All modules present - done
         if (missingModules.Count == 0)
         {
             return RequirementCheckResult.Success(
@@ -95,15 +95,60 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             );
         }
 
-        var missingModuleNames = string.Join(", ", missingModules.Select(m => m.Name));
-        var installCommands = GenerateInstallationInstructions(missingModules);
+        // Attempt auto-install for missing modules
+        logger.LogInformation("Attempting to auto-install missing PowerShell modules...");
+        var autoInstalled = new List<RequiredModule>();
+        var stillMissing = new List<RequiredModule>();
+
+        foreach (var module in missingModules)
+        {
+            logger.LogInformation("Installing {ModuleName}...", module.Name);
+            var installSuccess = await InstallModuleAsync(module.Name, logger, cancellationToken);
+
+            if (installSuccess)
+            {
+                var verified = await CheckModuleInstalledAsync(module.Name, logger, cancellationToken);
+                if (verified)
+                {
+                    autoInstalled.Add(module);
+                    logger.LogInformation("Successfully installed {ModuleName}", module.Name);
+                }
+                else
+                {
+                    stillMissing.Add(module);
+                    logger.LogWarning("Install succeeded but {ModuleName} not found in module path after install", module.Name);
+                }
+            }
+            else
+            {
+                stillMissing.Add(module);
+            }
+        }
+
+        if (stillMissing.Count == 0)
+        {
+            var autoInstalledNames = string.Join(", ", autoInstalled.Select(m => m.Name));
+            var alreadyInstalled = installedModules.Count > 0
+                ? $" Previously installed: {string.Join(", ", installedModules.Select(m => m.Name))}."
+                : string.Empty;
+            return RequirementCheckResult.Success(
+                details: $"Auto-installed missing modules: {autoInstalledNames}.{alreadyInstalled}"
+            );
+        }
+
+        // Some modules could not be auto-installed
+        var stillMissingNames = string.Join(", ", stillMissing.Select(m => m.Name));
+        var installCommands = GenerateInstallationInstructions(stillMissing);
+        var autoInstalledNote = autoInstalled.Count > 0
+            ? $"Auto-installed: {string.Join(", ", autoInstalled.Select(m => m.Name))}. "
+            : string.Empty;
 
         return RequirementCheckResult.Failure(
-            errorMessage: $"Missing required PowerShell modules: {missingModuleNames}",
-            resolutionGuidance: installCommands,
-            details: $"These modules are required for Microsoft Graph operations, app registration, and Azure authentication. " +
-                    $"Missing: {missingModuleNames}. " +
-                    $"Installed: {string.Join(", ", installedModules.Select(m => m.Name))}"
+            errorMessage: $"Missing required PowerShell modules (auto-install failed): {stillMissingNames}",
+            resolutionGuidance: $"{autoInstalledNote}{installCommands}",
+            details: $"These modules are required for Microsoft Graph operations. " +
+                     $"Auto-install was attempted but failed for: {stillMissingNames}. " +
+                     $"Installed: {string.Join(", ", installedModules.Concat(autoInstalled).Select(m => m.Name))}"
         );
     }
 
@@ -175,6 +220,29 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         catch (Exception ex)
         {
             logger.LogDebug("Module check failed for {ModuleName}: {Error}", moduleName, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Attempts to install a PowerShell module using Install-Module with CurrentUser scope.
+    /// Uses -Force and -AllowClobber to handle conflicts without requiring elevation.
+    /// </summary>
+    private async Task<bool> InstallModuleAsync(string moduleName, ILogger logger, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var command = $"Install-Module -Name '{moduleName}' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
+            var result = await ExecutePowerShellCommandAsync("pwsh", command, logger, cancellationToken);
+            if (!result.success)
+            {
+                logger.LogDebug("Auto-install failed for {ModuleName}: {Output}", moduleName, result.output);
+            }
+            return result.success;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Auto-install threw exception for {ModuleName}: {Error}", moduleName, ex.Message);
             return false;
         }
     }
