@@ -925,7 +925,7 @@ public class CleanupCommand
             return;
         }
 
-        logger.LogWarning("Blueprint cleanup completed with warnings.");
+        logger.LogWarning("Blueprint cleanup encountered warnings.");
         logger.LogWarning("The following resources could not be deleted and remain orphaned in Entra ID:");
         foreach (var userId in failedResources[AgenticUsersKey])
             logger.LogWarning("  Orphaned agentic user: {ResourceId}", userId);
