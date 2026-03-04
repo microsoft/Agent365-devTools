@@ -54,7 +54,7 @@ public class CleanupCommand
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, correlationId: correlationId));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
