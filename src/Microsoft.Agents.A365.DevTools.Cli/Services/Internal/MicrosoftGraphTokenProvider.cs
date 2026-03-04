@@ -234,16 +234,67 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         CancellationToken ct)
     {
         // Try PowerShell Core first (cross-platform)
-        var result = await ExecutePowerShellAsync("pwsh", script, ct);
+        var shell = "pwsh";
+        var result = await ExecutePowerShellAsync(shell, script, ct);
 
         // Fallback to Windows PowerShell if pwsh is not available
         if (!result.Success && IsPowerShellNotFoundError(result))
         {
             _logger.LogDebug("PowerShell Core not found, falling back to Windows PowerShell");
-            result = await ExecutePowerShellAsync("powershell", script, ct);
+            shell = "powershell";
+            result = await ExecutePowerShellAsync(shell, script, ct);
+        }
+
+        // If the failure is due to a missing or broken module, attempt auto-install and retry once.
+        // This handles cases where Get-Module -ListAvailable reports the module as present but
+        // Import-Module fails at runtime (e.g., corrupt install, partial uninstall, path mismatch).
+        if (!result.Success && IsPowerShellModuleMissingError(result))
+        {
+            if (await TryAutoInstallRequiredModulesAsync(shell, ct))
+            {
+                _logger.LogInformation("Auto-installed missing PowerShell module(s). Retrying...");
+                result = await ExecutePowerShellAsync(shell, script, ct);
+            }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Attempts to auto-install the PowerShell modules required for Graph token acquisition.
+    /// Returns true if installation succeeded, false otherwise.
+    /// </summary>
+    private async Task<bool> TryAutoInstallRequiredModulesAsync(string shell, CancellationToken ct)
+    {
+        _logger.LogInformation("Detected missing or broken PowerShell module. Attempting auto-install...");
+        try
+        {
+            var installScript =
+                "Install-Module -Name 'Microsoft.Graph.Authentication' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop; " +
+                "Install-Module -Name 'Microsoft.Graph.Applications' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
+            var result = await ExecutePowerShellAsync(shell, installScript, ct);
+            if (result.Success)
+            {
+                _logger.LogInformation("PowerShell modules auto-installed successfully.");
+                return true;
+            }
+            _logger.LogWarning("Auto-install of PowerShell modules failed: {Error}", result.StandardError);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Auto-install of PowerShell modules threw an exception: {Error}", ex.Message);
+            return false;
+        }
+    }
+
+    private static bool IsPowerShellModuleMissingError(CommandResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.StandardError)) return false;
+        var error = result.StandardError;
+        return error.Contains("module", StringComparison.OrdinalIgnoreCase) &&
+               (error.Contains("was not loaded", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("not found in any module", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<CommandResult> ExecutePowerShellAsync(
@@ -287,7 +338,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                  error.Contains("not found in any module", StringComparison.OrdinalIgnoreCase)))
             {
                 _logger.LogError(
-                    "Required PowerShell module is not installed. Run 'a365 setup requirements' to install missing modules.");
+                    "Required PowerShell module could not be loaded (auto-install was attempted but failed). " +
+                    "Run 'a365 setup requirements' to manually install missing modules.");
             }
 
             return null;

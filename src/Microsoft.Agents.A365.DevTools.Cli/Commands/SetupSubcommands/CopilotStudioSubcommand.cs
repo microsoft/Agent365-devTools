@@ -72,13 +72,18 @@ internal static class CopilotStudioSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
-            // Verify system requirements (PowerShell modules are required for Graph operations)
-            var systemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
-            if (!systemChecksOk)
+            // Verify system requirements (PowerShell modules are required for Graph operations).
+            // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
+            // which would be a side effect in a mode that is supposed to be non-mutating.
+            if (!dryRun)
             {
-                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                Environment.Exit(1);
+                var systemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                if (!systemChecksOk)
+                {
+                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                    Environment.Exit(1);
+                }
             }
 
             if (dryRun)

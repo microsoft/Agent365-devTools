@@ -85,13 +85,18 @@ internal static class PermissionsSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
-            // Verify system requirements (PowerShell modules are required for Graph operations)
-            var mcpSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
-            if (!mcpSystemChecksOk)
+            // Verify system requirements (PowerShell modules are required for Graph operations).
+            // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
+            // which would be a side effect in a mode that is supposed to be non-mutating.
+            if (!dryRun)
             {
-                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                Environment.Exit(1);
+                var mcpSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                if (!mcpSystemChecksOk)
+                {
+                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                    Environment.Exit(1);
+                }
             }
 
             if (dryRun)
@@ -172,13 +177,18 @@ internal static class PermissionsSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
-            // Verify system requirements (PowerShell modules are required for Graph operations)
-            var botSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
-            if (!botSystemChecksOk)
+            // Verify system requirements (PowerShell modules are required for Graph operations).
+            // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
+            // which would be a side effect in a mode that is supposed to be non-mutating.
+            if (!dryRun)
             {
-                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                Environment.Exit(1);
+                var botSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                if (!botSystemChecksOk)
+                {
+                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                    Environment.Exit(1);
+                }
             }
 
             if (dryRun)
@@ -255,13 +265,18 @@ internal static class PermissionsSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
-            // Verify system requirements (PowerShell modules are required for Graph operations)
-            var customSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
-            if (!customSystemChecksOk)
+            // Verify system requirements (PowerShell modules are required for Graph operations).
+            // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
+            // which would be a side effect in a mode that is supposed to be non-mutating.
+            if (!dryRun)
             {
-                logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                Environment.Exit(1);
+                var customSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                if (!customSystemChecksOk)
+                {
+                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+                    Environment.Exit(1);
+                }
             }
 
             if (dryRun)

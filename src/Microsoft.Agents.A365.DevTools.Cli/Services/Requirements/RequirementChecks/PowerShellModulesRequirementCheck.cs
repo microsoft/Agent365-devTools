@@ -286,7 +286,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             }
             
             logger.LogDebug("PowerShell command failed: {Error}", error);
-            return (false, null);
+            return (false, error);
         }
         catch (Exception ex)
         {
