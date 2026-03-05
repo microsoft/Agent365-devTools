@@ -160,6 +160,7 @@ public class CommandExecutor
                     var display = outputTransform?.Invoke(args.Data) ?? args.Data;
                     if (display != null)
                     {
+                        // outputPrefix is prepended only to the first line; callers must not return multi-line strings from outputTransform.
                         Console.WriteLine($"{outputPrefix}{display}");
                     }
                 }

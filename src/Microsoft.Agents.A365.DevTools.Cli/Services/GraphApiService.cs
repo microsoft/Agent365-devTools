@@ -408,7 +408,7 @@ public class GraphApiService
     public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
         string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        // $filter=appId eq is "Default+Advanced" per Graph docs � no ConsistencyLevel header required.
+        // $filter=appId eq is "Default+Advanced" per Graph docs -� no ConsistencyLevel header required.
         // The token must have Application.Read.All; pass scopes to ensure MSAL token is used when needed.
         using var doc = await GraphGetAsync(
             tenantId,

@@ -232,7 +232,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     {
         try
         {
-            var command = $"Install-Module -Name '{moduleName}' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
+            var command = $"Install-Module -Name '{moduleName}' -Repository 'PSGallery' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
             var result = await ExecutePowerShellCommandAsync("pwsh", command, logger, cancellationToken);
             if (!result.success)
             {

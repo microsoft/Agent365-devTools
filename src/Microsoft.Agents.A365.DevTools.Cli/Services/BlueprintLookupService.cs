@@ -267,6 +267,7 @@ public class BlueprintLookupService
 
             _logger.LogDebug("Found service principal (ObjectId: {ObjectId}, AppId: {AppId})", objectId, appId);
 
+            // Note: DisplayName is not queried in this lookup path ($select=id only) — callers must not rely on it being populated.
             return new ServicePrincipalLookupResult
             {
                 Found = true,

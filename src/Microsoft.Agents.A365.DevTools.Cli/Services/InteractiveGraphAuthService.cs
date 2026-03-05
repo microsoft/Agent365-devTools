@@ -108,15 +108,15 @@ public sealed class InteractiveGraphAuthService
 
             await credential.GetTokenAsync(tokenContext, cancellationToken);
         }
-        catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
+        catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant", StringComparison.Ordinal))
         {
             ThrowInsufficientPermissionsException(ex);
             throw; // Unreachable but required for compiler
         }
         catch (MsalAuthenticationFailedException ex) when (
-            ex.Message.Contains("localhost") ||
-            ex.Message.Contains("connection") ||
-            ex.Message.Contains("redirect_uri"))
+            ex.Message.Contains("localhost", StringComparison.Ordinal) ||
+            ex.Message.Contains("connection", StringComparison.Ordinal) ||
+            ex.Message.Contains("redirect_uri", StringComparison.Ordinal))
         {
             _logger.LogError("Browser authentication failed due to connectivity issue: {Message}", ex.Message);
             throw new GraphApiException(

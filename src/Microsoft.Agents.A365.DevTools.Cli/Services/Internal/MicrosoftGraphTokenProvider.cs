@@ -327,8 +327,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         try
         {
             var installScript =
-                "Install-Module -Name 'Microsoft.Graph.Authentication' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop; " +
-                "Install-Module -Name 'Microsoft.Graph.Applications' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
+                "Install-Module -Name 'Microsoft.Graph.Authentication' -Repository 'PSGallery' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop; " +
+                "Install-Module -Name 'Microsoft.Graph.Applications' -Repository 'PSGallery' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
             var result = await ExecutePowerShellAsync(shell, installScript, ct);
             if (result.Success)
             {

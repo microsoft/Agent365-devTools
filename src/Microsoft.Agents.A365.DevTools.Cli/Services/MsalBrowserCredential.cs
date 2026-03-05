@@ -382,6 +382,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         // which can be reused silently without prompting the user again.
         var accountsList = (await _publicClientApp.GetAccountsAsync()).ToList();
         // Filter by tenant to avoid silently authenticating as the wrong identity when multiple accounts are cached.
+        // If multiple accounts share the same tenant (rare), FirstOrDefault picks the first match; this is acceptable
+        // since MSAL will re-prompt if the silent acquisition fails for the wrong account.
         var cachedAccount = accountsList.Count switch
         {
             0 => null,
@@ -430,9 +432,9 @@ public sealed class MsalBrowserCredential : TokenCredential
             return new AccessToken(deviceCodeResult.AccessToken, deviceCodeResult.ExpiresOn);
         }
         catch (MsalException msalEx) when (
-            msalEx.Message.Contains("AADSTS7000218") ||
+            msalEx.Message.Contains("AADSTS7000218", StringComparison.Ordinal) ||
             (msalEx is MsalServiceException svcEx && svcEx.ErrorCode == "invalid_client" &&
-             msalEx.Message.Contains("client_assertion")))
+             msalEx.Message.Contains("client_assertion", StringComparison.Ordinal)))
         {
             // Do NOT pass msalEx as logger argument — avoids printing the full stack trace.
             // This error means "Allow public client flows" is disabled on the app registration.
