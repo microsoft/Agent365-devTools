@@ -100,6 +100,7 @@
 ### Code Review Mindset
 - Be cautious about deleting code; avoid `git restore` without review
 - Do not create unnecessary documentation files
+- For user-facing changes (features, bug fixes, behavioral changes): verify `CHANGELOG.md` has an entry in the `[Unreleased]` section
 
 ---
 

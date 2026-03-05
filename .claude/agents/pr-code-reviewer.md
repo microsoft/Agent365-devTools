@@ -144,7 +144,12 @@ For each changed file, analyze:
    - Path separators
    - OS-specific code
 
-7. **Test Coverage Gaps**
+7. **CHANGELOG.md Check** (for user-facing changes)
+   - If the PR adds features, fixes bugs, or changes observable behavior, verify `CHANGELOG.md` has an entry in the `[Unreleased]` section
+   - Internal refactors, test-only changes, and tooling/CI-only changes do not require a CHANGELOG entry
+   - Flag as `low` severity if missing from a user-facing PR
+
+8. **Test Coverage Gaps**
    - Based on the conditional logic, what specific test scenarios are needed?
    - Generate concrete test code examples
 

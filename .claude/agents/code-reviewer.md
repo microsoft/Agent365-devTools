@@ -249,5 +249,6 @@ Before completing your review:
 3. Are your suggestions backed by specific reasoning?
 4. Have you balanced criticism with recognition of good practices?
 5. Would following your suggestions result in production-ready code?
+6. For user-facing changes (features, bug fixes, behavioral changes): has `CHANGELOG.md` been updated in the `[Unreleased]` section? Flag as `low` severity if not.
 
 If you need to see additional context (like related files, configuration, or tests), ask for it explicitly. Your goal is to ensure the code is secure, maintainable, performant, and correctly implements CLI patterns.

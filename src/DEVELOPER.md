@@ -833,32 +833,30 @@ Follow Semantic Versioning: `MAJOR.MINOR.PATCH[-PRERELEASE]`
 
 ### Create Release
 
-1. Update version in `Microsoft.Agents.A365.DevTools.Cli.csproj`:
-   ```xml
-   <Version>1.0.0-beta.2</Version>
-   ```
+Version is managed automatically by [Nerdbank.GitVersioning](https://github.com/dotnet/Nerdbank.GitVersioning) via `src/version.json`. The NuGet publish process is fully automated through GitHub Actions.
 
-2. Build and pack:
-   ```bash
-   dotnet clean
-   dotnet build -c Release
-   dotnet pack -c Release
-   ```
+**Steps to release:**
 
-3. Test locally:
-   ```bash
-   dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli
-   dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli \
-     --add-source ./bin/Release \
-     --prerelease
-   ```
+1. **Update CHANGELOG.md** — move items from `[Unreleased]` to a new version section (e.g., `[1.2.0] - YYYY-MM`). Update the comparison links at the bottom.
 
-4. Publish to NuGet (when ready):
-   ```bash
-   dotnet nuget push ./bin/Release/Microsoft.Agents.A365.DevTools.Cli.1.0.0-beta.2.nupkg \
-     --source https://api.nuget.org/v3/index.json \
-     --api-key YOUR_API_KEY
-   ```
+2. **Merge to main** — CI runs automatically: builds, tests, and uploads the NuGet package as a build artifact.
+
+3. **Publish the GitHub release draft** — release-drafter auto-creates a draft release from merged PR titles and labels. Go to [GitHub Releases](https://github.com/microsoft/Agent365-devTools/releases), review the draft, set the correct version tag (e.g., `v1.2.0`), and click **Publish release**.
+
+4. **NuGet publish runs automatically** — the `release.yml` workflow triggers on `release: published` and pushes the package to NuGet.org using the `NUGET_API_KEY` repository secret.
+
+**Test locally before releasing:**
+```bash
+cd src
+dotnet build dirs.proj -c Release
+dotnet pack dirs.proj -c Release --output ../NuGetPackages
+
+dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli
+dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli \
+  --add-source ../NuGetPackages \
+  --prerelease
+a365 --version
+```
 
 ---
 
@@ -951,6 +949,7 @@ Then run: `source ~/.bashrc` (or `source ~/.zshrc`)
 - [ ] No breaking changes (or documented)
 - [ ] Error handling implemented
 - [ ] Logging added
+- [ ] CHANGELOG.md updated in `[Unreleased]` (required for user-facing changes: features, bug fixes, behavioral changes)
 
 ---
 
