@@ -659,7 +659,7 @@ internal static class PermissionsSubcommand
 
             if (setupConfig.CustomBlueprintPermissions == null || setupConfig.CustomBlueprintPermissions.Count == 0)
             {
-                logger.LogInformation("No custom blueprint permissions configured.");
+                logger.LogInformation("No custom blueprint permissions specified in config. Skipping.");
                 await configService.SaveStateAsync(setupConfig);
                 return true;
             }

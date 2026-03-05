@@ -5,6 +5,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -117,9 +118,15 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 return cached.AccessToken;
             }
 
-            _logger.LogInformation(
-                "Acquiring Microsoft Graph delegated access token via PowerShell (Device Code: {UseDeviceCode})",
-                useDeviceCode);
+            _logger.LogInformation("Acquiring Microsoft Graph delegated access token via PowerShell...");
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                _logger.LogInformation("A browser window will open for authentication. Complete sign-in, then return here — the CLI will continue automatically.");
+            }
+            else
+            {
+                _logger.LogInformation("A device code prompt will appear below. Open the URL in any browser, enter the code, complete sign-in, then return here — the CLI will continue automatically.");
+            }
 
             var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
             var result = await ExecuteWithFallbackAsync(script, ct);
