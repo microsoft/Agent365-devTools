@@ -249,7 +249,15 @@ internal static class SetupHelpers
                 "insufficient permissions, or sign-in was cancelled.");
         }
 
-        var blueprintSpObjectId = await graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, ct, permissionGrantScopes);
+        // Retry: Azure AD service principal propagation can lag 10-30s after blueprint creation.
+        var retryHelperSp = new RetryHelper(logger);
+        var blueprintSpObjectId = await retryHelperSp.ExecuteWithRetryAsync(
+            operation: (innerCt) => graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, innerCt, permissionGrantScopes)!,
+            shouldRetry: result => string.IsNullOrWhiteSpace(result),
+            maxRetries: 5,
+            baseDelaySeconds: 5,
+            cancellationToken: ct);
+
         if (string.IsNullOrWhiteSpace(blueprintSpObjectId))
         {
             throw new SetupValidationException($"Blueprint Service Principal not found for appId {config.AgentBlueprintId}. " +
