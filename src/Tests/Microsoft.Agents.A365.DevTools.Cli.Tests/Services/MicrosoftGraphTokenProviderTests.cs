@@ -35,6 +35,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 
@@ -51,6 +52,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -68,6 +70,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 
@@ -84,6 +87,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -158,6 +162,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "PowerShell error" });
 
@@ -184,6 +189,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 
@@ -229,6 +235,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 

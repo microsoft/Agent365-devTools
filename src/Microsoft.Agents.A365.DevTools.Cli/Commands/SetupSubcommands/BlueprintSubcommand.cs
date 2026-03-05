@@ -810,7 +810,9 @@ internal static class BlueprintSubcommand
             if (string.IsNullOrWhiteSpace(existingServicePrincipalId))
             {
                 logger.LogDebug("Looking up service principal for blueprint...");
-                var spLookup = await blueprintLookupService.GetServicePrincipalByAppIdAsync(tenantId, existingAppId, ct);
+                var spLookup = await blueprintLookupService.GetServicePrincipalByAppIdAsync(
+                    tenantId, existingAppId, ct,
+                    scopes: AuthenticationConstants.RequiredPermissionGrantScopes);
                 
                 if (spLookup.Found)
                 {
@@ -1376,6 +1378,20 @@ internal static class BlueprintSubcommand
         var applicationScopes = GetApplicationScopes(setupConfig, logger);
         bool consentAlreadyExists = false;
 
+        // Resolve blueprint SP object ID once — reused by both pre-check and polling.
+        // servicePrincipalId comes from generated config (persisted on previous runs).
+        // If absent, look it up using MSAL scopes that include Application.Read.All.
+        // Without Application.Read.All the az CLI token causes Graph to return empty results silently.
+        var blueprintSpId = servicePrincipalId;
+        if (string.IsNullOrWhiteSpace(blueprintSpId))
+        {
+            logger.LogDebug("Looking up service principal for blueprint...");
+            var spLookup = await blueprintLookupService.GetServicePrincipalByAppIdAsync(
+                tenantId, appId, ct,
+                scopes: AuthenticationConstants.RequiredPermissionGrantScopes);
+            blueprintSpId = spLookup.ObjectId;
+        }
+
         // Only check for existing consent if blueprint already existed
         // New blueprints cannot have consent yet, so skip the verification
         if (alreadyExisted)
@@ -1383,22 +1399,14 @@ internal static class BlueprintSubcommand
             logger.LogInformation("Verifying admin consent for application");
             logger.LogDebug("  - Application scopes: {Scopes}", string.Join(", ", applicationScopes));
 
-            // Check if consent already exists with required scopes
-            var blueprintSpId = servicePrincipalId;
-            if (string.IsNullOrWhiteSpace(blueprintSpId))
-            {
-                logger.LogDebug("Looking up service principal for blueprint to check consent...");
-                var spLookup = await blueprintLookupService.GetServicePrincipalByAppIdAsync(tenantId, appId, ct);
-                blueprintSpId = spLookup.ObjectId;
-            }
-
             if (!string.IsNullOrWhiteSpace(blueprintSpId))
             {
-                // Get Microsoft Graph service principal ID
+                // Get Microsoft Graph service principal ID (needs Application.Read.All)
                 var graphSpId = await graphApiService.LookupServicePrincipalByAppIdAsync(
                     tenantId,
                     AuthenticationConstants.MicrosoftGraphResourceAppId,
-                    ct);
+                    ct,
+                    AuthenticationConstants.RequiredPermissionGrantScopes);
 
                 if (!string.IsNullOrWhiteSpace(graphSpId))
                 {
@@ -1410,7 +1418,8 @@ internal static class BlueprintSubcommand
                         graphSpId,
                         applicationScopes,
                         logger,
-                        ct);
+                        ct,
+                        scopes: AuthenticationConstants.RequiredPermissionGrantScopes);
                 }
             }
 
@@ -1468,7 +1477,18 @@ internal static class BlueprintSubcommand
         logger.LogInformation("If the browser does not open automatically, navigate to this URL to grant consent: {ConsentUrl}", consentUrlGraph);
         BrowserHelper.TryOpenUrl(consentUrlGraph, logger);
 
-        var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
+        bool consentSuccess;
+        if (!string.IsNullOrWhiteSpace(blueprintSpId))
+        {
+            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(
+                graphApiService, logger, tenantId, blueprintSpId,
+                "Graph API Scopes", 180, 5, ct);
+        }
+        else
+        {
+            logger.LogDebug("Could not resolve blueprint service principal. Falling back to az rest polling.");
+            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
+        }
 
         bool graphInheritablePermissionsConfigured = false;
         string? graphInheritablePermissionsError = null;

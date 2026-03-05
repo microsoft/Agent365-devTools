@@ -324,7 +324,7 @@ public class AuthenticationService
         cache.Tokens[resourceUrl] = token;
         var updatedJson = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(_tokenCachePath, updatedJson);
-        _logger.LogInformation("Authentication token cached for {ResourceUrl} at: {Path}", resourceUrl, _tokenCachePath);
+        _logger.LogDebug("Authentication token cached for {ResourceUrl} at: {Path}", resourceUrl, _tokenCachePath);
     }
 
     /// <summary>

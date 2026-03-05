@@ -112,18 +112,9 @@ public class GraphApiServiceTests
     public async Task LookupServicePrincipalAsync_DoesNotIncludeConsistencyLevelHeader()
     {
         // This test verifies that the ConsistencyLevel header is NOT sent during service principal lookup.
-        // The ConsistencyLevel: eventual header is only required for advanced Graph queries and causes
-        // HTTP 400 "One or more headers are invalid" errors for simple $filter queries.
+        // Per Graph docs, servicePrincipal $filter=appId eq is "Default+Advanced" — it works without
+        // ConsistencyLevel. Adding it caused HTTP 400 "One or more headers are invalid" in some scenarios.
         // Regression test for issue discovered on 2025-12-19.
-        //
-        // NOTE: This test covers BOTH bug locations:
-        // 1. ExecutePublishGraphStepsAsync (line 211) - where header was incorrectly set after token acquisition
-        // 2. EnsureGraphHeadersAsync (lines 745-746) - where header was incorrectly set before all Graph API calls
-        //
-        // The bug in ExecutePublishGraphStepsAsync was "defensive" - it set the header on the HttpClient, but
-        // EnsureGraphHeadersAsync would have overwritten it anyway. By testing EnsureGraphHeadersAsync (which is
-        // called by ALL Graph API operations), we ensure the header is never sent regardless of whether
-        // ExecutePublishGraphStepsAsync tries to set it.
 
         // Arrange
         HttpRequestMessage? capturedRequest = null;
@@ -190,7 +181,7 @@ public class GraphApiServiceTests
         // Verify the ConsistencyLevel header is NOT present on the service principal lookup request
         capturedRequest.Headers.Contains("ConsistencyLevel").Should().BeFalse(
             "ConsistencyLevel header should NOT be present for simple service principal lookup queries. " +
-            "This header is only needed for advanced Graph query capabilities and causes HTTP 400 errors otherwise.");
+            "Per Graph docs, appId eq is Default+Advanced and does not require this header.");
     }
 
     [Theory]

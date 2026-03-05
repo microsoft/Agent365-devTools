@@ -114,6 +114,7 @@ public class CommandExecutor
         string? workingDirectory = null,
         string outputPrefix = "",
         bool interactive = false,
+        Func<string, string?>? outputTransform = null,
         CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("Executing with streaming: {Command} {Arguments} (Interactive={Interactive})", command, arguments, interactive);
@@ -156,7 +157,11 @@ public class CommandExecutor
                 // Don't print JWT tokens to console (security)
                 if (!IsJwtToken(args.Data))
                 {
-                    Console.WriteLine($"{outputPrefix}{args.Data}");
+                    var display = outputTransform?.Invoke(args.Data) ?? args.Data;
+                    if (display != null)
+                    {
+                        Console.WriteLine($"{outputPrefix}{display}");
+                    }
                 }
                 else
                 {

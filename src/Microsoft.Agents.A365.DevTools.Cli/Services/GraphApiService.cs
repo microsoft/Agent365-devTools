@@ -287,7 +287,11 @@ public class GraphApiService
 
         // Ensure HttpResponseMessage is properly disposed
         using var resp = await _httpClient.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode) return null;
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogDebug("Graph GET {Url} failed: {StatusCode} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+            return null;
+        }
         var json = await resp.Content.ReadAsStringAsync(ct);
 
         return JsonDocument.Parse(json);
@@ -401,7 +405,13 @@ public class GraphApiService
     public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
         string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id", ct, scopes);
+        // $filter=appId eq is "Default+Advanced" per Graph docs — no ConsistencyLevel header required.
+        // The token must have Application.Read.All; pass scopes to ensure MSAL token is used when needed.
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id",
+            ct,
+            scopes);
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
         return value[0].GetProperty("id").GetString();

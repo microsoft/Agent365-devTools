@@ -313,7 +313,44 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             workingDirectory: null,
             outputPrefix: "",
             interactive: true,
+            outputTransform: FormatDeviceCodeLine,
             cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// Intercepts the PS Connect-MgGraph device code line and reformats it to match the MSAL box format.
+    /// Input:  "To sign in, use a web browser to open the page {url} and enter the code {code} to authenticate."
+    /// Output: the MSAL-style === box with URL and code on separate lines.
+    /// Returns null to suppress the original line; returns the line unchanged for all other output.
+    /// </summary>
+    private static string? FormatDeviceCodeLine(string line)
+    {
+        const string marker = "To sign in, use a web browser to open the page ";
+        const string codeMarker = " and enter the code ";
+        const string suffix = " to authenticate.";
+
+        if (!line.Contains(marker, StringComparison.OrdinalIgnoreCase))
+            return line;
+
+        try
+        {
+            var pageStart = line.IndexOf(marker, StringComparison.OrdinalIgnoreCase) + marker.Length;
+            var codeStart = line.IndexOf(codeMarker, pageStart, StringComparison.OrdinalIgnoreCase);
+            if (codeStart < 0) return line;
+
+            var url = line[pageStart..codeStart].Trim();
+            var codeEnd = line.IndexOf(suffix, codeStart + codeMarker.Length, StringComparison.OrdinalIgnoreCase);
+            var code = codeEnd >= 0
+                ? line[(codeStart + codeMarker.Length)..codeEnd].Trim()
+                : line[(codeStart + codeMarker.Length)..].Trim();
+
+            var sep = new string('=', 74);
+            return $"{sep}\nTo sign in, use a web browser to open the page:\n    {url}\nAnd enter the code: {code}\n{sep}";
+        }
+        catch
+        {
+            return line;
+        }
     }
 
     private static string BuildPowerShellArguments(string shell, string script)
