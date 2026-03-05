@@ -31,11 +31,13 @@ public static class BrowserHelper
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                psi = new ProcessStartInfo { FileName = "open", Arguments = url };
+                psi = new ProcessStartInfo { FileName = "open" };
+                psi.ArgumentList.Add(url);
             }
             else
             {
-                psi = new ProcessStartInfo { FileName = "xdg-open", Arguments = url };
+                psi = new ProcessStartInfo { FileName = "xdg-open" };
+                psi.ArgumentList.Add(url);
             }
             using var process = new Process { StartInfo = psi };
             process.Start();

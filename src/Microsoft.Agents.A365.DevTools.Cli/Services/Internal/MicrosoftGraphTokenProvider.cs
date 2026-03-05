@@ -426,10 +426,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 "Failed to acquire Microsoft Graph access token. Error: {Error}",
                 result.StandardError);
 
-            var error = result.StandardError ?? string.Empty;
-            if (error.Contains("module", StringComparison.OrdinalIgnoreCase) &&
-                (error.Contains("was not loaded", StringComparison.OrdinalIgnoreCase) ||
-                 error.Contains("not found in any module", StringComparison.OrdinalIgnoreCase)))
+            if (IsPowerShellModuleMissingError(result))
             {
                 _logger.LogError(
                     "Required PowerShell module could not be loaded (auto-install was attempted but failed). " +

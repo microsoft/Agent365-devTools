@@ -380,8 +380,15 @@ public sealed class MsalBrowserCredential : TokenCredential
         // On Linux, the shared in-process cache may already hold a token from an earlier
         // authentication step in the same CLI invocation (e.g., blueprint creation),
         // which can be reused silently without prompting the user again.
-        var accounts = await _publicClientApp.GetAccountsAsync();
-        var cachedAccount = accounts.FirstOrDefault();
+        var accountsList = (await _publicClientApp.GetAccountsAsync()).ToList();
+        // Filter by tenant to avoid silently authenticating as the wrong identity when multiple accounts are cached.
+        var cachedAccount = accountsList.Count switch
+        {
+            0 => null,
+            1 => accountsList[0],
+            _ => accountsList.FirstOrDefault(a =>
+                string.Equals(a.HomeAccountId?.TenantId, _tenantId, StringComparison.OrdinalIgnoreCase))
+        };
         if (cachedAccount != null)
         {
             try

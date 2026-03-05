@@ -252,7 +252,7 @@ internal static class SetupHelpers
         // Retry: Azure AD service principal propagation can lag 10-30s after blueprint creation.
         var retryHelperSp = new RetryHelper(logger);
         var blueprintSpObjectId = await retryHelperSp.ExecuteWithRetryAsync(
-            operation: (innerCt) => graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, innerCt, permissionGrantScopes)!,
+            operation: (innerCt) => graph.LookupServicePrincipalByAppIdAsync(config.TenantId, config.AgentBlueprintId, innerCt, permissionGrantScopes),
             shouldRetry: result => string.IsNullOrWhiteSpace(result),
             maxRetries: 5,
             baseDelaySeconds: 5,
