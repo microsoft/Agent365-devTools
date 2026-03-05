@@ -22,7 +22,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// Uses Microsoft.Identity.Client.Extensions.Msal to persist tokens across all CLI instances.
 /// This dramatically reduces authentication prompts during multi-step operations like 'a365 setup all'.
 ///
-/// Cache Location: %LocalApplicationData%\Agent365\msal-token-cache (Windows/macOS)
+/// Cache Location: [LocalApplicationData]/Agent365/msal-token-cache (Windows/macOS)
 /// Security: Tokens are stored using platform-appropriate mechanisms:
 ///   - Windows: DPAPI (Data Protection API) - tokens encrypted with user credentials, persisted to disk
 ///   - macOS: Keychain - tokens stored in secure keychain, persisted to disk

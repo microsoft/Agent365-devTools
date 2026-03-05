@@ -307,9 +307,9 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             "Method 1: Install all required modules at once"
         };
 
-        // PowerShell 7+ command
-        var moduleNames = string.Join(",", missingModules.Select(m => $"'{m.Name}'"));
-        instructions.Add($"  pwsh -Command \"Install-Module -Name '{moduleNames}' -Scope CurrentUser -Force\"");
+        // PowerShell 7+ command — pass quoted module names directly as an array literal (no outer quotes)
+        var moduleNames = string.Join(", ", missingModules.Select(m => $"'{m.Name}'"));
+        instructions.Add($"  pwsh -Command \"Install-Module -Name {moduleNames} -Scope CurrentUser -Force\"");
         instructions.Add("");
 
         // Individual module instructions

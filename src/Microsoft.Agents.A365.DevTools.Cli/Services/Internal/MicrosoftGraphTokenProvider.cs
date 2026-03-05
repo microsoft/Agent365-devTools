@@ -232,6 +232,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             $"if ($null -eq $ctx) {{ throw 'Failed to establish Graph context' }}; " +
             $"$response = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/$metadata' -OutputType HttpResponseMessage -ErrorAction Stop; " +
             $"$token = $response.RequestMessage.Headers.Authorization.Parameter; " +
+            $"$response.Dispose(); " +
             $"if ([string]::IsNullOrWhiteSpace($token)) {{ throw 'Failed to extract access token from Graph request headers' }}; " +
             $"$token";
     }

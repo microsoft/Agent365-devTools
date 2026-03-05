@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -63,7 +64,7 @@ internal static class CopilotStudioSubcommand
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -82,7 +83,7 @@ internal static class CopilotStudioSubcommand
                 if (!systemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    Environment.Exit(1);
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
             }
 

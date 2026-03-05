@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using Azure.Core;
-using Azure.Identity;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Extensions.Logging;
@@ -90,10 +89,6 @@ public sealed class InteractiveGraphAuthService
         _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
         _logger.LogInformation("");
 
-        // Resolve credential: use injected factory (for tests) or default MsalBrowserCredential
-        var credential = _credentialFactory?.Invoke(_clientAppId, tenantId)
-            ?? new MsalBrowserCredential(_clientAppId, tenantId, redirectUri: null, _logger);
-
         _logger.LogInformation("Authenticating to Microsoft Graph...");
         _logger.LogInformation("IMPORTANT: You must grant consent for all required permissions.");
         _logger.LogInformation("Required permissions are defined in AuthenticationConstants.RequiredClientAppPermissions.");
@@ -102,9 +97,15 @@ public sealed class InteractiveGraphAuthService
 
         // Eagerly acquire a token so authentication failures are detected here rather than
         // surfacing later from inside GraphServiceClient's lazy token acquisition.
+        // Resolve credential inside try/catch so factory exceptions are wrapped consistently.
         var tokenContext = new TokenRequestContext(RequiredScopes);
+        TokenCredential? credential = null;
         try
         {
+            // Resolve credential: use injected factory (for tests) or default MsalBrowserCredential
+            credential = _credentialFactory?.Invoke(_clientAppId, tenantId)
+                ?? new MsalBrowserCredential(_clientAppId, tenantId, redirectUri: null, _logger);
+
             await credential.GetTokenAsync(tokenContext, cancellationToken);
         }
         catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("invalid_grant"))
@@ -146,7 +147,7 @@ public sealed class InteractiveGraphAuthService
         _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
         _logger.LogInformation("");
 
-        var graphClient = new GraphServiceClient(credential, RequiredScopes);
+        var graphClient = new GraphServiceClient(credential!, RequiredScopes);
         _cachedClient = graphClient;
         _cachedTenantId = tenantId;
 

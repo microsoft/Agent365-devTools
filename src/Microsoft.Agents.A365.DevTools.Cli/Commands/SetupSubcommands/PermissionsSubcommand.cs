@@ -76,7 +76,7 @@ internal static class PermissionsSubcommand
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -95,7 +95,7 @@ internal static class PermissionsSubcommand
                 if (!mcpSystemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    Environment.Exit(1);
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
             }
 
@@ -168,7 +168,7 @@ internal static class PermissionsSubcommand
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -187,7 +187,7 @@ internal static class PermissionsSubcommand
                 if (!botSystemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    Environment.Exit(1);
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
             }
 
@@ -256,7 +256,7 @@ internal static class PermissionsSubcommand
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -275,7 +275,7 @@ internal static class PermissionsSubcommand
                 if (!customSystemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    Environment.Exit(1);
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
             }
 
