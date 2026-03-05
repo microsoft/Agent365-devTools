@@ -254,24 +254,259 @@ public class CleanupCommandTests
         Assert.DoesNotContain("force", optionNames);
     }
 
-    [Fact(Skip = "Requires interactive confirmation. Refactor command to allow test automation.")]
+    [Fact]
     public async Task CleanupBlueprint_WithValidConfig_ShouldReturnSuccess()
     {
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(true);
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
 
-        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
+        var stubbedBlueprintService = CreateStubbedBlueprintService();
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
         var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
 
         // Act
         var result = await command.InvokeAsync(args);
 
         // Assert
-        Assert.Equal(0, result); // Success exit code
-        
-        // Test behavior: Blueprint cleanup currently succeeds (placeholder implementation)
-        // When actual PowerShell integration is added, this test can be enhanced
+        result.Should().Be(0);
+    }
+
+    private AgentBlueprintService CreateStubbedBlueprintService(
+        IReadOnlyList<AgentInstanceInfo>? instances = null,
+        bool deleteUserResult = true,
+        bool deleteIdentityResult = true,
+        bool deleteBlueprintResult = true)
+    {
+        var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
+        var spyService = Substitute.ForPartsOf<AgentBlueprintService>(mockBlueprintLogger, _graphApiService);
+
+        spyService.GetAgentInstancesForBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(instances ?? (IReadOnlyList<AgentInstanceInfo>)Array.Empty<AgentInstanceInfo>());
+
+        spyService.DeleteAgentUserAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(deleteUserResult);
+
+        spyService.DeleteAgentIdentityAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(deleteIdentityResult);
+
+        spyService.DeleteAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(deleteBlueprintResult);
+
+        return spyService;
+    }
+
+    /// <summary>
+    /// Verifies that blueprint cleanup deletes agent instances before deleting the blueprint.
+    /// Instance deletion order: agentic user first, then identity SP, then blueprint.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithInstances_DeletesInstancesBeforeBlueprint()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        // Capture blueprint ID before the command clears it during config save
+        var expectedBlueprintId = config.AgentBlueprintId!;
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(true);
+
+        var instances = new List<AgentInstanceInfo>
+        {
+            new() { IdentitySpId = "sp-id-1", DisplayName = "Instance A", AgentUserId = "user-id-1" }
+        };
+        var spyService = CreateStubbedBlueprintService(instances: instances);
+
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBotConfigurator,
+            _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService);
+        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0);
+
+        await spyService.Received(1).DeleteAgentUserAsync(
+            config.TenantId, "user-id-1", Arg.Any<CancellationToken>());
+
+        await spyService.Received(1).DeleteAgentIdentityAsync(
+            config.TenantId, "sp-id-1", Arg.Any<CancellationToken>());
+
+        await spyService.Received(1).DeleteAgentBlueprintAsync(
+            config.TenantId, expectedBlueprintId, Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies that blueprint cleanup with no instances proceeds exactly as before
+    /// (no instance deletion calls made).
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WithNoInstances_ProceedsAsNormal()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        // Capture blueprint ID before the command clears it during config save
+        var expectedBlueprintId = config.AgentBlueprintId!;
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(true);
+
+        var spyService = CreateStubbedBlueprintService(instances: Array.Empty<AgentInstanceInfo>());
+
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBotConfigurator,
+            _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService);
+        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0);
+
+        await spyService.DidNotReceive().DeleteAgentUserAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await spyService.DidNotReceive().DeleteAgentIdentityAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        await spyService.Received(1).DeleteAgentBlueprintAsync(
+            config.TenantId, expectedBlueprintId, Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies that when an instance deletion fails, a warning is emitted and the
+    /// blueprint is still deleted (warn-and-continue behaviour).
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_InstanceDeletionFails_WarnsAndContinuesToBlueprint()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        // Capture blueprint ID before the command clears it during config save
+        var expectedBlueprintId = config.AgentBlueprintId!;
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(true);
+
+        var instances = new List<AgentInstanceInfo>
+        {
+            new() { IdentitySpId = "sp-id-1", DisplayName = "Instance A", AgentUserId = "user-id-1" }
+        };
+        var spyService = CreateStubbedBlueprintService(
+            instances: instances,
+            deleteUserResult: false,
+            deleteIdentityResult: true,
+            deleteBlueprintResult: true);
+
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBotConfigurator,
+            _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService);
+        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert -- command succeeds overall
+        result.Should().Be(0);
+
+        // Blueprint is still deleted despite the instance failure
+        await spyService.Received(1).DeleteAgentBlueprintAsync(
+            config.TenantId, expectedBlueprintId, Arg.Any<CancellationToken>());
+
+        // Verify a warning was logged about the failed agentic user deletion
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Failed to delete agentic user") && o.ToString()!.Contains("user-id-1")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        // Verify the orphan summary warning was emitted for the failed resource
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Orphaned agentic user") && o.ToString()!.Contains("user-id-1")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>
+    /// Verifies that when instances are deleted successfully but the blueprint deletion fails,
+    /// a warning is logged about the incomplete cleanup state.
+    /// </summary>
+    [Fact]
+    public async Task CleanupBlueprint_WhenBlueprintDeletionFailsWithInstances_LogsWarning()
+    {
+        // Arrange
+        var config = CreateValidConfig();
+        var expectedBlueprintId = config.AgentBlueprintId!;
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(true);
+
+        var instances = new List<AgentInstanceInfo>
+        {
+            new() { IdentitySpId = "sp-id-1", DisplayName = "Instance A", AgentUserId = "user-id-1" }
+        };
+        var spyService = CreateStubbedBlueprintService(
+            instances: instances,
+            deleteUserResult: true,
+            deleteIdentityResult: true,
+            deleteBlueprintResult: false);
+
+        _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBotConfigurator,
+            _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService);
+        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0);
+
+        await spyService.Received(1).DeleteAgentUserAsync(
+            config.TenantId, "user-id-1", Arg.Any<CancellationToken>());
+
+        await spyService.Received(1).DeleteAgentIdentityAsync(
+            config.TenantId, "sp-id-1", Arg.Any<CancellationToken>());
+
+        await spyService.Received(1).DeleteAgentBlueprintAsync(
+            config.TenantId, expectedBlueprintId, Arg.Any<CancellationToken>());
+
+        // Verify that a warning was logged about the blueprint deletion failure
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint deletion failed. The blueprint still exists in Entra ID.")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        // Verify that the retry guidance message is also logged
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("All agent instances were deleted. Retry 'a365 cleanup blueprint'")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
     }
 
     private static Agent365Config CreateValidConfig()
@@ -501,7 +736,7 @@ public class CleanupCommandTests
         
         // Verify no deletion operations were called (because blueprint ID is missing)
         await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
     }
 
     /// <summary>
@@ -539,7 +774,7 @@ public class CleanupCommandTests
         
         // Verify no deletion operations were called (because BotName is empty)
         await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
     }
 
     /// <summary>
@@ -674,7 +909,7 @@ public class CleanupCommandTests
         
         // Verify no deletion operations were called since blueprint ID is invalid
         await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
     }
 
     /// <summary>
@@ -765,7 +1000,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
         
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBotConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService);
@@ -786,7 +1021,7 @@ public class CleanupCommandTests
             
             // Verify NO deletion was called because empty input defaults to cancel
             await _mockBotConfigurator.DidNotReceive().DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>());
         }
         finally
         {

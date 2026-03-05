@@ -284,12 +284,11 @@ public class GraphApiService
         var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
-
-        // Ensure HttpResponseMessage is properly disposed
         using var resp = await _httpClient.GetAsync(url, ct);
         if (!resp.IsSuccessStatusCode)
         {
-            _logger.LogDebug("Graph GET {Url} failed: {StatusCode} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+            var errorBody = await resp.Content.ReadAsStringAsync(ct);
+            _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, errorBody);
             return null;
         }
         var json = await resp.Content.ReadAsStringAsync(ct);
@@ -304,9 +303,13 @@ public class GraphApiService
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var resp = await _httpClient.PostAsync(url, content, ct);
+        using var resp = await _httpClient.PostAsync(url, content, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode) return null;
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogError("Graph POST {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+            return null;
+        }
 
         return string.IsNullOrWhiteSpace(body) ? null : JsonDocument.Parse(body);
     }
@@ -326,7 +329,7 @@ public class GraphApiService
             : $"https://graph.microsoft.com{relativePath}";
 
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var resp = await _httpClient.PostAsync(url, content, ct);
+        using var resp = await _httpClient.PostAsync(url, content, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
 
         JsonDocument? json = null;
@@ -356,8 +359,8 @@ public class GraphApiService
             ? relativePath
             : $"https://graph.microsoft.com{relativePath}";
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
-        var resp = await _httpClient.SendAsync(request, ct);
+        using var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
+        using var resp = await _httpClient.SendAsync(request, ct);
 
         // Many PATCH calls return 204 NoContent on success
         if (!resp.IsSuccessStatusCode)
@@ -365,7 +368,7 @@ public class GraphApiService
             var body = await resp.Content.ReadAsStringAsync(ct);
             _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
         }
-        
+
         return resp.IsSuccessStatusCode;
     }
 
@@ -405,7 +408,7 @@ public class GraphApiService
     public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
         string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        // $filter=appId eq is "Default+Advanced" per Graph docs — no ConsistencyLevel header required.
+        // $filter=appId eq is "Default+Advanced" per Graph docs � no ConsistencyLevel header required.
         // The token must have Application.Read.All; pass scopes to ensure MSAL token is used when needed.
         using var doc = await GraphGetAsync(
             tenantId,

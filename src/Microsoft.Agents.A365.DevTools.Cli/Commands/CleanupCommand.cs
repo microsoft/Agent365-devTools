@@ -14,6 +14,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
 public class CleanupCommand
 {
+    private const string AgenticUsersKey = "agentic users";
+    private const string IdentitySpsKey = "identity SPs";
+
     public static Command CreateCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
@@ -51,7 +54,7 @@ public class CleanupCommand
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, federatedCredentialService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -64,7 +67,9 @@ public class CleanupCommand
         IBotConfigurator botConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
-        FederatedCredentialService federatedCredentialService)
+        IConfirmationProvider confirmationProvider,
+        FederatedCredentialService federatedCredentialService,
+        string? correlationId = null)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -111,41 +116,114 @@ public class CleanupCommand
                     return;
                 }
 
-                // Full blueprint cleanup (original behavior)
+                // Full blueprint cleanup with cascade instance deletion
                 logger.LogInformation("Starting blueprint cleanup...");
 
-                // Check if there's actually a blueprint to clean up
                 if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
                 {
                     logger.LogInformation("No blueprint application found to clean up");
                     return;
                 }
 
+                // Query for agent instances linked to this blueprint before showing preview
+                logger.LogInformation("Querying for agent instances linked to blueprint...");
+                List<AgentInstanceInfo> instances;
+                try
+                {
+                    instances = (await agentBlueprintService.GetAgentInstancesForBlueprintAsync(
+                        config.TenantId,
+                        config.AgentBlueprintId))?.ToList() ?? new List<AgentInstanceInfo>();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to query agent instances for blueprint {BlueprintId}. Aborting cleanup.", config.AgentBlueprintId);
+                    return;
+                }
+
+                // Show preview
                 logger.LogInformation("");
                 logger.LogInformation("Blueprint Cleanup Preview:");
                 logger.LogInformation("=============================");
                 logger.LogInformation("Will delete Entra ID application: {BlueprintId}", config.AgentBlueprintId);
                 logger.LogInformation("  Name: {DisplayName}", config.AgentBlueprintDisplayName);
+
+                if (instances.Count > 0)
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("Will also delete {Count} agent instance(s) linked to this blueprint:", instances.Count);
+                    foreach (var instance in instances)
+                    {
+                        logger.LogInformation("  Instance: {DisplayName} (SP: {SpId})", instance.DisplayName ?? "(unnamed)", instance.IdentitySpId);
+                        if (!string.IsNullOrWhiteSpace(instance.AgentUserId))
+                            logger.LogInformation("    Agentic user: {UserId}", instance.AgentUserId);
+                    }
+                }
+
                 logger.LogInformation("");
 
-                Console.Write("Continue with blueprint cleanup? (y/N): ");
-                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-                if (response != "y" && response != "yes")
+                if (!await confirmationProvider.ConfirmAsync("Continue with blueprint cleanup? (y/N): "))
                 {
                     logger.LogInformation("Cleanup cancelled by user");
                     return;
                 }
 
+                // Delete instances first (warn and continue on failure)
+                var failedResources = new Dictionary<string, List<string>>
+                {
+                    [AgenticUsersKey] = new List<string>(),
+                    [IdentitySpsKey] = new List<string>()
+                };
+
+                foreach (var instance in instances)
+                {
+                    // Delete agentic user before identity SP
+                    if (!string.IsNullOrWhiteSpace(instance.AgentUserId))
+                    {
+                        logger.LogInformation("Deleting agentic user {UserId} for instance {DisplayName}...",
+                            instance.AgentUserId, instance.DisplayName ?? instance.IdentitySpId);
+
+                        var userDeleted = await agentBlueprintService.DeleteAgentUserAsync(
+                            config.TenantId,
+                            instance.AgentUserId);
+
+                        if (!userDeleted)
+                        {
+                            logger.LogWarning("Failed to delete agentic user {UserId} -- will continue", instance.AgentUserId);
+                            failedResources[AgenticUsersKey].Add(instance.AgentUserId!);
+                        }
+                        else
+                        {
+                            logger.LogInformation("Agentic user deleted");
+                        }
+                    }
+
+                    // Delete identity SP
+                    logger.LogInformation("Deleting agent identity SP {SpId} for instance {DisplayName}...",
+                        instance.IdentitySpId, instance.DisplayName ?? instance.IdentitySpId);
+
+                    var spDeleted = await agentBlueprintService.DeleteAgentIdentityAsync(
+                        config.TenantId,
+                        instance.IdentitySpId);
+
+                    if (!spDeleted)
+                    {
+                        logger.LogWarning("Failed to delete agent identity SP {SpId} -- will continue", instance.IdentitySpId);
+                        failedResources[IdentitySpsKey].Add(instance.IdentitySpId);
+                    }
+                    else
+                    {
+                        logger.LogInformation("Agent identity SP deleted");
+                    }
+                }
+
                 // Delete federated credentials first before deleting the blueprint
                 logger.LogInformation("");
                 logger.LogInformation("Deleting federated credentials from blueprint...");
-                
+
                 // Configure FederatedCredentialService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(config.ClientAppId))
-                {
                     federatedCredentialService.CustomClientAppId = config.ClientAppId;
-                }
-                
+
                 var ficsDeleted = await federatedCredentialService.DeleteAllFederatedCredentialsAsync(
                     config.TenantId,
                     config.AgentBlueprintId);
@@ -160,25 +238,39 @@ public class CleanupCommand
                     logger.LogInformation("Federated credentials deleted successfully");
                 }
 
-                // Delete the agent blueprint using the special Graph API endpoint
+                // Delete the agent blueprint
                 logger.LogInformation("");
                 logger.LogInformation("Deleting agent blueprint application...");
                 var deleted = await agentBlueprintService.DeleteAgentBlueprintAsync(
                     config.TenantId,
                     config.AgentBlueprintId);
-                
+
                 if (!deleted)
                 {
                     logger.LogWarning("");
-                    logger.LogWarning("Blueprint deletion failed.");
+                    logger.LogWarning("Blueprint deletion failed. The blueprint still exists in Entra ID.");
+                    PrintOrphanSummary(logger, failedResources);
+                    if (!HasOrphanedResources(failedResources))
+                    {
+                        logger.LogWarning("All agent instances were deleted. Retry 'a365 cleanup blueprint' or delete the blueprint manually via the Entra portal or Graph API.");
+                    }
                     return;
                 }
 
-                // Blueprint deleted successfully
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
-                // Handle endpoint deletion if needed using shared helper
-                if (!await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId))
+                bool endpointDeleted = false;
+                try
+                {
+                    endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
+                }
+                finally
+                {
+                    // Always emit orphan summary before returning, regardless of endpoint deletion outcome
+                    PrintOrphanSummary(logger, failedResources);
+                }
+
+                if (!endpointDeleted)
                 {
                     return;
                 }
@@ -193,8 +285,12 @@ public class CleanupCommand
 
                 await configService.SaveStateAsync(config);
                 logger.LogInformation("Local configuration cleared");
-                logger.LogInformation("");
-                logger.LogInformation("Blueprint cleanup completed successfully!");
+
+                if (!HasOrphanedResources(failedResources))
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("Blueprint cleanup completed successfully!");
+                }
             }
             catch (Exception ex)
             {
@@ -821,6 +917,37 @@ public class CleanupCommand
         logger.LogInformation("");
         logger.LogInformation("Endpoint cleanup completed successfully!");
         logger.LogInformation("");
+    }
+
+    /// <summary>
+    /// Checks whether any instance deletions were recorded as failures.
+    /// </summary>
+    private static bool HasOrphanedResources(Dictionary<string, List<string>> failedResources)
+    {
+        return failedResources[AgenticUsersKey].Count + failedResources[IdentitySpsKey].Count > 0;
+    }
+
+    /// <summary>
+    /// Prints a summary of orphaned Entra ID resources that could not be deleted.
+    /// This should be called whenever instance deletions have failed, regardless of
+    /// whether the blueprint deletion itself succeeded or failed.
+    /// </summary>
+    private static void PrintOrphanSummary(
+        ILogger<CleanupCommand> logger,
+        Dictionary<string, List<string>> failedResources)
+    {
+        if (!HasOrphanedResources(failedResources))
+        {
+            return;
+        }
+
+        logger.LogWarning("Blueprint cleanup encountered warnings.");
+        logger.LogWarning("The following resources could not be deleted and remain orphaned in Entra ID:");
+        foreach (var userId in failedResources[AgenticUsersKey])
+            logger.LogWarning("  Orphaned agentic user: {ResourceId}", userId);
+        foreach (var spId in failedResources[IdentitySpsKey])
+            logger.LogWarning("  Orphaned identity SP: {ResourceId}", spId);
+        logger.LogWarning("Delete them manually via the Entra portal or Graph API.");
     }
 
     private static async Task<Agent365Config?> LoadConfigAsync(
