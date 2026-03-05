@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
@@ -131,6 +132,15 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
             var result = await ExecuteWithFallbackAsync(script, ct);
             var token = ProcessResult(result);
+
+            // If PS Connect-MgGraph fails for any reason (no TTY on Linux, NullRef in DeviceCodeCredential,
+            // module issues, etc.), fall back to MSAL. On Windows this uses WAM; on Linux/macOS it uses
+            // device code. The acquired token is stored in _tokenCache below so subsequent calls
+            // (inheritable permissions, custom permissions) hit the cache without re-prompting.
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                token = await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct);
+            }
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -261,6 +271,49 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Acquires a Microsoft Graph access token via MSAL as a fallback when PowerShell
+    /// Connect-MgGraph fails for any reason. On Windows uses WAM; on Linux/macOS uses device code.
+    /// Uses MsalBrowserCredential which shares the static in-process token cache, so a token
+    /// acquired here is reused silently on subsequent calls within the same CLI invocation.
+    /// </summary>
+    private async Task<string?> AcquireGraphTokenViaMsalAsync(
+        string tenantId,
+        string[] scopes,
+        string? clientAppId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(clientAppId))
+        {
+            _logger.LogDebug("No client app ID available for MSAL Graph fallback.");
+            return null;
+        }
+
+        try
+        {
+            // MSAL requires fully-qualified scope URIs; PS Connect-MgGraph handles this internally.
+            var fullScopes = scopes
+                .Select(s => s.Contains("://", StringComparison.Ordinal) ? s : $"https://graph.microsoft.com/{s}")
+                .ToArray();
+
+            _logger.LogDebug("Acquiring Graph token via MSAL for scopes: {Scopes}", string.Join(", ", fullScopes));
+
+            var msalCredential = new MsalBrowserCredential(clientAppId, tenantId, logger: _logger);
+            var tokenResult = await msalCredential.GetTokenAsync(new TokenRequestContext(fullScopes), ct);
+
+            if (string.IsNullOrWhiteSpace(tokenResult.Token))
+                return null;
+
+            _logger.LogInformation("Microsoft Graph access token acquired via MSAL fallback.");
+            return tokenResult.Token;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MSAL Graph token fallback failed: {Message}", ex.Message);
+            return null;
+        }
     }
 
     /// <summary>

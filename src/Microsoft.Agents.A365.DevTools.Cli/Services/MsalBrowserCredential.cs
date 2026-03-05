@@ -376,6 +376,29 @@ public sealed class MsalBrowserCredential : TokenCredential
         string[] scopes,
         CancellationToken cancellationToken)
     {
+        // Before showing a device code, try to get a cached token.
+        // On Linux, the shared in-process cache may already hold a token from an earlier
+        // authentication step in the same CLI invocation (e.g., blueprint creation),
+        // which can be reused silently without prompting the user again.
+        var accounts = await _publicClientApp.GetAccountsAsync();
+        var cachedAccount = accounts.FirstOrDefault();
+        if (cachedAccount != null)
+        {
+            try
+            {
+                _logger?.LogDebug("Attempting silent token acquisition before device code...");
+                var silentResult = await _publicClientApp
+                    .AcquireTokenSilent(scopes, cachedAccount)
+                    .ExecuteAsync(cancellationToken);
+                _logger?.LogDebug("Acquired token silently, skipping device code prompt.");
+                return new AccessToken(silentResult.AccessToken, silentResult.ExpiresOn);
+            }
+            catch (MsalUiRequiredException)
+            {
+                _logger?.LogDebug("Silent acquisition failed, proceeding with device code.");
+            }
+        }
+
         _logger?.LogInformation("Falling back to device code authentication...");
         _logger?.LogInformation("Please sign in with your Microsoft account");
 
