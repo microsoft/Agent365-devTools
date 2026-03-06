@@ -11,6 +11,8 @@ using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
@@ -1821,6 +1823,154 @@ public class BlueprintSubcommandTests
             Arg.Is<object>(o => o.ToString()!.Contains("cannot be used together")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    #endregion
+
+    #region Generated Config Merge Preservation Tests
+
+    /// <summary>
+    /// Verifies that the blueprint intermediate save pattern (merge into existing JsonObject)
+    /// preserves all pre-existing fields such as agentBlueprintClientSecret, botId, etc.
+    /// Regression test for bug where a new JsonObject replaced the existing config,
+    /// dropping fields not explicitly listed in the allowlist.
+    /// </summary>
+    [Fact]
+    public async Task BlueprintIntermediateSave_ShouldPreserveExistingGeneratedConfigFields()
+    {
+        // Arrange - simulate a generated config with fields set by other subcommands
+        var tempDir = Path.Combine(Path.GetTempPath(), $"a365test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var generatedConfigPath = Path.Combine(tempDir, "a365.generated.config.json");
+
+        try
+        {
+            var existingConfig = new JsonObject
+            {
+                ["managedIdentityPrincipalId"] = "msi-principal-id-123",
+                ["agentBlueprintId"] = "old-blueprint-id",
+                ["agentBlueprintObjectId"] = "old-object-id",
+                ["agentBlueprintServicePrincipalObjectId"] = "old-sp-id",
+                ["agentBlueprintClientSecret"] = "encrypted-secret-value",
+                ["agentBlueprintClientSecretProtected"] = true,
+                ["botId"] = "bot-id-456",
+                ["botMsaAppId"] = "bot-msa-app-id-789",
+                ["botMessagingEndpoint"] = "https://myapp.azurewebsites.net/api/messages",
+                ["completed"] = true,
+                ["completedAt"] = "2026-01-01T00:00:00Z",
+                ["resourceConsents"] = new JsonArray
+                {
+                    new JsonObject { ["resourceName"] = "Microsoft Graph", ["consentGranted"] = true }
+                }
+            };
+
+            await File.WriteAllTextAsync(generatedConfigPath, existingConfig.ToJsonString(
+                new JsonSerializerOptions { WriteIndented = true }));
+
+            // Act - simulate the merge pattern used in BlueprintSubcommand
+            var generatedConfig = JsonNode.Parse(
+                await File.ReadAllTextAsync(generatedConfigPath))?.AsObject() ?? new JsonObject();
+
+            var newBlueprintAppId = "new-blueprint-app-id";
+            var newBlueprintObjectId = "new-object-id";
+            var newServicePrincipalId = "new-sp-id";
+
+            // This is the exact pattern from the fix
+            generatedConfig["agentBlueprintId"] = newBlueprintAppId;
+            generatedConfig["agentBlueprintObjectId"] = newBlueprintObjectId;
+            generatedConfig["agentBlueprintServicePrincipalObjectId"] = newServicePrincipalId;
+            if (generatedConfig["resourceConsents"] == null)
+            {
+                generatedConfig["resourceConsents"] = new JsonArray();
+            }
+
+            await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(
+                new JsonSerializerOptions { WriteIndented = true }));
+
+            // Assert - read back and verify ALL fields are preserved
+            var savedConfig = JsonNode.Parse(await File.ReadAllTextAsync(generatedConfigPath))!.AsObject();
+
+            // Updated fields should have new values
+            savedConfig["agentBlueprintId"]!.GetValue<string>().Should().Be("new-blueprint-app-id");
+            savedConfig["agentBlueprintObjectId"]!.GetValue<string>().Should().Be("new-object-id");
+            savedConfig["agentBlueprintServicePrincipalObjectId"]!.GetValue<string>().Should().Be("new-sp-id");
+
+            // Pre-existing fields must be preserved (the bug would wipe these)
+            savedConfig["agentBlueprintClientSecret"]!.GetValue<string>().Should().Be("encrypted-secret-value");
+            savedConfig["agentBlueprintClientSecretProtected"]!.GetValue<bool>().Should().BeTrue();
+            savedConfig["botId"]!.GetValue<string>().Should().Be("bot-id-456");
+            savedConfig["botMsaAppId"]!.GetValue<string>().Should().Be("bot-msa-app-id-789");
+            savedConfig["botMessagingEndpoint"]!.GetValue<string>().Should().Be("https://myapp.azurewebsites.net/api/messages");
+            savedConfig["managedIdentityPrincipalId"]!.GetValue<string>().Should().Be("msi-principal-id-123");
+            savedConfig["completed"]!.GetValue<bool>().Should().BeTrue();
+            savedConfig["completedAt"]!.GetValue<string>().Should().Be("2026-01-01T00:00:00Z");
+
+            // Resource consents should be preserved
+            savedConfig["resourceConsents"]!.AsArray().Should().HaveCount(1);
+            savedConfig["resourceConsents"]![0]!["resourceName"]!.GetValue<string>().Should().Be("Microsoft Graph");
+        }
+        finally
+        {
+            // Cleanup temp directory
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Verifies that the merge pattern initializes resourceConsents when it does not exist.
+    /// </summary>
+    [Fact]
+    public async Task BlueprintIntermediateSave_ShouldInitializeResourceConsents_WhenNull()
+    {
+        // Arrange - config without resourceConsents
+        var tempDir = Path.Combine(Path.GetTempPath(), $"a365test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var generatedConfigPath = Path.Combine(tempDir, "a365.generated.config.json");
+
+        try
+        {
+            var existingConfig = new JsonObject
+            {
+                ["managedIdentityPrincipalId"] = "msi-id",
+                ["agentBlueprintClientSecret"] = "secret-123"
+            };
+
+            await File.WriteAllTextAsync(generatedConfigPath, existingConfig.ToJsonString(
+                new JsonSerializerOptions { WriteIndented = true }));
+
+            // Act
+            var generatedConfig = JsonNode.Parse(
+                await File.ReadAllTextAsync(generatedConfigPath))?.AsObject() ?? new JsonObject();
+
+            generatedConfig["agentBlueprintId"] = "app-id";
+            generatedConfig["agentBlueprintObjectId"] = "obj-id";
+            generatedConfig["agentBlueprintServicePrincipalObjectId"] = "sp-id";
+            if (generatedConfig["resourceConsents"] == null)
+            {
+                generatedConfig["resourceConsents"] = new JsonArray();
+            }
+
+            await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(
+                new JsonSerializerOptions { WriteIndented = true }));
+
+            // Assert
+            var savedConfig = JsonNode.Parse(await File.ReadAllTextAsync(generatedConfigPath))!.AsObject();
+
+            savedConfig["resourceConsents"].Should().NotBeNull();
+            savedConfig["resourceConsents"]!.AsArray().Should().BeEmpty();
+            savedConfig["agentBlueprintClientSecret"]!.GetValue<string>().Should().Be("secret-123");
+            savedConfig["managedIdentityPrincipalId"]!.GetValue<string>().Should().Be("msi-id");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
     }
 
     #endregion

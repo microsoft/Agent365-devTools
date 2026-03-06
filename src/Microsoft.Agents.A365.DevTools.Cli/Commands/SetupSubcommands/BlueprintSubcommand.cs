@@ -488,23 +488,16 @@ internal static class BlueprintSubcommand
         logger.LogDebug("Blueprint created: {Name} (Object ID: {ObjectId}, App ID: {AppId})",
             setupConfig.AgentBlueprintDisplayName, blueprintObjectId, blueprintAppId);
 
-        // Convert to camelCase and save
-        var camelCaseConfig = new JsonObject
+        // Update generated config with blueprint details, preserving all existing fields
+        generatedConfig["agentBlueprintId"] = blueprintAppId;
+        generatedConfig["agentBlueprintObjectId"] = blueprintObjectId;
+        generatedConfig["agentBlueprintServicePrincipalObjectId"] = blueprintResult.servicePrincipalId;
+        if (generatedConfig["resourceConsents"] == null)
         {
-            ["managedIdentityPrincipalId"] = generatedConfig["managedIdentityPrincipalId"]?.DeepClone(),
-            ["agentBlueprintId"] = blueprintAppId,
-            ["agentBlueprintObjectId"] = blueprintObjectId,
-            ["displayName"] = setupConfig.AgentBlueprintDisplayName,
-            ["servicePrincipalId"] = blueprintResult.servicePrincipalId,
-            ["identifierUri"] = $"api://{blueprintAppId}",
-            ["tenantId"] = setupConfig.TenantId,
-            ["resourceConsents"] = generatedConfig["resourceConsents"]?.DeepClone() ?? new JsonArray(),
-            ["agentBlueprintClientSecret"] = generatedConfig["agentBlueprintClientSecret"]?.DeepClone(),
-            ["agentBlueprintClientSecretProtected"] = generatedConfig["agentBlueprintClientSecretProtected"]?.DeepClone(),
-        };
+            generatedConfig["resourceConsents"] = new JsonArray();
+        }
 
-        await File.WriteAllTextAsync(generatedConfigPath, camelCaseConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
-        generatedConfig = camelCaseConfig;
+        await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
         // ========================================================================
         // Phase 2.5: Create Client Secret (logging handled by method)
