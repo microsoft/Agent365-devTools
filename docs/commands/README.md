@@ -13,7 +13,7 @@ There is reference documentation for each command.
 | [config](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/config) | Manage Agent 365 CLI configuration. Provides options to manage Agent 365 CLI configuration settings. |
 | [config init](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/config#config-init) | Interactively configure Agent 365 CLI or import from a file. |
 | [config display](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/config#config-display) | Show current Agent 365 CLI configuration. |
-| [create-instance](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/create-instance) | Temporarily removed - This command is removed temporarily. Use a365 publish and create an agent instance via Teams instead. |
+| [create-instance](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/create-instance) | This command is temporarily removed. Use `a365 publish` to create an agent instance via Teams instead. |
 | [deploy](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy) | Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions |
 | [deploy app](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy#deploy-app) | Deploys your agent code to the Azure Web App created during setup. |
 | [deploy mcp](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy#deploy-mcp) | Updates MCP server permissions on your agent blueprint. |
