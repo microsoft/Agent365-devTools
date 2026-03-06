@@ -231,7 +231,7 @@ a365 setup all
 
 **Documentation**:
 - Design: [design-custom-resource-permissions.md](./design-custom-resource-permissions.md)
-- Command Reference: [setup permissions custom](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-custom)
+- Command Reference: [a365 setup permissions custom](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup#setup-permissions-custom)
 - GitHub Issue: [#194](https://github.com/microsoft/Agent365-devTools/issues/194)
 
 ---
