@@ -136,7 +136,7 @@ Central NuGet package management in `src/Directory.Packages.props`. Key dependen
 
 - [Agent 365 CLI reference](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/) - CLI usage guide with examples
 - `.github/copilot-instructions.md` - Code standards and review rules
-- `docs/commands/` - Individual command documentation
+- `docs/commands/` - Index/pointers to CLI command documentation on Microsoft Learn
 
 ## Code Review Checklist
 
