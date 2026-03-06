@@ -248,5 +248,5 @@ a365 setup all
 ## Related Documentation
 
 - [CLI Usage Guide](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/) - End-user documentation
-- [Command Documentation](./commands/) - Individual command reference
+- [Command Documentation](./commands/) - Index of CLI commands and links to Microsoft Learn reference
 - [Code Standards](../.github/copilot-instructions.md) - Coding conventions and review rules
