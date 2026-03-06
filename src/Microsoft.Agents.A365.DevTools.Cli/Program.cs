@@ -90,7 +90,9 @@ class Program
             var configService = serviceProvider.GetRequiredService<IConfigService>();
             var executor = serviceProvider.GetRequiredService<CommandExecutor>();
             var authService = serviceProvider.GetRequiredService<AuthenticationService>();
-            var azureValidator = serviceProvider.GetRequiredService<IAzureValidator>();
+            var prerequisiteRunner = serviceProvider.GetRequiredService<IPrerequisiteRunner>();
+            var authValidator = serviceProvider.GetRequiredService<AzureAuthValidator>();
+            var environmentValidator = serviceProvider.GetRequiredService<IAzureEnvironmentValidator>();
             var toolingService = serviceProvider.GetRequiredService<IAgent365ToolingService>();
 
             // Get services needed by commands
@@ -111,11 +113,11 @@ class Program
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
+                deploymentService, botConfigurator, prerequisiteRunner, authValidator, environmentValidator, webAppCreator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
-                botConfigurator, graphApiService, azureValidator));
+                botConfigurator, graphApiService));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, azureValidator, graphApiService, agentBlueprintService));
+                deploymentService, prerequisiteRunner, authValidator, graphApiService, agentBlueprintService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
@@ -125,7 +127,7 @@ class Program
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, prerequisiteRunner, authValidator));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentPublishService, graphApiService, agentBlueprintService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
@@ -228,12 +230,12 @@ class Program
             return new Agent365ToolingService(configService, authService, logger, environment);
         });
 
-        // Add Azure validators (individual validators for composition)
+        // Add Azure validators
         services.AddSingleton<AzureAuthValidator>();
         services.AddSingleton<IAzureEnvironmentValidator, AzureEnvironmentValidator>();
 
-        // Add unified Azure validator
-        services.AddSingleton<IAzureValidator, AzureValidator>();
+        // Add prerequisite runner
+        services.AddSingleton<IPrerequisiteRunner, PrerequisiteRunner>();
 
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();

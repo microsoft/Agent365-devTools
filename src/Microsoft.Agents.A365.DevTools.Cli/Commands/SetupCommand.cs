@@ -20,7 +20,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             CommandExecutor executor,
             DeploymentService deploymentService,
             IBotConfigurator botConfigurator,
-            IAzureValidator azureValidator,
+            IPrerequisiteRunner prerequisiteRunner,
+            AzureAuthValidator authValidator,
+            IAzureEnvironmentValidator environmentValidator,
             AzureWebAppCreator webAppCreator,
             PlatformDetector platformDetector,
             GraphApiService graphApiService,
@@ -29,7 +31,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             FederatedCredentialService federatedCredentialService,
             IClientAppValidator clientAppValidator)
         {
-            var command = new Command("setup", 
+            var command = new Command("setup",
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
                 "Recommended execution order:\n" +
                 "  0. a365 setup requirements           # Check prerequisites (optional)\n" +
@@ -46,16 +48,16 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, clientAppValidator));
 
             command.AddCommand(InfrastructureSubcommand.CreateCommand(
-                logger, configService, azureValidator, webAppCreator, platformDetector, executor));
+                logger, configService, prerequisiteRunner, authValidator, webAppCreator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, azureValidator, webAppCreator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, prerequisiteRunner, authValidator, webAppCreator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, botConfigurator, prerequisiteRunner, authValidator, environmentValidator, webAppCreator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             return command;
         }

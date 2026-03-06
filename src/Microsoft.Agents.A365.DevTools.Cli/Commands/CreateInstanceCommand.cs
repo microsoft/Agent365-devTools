@@ -18,7 +18,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public class CreateInstanceCommand
 {
     public static Command CreateCommand(ILogger<CreateInstanceCommand> logger, IConfigService configService, CommandExecutor executor,
-        IBotConfigurator botConfigurator, GraphApiService graphApiService, IAzureValidator azureValidator)
+        IBotConfigurator botConfigurator, GraphApiService graphApiService)
     {
         // Command description - deprecated
         // Old: Create and configure agent user identities with appropriate
@@ -75,12 +75,6 @@ public class CreateInstanceCommand
                 var instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
                 if (instanceConfig == null) Environment.Exit(1);
 
-                // Validate Azure CLI authentication, subscription, and environment
-                if (!await azureValidator.ValidateAllAsync(instanceConfig.SubscriptionId))
-                {
-                    logger.LogError("Instance creation cannot proceed without proper Azure CLI authentication and subscription");
-                    Environment.Exit(1);
-                }
                 logger.LogInformation("");
 
                 // Step 1-3: Identity, Licenses, and MCP Registration

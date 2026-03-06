@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -19,7 +20,8 @@ public class DeployCommand
         IConfigService configService,
         CommandExecutor executor,
         DeploymentService deploymentService,
-        IAzureValidator azureValidator,
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
     {
@@ -53,7 +55,7 @@ public class DeployCommand
         command.AddOption(restartOption);
 
         // Add subcommands
-        command.AddCommand(CreateAppSubcommand(logger, configService, executor, deploymentService, azureValidator));
+        command.AddCommand(CreateAppSubcommand(logger, configService, executor, deploymentService, prerequisiteRunner, authValidator));
         command.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
 
         // Single handler for the deploy command - runs only the application deployment flow
@@ -82,7 +84,7 @@ public class DeployCommand
                 }
 
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
-                    config.FullName, configService, azureValidator, executor, logger);
+                    config.FullName, configService, prerequisiteRunner, authValidator, executor, logger);
                 if (validatedConfig == null) return;
 
                 await DeployApplicationAsync(validatedConfig, deploymentService, verbose, inspect, restart, logger);
@@ -101,7 +103,8 @@ public class DeployCommand
         IConfigService configService,
         CommandExecutor executor,
         DeploymentService deploymentService,
-        IAzureValidator azureValidator)
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator)
     {
         var command = new Command("app", "Deploy Microsoft Agent 365 application binaries to the configured Azure App Service");
 
@@ -157,7 +160,7 @@ public class DeployCommand
                 }
 
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
-                    config.FullName, configService, azureValidator, executor, logger);
+                    config.FullName, configService, prerequisiteRunner, authValidator, executor, logger);
                 if (validatedConfig == null) return;
 
                 await DeployApplicationAsync(validatedConfig, deploymentService, verbose, inspect, restart, logger);
@@ -218,6 +221,18 @@ public class DeployCommand
                 var updateConfig = await configService.LoadAsync(config.FullName);
                 if (updateConfig == null) Environment.Exit(1);
 
+                // Early validation: fail before any network calls
+                if (string.IsNullOrWhiteSpace(updateConfig.AgentBlueprintId))
+                {
+                    logger.LogError("agentBlueprintId is not configured. Run 'a365 setup all' to create the agent blueprint.");
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(updateConfig.AgenticAppId))
+                {
+                    logger.LogError("agenticAppId is not configured. Run 'a365 setup all' to complete setup.");
+                    return;
+                }
+
                 // Configure GraphApiService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(updateConfig.ClientAppId))
                 {
@@ -246,7 +261,8 @@ public class DeployCommand
     private static async Task<Agent365Config?> ValidateDeploymentPrerequisitesAsync(
         string configPath,
         IConfigService configService,
-        IAzureValidator azureValidator,
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator,
         CommandExecutor executor,
         ILogger logger)
     {
@@ -255,7 +271,11 @@ public class DeployCommand
         if (configData == null) return null;
 
         // Validate Azure CLI authentication, subscription, and environment
-        if (!await azureValidator.ValidateAllAsync(configData.SubscriptionId))
+        var checks = new List<Services.Requirements.IRequirementCheck>
+        {
+            new AzureAuthRequirementCheck(authValidator)
+        };
+        if (!await prerequisiteRunner.RunAsync(checks, configData, logger))
         {
             logger.LogError("Deployment cannot proceed without proper Azure CLI authentication and the correct subscription context");
             return null;

@@ -9,6 +9,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
@@ -62,60 +63,12 @@ internal static class BlueprintSubcommand
     private const int ClientSecretValidationTimeoutSeconds = 10;
     private const string MicrosoftLoginOAuthTokenEndpoint = "https://login.microsoftonline.com/{0}/oauth2/v2.0/token";
 
-    /// <summary>
-    /// Validates blueprint prerequisites without performing any actions.
-    /// </summary>
-    public static async Task<List<string>> ValidateAsync(
-        Models.Agent365Config config,
-        IAzureValidator azureValidator,
-        IClientAppValidator clientAppValidator,
-        CancellationToken cancellationToken = default)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(config.ClientAppId))
-        {
-            errors.Add("clientAppId is required in configuration");
-            errors.Add("Please configure a custom client app in your tenant with required permissions");
-            errors.Add($"See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions");
-            return errors;
-        }
-
-        // Validate client app exists and has required permissions
-        try
-        {
-            await clientAppValidator.EnsureValidClientAppAsync(
-                config.ClientAppId,
-                config.TenantId,
-                cancellationToken);
-        }
-        catch (ClientAppValidationException ex)
-        {
-            // Add issue description and error details
-            errors.Add(ex.IssueDescription);
-            errors.AddRange(ex.ErrorDetails);
-            
-            // Add mitigation steps if available
-            if (ex.MitigationSteps.Count > 0)
-            {
-                errors.AddRange(ex.MitigationSteps);
-            }
-        }
-        catch (Exception ex)
-        {
-            // Catch any unexpected validation errors (Graph API failures, etc.)
-            errors.Add($"Client app validation failed: {ex.Message}");
-            errors.Add("Ensure Azure CLI is authenticated and you have access to the tenant.");
-        }
-
-        return errors;
-    }
-
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
-        IAzureValidator azureValidator,
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator,
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         IBotConfigurator botConfigurator,
@@ -303,7 +256,8 @@ internal static class BlueprintSubcommand
                 setupConfig,
                 config,
                 executor,
-                azureValidator,
+                prerequisiteRunner,
+                authValidator,
                 logger,
                 false,
                 false,
@@ -367,7 +321,8 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         FileInfo config,
         CommandExecutor executor,
-        IAzureValidator azureValidator,
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator,
         ILogger logger,
         bool skipInfrastructure,
         bool isSetupAll,
@@ -401,7 +356,11 @@ internal static class BlueprintSubcommand
         logger.LogInformation("==> Creating Agent Blueprint");
 
         // Validate Azure authentication
-        if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
+        var authChecks = new List<Services.Requirements.IRequirementCheck>
+        {
+            new AzureAuthRequirementCheck(authValidator)
+        };
+        if (!await prerequisiteRunner.RunAsync(authChecks, setupConfig, logger, cancellationToken))
         {
             return new BlueprintCreationResult
             {

@@ -26,7 +26,7 @@ public class AzureAuthValidator
     /// </summary>
     /// <param name="expectedSubscriptionId">The expected subscription ID to validate against. If null, only checks authentication.</param>
     /// <returns>True if authenticated and subscription matches (if specified), false otherwise.</returns>
-    public async Task<bool> ValidateAuthenticationAsync(string? expectedSubscriptionId = null)
+    public virtual async Task<bool> ValidateAuthenticationAsync(string? expectedSubscriptionId = null)
     {
         try
         {

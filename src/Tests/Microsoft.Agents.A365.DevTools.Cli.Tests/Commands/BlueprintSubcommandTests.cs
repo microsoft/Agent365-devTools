@@ -6,7 +6,9 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.CommandLine;
 using System.CommandLine.Builder;
@@ -26,7 +28,8 @@ public class BlueprintSubcommandTests
     private readonly ILogger _mockLogger;
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
-    private readonly IAzureValidator _mockAzureValidator;
+    private readonly IPrerequisiteRunner _mockPrerequisiteRunner;
+    private readonly AzureAuthValidator _mockAuthValidator;
     private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly IBotConfigurator _mockBotConfigurator;
@@ -42,7 +45,8 @@ public class BlueprintSubcommandTests
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
-        _mockAzureValidator = Substitute.For<IAzureValidator>();
+        _mockPrerequisiteRunner = Substitute.For<IPrerequisiteRunner>();
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
@@ -62,7 +66,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -80,7 +85,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -99,7 +105,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -120,7 +127,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -141,7 +149,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -161,7 +170,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -190,7 +200,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -205,7 +216,6 @@ public class BlueprintSubcommandTests
         // Assert
         result.Should().Be(0);
         await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
-        await _mockAzureValidator.DidNotReceiveWithAnyArgs().ValidateAllAsync(default!);
     }
 
     [Fact]
@@ -225,7 +235,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -262,20 +273,25 @@ public class BlueprintSubcommandTests
 
         var configFile = new FileInfo("test-config.json");
 
-        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>())
+        _mockPrerequisiteRunner.RunAsync(
+                Arg.Any<IEnumerable<IRequirementCheck>>(),
+                Arg.Any<Agent365Config>(),
+                Arg.Any<ILogger>(),
+                Arg.Any<CancellationToken>())
             .Returns(true);
 
         // Note: Since DelegatedConsentService needs to run and will fail with invalid tenant,
         // the method returns false rather than throwing for missing display name upfront.
         // The display name check happens after consent, so this test verifies
         // the method can handle failures gracefully.
-        
+
         // Act
         var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
                 config,
                 configFile,
                 _mockExecutor,
-                _mockAzureValidator,
+                _mockPrerequisiteRunner,
+                _mockAuthValidator,
                 _mockLogger,
                 skipInfrastructure: false,
                 isSetupAll: false,
@@ -305,15 +321,20 @@ public class BlueprintSubcommandTests
 
         var configFile = new FileInfo("test-config.json");
 
-        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>())
-            .Returns(false); // Validation fails
+        _mockPrerequisiteRunner.RunAsync(
+                Arg.Any<IEnumerable<IRequirementCheck>>(),
+                Arg.Any<Agent365Config>(),
+                Arg.Any<ILogger>(),
+                Arg.Any<CancellationToken>())
+            .Returns(false); // Auth check fails
 
         // Act
         var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
             config,
             configFile,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockLogger,
             skipInfrastructure: false,
             isSetupAll: false,
@@ -326,7 +347,11 @@ public class BlueprintSubcommandTests
         result.Should().NotBeNull();
         result.BlueprintCreated.Should().BeFalse();
         result.EndpointRegistered.Should().BeFalse();
-        await _mockAzureValidator.Received(1).ValidateAllAsync(config.SubscriptionId);
+        await _mockPrerequisiteRunner.Received(1).RunAsync(
+            Arg.Any<IEnumerable<IRequirementCheck>>(),
+            Arg.Any<Agent365Config>(),
+            Arg.Any<ILogger>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -337,7 +362,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -365,7 +391,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -401,7 +428,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -429,7 +457,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -455,7 +484,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -477,7 +507,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -504,7 +535,11 @@ public class BlueprintSubcommandTests
 
         var configFile = new FileInfo("test-config.json");
 
-        _mockAzureValidator.ValidateAllAsync(Arg.Any<string>())
+        _mockPrerequisiteRunner.RunAsync(
+                Arg.Any<IEnumerable<IRequirementCheck>>(),
+                Arg.Any<Agent365Config>(),
+                Arg.Any<ILogger>(),
+                Arg.Any<CancellationToken>())
             .Returns(false); // Fail fast for this test
 
         // Act
@@ -512,7 +547,8 @@ public class BlueprintSubcommandTests
             config,
             configFile,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockLogger,
             skipInfrastructure: false,
             isSetupAll: false,
@@ -543,7 +579,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -571,7 +608,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -605,7 +643,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -637,7 +676,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -1327,7 +1367,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -1661,7 +1702,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -1696,7 +1738,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
@@ -1731,7 +1774,8 @@ public class BlueprintSubcommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -23,7 +24,8 @@ public class DeployCommandTests
     private readonly ConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly DeploymentService _mockDeploymentService;
-    private readonly IAzureValidator _mockAzureValidator;
+    private readonly IPrerequisiteRunner _mockPrerequisiteRunner;
+    private readonly AzureAuthValidator _mockAuthValidator;
     private readonly GraphApiService _mockGraphApiService;
     private readonly AgentBlueprintService _mockBlueprintService;
 
@@ -52,7 +54,8 @@ public class DeployCommandTests
             mockNodeLogger,
             mockPythonLogger);
         
-        _mockAzureValidator = Substitute.For<IAzureValidator>();
+        _mockPrerequisiteRunner = Substitute.For<IPrerequisiteRunner>();
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
     }
@@ -66,7 +69,8 @@ public class DeployCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockGraphApiService, _mockBlueprintService);
 
         // Act
@@ -85,7 +89,8 @@ public class DeployCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockGraphApiService, _mockBlueprintService);
 
         // Act
@@ -105,7 +110,8 @@ public class DeployCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockAzureValidator,
+            _mockPrerequisiteRunner,
+            _mockAuthValidator,
             _mockGraphApiService, _mockBlueprintService);
 
         // Act

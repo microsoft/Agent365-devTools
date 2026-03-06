@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -26,7 +27,9 @@ internal static class AllSubcommand
         IConfigService configService,
         CommandExecutor executor,
         IBotConfigurator botConfigurator,
-        IAzureValidator azureValidator,
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator,
+        IAzureEnvironmentValidator environmentValidator,
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
@@ -206,57 +209,22 @@ internal static class AllSubcommand
                 // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
                 logger.LogDebug("Validating all prerequisites...");
 
-                var allErrors = new List<string>();
-
-                // Validate Azure CLI authentication first
-                logger.LogDebug("Validating Azure CLI authentication...");
-                if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
+                var prereqChecks = new List<Services.Requirements.IRequirementCheck>
                 {
-                    allErrors.Add("Azure CLI authentication failed or subscription not set correctly");
-                    logger.LogError("Azure CLI authentication validation failed");
-                }
-                else
-                {
-                    logger.LogDebug("Azure CLI authentication: OK");
-                }
+                    new AzureAuthRequirementCheck(authValidator),
+                    new ClientAppRequirementCheck(clientAppValidator)
+                };
 
-                // Validate Infrastructure prerequisites
                 if (!skipInfrastructure && setupConfig.NeedDeployment)
-                {
-                    logger.LogDebug("Validating Infrastructure prerequisites...");
-                    var infraErrors = await InfrastructureSubcommand.ValidateAsync(setupConfig, azureValidator, CancellationToken.None);
-                    if (infraErrors.Count > 0)
-                    {
-                        allErrors.AddRange(infraErrors.Select(e => $"Infrastructure: {e}"));
-                    }
-                    else
-                    {
-                        logger.LogDebug("Infrastructure prerequisites: OK");
-                    }
-                }
+                    prereqChecks.Add(new InfrastructureRequirementCheck());
 
-                // Validate Blueprint prerequisites
-                logger.LogDebug("Validating Blueprint prerequisites...");
-                var blueprintErrors = await BlueprintSubcommand.ValidateAsync(setupConfig, azureValidator, clientAppValidator, CancellationToken.None);
-                if (blueprintErrors.Count > 0)
-                {
-                    allErrors.AddRange(blueprintErrors.Select(e => $"Blueprint: {e}"));
-                }
-                else
-                {
-                    logger.LogDebug("Blueprint prerequisites: OK");
-                }
+                // Run advisory environment check (warning only, never blocks)
+                await environmentValidator.ValidateEnvironmentAsync();
 
-                // Stop if any validation failed
-                if (allErrors.Count > 0)
+                if (!await prerequisiteRunner.RunAsync(prereqChecks, setupConfig, logger, CancellationToken.None))
                 {
-                    logger.LogError("Setup cannot proceed due to validation failures:");
-                    foreach (var error in allErrors)
-                    {
-                        logger.LogError("  - {Error}", error);
-                    }
-                    logger.LogError("Please fix the errors above and try again");
-                    setupResults.Errors.AddRange(allErrors);
+                    logger.LogError("Setup cannot proceed due to prerequisite validation failures. Please fix the errors above and try again.");
+                    setupResults.Errors.Add("Prerequisite validation failed");
                     ExceptionHandler.ExitWithCleanup(1);
                 }
 
@@ -304,7 +272,8 @@ internal static class AllSubcommand
                         setupConfig,
                         config,
                         executor,
-                        azureValidator,
+                        prerequisiteRunner,
+                        authValidator,
                         logger,
                         skipInfrastructure,
                         true,

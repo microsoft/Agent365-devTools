@@ -8,6 +8,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
@@ -24,7 +25,9 @@ public class CleanupCommand
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
-        FederatedCredentialService federatedCredentialService)
+        FederatedCredentialService federatedCredentialService,
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
@@ -55,7 +58,7 @@ public class CleanupCommand
 
         // Add subcommands for granular control
         cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
-        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
+        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, prerequisiteRunner, authValidator));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
         return cleanupCommand;
@@ -304,7 +307,9 @@ public class CleanupCommand
     private static Command CreateAzureCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        IPrerequisiteRunner prerequisiteRunner,
+        AzureAuthValidator authValidator)
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
         
@@ -330,6 +335,10 @@ public class CleanupCommand
                 
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
+
+                var authChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
+                if (!await prerequisiteRunner.RunAsync(authChecks, config, logger, CancellationToken.None))
+                    return;
 
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
