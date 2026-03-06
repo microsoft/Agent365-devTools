@@ -34,7 +34,7 @@ There is reference documentation for each command.
 | [develop-mcp block](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-block) | Block an MCP server. |
 | [develop-mcp package-mcp-server](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-package-mcp-server) | Generate MCP server package for submission on Microsoft admin center. |
 | [publish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/publish) | Update manifest.json ID values and publish the package. Configure federated identity and app role assignments. |
-| [query-entra](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra) | Query Microsoft Entra ID for agent information (scopes, permissions, consent status). Provides options to query Microsoft Entra ID for agent information including scopes, permissions, and consent status. |
+| [query-entra](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra) | Query Microsoft Entra ID for agent information including scopes, permissions, and consent status. |
 | [query-entra blueprint-scopes](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra#query-entra-blueprint-scopes) | List configured scopes and consent status for the agent blueprint. |
 | [query-entra instance-scopes](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra#query-entra-instance-scopes) | List configured scopes and consent status for the agent instance. |
 | [setup](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/setup) | Set up your Agent 365 environment with granular control over each step. |
