@@ -55,16 +55,108 @@ public class MockToolFidelityTests
             $"Snapshot '{snapshot.ServerName}' is marked as populated (capturedAt={snapshot.CapturedAt}) " +
             "but contains no tools. Re-capture the snapshot or mark it UNPOPULATED.");
 
-        var mockTools = LoadEnabledMockTools(snapshot.ServerName);
-        var mockToolNames = new HashSet<string>(mockTools.Select(t => t.Name));
+        var mockTools = LoadEnabledMockTools(snapshot.ServerName).ToList();
+        var mockToolsByName = mockTools.ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
 
-        // Act & Assert - every snapshot tool must exist in the mock
+        // Act & Assert - every snapshot tool must exist in the mock and have a compatible inputSchema
         foreach (var snapshotTool in snapshot.Tools)
         {
-            mockToolNames.Should().Contain(
+            mockToolsByName.Should().ContainKey(
                 snapshotTool.Name,
                 $"Snapshot tool '{snapshotTool.Name}' for server '{snapshot.ServerName}' " +
                 $"is missing from the mock definition. Add it to mocks/{snapshot.ServerName}.json.");
+
+            if (!mockToolsByName.TryGetValue(snapshotTool.Name, out var mockTool))
+            {
+                continue;
+            }
+
+            if (TryGetInputSchema(snapshotTool.InputSchema, out var snapshotSchema))
+            {
+                TryGetInputSchema(mockTool.InputSchema, out var mockSchema).Should().BeTrue(
+                    $"Mock tool '{snapshotTool.Name}' for server '{snapshot.ServerName}' " +
+                    "must define an inputSchema when the snapshot tool does.");
+
+                GetSchemaRequiredAndPropertyNames(snapshotSchema, out var snapshotRequired, out var snapshotPropertyNames);
+                GetSchemaRequiredAndPropertyNames(mockSchema, out var mockRequired, out var mockPropertyNames);
+
+                mockRequired.Should().BeEquivalentTo(
+                    snapshotRequired,
+                    $"Required fields for tool '{snapshotTool.Name}' on server '{snapshot.ServerName}' " +
+                    "must match between snapshot and mock inputSchema.");
+
+                mockPropertyNames.Should().BeEquivalentTo(
+                    snapshotPropertyNames,
+                    $"Property names for tool '{snapshotTool.Name}' on server '{snapshot.ServerName}' " +
+                    "must match between snapshot and mock inputSchema.");
+            }
+        }
+    }
+
+    private static bool TryGetInputSchema(object? value, out JsonElement inputSchema)
+    {
+        inputSchema = default;
+
+        if (value is JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.Undefined || element.ValueKind == JsonValueKind.Null)
+            {
+                return false;
+            }
+
+            inputSchema = element.Clone();
+            return true;
+        }
+
+        if (value is string json && !string.IsNullOrWhiteSpace(json))
+        {
+            using var document = JsonDocument.Parse(json, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            inputSchema = document.RootElement.Clone();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void GetSchemaRequiredAndPropertyNames(
+        JsonElement schema,
+        out HashSet<string> required,
+        out HashSet<string> propertyNames)
+    {
+        required = new HashSet<string>(StringComparer.Ordinal);
+        propertyNames = new HashSet<string>(StringComparer.Ordinal);
+
+        if (schema.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        if (schema.TryGetProperty("required", out var requiredElement) &&
+            requiredElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in requiredElement.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    var name = item.GetString();
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        required.Add(name);
+                    }
+                }
+            }
+        }
+
+        if (schema.TryGetProperty("properties", out var propertiesElement) &&
+            propertiesElement.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in propertiesElement.EnumerateObject())
+            {
+                if (!string.IsNullOrEmpty(property.Name))
+                {
+                    propertyNames.Add(property.Name);
+                }
+            }
         }
     }
 
@@ -217,5 +309,8 @@ public class MockToolFidelityTests
 
         [JsonPropertyName("description")]
         public string Description { get; set; } = string.Empty;
+
+        [JsonPropertyName("inputSchema")]
+        public JsonElement InputSchema { get; set; }
     }
 }

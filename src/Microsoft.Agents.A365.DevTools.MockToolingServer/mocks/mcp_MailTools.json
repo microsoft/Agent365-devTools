@@ -249,6 +249,10 @@
         "preferHtml": {
           "type": "boolean",
           "description": "If true, request HTML body format"
+        },
+        "bodyPreviewOnly": {
+          "type": "boolean",
+          "description": "If true, returns only the body preview (~255 chars) instead of the full body. Useful for reducing payload size."
         }
       },
       "required": [
@@ -479,34 +483,24 @@
   },
   {
     "name": "SearchMessages",
-    "description": "Search Outlook messages using Microsoft Graph Search API with KQL-style queries.",
+    "description": "Search for email messages using natural language queries powered by Microsoft 365 Copilot. This tool searches across your mailbox to find relevant emails. Use natural language to describe what you're looking for (e.g., 'emails from Sarah about the budget', 'unread messages from this week', 'messages with attachments about the project'). The search focuses specifically on email content and metadata.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "queryString": {
+        "message": {
           "type": "string",
-          "description": "KQL-style search string (e.g., 'contoso OR from:user@example.com')"
+          "description": "Natural language search query for finding emails (e.g., 'emails from John about the project', 'unread messages from last week')"
         },
-        "from": {
-          "type": "integer",
-          "description": "Zero-based offset of the first result"
-        },
-        "size": {
-          "type": "integer",
-          "description": "Page size (1-50)"
-        },
-        "enableTopResults": {
-          "type": "boolean",
-          "description": "If true, returns top results with relevance boosting"
-        },
-        "includeBody": {
-          "type": "boolean",
-          "description": "If true, include full body HTML content for each message (larger payload). BodyLength and BodyTruncated metadata returned."
+        "conversationId": {
+          "type": "string",
+          "description": "Existing conversation id (GUID). Auto-created if missing."
         }
       },
-      "required": []
+      "required": [
+        "message"
+      ]
     },
-    "responseTemplate": "Message search completed with query '{{queryString}}' (mock).",
+    "responseTemplate": "Message search completed for '{{message}}' (mock).",
     "delayMs": 250,
     "errorRate": 0,
     "statusCode": 200,

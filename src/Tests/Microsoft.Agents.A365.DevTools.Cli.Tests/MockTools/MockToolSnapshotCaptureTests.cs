@@ -4,7 +4,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FluentAssertions;
-using Microsoft.Agents.A365.DevTools.MockToolingServer.MockTools;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.MockTools;
 
@@ -21,9 +20,17 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.MockTools;
 ///   $env:MCP_BEARER_TOKEN = a365 develop get-token --output raw
 ///   dotnet test --filter "FullyQualifiedName~MockToolSnapshotCaptureTests"
 ///
-///   # Drift detection + update snapshot files on disk
+///   # Refresh snapshots AND auto-update the corresponding mock files
 ///   $env:MCP_UPDATE_SNAPSHOTS = "true"
 ///   dotnet test --filter "FullyQualifiedName~MockToolSnapshotCaptureTests"
+///
+/// When MCP_UPDATE_SNAPSHOTS=true, both the snapshot file and the mock file are
+/// written. The mock merge preserves existing responseTemplate / delayMs / errorRate
+/// values for tools that still exist, adds new tools with generated defaults, and
+/// sets enabled=false for tools that have been removed from the real server.
+///
+/// Future: consider promoting snapshot capture and mock sync to explicit
+/// <c>a365 develop</c> subcommands for better discoverability.
 /// </summary>
 [CollectionDefinition("MockToolSnapshotCapture", DisableParallelization = true)]
 public class MockToolSnapshotCaptureCollection { }
@@ -101,14 +108,12 @@ public class MockToolSnapshotCaptureTests
         addedOnLive.Should().BeEmpty(
             $"server '{serverName}' exposes new tools not yet captured in the snapshot: " +
             $"{string.Join(", ", addedOnLive)}. " +
-            $"Re-run with {UpdateSnapshotsEnvVar}=true to refresh snapshots, " +
-            $"then update the corresponding mock file.");
+            $"Re-run with {UpdateSnapshotsEnvVar}=true to refresh snapshots and auto-update the mock file.");
 
         removedFromLive.Should().BeEmpty(
             $"server '{serverName}' no longer exposes tools that are still in the snapshot: " +
             $"{string.Join(", ", removedFromLive)}. " +
-            $"Re-run with {UpdateSnapshotsEnvVar}=true to refresh snapshots, " +
-            $"then remove the corresponding tools from the mock file.");
+            $"Re-run with {UpdateSnapshotsEnvVar}=true to refresh snapshots and auto-update the mock file.");
     }
 
     // -------------------------------------------------------------------------
@@ -129,8 +134,8 @@ public class MockToolSnapshotCaptureTests
             @params = new { }
         });
 
-        var content  = new StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
-        var response = await client.PostAsync($"{McpBaseUrl}/agents/servers/{serverName}", content);
+        using var content  = new StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync($"{McpBaseUrl}/agents/servers/{serverName}", content);
 
         response.EnsureSuccessStatusCode();
 
@@ -204,9 +209,84 @@ public class MockToolSnapshotCaptureTests
 
         var utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         File.WriteAllText(outPath, json, utf8NoBom);
+
+        // Auto-sync the mock file so its inputSchema stays aligned with the new snapshot.
+        // Existing responseTemplate / delayMs / errorRate / statusCode values are preserved.
+        MergeMockFile(serverName, tools);
+    }
+
+    // -------------------------------------------------------------------------
+    // Mock file auto-sync
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Merges live tool definitions into the corresponding mock file:
+    /// <list type="bullet">
+    ///   <item>Existing tools: schema updated from snapshot; behavior fields (responseTemplate,
+    ///   delayMs, errorRate, statusCode, enabled) preserved from the current mock entry.</item>
+    ///   <item>New tools (in snapshot but not in mock): added with generated defaults.</item>
+    ///   <item>Removed tools (in mock but not in snapshot): kept with <c>enabled=false</c>
+    ///   so the developer can review and delete them explicitly.</item>
+    /// </list>
+    /// </summary>
+    private static void MergeMockFile(string serverName, List<LiveTool> liveTools)
+    {
+        var mockPath = Path.Combine(GetMocksDirectory(), $"{serverName}.json");
+
+        // Load existing mock entries to preserve their behavior fields.
+        var existingByName = File.Exists(mockPath)
+            ? (JsonSerializer.Deserialize<List<ExistingMockEntry>>(File.ReadAllText(mockPath), JsonOptions) ?? [])
+              .ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, ExistingMockEntry>(StringComparer.OrdinalIgnoreCase);
+
+        // Rebuild from snapshot order, preserving behavior fields for existing tools.
+        var updated = liveTools.Select(live =>
+        {
+            existingByName.TryGetValue(live.Name, out var ex);
+            return new Dictionary<string, object?>
+            {
+                ["name"]             = live.Name,
+                ["description"]      = live.Description,
+                ["inputSchema"]      = live.InputSchema,
+                ["responseTemplate"] = ex?.ResponseTemplate ?? $"Mock response from {live.Name} (mock).",
+                ["delayMs"]          = (object)(ex?.DelayMs   ?? 250),
+                ["errorRate"]        = (object)(ex?.ErrorRate  ?? 0.0),
+                ["statusCode"]       = (object)(ex?.StatusCode ?? 200),
+                ["enabled"]          = (object)(ex?.Enabled    ?? true),
+            };
+        }).ToList();
+
+        // Tools removed from the real server: keep as disabled for developer review.
+        var liveNames = liveTools.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var ex in existingByName.Values.Where(e => !liveNames.Contains(e.Name)))
+        {
+            updated.Add(new Dictionary<string, object?>
+            {
+                ["name"]             = ex.Name,
+                ["description"]      = ex.Description,
+                ["inputSchema"]      = ex.InputSchema,
+                ["responseTemplate"] = ex.ResponseTemplate,
+                ["delayMs"]          = (object)ex.DelayMs,
+                ["errorRate"]        = (object)ex.ErrorRate,
+                ["statusCode"]       = (object)ex.StatusCode,
+                ["enabled"]          = (object)false,
+            });
+        }
+
+        var utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        File.WriteAllText(
+            mockPath,
+            JsonSerializer.Serialize(updated, new JsonSerializerOptions { WriteIndented = true }),
+            utf8NoBom);
     }
 
     private static string GetSnapshotsDirectory()
+        => Path.Combine(GetMockToolingServerDirectory(), "snapshots");
+
+    private static string GetMocksDirectory()
+        => Path.Combine(GetMockToolingServerDirectory(), "mocks");
+
+    private static string GetMockToolingServerDirectory()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
 
@@ -217,8 +297,7 @@ public class MockToolSnapshotCaptureTests
                 return Path.Combine(
                     dir.FullName,
                     "src",
-                    "Microsoft.Agents.A365.DevTools.MockToolingServer",
-                    "snapshots");
+                    "Microsoft.Agents.A365.DevTools.MockToolingServer");
             }
 
             dir = dir.Parent;
@@ -282,5 +361,21 @@ public class MockToolSnapshotCaptureTests
     {
         [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Minimal model for reading existing mock entries to preserve their behavior fields
+    /// during auto-merge. Only the fields that must survive a snapshot refresh are included.
+    /// </summary>
+    private sealed class ExistingMockEntry
+    {
+        [JsonPropertyName("name")]             public string Name             { get; set; } = string.Empty;
+        [JsonPropertyName("description")]      public string Description      { get; set; } = string.Empty;
+        [JsonPropertyName("inputSchema")]      public JsonElement InputSchema  { get; set; }
+        [JsonPropertyName("responseTemplate")] public string ResponseTemplate { get; set; } = string.Empty;
+        [JsonPropertyName("delayMs")]          public int    DelayMs          { get; set; } = 250;
+        [JsonPropertyName("errorRate")]        public double ErrorRate         { get; set; } = 0.0;
+        [JsonPropertyName("statusCode")]       public int    StatusCode        { get; set; } = 200;
+        [JsonPropertyName("enabled")]          public bool   Enabled           { get; set; } = true;
     }
 }

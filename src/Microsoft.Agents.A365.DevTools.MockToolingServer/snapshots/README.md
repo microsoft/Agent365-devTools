@@ -15,7 +15,6 @@ Each snapshot file follows this JSON structure:
   "$schema": "mock-snapshot-schema",
   "capturedAt": "<ISO 8601 UTC timestamp, or \"UNPOPULATED\">",
   "serverName": "<MCP server name, e.g. mcp_CalendarTools>",
-  "sourceNote": "Run MockToolSnapshotCaptureTests with MCP_BEARER_TOKEN set to populate this file.",
   "tools": [
     {
       "name": "<tool name>",
@@ -31,7 +30,6 @@ Each snapshot file follows this JSON structure:
 | `$schema` | Always `"mock-snapshot-schema"`. Reserved for future formal JSON Schema validation. |
 | `capturedAt` | ISO 8601 UTC timestamp of when the snapshot was captured. `"UNPOPULATED"` means the file has never been populated with real data. |
 | `serverName` | The M365 MCP server name this snapshot corresponds to (e.g., `mcp_CalendarTools`, `mcp_MailTools`, `mcp_MeServer`, `mcp_KnowledgeTools`). |
-| `sourceNote` | Human-readable note explaining how to populate the file. |
 | `tools` | Array of tool definitions. Each entry has `name` (string), `description` (string), and `inputSchema` (JSON Schema object). |
 
 ## How to Update Snapshots
@@ -69,13 +67,18 @@ dotnet test --filter "FullyQualifiedName~MockToolSnapshotCaptureTests"
 
 ### Refresh snapshot files
 
-Writes updated snapshot files to disk for review and commit:
+Writes updated snapshot files **and auto-updates the corresponding mock files** in `../mocks/`:
 ```bash
 MCP_UPDATE_SNAPSHOTS=true dotnet test --filter "FullyQualifiedName~MockToolSnapshotCaptureTests"
 ```
 
-After refreshing, update the corresponding mock files in `../mocks/` to match
-any new or changed tools, then run `MockToolFidelityTests` to confirm coverage.
+The mock auto-merge:
+- **Existing tools**: `inputSchema` updated from snapshot; `responseTemplate`, `delayMs`, `errorRate`, `statusCode`, and `enabled` preserved from the current mock entry.
+- **New tools**: added with schema from snapshot and sensible defaults (`responseTemplate` is auto-generated, `delayMs=250`, `enabled=true`).
+- **Removed tools**: kept in the mock file with `enabled=false` for developer review — delete them explicitly once confirmed.
+
+After refreshing, run `MockToolFidelityTests` to confirm coverage, then review the diff
+(especially `responseTemplate` for any new tools) before committing.
 
 ## UNPOPULATED Snapshots
 

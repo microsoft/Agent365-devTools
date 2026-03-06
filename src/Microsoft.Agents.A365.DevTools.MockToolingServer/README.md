@@ -39,7 +39,9 @@ Tools for email operations including `SendEmail`, `SendEmailWithAttachments`, an
 
 ### What the mock guarantees
 
-Every tool exposed by a real M365 MCP server is present in the corresponding mock with the same name, same casing, and same required input fields. This ensures that agents developed against the mock will not encounter missing-tool or schema-mismatch errors when switched to a real server.
+Every tool exposed by a real M365 MCP server is present in the corresponding mock with the same name, same casing, same required input fields, and the same set of input property names. This ensures that agents developed against the mock will not encounter missing-tool or schema-mismatch errors when switched to a real server.
+
+The fidelity contract is CI-enforced: `MockToolFidelityTests` compares each mock tool's `inputSchema` (required fields and property names) against the corresponding snapshot.
 
 ### What the mock does not guarantee
 
@@ -84,13 +86,15 @@ MCP_UPDATE_SNAPSHOTS=true dotnet test --filter "FullyQualifiedName~MockToolSnaps
    $env:MCP_BEARER_TOKEN = a365 develop get-token --app-id <your-app-id> --scopes McpServers.Mail.All McpServers.Calendar.All McpServers.Me.All McpServers.Knowledge.All --output raw
    ```
 
-2. Run the snapshot capture tests to write updated snapshot files:
+2. Run the snapshot capture tests. This refreshes both the snapshot files **and** the mock files in one step:
 
    ```bash
    MCP_UPDATE_SNAPSHOTS=true dotnet test --filter "FullyQualifiedName~MockToolSnapshotCaptureTests"
    ```
 
-3. After updating snapshots, update the corresponding mock JSON files in `mocks/` to match any new or changed tools.
+   The mock auto-merge preserves existing `responseTemplate` / `delayMs` / `errorRate` values for unchanged tools, adds new tools with sensible defaults, and marks removed tools as `enabled=false` for review.
+
+3. Review the diff — no manual schema editing is required. Check `responseTemplate` for any newly added tools and customise if your agent tests need specific data shapes.
 
 4. Run fidelity tests to confirm coverage:
 
