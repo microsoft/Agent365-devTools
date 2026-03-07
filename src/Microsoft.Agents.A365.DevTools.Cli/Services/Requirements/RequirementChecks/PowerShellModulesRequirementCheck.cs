@@ -43,8 +43,6 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     /// </summary>
     private async Task<RequirementCheckResult> CheckImplementationAsync(Agent365Config config, ILogger logger, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Checking if PowerShell is available on this system...");
-
         // Check if PowerShell is available
         var powerShellAvailable = await CheckPowerShellAvailabilityAsync(logger, cancellationToken);
         if (!powerShellAvailable)
@@ -65,7 +63,6 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             );
         }
 
-        logger.LogInformation("Checking PowerShell modules...");
         var missingModules = new List<RequiredModule>();
         var installedModules = new List<RequiredModule>();
 
@@ -91,7 +88,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         if (missingModules.Count == 0)
         {
             return RequirementCheckResult.Success(
-                details: $"All required PowerShell modules are installed: {string.Join(", ", installedModules.Select(m => m.Name))}"
+                details: string.Join(", ", installedModules.Select(m => m.Name))
             );
         }
 

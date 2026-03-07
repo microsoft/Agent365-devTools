@@ -290,7 +290,6 @@ public class BlueprintSubcommandTests
                 config,
                 configFile,
                 _mockExecutor,
-                _mockPrerequisiteRunner,
                 _mockAuthValidator,
                 _mockLogger,
                 skipInfrastructure: false,
@@ -306,53 +305,6 @@ public class BlueprintSubcommandTests
         result.EndpointRegistered.Should().BeFalse();
     }
 
-    [Fact]
-    public async Task CreateBlueprintImplementation_WithAzureValidationFailure_ShouldReturnFalse()
-    {
-        // Arrange
-        var config = new Agent365Config
-        {
-            TenantId = "00000000-0000-0000-0000-000000000000",
-            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required for validation
-            SubscriptionId = "test-sub",
-            AgentBlueprintDisplayName = "Test Blueprint",
-            Location = "eastus" // Required for endpoint registration; location guard runs before Azure validation
-        };
-
-        var configFile = new FileInfo("test-config.json");
-
-        _mockPrerequisiteRunner.RunAsync(
-                Arg.Any<IEnumerable<IRequirementCheck>>(),
-                Arg.Any<Agent365Config>(),
-                Arg.Any<ILogger>(),
-                Arg.Any<CancellationToken>())
-            .Returns(false); // Auth check fails
-
-        // Act
-        var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
-            config,
-            configFile,
-            _mockExecutor,
-            _mockPrerequisiteRunner,
-            _mockAuthValidator,
-            _mockLogger,
-            skipInfrastructure: false,
-            isSetupAll: false,
-            _mockConfigService,
-            _mockBotConfigurator,
-            _mockPlatformDetector,
-            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.BlueprintCreated.Should().BeFalse();
-        result.EndpointRegistered.Should().BeFalse();
-        await _mockPrerequisiteRunner.Received(1).RunAsync(
-            Arg.Any<IEnumerable<IRequirementCheck>>(),
-            Arg.Any<Agent365Config>(),
-            Arg.Any<ILogger>(),
-            Arg.Any<CancellationToken>());
-    }
 
     [Fact]
     public void CommandDescription_ShouldMentionRequiredPermissions()
@@ -535,19 +487,11 @@ public class BlueprintSubcommandTests
 
         var configFile = new FileInfo("test-config.json");
 
-        _mockPrerequisiteRunner.RunAsync(
-                Arg.Any<IEnumerable<IRequirementCheck>>(),
-                Arg.Any<Agent365Config>(),
-                Arg.Any<ILogger>(),
-                Arg.Any<CancellationToken>())
-            .Returns(false); // Fail fast for this test
-
         // Act
         var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
             config,
             configFile,
             _mockExecutor,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
             _mockLogger,
             skipInfrastructure: false,

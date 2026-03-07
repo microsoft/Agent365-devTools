@@ -37,8 +37,7 @@ public class FrontierPreviewRequirementCheckTests
         result.Passed.Should().BeTrue("check should pass to allow user to proceed despite warning");
         result.IsWarning.Should().BeTrue("check should be flagged as a warning");
         result.Details.Should().NotBeNullOrEmpty();
-        result.Details.Should().Contain("enrolled");
-        result.Details.Should().Contain("preview");
+        result.Details.Should().Contain("auto-verified");
         result.ErrorMessage.Should().Contain("Cannot automatically verify");
         result.ResolutionGuidance.Should().BeNullOrEmpty("warning checks don't have resolution guidance");
     }
@@ -54,11 +53,11 @@ public class FrontierPreviewRequirementCheckTests
         await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the logger was called with the main warning message
+        // Verify the logger was called with the warning output line
         _mockLogger.Received().Log(
-            LogLevel.Warning,
+            LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Frontier Preview Program enrollment is required")),
+            Arg.Is<object>(o => o.ToString()!.Contains("[WARN] Frontier Preview Program")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -74,11 +73,11 @@ public class FrontierPreviewRequirementCheckTests
         await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the logger was called with "Requirement:" prefix
+        // Verify the logger was called with the check name in the output line
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Requirement:") && o.ToString()!.Contains("Frontier Preview Program")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Frontier Preview Program")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -94,9 +93,8 @@ public class FrontierPreviewRequirementCheckTests
         var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the result mentions preview context
-        result.Details.Should().Contain("preview");
-        result.Details.Should().Contain("enrolled");
+        // Verify the result mentions the auto-verification limitation
+        result.Details.Should().Contain("auto-verified");
     }
 
     [Fact]
@@ -110,8 +108,8 @@ public class FrontierPreviewRequirementCheckTests
         var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        // Verify the details mention checking documentation
-        result.Details.Should().Contain("Check documentation");
+        // Verify the details include a reference URL
+        result.Details.Should().Contain("https://adoption.microsoft.com/copilot/frontier-program/");
     }
 
     [Fact]

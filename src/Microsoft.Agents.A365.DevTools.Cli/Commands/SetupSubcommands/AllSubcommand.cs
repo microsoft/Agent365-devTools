@@ -79,7 +79,7 @@ internal static class AllSubcommand
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
-            logger.LogInformation("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
+            logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             if (dryRun)
             {
@@ -113,61 +113,12 @@ internal static class AllSubcommand
                 return;
             }
 
-            logger.LogInformation("Agent 365 Setup");
-            logger.LogInformation("Running all setup steps...");
-            
-            if (skipRequirements)
-            {
-                logger.LogInformation("NOTE: Skipping requirements validation (--skip-requirements flag used)");
-            }
-            
-            if (skipInfrastructure)
-            {
-                logger.LogInformation("NOTE: Skipping infrastructure creation (--skip-infrastructure flag used)");
-            }
-            
-            logger.LogInformation("");
 
             var setupResults = new SetupResults();
 
             try
             {
-                // PHASE 0a: CHECK SYSTEM REQUIREMENTS before loading config (if not skipped)
-                // Runs config-independent checks (PowerShell, Frontier Preview) so blockers
-                // are surfaced before the user is asked to fill in the configuration wizard.
-                if (!skipRequirements)
-                {
-                    logger.LogDebug("Validating system prerequisites...");
-
-                    try
-                    {
-                        var systemResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetSystemRequirementChecks(),
-                            new Agent365Config(),
-                            logger,
-                            category: null,
-                            CancellationToken.None);
-
-                        if (!systemResult)
-                        {
-                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
-                            ExceptionHandler.ExitWithCleanup(1);
-                        }
-                    }
-                    catch (Exception reqEx)
-                    {
-                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
-                        logger.LogError("Setup cannot proceed because system requirement validation failed unexpectedly.");
-                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
-                        ExceptionHandler.ExitWithCleanup(1);
-                    }
-                }
-                else
-                {
-                    logger.LogDebug("Skipping requirements validation (--skip-requirements flag used)");
-                }
-
-                // PHASE 0b: Load configuration (may trigger interactive wizard)
+                // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
 
                 // Configure GraphApiService with custom client app ID if available
@@ -177,21 +128,19 @@ internal static class AllSubcommand
                     graphApiService.CustomClientAppId = setupConfig.ClientAppId;
                 }
 
-                // PHASE 0c: CHECK CONFIG-DEPENDENT REQUIREMENTS after the wizard
+                // Validate all prerequisites in one pass
                 if (!skipRequirements)
                 {
-                    logger.LogDebug("Validating configuration prerequisites...");
+                    var checks = RequirementsSubcommand.GetRequirementChecks(authValidator, clientAppValidator);
+                    if (!skipInfrastructure && setupConfig.NeedDeployment)
+                        checks.Add(new InfrastructureRequirementCheck());
 
                     try
                     {
-                        var configResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetConfigRequirementChecks(clientAppValidator),
-                            setupConfig,
-                            logger,
-                            category: null,
-                            CancellationToken.None);
+                        var requirementsResult = await RequirementsSubcommand.RunRequirementChecksAsync(
+                            checks, setupConfig, logger, category: null, CancellationToken.None);
 
-                        if (!configResult)
+                        if (!requirementsResult)
                         {
                             logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
                             ExceptionHandler.ExitWithCleanup(1);
@@ -200,35 +149,22 @@ internal static class AllSubcommand
                     catch (Exception reqEx)
                     {
                         logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
-                        logger.LogError("Setup cannot proceed because configuration requirement validation failed unexpectedly.");
                         logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
                         ExceptionHandler.ExitWithCleanup(1);
                     }
                 }
 
-                // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
-                logger.LogDebug("Validating all prerequisites...");
-
-                var prereqChecks = new List<Services.Requirements.IRequirementCheck>
-                {
-                    new AzureAuthRequirementCheck(authValidator),
-                    new ClientAppRequirementCheck(clientAppValidator)
-                };
-
-                if (!skipInfrastructure && setupConfig.NeedDeployment)
-                    prereqChecks.Add(new InfrastructureRequirementCheck());
-
                 // Run advisory environment check (warning only, never blocks)
                 await environmentValidator.ValidateEnvironmentAsync();
 
-                if (!await prerequisiteRunner.RunAsync(prereqChecks, setupConfig, logger, CancellationToken.None))
-                {
-                    logger.LogError("Setup cannot proceed due to prerequisite validation failures. Please fix the errors above and try again.");
-                    setupResults.Errors.Add("Prerequisite validation failed");
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
-
                 logger.LogDebug("All validations passed. Starting setup execution...");
+
+                logger.LogInformation("Running all setup steps... (TraceId: {TraceId})", correlationId);
+                if (skipRequirements)
+                    logger.LogInformation("NOTE: Requirements validation skipped (--skip-requirements flag used)");
+                if (skipInfrastructure)
+                    logger.LogInformation("NOTE: Infrastructure creation skipped (--skip-infrastructure flag used)");
+                logger.LogInformation("");
 
                 var generatedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -272,7 +208,6 @@ internal static class AllSubcommand
                         setupConfig,
                         config,
                         executor,
-                        prerequisiteRunner,
                         authValidator,
                         logger,
                         skipInfrastructure,

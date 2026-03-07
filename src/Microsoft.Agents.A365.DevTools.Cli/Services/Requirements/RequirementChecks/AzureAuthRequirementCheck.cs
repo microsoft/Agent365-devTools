@@ -34,8 +34,14 @@ public class AzureAuthRequirementCheck : RequirementCheck
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
-        // AzureAuthValidator logs all detailed user-facing messages internally.
-        // This adapter converts the bool result into a RequirementCheckResult.
+        return await ExecuteCheckWithLoggingAsync(config, logger, CheckImplementationAsync, cancellationToken);
+    }
+
+    private async Task<RequirementCheckResult> CheckImplementationAsync(
+        Agent365Config config,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
         var authenticated = await _authValidator.ValidateAuthenticationAsync(config.SubscriptionId);
 
         if (!authenticated)

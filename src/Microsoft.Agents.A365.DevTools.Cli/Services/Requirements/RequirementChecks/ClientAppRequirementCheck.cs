@@ -70,7 +70,7 @@ public class ClientAppRequirementCheck : RequirementCheck
             );
 
             return RequirementCheckResult.Success(
-                details: $"Client app {config.ClientAppId} is properly configured with all required permissions and admin consent."
+                details: config.ClientAppId
             );
         }
         catch (ClientAppValidationException ex)

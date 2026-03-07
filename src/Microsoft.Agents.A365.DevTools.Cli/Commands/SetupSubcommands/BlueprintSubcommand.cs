@@ -124,7 +124,7 @@ internal static class BlueprintSubcommand
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
-            logger.LogInformation("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
+            logger.LogDebug("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
 
             // Validate mutually exclusive options
             if (!ValidateMutuallyExclusiveOptions(
@@ -184,7 +184,7 @@ internal static class BlueprintSubcommand
                 try
                 {
                     var requirementsResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                        RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
+                        RequirementsSubcommand.GetRequirementChecks(authValidator, clientAppValidator),
                         setupConfig,
                         logger,
                         category: null,
@@ -218,6 +218,8 @@ internal static class BlueprintSubcommand
                 }
                 return;
             }
+
+            logger.LogInformation("Starting blueprint setup... (TraceId: {TraceId})", correlationId);
 
             // Handle --endpoint-only flag
             if (endpointOnly)
@@ -256,7 +258,6 @@ internal static class BlueprintSubcommand
                 setupConfig,
                 config,
                 executor,
-                prerequisiteRunner,
                 authValidator,
                 logger,
                 false,
@@ -321,7 +322,6 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         FileInfo config,
         CommandExecutor executor,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator,
         ILogger logger,
         bool skipInfrastructure,
@@ -354,21 +354,6 @@ internal static class BlueprintSubcommand
 
         logger.LogInformation("");
         logger.LogInformation("==> Creating Agent Blueprint");
-
-        // Validate Azure authentication
-        var authChecks = new List<Services.Requirements.IRequirementCheck>
-        {
-            new AzureAuthRequirementCheck(authValidator)
-        };
-        if (!await prerequisiteRunner.RunAsync(authChecks, setupConfig, logger, cancellationToken))
-        {
-            return new BlueprintCreationResult
-            {
-                BlueprintCreated = false,
-                EndpointRegistered = false,
-                EndpointRegistrationAttempted = false
-            };
-        }
 
         var generatedConfigPath = Path.Combine(
             config.DirectoryName ?? Environment.CurrentDirectory,
@@ -1143,7 +1128,8 @@ internal static class BlueprintSubcommand
                 tenantId,
                 objectId,
                 userObjectId: null,
-                ct);
+                ct,
+                scopes: AuthenticationConstants.RequiredClientAppPermissions);
 
             if (isOwner)
             {

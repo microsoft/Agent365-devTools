@@ -94,7 +94,6 @@ public class ClientAppRequirementCheckTests
         // Assert
         result.Should().NotBeNull();
         result.Passed.Should().BeTrue("client app is valid");
-        result.Details.Should().Contain("properly configured");
         result.Details.Should().Contain(config.ClientAppId);
         result.ErrorMessage.Should().BeNullOrEmpty();
         result.ResolutionGuidance.Should().BeNullOrEmpty();

@@ -9,6 +9,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -161,13 +162,16 @@ public class RequirementsSubcommandTests
     {
         // GetRequirementChecks is now derived from GetSystemRequirementChecks + GetConfigRequirementChecks.
         // This test guards against a check being accidentally added to one sub-list but not propagated.
+        var mockExecutor = Substitute.ForPartsOf<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
         var mockValidator = Substitute.For<IClientAppValidator>();
 
-        var checks = RequirementsSubcommand.GetRequirementChecks(mockValidator);
+        var checks = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
 
-        checks.Should().HaveCount(4, "system (2) + config (2) checks");
+        checks.Should().HaveCount(5, "system (2) + config (3) checks");
         checks.Should().ContainSingle(c => c is FrontierPreviewRequirementCheck);
         checks.Should().ContainSingle(c => c is PowerShellModulesRequirementCheck);
+        checks.Should().ContainSingle(c => c is AzureAuthRequirementCheck);
         checks.Should().ContainSingle(c => c is LocationRequirementCheck);
         checks.Should().ContainSingle(c => c is ClientAppRequirementCheck);
     }
@@ -176,11 +180,13 @@ public class RequirementsSubcommandTests
     public void GetRequirementChecks_IsUnionOfSystemAndConfigChecks()
     {
         // GetRequirementChecks must exactly equal GetSystemRequirementChecks + GetConfigRequirementChecks.
+        var mockExecutor = Substitute.ForPartsOf<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
         var mockValidator = Substitute.For<IClientAppValidator>();
 
-        var all = RequirementsSubcommand.GetRequirementChecks(mockValidator);
+        var all = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
         var system = RequirementsSubcommand.GetSystemRequirementChecks();
-        var config = RequirementsSubcommand.GetConfigRequirementChecks(mockValidator);
+        var config = RequirementsSubcommand.GetConfigRequirementChecks(mockAuthValidator, mockValidator);
 
         all.Should().HaveCount(system.Count + config.Count);
         all.Select(c => c.GetType()).Should().StartWith(system.Select(c => c.GetType()),
