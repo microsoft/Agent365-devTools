@@ -338,8 +338,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
         Console.WriteLine("This is used to detect your project type (.NET, Node.js, or Python)");
         Console.WriteLine("and as the source directory for Azure App Service deployment.");
         Console.WriteLine();
-        Console.WriteLine("  Use '.' if you are already running this command from your project folder.");
-        Console.WriteLine(@"  Example: /home/user/my-agent  or  C:\Projects\my-agent");
+        Console.WriteLine("  Absolute and relative paths are both accepted and will be resolved to a full path.");
+        Console.WriteLine(@"  Example: /home/user/my-agent  or  C:\Projects\my-agent  or  .");
         Console.WriteLine("=================================================================");
         Console.WriteLine();
 
@@ -371,7 +371,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             }
         }
 
-        return path;
+        return Path.GetFullPath(path);
     }
 
     private async Task<(string name, string? location)> PromptForResourceGroupAsync(Agent365Config? existingConfig)

@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
@@ -971,9 +972,9 @@ public class CleanupCommand
             logger.LogInformation("Loaded configuration successfully from {ConfigFile}", configPath);
             return config;
         }
-        catch (FileNotFoundException ex)
+        catch (ConfigFileNotFoundException ex)
         {
-            logger.LogError("Configuration file not found: {Message}", ex.Message);
+            logger.LogError("Configuration file not found: {Message}", ex.IssueDescription);
             return null;
         }
         catch (Exception ex)

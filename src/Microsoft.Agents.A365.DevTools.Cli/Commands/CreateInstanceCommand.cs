@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
@@ -499,16 +500,9 @@ public class CreateInstanceCommand
                 : await configService.LoadAsync();
             return config;
         }
-        catch (FileNotFoundException ex)
+        catch (ConfigFileNotFoundException ex)
         {
-            logger.LogError("Configuration file not found: {Message}", ex.Message);
-            logger.LogInformation("");
-            logger.LogInformation("To get started:");
-            logger.LogInformation("  1. Copy a365.config.example.json to a365.config.json");
-            logger.LogInformation("  2. Edit a365.config.json with your Azure tenant and subscription details");
-            logger.LogInformation("  3. Run 'a365 setup' to initialize your environment first");
-            logger.LogInformation("  4. Then run 'a365 createinstance' to create agent instances");
-            logger.LogInformation("");
+            logger.LogError("Configuration file not found: {Message}", ex.IssueDescription);
             return null;
         }
         catch (Exception ex)

@@ -292,7 +292,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return;
             }
 
-            _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback on macOS/Linux).");
+            _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback).");
             _logger.LogInformation("Run 'a365 setup requirements' at any time to re-verify and auto-fix this setting.");
 
             var patchBody = "{\"isFallbackPublicClient\":true}";
