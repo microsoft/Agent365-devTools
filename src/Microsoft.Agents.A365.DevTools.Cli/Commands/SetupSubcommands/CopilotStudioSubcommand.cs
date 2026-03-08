@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -30,6 +31,7 @@ internal static class CopilotStudioSubcommand
 
     public static Command CreateCommand(
         ILogger logger,
+        AzureAuthValidator authValidator,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -78,8 +80,10 @@ internal static class CopilotStudioSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
+                var copilotChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
+                copilotChecks.AddRange(RequirementsSubcommand.GetSystemRequirementChecks());
                 var systemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                    copilotChecks, setupConfig, logger, category: null, CancellationToken.None);
                 if (!systemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");

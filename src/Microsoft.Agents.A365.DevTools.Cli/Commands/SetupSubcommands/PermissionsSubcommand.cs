@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.Threading;
@@ -20,6 +21,7 @@ internal static class PermissionsSubcommand
 {
     public static Command CreateCommand(
         ILogger logger,
+        AzureAuthValidator authValidator,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -30,10 +32,10 @@ internal static class PermissionsSubcommand
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
-        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
-        permissionsCommand.AddCommand(CreateBotSubcommand(logger, configService, executor, graphApiService, blueprintService));
-        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, configService, executor, graphApiService, blueprintService));
-        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
 
         return permissionsCommand;
     }
@@ -43,6 +45,7 @@ internal static class PermissionsSubcommand
     /// </summary>
     private static Command CreateMcpSubcommand(
         ILogger logger,
+        AzureAuthValidator authValidator,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -90,8 +93,10 @@ internal static class PermissionsSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
+                var mcpChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
+                mcpChecks.AddRange(RequirementsSubcommand.GetSystemRequirementChecks());
                 var mcpSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                    mcpChecks, setupConfig, logger, category: null, CancellationToken.None);
                 if (!mcpSystemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
@@ -133,6 +138,7 @@ internal static class PermissionsSubcommand
     /// </summary>
     private static Command CreateBotSubcommand(
         ILogger logger,
+        AzureAuthValidator authValidator,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -182,8 +188,10 @@ internal static class PermissionsSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
+                var botChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
+                botChecks.AddRange(RequirementsSubcommand.GetSystemRequirementChecks());
                 var botSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                    botChecks, setupConfig, logger, category: null, CancellationToken.None);
                 if (!botSystemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
@@ -222,6 +230,7 @@ internal static class PermissionsSubcommand
     /// </summary>
     private static Command CreateCustomSubcommand(
         ILogger logger,
+        AzureAuthValidator authValidator,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -270,8 +279,10 @@ internal static class PermissionsSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
+                var customChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
+                customChecks.AddRange(RequirementsSubcommand.GetSystemRequirementChecks());
                 var customSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
+                    customChecks, setupConfig, logger, category: null, CancellationToken.None);
                 if (!customSystemChecksOk)
                 {
                     logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");

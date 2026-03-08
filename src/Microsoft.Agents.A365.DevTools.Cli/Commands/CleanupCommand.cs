@@ -11,6 +11,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -27,7 +28,6 @@ public class CleanupCommand
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
@@ -59,7 +59,7 @@ public class CleanupCommand
 
         // Add subcommands for granular control
         cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
-        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, prerequisiteRunner, authValidator));
+        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
         return cleanupCommand;
@@ -309,7 +309,6 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator)
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
@@ -338,7 +337,9 @@ public class CleanupCommand
                 if (config == null) return;
 
                 var authChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
-                if (!await prerequisiteRunner.RunAsync(authChecks, config, logger, CancellationToken.None))
+                var authOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                    authChecks, config, logger, category: null, CancellationToken.None);
+                if (!authOk)
                     return;
 
                 logger.LogInformation("");

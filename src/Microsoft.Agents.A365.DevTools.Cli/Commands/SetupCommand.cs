@@ -48,13 +48,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, authValidator, clientAppValidator));
 
             command.AddCommand(InfrastructureSubcommand.CreateCommand(
-                logger, configService, prerequisiteRunner, authValidator, webAppCreator, platformDetector, executor));
+                logger, configService, authValidator, webAppCreator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
                 logger, configService, executor, prerequisiteRunner, authValidator, webAppCreator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
-                logger, configService, executor, graphApiService, blueprintService));
+                logger, authValidator, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
                 logger, configService, executor, botConfigurator, prerequisiteRunner, authValidator, environmentValidator, webAppCreator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));

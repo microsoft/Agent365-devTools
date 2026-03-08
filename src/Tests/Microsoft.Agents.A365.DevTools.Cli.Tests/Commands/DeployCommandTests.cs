@@ -69,7 +69,6 @@ public class DeployCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
             _mockGraphApiService, _mockBlueprintService);
 
@@ -89,7 +88,6 @@ public class DeployCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
             _mockGraphApiService, _mockBlueprintService);
 
@@ -110,7 +108,6 @@ public class DeployCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
             _mockGraphApiService, _mockBlueprintService);
 

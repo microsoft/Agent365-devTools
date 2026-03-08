@@ -122,7 +122,6 @@ public class CleanupCommandBotEndpointTests
             _agentBlueprintService,
             _mockConfirmationProvider,
             _federatedCredentialService,
-            _mockPrerequisiteRunner,
             _mockAuthValidator);
 
         Assert.NotNull(command);

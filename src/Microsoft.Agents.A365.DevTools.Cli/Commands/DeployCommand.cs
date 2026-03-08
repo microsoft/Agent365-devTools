@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
@@ -20,7 +21,6 @@ public class DeployCommand
         IConfigService configService,
         CommandExecutor executor,
         DeploymentService deploymentService,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService)
@@ -55,7 +55,7 @@ public class DeployCommand
         command.AddOption(restartOption);
 
         // Add subcommands
-        command.AddCommand(CreateAppSubcommand(logger, configService, executor, deploymentService, prerequisiteRunner, authValidator));
+        command.AddCommand(CreateAppSubcommand(logger, configService, executor, deploymentService, authValidator));
         command.AddCommand(CreateMcpSubcommand(logger, configService, executor, graphApiService, blueprintService));
 
         // Single handler for the deploy command - runs only the application deployment flow
@@ -84,7 +84,7 @@ public class DeployCommand
                 }
 
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
-                    config.FullName, configService, prerequisiteRunner, authValidator, executor, logger);
+                    config.FullName, configService, authValidator, executor, logger);
                 if (validatedConfig == null) return;
 
                 await DeployApplicationAsync(validatedConfig, deploymentService, verbose, inspect, restart, logger);
@@ -103,7 +103,6 @@ public class DeployCommand
         IConfigService configService,
         CommandExecutor executor,
         DeploymentService deploymentService,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator)
     {
         var command = new Command("app", "Deploy Microsoft Agent 365 application binaries to the configured Azure App Service");
@@ -160,7 +159,7 @@ public class DeployCommand
                 }
 
                 var validatedConfig = await ValidateDeploymentPrerequisitesAsync(
-                    config.FullName, configService, prerequisiteRunner, authValidator, executor, logger);
+                    config.FullName, configService, authValidator, executor, logger);
                 if (validatedConfig == null) return;
 
                 await DeployApplicationAsync(validatedConfig, deploymentService, verbose, inspect, restart, logger);
@@ -232,6 +231,11 @@ public class DeployCommand
                     logger.LogError("agenticAppId is not configured. Run 'a365 setup all' to complete setup.");
                     return;
                 }
+                if (string.IsNullOrWhiteSpace(updateConfig.TenantId))
+                {
+                    logger.LogError("tenantId is not configured. Run 'a365 setup all' to complete setup.");
+                    return;
+                }
 
                 // Configure GraphApiService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(updateConfig.ClientAppId))
@@ -261,7 +265,6 @@ public class DeployCommand
     private static async Task<Agent365Config?> ValidateDeploymentPrerequisitesAsync(
         string configPath,
         IConfigService configService,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator,
         CommandExecutor executor,
         ILogger logger)
@@ -270,12 +273,26 @@ public class DeployCommand
         var configData = await configService.LoadAsync(configPath);
         if (configData == null) return null;
 
+        // Validate required config fields before any network calls
+        var missingFields = new List<string>();
+        if (string.IsNullOrWhiteSpace(configData.ResourceGroup)) missingFields.Add("resourceGroup");
+        if (string.IsNullOrWhiteSpace(configData.WebAppName)) missingFields.Add("webAppName");
+        if (string.IsNullOrWhiteSpace(configData.SubscriptionId)) missingFields.Add("subscriptionId");
+        if (missingFields.Count > 0)
+        {
+            logger.LogError("Missing required configuration fields: {Fields}. Update a365.config.json and retry.",
+                string.Join(", ", missingFields));
+            return null;
+        }
+
         // Validate Azure CLI authentication, subscription, and environment
         var checks = new List<Services.Requirements.IRequirementCheck>
         {
             new AzureAuthRequirementCheck(authValidator)
         };
-        if (!await prerequisiteRunner.RunAsync(checks, configData, logger))
+        var authOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+            checks, configData, logger, category: null, CancellationToken.None);
+        if (!authOk)
         {
             logger.LogError("Deployment cannot proceed without proper Azure CLI authentication and the correct subscription context");
             return null;

@@ -29,7 +29,6 @@ public static class InfrastructureSubcommand
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator,
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
@@ -92,8 +91,11 @@ public static class InfrastructureSubcommand
                     new AzureAuthRequirementCheck(authValidator),
                     new InfrastructureRequirementCheck()
                 };
-                if (!await prerequisiteRunner.RunAsync(checks, setupConfig, logger, CancellationToken.None))
+                var checksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
+                    checks, setupConfig, logger, category: null, CancellationToken.None);
+                if (!checksOk)
                 {
+                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
                     ExceptionHandler.ExitWithCleanup(1);
                 }
             }

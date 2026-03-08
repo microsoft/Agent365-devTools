@@ -117,7 +117,7 @@ class Program
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, prerequisiteRunner, authValidator, graphApiService, agentBlueprintService));
+                deploymentService, authValidator, graphApiService, agentBlueprintService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
@@ -127,7 +127,7 @@ class Program
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, prerequisiteRunner, authValidator));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, authValidator));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentPublishService, graphApiService, agentBlueprintService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
