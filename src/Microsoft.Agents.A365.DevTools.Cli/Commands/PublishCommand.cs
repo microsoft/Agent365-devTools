@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
@@ -8,6 +9,8 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
 using System.CommandLine;
@@ -83,6 +86,13 @@ public class PublishCommand
             return Environment.CurrentDirectory;
         }
     }
+
+    /// <summary>
+    /// Requirement checks for publish: MOS service principals must exist and be configured.
+    /// Runs before the interactive manifest editing pause to avoid wasted work.
+    /// </summary>
+    internal static List<IRequirementCheck> GetChecks(GraphApiService graphApiService, AgentBlueprintService blueprintService)
+        => [new MosPrerequisitesRequirementCheck(graphApiService, blueprintService)];
 
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
@@ -229,31 +239,8 @@ public class PublishCommand
                 logger.LogDebug("Manifest files written to disk");
 
                 // Verify MOS prerequisites before asking user to edit manifest (fail fast)
-                logger.LogInformation("");
-                logger.LogDebug("Checking MOS prerequisites (service principals and permissions)...");
-                try
-                {
-                    var mosPrereqsConfigured = await PublishHelpers.EnsureMosPrerequisitesAsync(
-                        graphApiService, blueprintService, config, logger);
-
-                    if (!mosPrereqsConfigured)
-                    {
-                        logger.LogError("Failed to configure MOS prerequisites. Aborting publish.");
-                        return;
-                    }
-                    logger.LogInformation("");
-                }
-                catch (SetupValidationException ex)
-                {
-                    logger.LogError("MOS prerequisites configuration failed: {Message}", ex.Message);
-                    logger.LogInformation("");
-                    logger.LogInformation("To manually create MOS service principals, run:");
-                    logger.LogInformation("  az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1");
-                    logger.LogInformation("  az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43");
-                    logger.LogInformation("  az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda");
-                    logger.LogInformation("");
-                    return;
-                }
+                await RequirementsSubcommand.RunChecksOrExitAsync(
+                    GetChecks(graphApiService, blueprintService), config, logger, context.GetCancellationToken());
 
                 // Interactive pause for user customization
                 logger.LogInformation("");

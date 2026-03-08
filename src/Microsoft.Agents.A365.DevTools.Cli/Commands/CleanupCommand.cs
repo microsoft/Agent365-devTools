@@ -337,20 +337,27 @@ public class CleanupCommand
             new[] { "--verbose", "-v" },
             description: "Enable verbose logging");
 
+        var dryRunOption = new Option<bool>("--dry-run", "Show resources that would be deleted without making any changes");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
+        command.AddOption(dryRunOption);
 
-        command.SetHandler(async (configFile, verbose) =>
+        command.SetHandler(async (configFile, verbose, dryRun) =>
         {
             try
             {
-                logger.LogInformation("Starting Azure cleanup...");
+                if (!dryRun)
+                    logger.LogInformation("Starting Azure cleanup...");
 
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
 
-                var checks = GetAzureCleanupChecks(authValidator);
-                await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
+                if (!dryRun)
+                {
+                    var checks = GetAzureCleanupChecks(authValidator);
+                    await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
+                }
 
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
@@ -361,6 +368,12 @@ public class CleanupCommand
                     logger.LogInformation("    Azure Bot: {BotId}", config.BotId);
                 logger.LogInformation("    Resource Group: {ResourceGroup}", config.ResourceGroup);
                 logger.LogInformation("");
+
+                if (dryRun)
+                {
+                    logger.LogInformation("DRY RUN: No changes made.");
+                    return;
+                }
 
                 Console.Write("Continue with Azure cleanup? (y/N): ");
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
@@ -418,7 +431,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Azure cleanup failed with exception");
             }
-        }, configOption, verboseOption);
+        }, configOption, verboseOption, dryRunOption);
 
         return command;
     }

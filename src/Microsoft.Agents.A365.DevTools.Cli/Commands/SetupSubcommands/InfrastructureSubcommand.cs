@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -25,7 +26,17 @@ public static class InfrastructureSubcommand
     private const int MaxSdkValidationAttempts = 3;
     private const int InitialRetryDelayMs = 500;
     private const int MaxRetryDelayMs = 5000; // Cap exponential backoff at 5 seconds
-    
+
+    /// <summary>
+    /// Requirement checks for setup infrastructure: Azure auth, Frontier Preview, PowerShell modules, and infrastructure config.
+    /// </summary>
+    internal static List<IRequirementCheck> GetChecks(AzureAuthValidator auth)
+    {
+        var checks = SetupCommand.GetBaseChecks(auth);
+        checks.Add(new InfrastructureRequirementCheck());
+        return checks;
+    }
+
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
@@ -86,18 +97,8 @@ public static class InfrastructureSubcommand
             var setupConfig = await configService.LoadAsync(config.FullName);
             if (setupConfig.NeedDeployment)
             {
-                var checks = new List<Services.Requirements.IRequirementCheck>
-                {
-                    new AzureAuthRequirementCheck(authValidator),
-                    new InfrastructureRequirementCheck()
-                };
-                var checksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    checks, setupConfig, logger, category: null, CancellationToken.None);
-                if (!checksOk)
-                {
-                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
+                await RequirementsSubcommand.RunChecksOrExitAsync(
+                    GetChecks(authValidator), setupConfig, logger, CancellationToken.None);
             }
             else
             {

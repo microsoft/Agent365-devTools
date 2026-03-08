@@ -8,6 +8,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -97,6 +98,14 @@ public class DeployCommand
 
         return command;
     }
+
+    /// <summary>
+    /// Requirement checks for deploy: Azure CLI auth and App Service token validity.
+    /// AppServiceAuthRequirementCheck probes the App Service scope explicitly to catch
+    /// revoked/expired grants before build and upload begin.
+    /// </summary>
+    public static List<IRequirementCheck> GetChecks(AzureAuthValidator auth)
+        => [new AzureAuthRequirementCheck(auth), new AppServiceAuthRequirementCheck(auth)];
 
     private static Command CreateAppSubcommand(
         ILogger<DeployCommand> logger,
@@ -285,18 +294,9 @@ public class DeployCommand
             return null;
         }
 
-        // Validate Azure CLI authentication, subscription, and environment
-        var checks = new List<Services.Requirements.IRequirementCheck>
-        {
-            new AzureAuthRequirementCheck(authValidator)
-        };
-        var authOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-            checks, configData, logger, category: null, CancellationToken.None);
-        if (!authOk)
-        {
-            logger.LogError("Deployment cannot proceed without proper Azure CLI authentication and the correct subscription context");
-            return null;
-        }
+        // Validate Azure CLI authentication and App Service token scope
+        await RequirementsSubcommand.RunChecksOrExitAsync(
+            GetChecks(authValidator), configData, logger, CancellationToken.None);
 
         // Validate Azure Web App exists before starting deployment
         logger.LogInformation("Validating Azure Web App exists...");

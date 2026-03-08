@@ -77,4 +77,21 @@ public class AzureAuthValidator
             return false;
         }
     }
+
+    /// <summary>
+    /// Probes the Azure App Service token scope to verify deployment credentials are valid.
+    /// Returns false if the grant is expired or revoked (AADSTS50173 / invalid_grant).
+    /// </summary>
+    public virtual async Task<bool> GetAppServiceTokenAsync(CancellationToken ct = default)
+    {
+        var result = await _executor.ExecuteAsync(
+            "az",
+            "account get-access-token --resource https://appservice.azure.com",
+            captureOutput: true,
+            suppressErrorLogging: true,
+            cancellationToken: ct);
+
+        _logger.LogDebug("App Service token probe: {Result}", result.Success ? "valid" : "expired or revoked");
+        return result.Success;
+    }
 }

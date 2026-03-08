@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `a365 cleanup azure --dry-run` — preview resources that would be deleted without making any changes or requiring Azure authentication
+- `AppServiceAuthRequirementCheck` — validates App Service deployment token before `a365 deploy` begins, catching revoked grants (AADSTS50173) early
+- `MosPrerequisitesRequirementCheck` — validates MOS service principals before `a365 publish` proceeds
+
 ### Fixed
 - macOS/Linux: device code fallback when browser authentication is unavailable (#309)
 - Linux: MSAL fallback when PowerShell `Connect-MgGraph` fails in non-TTY environments (#309)

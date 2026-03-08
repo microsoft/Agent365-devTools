@@ -33,7 +33,13 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   ├── BotConfigurator.cs        # Messaging endpoint registration
 │   ├── GraphApiService.cs        # Graph API interactions
 │   ├── AuthenticationService.cs  # MSAL.NET authentication
-│   └── Helpers/                  # Service helper utilities
+│   ├── AzureAuthValidator.cs     # Azure CLI auth + App Service token validation
+│   ├── Helpers/                  # Service helper utilities
+│   └── Requirements/             # Prerequisite validation system
+│       ├── IRequirementCheck.cs  # Check interface
+│       ├── RequirementCheck.cs   # Abstract base class with logging wrapper
+│       ├── RequirementCheckResult.cs  # Success/Warning/Failure result
+│       └── RequirementChecks/    # Concrete check implementations
 ├── Models/                       # Data models
 │   ├── Agent365Config.cs         # Unified configuration model
 │   ├── ProjectPlatform.cs        # Platform enumeration
@@ -197,6 +203,76 @@ public class SetupCommand : AsyncCommand<SetupCommand.Settings>
 - Use dependency injection for services
 - Return 0 for success, non-zero for errors (use `ErrorCodes`)
 - Log progress with `ILogger<T>` and structured placeholders
+
+---
+
+## Prerequisite Validation Pattern (IRequirementCheck)
+
+Commands validate prerequisites through a structured check system before performing any mutating work. This produces consistent `[PASS]`/`[FAIL]`/`[WARN]` output and ensures users see actionable errors early.
+
+### Core Types
+
+```csharp
+// Each check returns a structured result
+public class RequirementCheckResult
+{
+    public RequirementCheckStatus Status { get; }  // Success, Warning, Failure
+    public string? Issue { get; }                  // What went wrong
+    public string? Resolution { get; }             // How to fix it
+}
+
+// Base class handles the [PASS]/[FAIL] output line
+public abstract class RequirementCheck : IRequirementCheck
+{
+    public abstract string Name { get; }
+    public abstract string Category { get; }
+    public abstract Task<RequirementCheckResult> CheckAsync(Agent365Config, ILogger, CancellationToken);
+}
+```
+
+### Check Composition
+
+Each command declares its checks via a static `GetChecks()` method, making composition explicit and testable:
+
+```csharp
+// deploy: auth first, then App Service token
+public static List<IRequirementCheck> GetChecks(AzureAuthValidator auth)
+    => [new AzureAuthRequirementCheck(auth), new AppServiceAuthRequirementCheck(auth)];
+
+// setup infrastructure: base checks + config validation
+internal static List<IRequirementCheck> GetChecks(AzureAuthValidator auth)
+{
+    var checks = SetupCommand.GetBaseChecks(auth);  // Auth + FrontierPreview + PowerShell
+    checks.Add(new InfrastructureRequirementCheck());
+    return checks;
+}
+```
+
+### Running Checks
+
+`RequirementsSubcommand.RunChecksOrExitAsync` is the shared runner — prints `[PASS]/[FAIL]/[WARN]` per check and calls `ExceptionHandler.ExitWithCleanup(1)` on any failure:
+
+```csharp
+await RequirementsSubcommand.RunChecksOrExitAsync(
+    GetChecks(authValidator), config, logger, cancellationToken);
+```
+
+### Dry-Run Rule
+
+Commands supporting `--dry-run` skip checks entirely — the `RunChecksOrExitAsync` call is guarded by `if (!dryRun)` so dry runs are always fast and require no Azure credentials.
+
+### Available Checks
+
+| Check | Category | Used By |
+|-------|----------|---------|
+| `AzureAuthRequirementCheck` | Azure | setup all, setup infra, deploy, cleanup azure |
+| `AppServiceAuthRequirementCheck` | Azure | deploy |
+| `FrontierPreviewRequirementCheck` | Azure | setup all, setup infra |
+| `PowerShellModulesRequirementCheck` | Tools | setup all, setup infra |
+| `InfrastructureRequirementCheck` | Configuration | setup infra |
+| `MosPrerequisitesRequirementCheck` | MOS | publish |
+| `LocationRequirementCheck` | Configuration | setup endpoint |
+| `ClientAppRequirementCheck` | Configuration | setup blueprint |
 
 ---
 
