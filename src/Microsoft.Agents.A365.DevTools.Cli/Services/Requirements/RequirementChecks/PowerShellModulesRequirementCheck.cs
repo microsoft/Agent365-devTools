@@ -93,13 +93,13 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         }
 
         // Attempt auto-install for missing modules
-        logger.LogInformation("Attempting to auto-install missing PowerShell modules...");
+        logger.LogDebug("Attempting to auto-install missing PowerShell modules...");
         var autoInstalled = new List<RequiredModule>();
         var stillMissing = new List<RequiredModule>();
 
         foreach (var module in missingModules)
         {
-            logger.LogInformation("Installing {ModuleName}...", module.Name);
+            logger.LogDebug("Installing {ModuleName}...", module.Name);
             var installSuccess = await InstallModuleAsync(module.Name, logger, cancellationToken);
 
             if (installSuccess)
@@ -108,12 +108,12 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
                 if (verified)
                 {
                     autoInstalled.Add(module);
-                    logger.LogInformation("Successfully installed {ModuleName}", module.Name);
+                    logger.LogDebug("Successfully installed {ModuleName}", module.Name);
                 }
                 else
                 {
                     stillMissing.Add(module);
-                    logger.LogWarning("Install succeeded but {ModuleName} not found in module path after install", module.Name);
+                    logger.LogDebug("Install succeeded but {ModuleName} not found in module path after install", module.Name);
                 }
             }
             else

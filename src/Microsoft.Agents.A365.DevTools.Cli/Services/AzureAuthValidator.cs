@@ -31,20 +31,11 @@ public class AzureAuthValidator
         try
         {
             // Check Azure CLI authentication by trying to get current account
-            var result = await _executor.ExecuteAsync("az", "account show --output json", captureOutput: true);
-            
+            var result = await _executor.ExecuteAsync("az", "account show --output json", captureOutput: true, suppressErrorLogging: true);
+
             if (!result.Success)
             {
-                _logger.LogError("Azure CLI authentication required!");
-                _logger.LogInformation("");
-                _logger.LogInformation("Please run the following command to log in to Azure:");
-                _logger.LogInformation("   az login");
-                _logger.LogInformation("");
-                _logger.LogInformation("After logging in, run this command again.");
-                _logger.LogInformation("");
-                _logger.LogInformation("For more information about Azure CLI authentication:");
-                _logger.LogInformation("   https://docs.microsoft.com/en-us/cli/azure/authenticate-azure-cli");
-                _logger.LogInformation("");
+                _logger.LogDebug("Azure CLI authentication check failed: {Error}", result.StandardError);
                 return false;
             }
 
@@ -66,13 +57,7 @@ public class AzureAuthValidator
             {
                 if (!string.Equals(subscriptionId, expectedSubscriptionId, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogError("Azure CLI is using a different subscription than configured");
-                    _logger.LogError("   Expected: {ExpectedSubscription}", expectedSubscriptionId);
-                    _logger.LogError("   Current:  {CurrentSubscription}", subscriptionId);
-                    _logger.LogInformation("");
-                    _logger.LogInformation("Please switch to the correct subscription:");
-                    _logger.LogInformation("   az account set --subscription {ExpectedSubscription}", expectedSubscriptionId);
-                    _logger.LogInformation("");
+                    _logger.LogDebug("Subscription mismatch — expected: {Expected}, current: {Current}", expectedSubscriptionId, subscriptionId);
                     return false;
                 }
                 
