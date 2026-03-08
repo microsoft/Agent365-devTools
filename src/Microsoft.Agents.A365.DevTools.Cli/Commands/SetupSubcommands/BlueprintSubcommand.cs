@@ -3,12 +3,14 @@
 
 using Azure.Core;
 using Azure.Identity;
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
@@ -59,6 +61,23 @@ internal static class BlueprintSubcommand
 {
     // Client secret validation constants
     private const int ClientSecretValidationMaxRetries = 2;
+
+    /// <summary>
+    /// Returns the requirement checks for <c>setup blueprint</c>.
+    /// Composes SetupCommand base checks + Location + ClientApp.
+    /// </summary>
+    public static List<Services.Requirements.IRequirementCheck> GetChecks(
+        AzureAuthValidator auth,
+        IClientAppValidator clientAppValidator)
+    {
+        var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
+        {
+            new LocationRequirementCheck(),
+            new ClientAppRequirementCheck(clientAppValidator),
+        };
+
+        return checks;
+    }
     private const int ClientSecretValidationRetryDelayMs = 1000;
     private const int ClientSecretValidationTimeoutSeconds = 10;
     private const string MicrosoftLoginOAuthTokenEndpoint = "https://login.microsoftonline.com/{0}/oauth2/v2.0/token";
@@ -183,21 +202,11 @@ internal static class BlueprintSubcommand
             {
                 try
                 {
-                    var requirementsResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                        RequirementsSubcommand.GetRequirementChecks(authValidator, clientAppValidator),
-                        setupConfig,
-                        logger,
-                        category: null,
-                        CancellationToken.None);
-
-                    if (!requirementsResult)
-                    {
-                        logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
-                        logger.LogError("Use the resolution guidance provided for each failed check.");
-                        ExceptionHandler.ExitWithCleanup(1);
-                    }
+                    var checks = BlueprintSubcommand.GetChecks(authValidator, clientAppValidator);
+                    await RequirementsSubcommand.RunChecksOrExitAsync(
+                        checks, setupConfig, logger, CancellationToken.None);
                 }
-                catch (Exception reqEx)
+                catch (Exception reqEx) when (reqEx is not OperationCanceledException)
                 {
                     logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
                     logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");

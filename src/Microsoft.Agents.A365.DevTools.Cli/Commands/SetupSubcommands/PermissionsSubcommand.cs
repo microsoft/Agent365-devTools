@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -19,6 +21,24 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class PermissionsSubcommand
 {
+    /// <summary>
+    /// Returns the requirement checks for <c>setup permissions mcp</c>.
+    /// </summary>
+    public static List<IRequirementCheck> GetMcpChecks(AzureAuthValidator auth)
+        => SetupCommand.GetBaseChecks(auth);
+
+    /// <summary>
+    /// Returns the requirement checks for <c>setup permissions bot</c>.
+    /// </summary>
+    public static List<IRequirementCheck> GetBotChecks(AzureAuthValidator auth)
+        => SetupCommand.GetBaseChecks(auth);
+
+    /// <summary>
+    /// Returns the requirement checks for <c>setup permissions custom</c>.
+    /// </summary>
+    public static List<IRequirementCheck> GetCustomChecks(AzureAuthValidator auth)
+        => SetupCommand.GetBaseChecks(auth);
+
     public static Command CreateCommand(
         ILogger logger,
         AzureAuthValidator authValidator,
@@ -93,15 +113,8 @@ internal static class PermissionsSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
-                var mcpChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
-                mcpChecks.AddRange(RequirementsSubcommand.GetSystemRequirementChecks());
-                var mcpSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    mcpChecks, setupConfig, logger, category: null, CancellationToken.None);
-                if (!mcpSystemChecksOk)
-                {
-                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
+                var mcpChecks = GetMcpChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(mcpChecks, setupConfig, logger, CancellationToken.None);
             }
 
             if (dryRun)
@@ -188,15 +201,8 @@ internal static class PermissionsSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
-                var botChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
-                botChecks.AddRange(RequirementsSubcommand.GetSystemRequirementChecks());
-                var botSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    botChecks, setupConfig, logger, category: null, CancellationToken.None);
-                if (!botSystemChecksOk)
-                {
-                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
+                var botChecks = GetBotChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(botChecks, setupConfig, logger, CancellationToken.None);
             }
 
             if (dryRun)
@@ -279,15 +285,8 @@ internal static class PermissionsSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
-                var customChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
-                customChecks.AddRange(RequirementsSubcommand.GetSystemRequirementChecks());
-                var customSystemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    customChecks, setupConfig, logger, category: null, CancellationToken.None);
-                if (!customSystemChecksOk)
-                {
-                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
+                var customChecks = GetCustomChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(customChecks, setupConfig, logger, CancellationToken.None);
             }
 
             if (dryRun)

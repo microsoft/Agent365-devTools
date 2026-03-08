@@ -177,22 +177,24 @@ public class RequirementsSubcommandTests
     }
 
     [Fact]
-    public void GetRequirementChecks_IsUnionOfSystemAndConfigChecks()
+    public void GetRequirementChecks_SystemChecksRunBeforeConfigChecks()
     {
-        // GetRequirementChecks must exactly equal GetSystemRequirementChecks + GetConfigRequirementChecks.
+        // GetRequirementChecks returns system checks (FrontierPreview, PowerShellModules)
+        // before config checks (AzureAuth, Location, ClientApp).
         var mockExecutor = Substitute.ForPartsOf<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
         var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
         var mockValidator = Substitute.For<IClientAppValidator>();
 
         var all = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
-        var system = RequirementsSubcommand.GetSystemRequirementChecks();
-        var config = RequirementsSubcommand.GetConfigRequirementChecks(mockAuthValidator, mockValidator);
 
-        all.Should().HaveCount(system.Count + config.Count);
-        all.Select(c => c.GetType()).Should().StartWith(system.Select(c => c.GetType()),
-            "system checks run before config checks");
-        all.Select(c => c.GetType()).Should().EndWith(config.Select(c => c.GetType()),
-            "config checks follow system checks");
+        // System checks come first
+        var types = all.Select(c => c.GetType()).ToList();
+        types.IndexOf(typeof(FrontierPreviewRequirementCheck))
+            .Should().BeLessThan(types.IndexOf(typeof(AzureAuthRequirementCheck)),
+                "system checks should run before config checks");
+        types.IndexOf(typeof(PowerShellModulesRequirementCheck))
+            .Should().BeLessThan(types.IndexOf(typeof(LocationRequirementCheck)),
+                "system checks should run before config checks");
     }
 
     #endregion

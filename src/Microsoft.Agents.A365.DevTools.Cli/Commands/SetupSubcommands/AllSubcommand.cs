@@ -1,11 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -22,6 +24,29 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class AllSubcommand
 {
+    /// <summary>
+    /// Returns the requirement checks for <c>setup all</c>.
+    /// Composes SetupCommand base checks + Location + ClientApp + optional Infrastructure.
+    /// </summary>
+    public static List<Services.Requirements.IRequirementCheck> GetChecks(
+        AzureAuthValidator auth,
+        IClientAppValidator clientAppValidator,
+        bool includeInfrastructure)
+    {
+        var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
+        {
+            new LocationRequirementCheck(),
+            new ClientAppRequirementCheck(clientAppValidator),
+        };
+
+        if (includeInfrastructure)
+        {
+            checks.Add(new InfrastructureRequirementCheck());
+        }
+
+        return checks;
+    }
+
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
@@ -131,22 +156,15 @@ internal static class AllSubcommand
                 // Validate all prerequisites in one pass
                 if (!skipRequirements)
                 {
-                    var checks = RequirementsSubcommand.GetRequirementChecks(authValidator, clientAppValidator);
-                    if (!skipInfrastructure && setupConfig.NeedDeployment)
-                        checks.Add(new InfrastructureRequirementCheck());
+                    var includeInfra = !skipInfrastructure && setupConfig.NeedDeployment;
+                    var checks = AllSubcommand.GetChecks(authValidator, clientAppValidator, includeInfra);
 
                     try
                     {
-                        var requirementsResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            checks, setupConfig, logger, category: null, CancellationToken.None);
-
-                        if (!requirementsResult)
-                        {
-                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
-                            ExceptionHandler.ExitWithCleanup(1);
-                        }
+                        await RequirementsSubcommand.RunChecksOrExitAsync(
+                            checks, setupConfig, logger, CancellationToken.None);
                     }
-                    catch (Exception reqEx)
+                    catch (Exception reqEx) when (reqEx is not OperationCanceledException)
                     {
                         logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
                         logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");

@@ -3,6 +3,8 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -14,6 +16,17 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
     /// </summary>
     public class SetupCommand
     {
+        /// <summary>
+        /// Returns the base requirement checks shared by all setup subcommands:
+        /// Azure authentication, Frontier Preview enrollment, and PowerShell modules.
+        /// </summary>
+        public static List<IRequirementCheck> GetBaseChecks(AzureAuthValidator auth)
+            => [
+                new AzureAuthRequirementCheck(auth),
+                new FrontierPreviewRequirementCheck(),
+                new PowerShellModulesRequirementCheck()
+            ];
+
         public static Command CreateCommand(
             ILogger<SetupCommand> logger,
             IConfigService configService,

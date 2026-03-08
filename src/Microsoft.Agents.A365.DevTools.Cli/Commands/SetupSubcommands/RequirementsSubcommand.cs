@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
@@ -137,6 +138,24 @@ internal static class RequirementsSubcommand
     }
 
     /// <summary>
+    /// Runs checks with formatted [PASS]/[FAIL] output and exits if any fail.
+    /// Use this instead of RunRequirementChecksAsync when failure should abort the command.
+    /// </summary>
+    public static async Task RunChecksOrExitAsync(
+        List<IRequirementCheck> checks,
+        Agent365Config config,
+        ILogger logger,
+        CancellationToken cancellationToken = default)
+    {
+        var passed = await RunRequirementChecksAsync(checks, config, logger, category: null, cancellationToken);
+        if (!passed)
+        {
+            logger.LogError("Operation cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+            ExceptionHandler.ExitWithCleanup(1);
+        }
+    }
+
+    /// <summary>
     /// Gets all available requirement checks.
     /// Derived from the union of system and config checks to keep a single source of truth.
     /// </summary>
@@ -151,7 +170,7 @@ internal static class RequirementsSubcommand
     /// Gets system-level requirement checks that do not depend on configuration.
     /// These can be run before the configuration wizard to surface blockers early.
     /// </summary>
-    public static List<IRequirementCheck> GetSystemRequirementChecks()
+    private static List<IRequirementCheck> GetSystemRequirementChecks()
     {
         return new List<IRequirementCheck>
         {
@@ -166,7 +185,7 @@ internal static class RequirementsSubcommand
     /// <summary>
     /// Gets configuration-dependent requirement checks that must run after the configuration is loaded.
     /// </summary>
-    public static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
+    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
     {
         return new List<IRequirementCheck>
         {

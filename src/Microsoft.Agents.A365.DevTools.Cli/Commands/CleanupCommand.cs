@@ -20,6 +20,13 @@ public class CleanupCommand
     private const string AgenticUsersKey = "agentic users";
     private const string IdentitySpsKey = "identity SPs";
 
+    /// <summary>
+    /// Returns the base requirement checks for cleanup operations:
+    /// Azure authentication only.
+    /// </summary>
+    public static List<Services.Requirements.IRequirementCheck> GetBaseChecks(AzureAuthValidator auth)
+        => [new AzureAuthRequirementCheck(auth)];
+
     public static Command CreateCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
@@ -305,6 +312,12 @@ public class CleanupCommand
         return command;
     }
 
+    /// <summary>
+    /// Returns the requirement checks for the <c>cleanup azure</c> subcommand.
+    /// </summary>
+    internal static List<Services.Requirements.IRequirementCheck> GetAzureCleanupChecks(AzureAuthValidator auth)
+        => GetBaseChecks(auth);
+
     private static Command CreateAzureCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
@@ -312,7 +325,7 @@ public class CleanupCommand
         AzureAuthValidator authValidator)
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
-        
+
         var configOption = new Option<FileInfo?>(
             new[] { "--config", "-c" },
             "Path to configuration file")
@@ -332,15 +345,12 @@ public class CleanupCommand
             try
             {
                 logger.LogInformation("Starting Azure cleanup...");
-                
+
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
 
-                var authChecks = new List<Services.Requirements.IRequirementCheck> { new AzureAuthRequirementCheck(authValidator) };
-                var authOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    authChecks, config, logger, category: null, CancellationToken.None);
-                if (!authOk)
-                    return;
+                var checks = GetAzureCleanupChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
 
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
