@@ -233,17 +233,17 @@ public class DeployCommand
                 if (string.IsNullOrWhiteSpace(updateConfig.AgentBlueprintId))
                 {
                     logger.LogError("agentBlueprintId is not configured. Run 'a365 setup all' to create the agent blueprint.");
-                    return;
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
                 if (string.IsNullOrWhiteSpace(updateConfig.AgenticAppId))
                 {
                     logger.LogError("agenticAppId is not configured. Run 'a365 setup all' to complete setup.");
-                    return;
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
                 if (string.IsNullOrWhiteSpace(updateConfig.TenantId))
                 {
                     logger.LogError("tenantId is not configured. Run 'a365 setup all' to complete setup.");
-                    return;
+                    ExceptionHandler.ExitWithCleanup(1);
                 }
 
                 // Configure GraphApiService with custom client app ID if available
@@ -269,7 +269,7 @@ public class DeployCommand
     }
 
     /// <summary>
-    /// Validates configuration, Azure authentication, and Web App existence
+    /// Validates configuration, Azure CLI authentication, and Web App existence
     /// </summary>
     private static async Task<Agent365Config?> ValidateDeploymentPrerequisitesAsync(
         string configPath,
@@ -280,7 +280,11 @@ public class DeployCommand
     {
         // Load configuration
         var configData = await configService.LoadAsync(configPath);
-        if (configData == null) return null;
+        if (configData == null)
+        {
+            Environment.ExitCode = 1;
+            return null;
+        }
 
         // Validate required config fields before any network calls
         var missingFields = new List<string>();
@@ -291,6 +295,7 @@ public class DeployCommand
         {
             logger.LogError("Missing required configuration fields: {Fields}. Update a365.config.json and retry.",
                 string.Join(", ", missingFields));
+            Environment.ExitCode = 1;
             return null;
         }
 
@@ -315,6 +320,7 @@ public class DeployCommand
             logger.LogInformation("  2. Or verify your a365.config.json has the correct WebAppName and ResourceGroup");
             logger.LogInformation("");
             logger.LogError("Deployment cannot proceed without a valid Azure Web App target");
+            Environment.ExitCode = 1;
             return null;
         }
 

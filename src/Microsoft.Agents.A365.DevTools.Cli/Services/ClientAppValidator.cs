@@ -714,7 +714,8 @@ public sealed class ClientAppValidator : IClientAppValidator
 
     private static bool IsCaeError(string errorOutput) =>
         errorOutput.Contains("TokenIssuedBeforeRevocationTimestamp", StringComparison.OrdinalIgnoreCase) ||
-        errorOutput.Contains("TokenCreatedWithOutdatedPolicies", StringComparison.OrdinalIgnoreCase);
+        errorOutput.Contains("TokenCreatedWithOutdatedPolicies", StringComparison.OrdinalIgnoreCase) ||
+        errorOutput.Contains("InvalidAuthenticationToken", StringComparison.OrdinalIgnoreCase);
 
     private record ClientAppInfo(string ObjectId, string DisplayName, JsonArray? RequiredResourceAccess);
 

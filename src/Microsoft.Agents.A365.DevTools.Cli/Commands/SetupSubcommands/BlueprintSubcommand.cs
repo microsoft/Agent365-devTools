@@ -86,7 +86,6 @@ internal static class BlueprintSubcommand
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator,
         AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,

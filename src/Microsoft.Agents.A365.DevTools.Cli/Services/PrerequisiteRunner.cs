@@ -35,9 +35,11 @@ public class PrerequisiteRunner : IPrerequisiteRunner
                 if (!string.IsNullOrWhiteSpace(result.ResolutionGuidance))
                     logger.LogError("  Resolution: {ResolutionGuidance}", result.ResolutionGuidance);
             }
-            else if (result.IsWarning && !string.IsNullOrWhiteSpace(result.Details))
+            else if (result.IsWarning)
             {
-                logger.LogWarning("{CheckName}: {Details}", check.Name, result.Details);
+                var warningMessage = result.ErrorMessage ?? result.Details;
+                logger.LogWarning("{CheckName}: {WarningMessage}", check.Name,
+                    string.IsNullOrWhiteSpace(warningMessage) ? "Warning reported with no message" : warningMessage);
             }
         }
 

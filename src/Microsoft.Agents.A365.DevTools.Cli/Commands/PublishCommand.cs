@@ -151,7 +151,7 @@ public class PublishCommand
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(config.ClientAppId))
+                if (!skipGraph && string.IsNullOrWhiteSpace(config.ClientAppId))
                 {
                     logger.LogError("clientAppId is not configured. Run 'a365 setup blueprint' first to configure client app authentication.");
                     return;
@@ -239,8 +239,12 @@ public class PublishCommand
                 logger.LogDebug("Manifest files written to disk");
 
                 // Verify MOS prerequisites before asking user to edit manifest (fail fast)
-                await RequirementsSubcommand.RunChecksOrExitAsync(
-                    GetChecks(graphApiService, blueprintService), config, logger, context.GetCancellationToken());
+                // Skip when --skip-graph is set: MOS checks perform Graph operations
+                if (!skipGraph)
+                {
+                    await RequirementsSubcommand.RunChecksOrExitAsync(
+                        GetChecks(graphApiService, blueprintService), config, logger, context.GetCancellationToken());
+                }
 
                 // Interactive pause for user customization
                 logger.LogInformation("");

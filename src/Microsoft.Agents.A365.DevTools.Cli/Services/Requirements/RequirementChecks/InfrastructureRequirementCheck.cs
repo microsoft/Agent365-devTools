@@ -29,6 +29,14 @@ public class InfrastructureRequirementCheck : RequirementCheck
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
+        return ExecuteCheckWithLoggingAsync(config, logger, CheckImplementationAsync, cancellationToken);
+    }
+
+    private static Task<RequirementCheckResult> CheckImplementationAsync(
+        Agent365Config config,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
         if (!config.NeedDeployment)
             return Task.FromResult(RequirementCheckResult.Success());
 
@@ -54,7 +62,7 @@ public class InfrastructureRequirementCheck : RequirementCheck
             : config.AppServicePlanSku;
 
         if (!IsValidAppServicePlanSku(sku))
-            errors.Add($"Invalid appServicePlanSku '{sku}'. Valid SKUs: F1 (Free), B1/B2/B3 (Basic), S1/S2/S3 (Standard), P1V2/P2V2/P3V2 (Premium V2), P1V3/P2V3/P3V3 (Premium V3)");
+            errors.Add($"Invalid appServicePlanSku '{sku}'. Valid SKUs: F1 (Free), B1/B2/B3 (Basic), S1/S2/S3 (Standard), P1V2/P2V2/P3V2 (Premium V2), P1V3/P2V3/P3V3 (Premium V3), I1/I2/I3/I1V2/I2V2/I3V2 (Isolated)");
 
         if (errors.Count > 0)
         {

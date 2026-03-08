@@ -35,10 +35,10 @@ public abstract class RequirementCheck : IRequirementCheck
     /// <summary>
     /// Helper method to log check warning
     /// </summary>
-    protected virtual void LogCheckWarning(ILogger logger, string? details = null)
+    protected virtual void LogCheckWarning(ILogger logger, string? message = null)
     {
-        logger.LogInformation("[WARN] {Name}{Details}", Name,
-            string.IsNullOrWhiteSpace(details) ? "" : $" - {details}");
+        logger.LogWarning("[WARN] {Name}{Details}", Name,
+            string.IsNullOrWhiteSpace(message) ? "" : $" - {message}");
     }
 
     /// <summary>
@@ -46,9 +46,9 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
     {
-        logger.LogInformation("[FAIL] {Name}", Name);
-        logger.LogInformation("  Issue: {ErrorMessage}", errorMessage);
-        logger.LogInformation("  Resolution: {ResolutionGuidance}", resolutionGuidance);
+        logger.LogError("[FAIL] {Name}", Name);
+        logger.LogError("  Issue: {ErrorMessage}", errorMessage);
+        logger.LogError("  Resolution: {ResolutionGuidance}", resolutionGuidance);
     }
 
     /// <summary>
@@ -69,7 +69,7 @@ public abstract class RequirementCheck : IRequirementCheck
             {
                 if (result.IsWarning)
                 {
-                    LogCheckWarning(logger, result.Details);
+                    LogCheckWarning(logger, result.ErrorMessage ?? result.Details);
                 }
                 else
                 {

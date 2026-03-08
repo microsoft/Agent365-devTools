@@ -52,10 +52,9 @@ public class FrontierPreviewRequirementCheckTests
         // Act
         await check.CheckAsync(config, _mockLogger);
 
-        // Assert
-        // Verify the logger was called with the warning output line
+        // Assert — [WARN] output is logged at Warning severity (not Information)
         _mockLogger.Received().Log(
-            LogLevel.Information,
+            LogLevel.Warning,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("[WARN] Frontier Preview Program")),
             Arg.Any<Exception>(),
@@ -72,10 +71,9 @@ public class FrontierPreviewRequirementCheckTests
         // Act
         await check.CheckAsync(config, _mockLogger);
 
-        // Assert
-        // Verify the logger was called with the check name in the output line
+        // Assert — warning is logged at Warning severity and includes the check name
         _mockLogger.Received().Log(
-            LogLevel.Information,
+            LogLevel.Warning,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("Frontier Preview Program")),
             Arg.Any<Exception>(),
