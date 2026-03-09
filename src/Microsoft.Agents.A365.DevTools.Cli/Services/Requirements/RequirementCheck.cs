@@ -69,7 +69,10 @@ public abstract class RequirementCheck : IRequirementCheck
             {
                 if (result.IsWarning)
                 {
-                    LogCheckWarning(logger, result.ErrorMessage ?? result.Details);
+                    var warningMessage = (!string.IsNullOrWhiteSpace(result.ErrorMessage) && !string.IsNullOrWhiteSpace(result.Details))
+                        ? $"{result.ErrorMessage} - {result.Details}"
+                        : result.ErrorMessage ?? result.Details;
+                    LogCheckWarning(logger, warningMessage);
                 }
                 else
                 {

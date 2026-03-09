@@ -231,9 +231,6 @@ class Program
         services.AddSingleton<AzureAuthValidator>();
         services.AddSingleton<IAzureEnvironmentValidator, AzureEnvironmentValidator>();
 
-        // Add prerequisite runner
-        services.AddSingleton<IPrerequisiteRunner, PrerequisiteRunner>();
-
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
         services.AddSingleton<DeploymentService>();

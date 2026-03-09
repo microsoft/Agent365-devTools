@@ -216,12 +216,14 @@ Commands validate prerequisites through a structured check system before perform
 // Each check returns a structured result
 public class RequirementCheckResult
 {
-    public RequirementCheckStatus Status { get; }  // Success, Warning, Failure
-    public string? Issue { get; }                  // What went wrong
-    public string? Resolution { get; }             // How to fix it
+    public bool Passed { get; }                      // true = pass or warning, false = failure
+    public bool IsWarning { get; }                   // true = warning (non-blocking)
+    public string? ErrorMessage { get; }             // What went wrong
+    public string? ResolutionGuidance { get; }       // How to fix it
+    public string? Details { get; }                  // Additional context (e.g., URLs)
 }
 
-// Base class handles the [PASS]/[FAIL] output line
+// Base class handles [PASS]/[FAIL]/[WARN] output and check execution
 public abstract class RequirementCheck : IRequirementCheck
 {
     public abstract string Name { get; }
@@ -267,7 +269,7 @@ Commands supporting `--dry-run` skip checks entirely — the `RunChecksOrExitAsy
 |-------|----------|---------|
 | `AzureAuthRequirementCheck` | Azure | setup all, setup infra, deploy, cleanup azure |
 | `AppServiceAuthRequirementCheck` | Azure | deploy |
-| `FrontierPreviewRequirementCheck` | Azure | setup all, setup infra |
+| `FrontierPreviewRequirementCheck` | Tenant Enrollment | setup all, setup infra |
 | `PowerShellModulesRequirementCheck` | Tools | setup all, setup infra |
 | `InfrastructureRequirementCheck` | Configuration | setup infra |
 | `MosPrerequisitesRequirementCheck` | MOS | publish |

@@ -194,7 +194,8 @@ public class DeploymentService
         {
             bool isSiteStartTimeout =
                 deployResult.StandardError.Contains("site failed to start within 10 mins", StringComparison.OrdinalIgnoreCase) ||
-                deployResult.StandardError.Contains("worker proccess failed to start", StringComparison.OrdinalIgnoreCase);
+                deployResult.StandardError.Contains("worker proccess failed to start", StringComparison.OrdinalIgnoreCase) ||
+                deployResult.StandardError.Contains("worker process failed to start", StringComparison.OrdinalIgnoreCase);
 
             if (isSiteStartTimeout)
             {

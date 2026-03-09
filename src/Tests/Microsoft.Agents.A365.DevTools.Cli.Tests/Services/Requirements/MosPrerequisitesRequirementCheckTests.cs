@@ -49,16 +49,27 @@ public class MosPrerequisitesRequirementCheckTests
     [Fact]
     public async Task CheckAsync_WhenSetupValidationExceptionHasMitigationSteps_ShouldIncludeThemInResolution()
     {
-        // Arrange — missing ClientAppId causes SetupValidationException
+        // Arrange — mock GraphGetAsync to throw SetupValidationException with explicit mitigation steps
+        var mitigationStep = "Grant admin consent via https://entra.microsoft.com";
         var check = new MosPrerequisitesRequirementCheck(_mockGraphApiService, _mockBlueprintService);
-        var config = new Agent365Config { TenantId = "test-tenant" }; // no ClientAppId
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant",
+            ClientAppId = "00000000-0000-0000-0000-000000000001"
+        };
+
+        _mockGraphApiService.GraphGetAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromException<System.Text.Json.JsonDocument?>(new SetupValidationException(
+                issueDescription: "MOS service principal not found",
+                mitigationSteps: [mitigationStep])));
 
         // Act
         var result = await check.CheckAsync(config, _mockLogger);
 
-        // Assert — SetupValidationException maps to a Failure with guidance
+        // Assert — mitigation steps from the exception must appear in ResolutionGuidance
         result.Passed.Should().BeFalse();
-        result.ResolutionGuidance.Should().NotBeNullOrEmpty();
+        result.ResolutionGuidance.Should().Contain(mitigationStep);
     }
 
     [Fact]

@@ -8,7 +8,8 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Runs prerequisite checks for a command and logs failures with actionable guidance.
+/// Runs prerequisite checks for a command and aggregates pass/fail results.
+/// Each check handles its own [PASS]/[FAIL]/[WARN] logging via ExecuteCheckWithLoggingAsync.
 /// </summary>
 public class PrerequisiteRunner : IPrerequisiteRunner
 {
