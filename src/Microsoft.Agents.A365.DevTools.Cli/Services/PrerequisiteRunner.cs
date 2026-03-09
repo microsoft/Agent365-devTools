@@ -28,18 +28,6 @@ public class PrerequisiteRunner : IPrerequisiteRunner
             if (!result.Passed)
             {
                 passed = false;
-
-                if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
-                    logger.LogError("{CheckName}: {ErrorMessage}", check.Name, result.ErrorMessage);
-
-                if (!string.IsNullOrWhiteSpace(result.ResolutionGuidance))
-                    logger.LogError("  Resolution: {ResolutionGuidance}", result.ResolutionGuidance);
-            }
-            else if (result.IsWarning)
-            {
-                var warningMessage = result.ErrorMessage ?? result.Details;
-                logger.LogWarning("{CheckName}: {WarningMessage}", check.Name,
-                    string.IsNullOrWhiteSpace(warningMessage) ? "Warning reported with no message" : warningMessage);
             }
         }
 

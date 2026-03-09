@@ -114,7 +114,7 @@ public class PrerequisiteRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_WithWarningCheck_ShouldReturnTrueAndLogWarning()
+    public async Task RunAsync_WithWarningCheck_ShouldReturnTrue()
     {
         // Arrange
         var runner = new PrerequisiteRunner();
@@ -128,14 +128,10 @@ public class PrerequisiteRunnerTests
         // Act
         var result = await runner.RunAsync(checks, _config, _mockLogger);
 
-        // Assert
+        // Assert: warnings do not block execution.
+        // Warning output is emitted by the check itself (via ExecuteCheckWithLoggingAsync),
+        // not by the runner.
         result.Should().BeTrue("a warning does not block execution");
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Any<object>(),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
     }
 
     [Fact]

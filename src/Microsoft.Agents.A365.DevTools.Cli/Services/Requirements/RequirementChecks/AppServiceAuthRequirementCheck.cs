@@ -48,6 +48,6 @@ public class AppServiceAuthRequirementCheck : RequirementCheck
             ? RequirementCheckResult.Success()
             : RequirementCheckResult.Failure(
                 "Azure App Service token is expired or revoked",
-                "Run: az logout\n     az login --tenant <tenantId>");
+                "Run 'az logout' then 'az login --tenant <tenantId>' and retry");
     }
 }

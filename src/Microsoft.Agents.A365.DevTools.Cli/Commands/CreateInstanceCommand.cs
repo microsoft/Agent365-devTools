@@ -502,7 +502,7 @@ public class CreateInstanceCommand
         }
         catch (ConfigFileNotFoundException ex)
         {
-            logger.LogError("Configuration file not found: {Message}", ex.IssueDescription);
+            logger.LogError("{Message}", ex.IssueDescription);
             return null;
         }
         catch (Exception ex)
