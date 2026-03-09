@@ -27,7 +27,6 @@ public class BlueprintSubcommandTests
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly IAzureValidator _mockAzureValidator;
-    private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly IBotConfigurator _mockBotConfigurator;
     private readonly GraphApiService _mockGraphApiService;
@@ -43,7 +42,6 @@ public class BlueprintSubcommandTests
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
         _mockAzureValidator = Substitute.For<IAzureValidator>();
-        _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
@@ -63,7 +61,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -81,7 +78,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -100,7 +96,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -121,7 +116,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -142,7 +136,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -162,7 +155,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -191,7 +183,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -226,7 +217,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -338,7 +328,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -366,7 +355,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -402,7 +390,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -430,7 +417,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -456,7 +442,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -478,7 +463,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -544,7 +528,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -572,7 +555,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -606,7 +588,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -638,7 +619,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1328,7 +1308,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1662,7 +1641,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1697,7 +1675,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
@@ -1732,7 +1709,6 @@ public class BlueprintSubcommandTests
             _mockConfigService,
             _mockExecutor,
             _mockAzureValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockBotConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);

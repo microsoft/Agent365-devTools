@@ -21,7 +21,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             DeploymentService deploymentService,
             IBotConfigurator botConfigurator,
             IAzureValidator azureValidator,
-            AzureWebAppCreator webAppCreator,
             PlatformDetector platformDetector,
             GraphApiService graphApiService,
             AgentBlueprintService blueprintService,
@@ -46,16 +45,16 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, clientAppValidator));
 
             command.AddCommand(InfrastructureSubcommand.CreateCommand(
-                logger, configService, azureValidator, webAppCreator, platformDetector, executor));
+                logger, configService, azureValidator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, azureValidator, webAppCreator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, azureValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, botConfigurator, azureValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             return command;
         }

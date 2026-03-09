@@ -27,7 +27,6 @@ internal static class AllSubcommand
         CommandExecutor executor,
         IBotConfigurator botConfigurator,
         IAzureValidator azureValidator,
-        AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,

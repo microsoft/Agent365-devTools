@@ -102,7 +102,6 @@ public static class InfrastructureSubcommand
         ILogger logger,
         IConfigService configService,
         IAzureValidator azureValidator,
-        AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         CommandExecutor executor)
     {

@@ -288,7 +288,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     {
         if (string.IsNullOrWhiteSpace(clientAppId))
         {
-            _logger.LogDebug("No client app ID available for MSAL Graph fallback.");
+            _logger.LogWarning("MSAL Graph fallback skipped: no client app ID available. Ensure ClientAppId is set in a365.config.json.");
             return null;
         }
 
