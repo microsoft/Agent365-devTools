@@ -25,10 +25,7 @@ public class SetupCommandTests
     private readonly CommandExecutor _mockExecutor;
     private readonly DeploymentService _mockDeploymentService;
     private readonly IBotConfigurator _mockBotConfigurator;
-    private readonly IPrerequisiteRunner _mockPrerequisiteRunner;
     private readonly AzureAuthValidator _mockAuthValidator;
-    private readonly IAzureEnvironmentValidator _mockEnvironmentValidator;
-    private readonly AzureWebAppCreator _mockWebAppCreator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly GraphApiService _mockGraphApiService;
     private readonly AgentBlueprintService _mockBlueprintService;
@@ -56,10 +53,7 @@ public class SetupCommandTests
             mockNodeLogger,
             mockPythonLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
-        _mockPrerequisiteRunner = Substitute.For<IPrerequisiteRunner>();
         _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
-        _mockEnvironmentValidator = Substitute.For<IAzureEnvironmentValidator>();
-        _mockWebAppCreator = Substitute.ForPartsOf<AzureWebAppCreator>(Substitute.For<ILogger<AzureWebAppCreator>>());
         _mockGraphApiService = Substitute.For<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
@@ -86,18 +80,15 @@ public class SetupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
         
         var command = SetupCommand.CreateCommand(
-            _mockLogger, 
-            _mockConfigService, 
-            _mockExecutor, 
-            _mockDeploymentService, 
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
-        
+
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
@@ -139,10 +130,7 @@ public class SetupCommandTests
             _mockExecutor, 
             _mockDeploymentService, 
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
         
@@ -169,10 +157,7 @@ public class SetupCommandTests
             _mockExecutor, 
             _mockDeploymentService, 
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -196,10 +181,7 @@ public class SetupCommandTests
             _mockExecutor, 
             _mockDeploymentService, 
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -226,10 +208,7 @@ public class SetupCommandTests
             _mockExecutor, 
             _mockDeploymentService, 
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
         
@@ -274,10 +253,7 @@ public class SetupCommandTests
             _mockExecutor, 
             _mockDeploymentService, 
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -319,10 +295,7 @@ public class SetupCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator);
 
@@ -363,10 +336,7 @@ public class SetupCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,
@@ -409,10 +379,7 @@ public class SetupCommandTests
             _mockExecutor,
             _mockDeploymentService,
             _mockBotConfigurator,
-            _mockPrerequisiteRunner,
             _mockAuthValidator,
-            _mockEnvironmentValidator,
-            _mockWebAppCreator,
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,

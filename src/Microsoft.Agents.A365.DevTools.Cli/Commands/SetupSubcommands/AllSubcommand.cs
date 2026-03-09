@@ -52,10 +52,7 @@ internal static class AllSubcommand
         IConfigService configService,
         CommandExecutor executor,
         IBotConfigurator botConfigurator,
-        IPrerequisiteRunner prerequisiteRunner,
         AzureAuthValidator authValidator,
-        IAzureEnvironmentValidator environmentValidator,
-        AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
@@ -171,9 +168,6 @@ internal static class AllSubcommand
                         ExceptionHandler.ExitWithCleanup(1);
                     }
                 }
-
-                // Run advisory environment check (warning only, never blocks)
-                await environmentValidator.ValidateEnvironmentAsync();
 
                 logger.LogDebug("All validations passed. Starting setup execution...");
 

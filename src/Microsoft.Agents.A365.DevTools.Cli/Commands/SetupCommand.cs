@@ -33,10 +33,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             CommandExecutor executor,
             DeploymentService deploymentService,
             IBotConfigurator botConfigurator,
-            IPrerequisiteRunner prerequisiteRunner,
             AzureAuthValidator authValidator,
-            IAzureEnvironmentValidator environmentValidator,
-            AzureWebAppCreator webAppCreator,
             PlatformDetector platformDetector,
             GraphApiService graphApiService,
             AgentBlueprintService blueprintService,
@@ -61,16 +58,16 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, authValidator, clientAppValidator));
 
             command.AddCommand(InfrastructureSubcommand.CreateCommand(
-                logger, configService, authValidator, webAppCreator, platformDetector, executor));
+                logger, configService, authValidator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, authValidator, webAppCreator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, authValidator, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, prerequisiteRunner, authValidator, environmentValidator, webAppCreator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             return command;
         }

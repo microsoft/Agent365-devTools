@@ -87,7 +87,6 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         CommandExecutor executor,
         AzureAuthValidator authValidator,
-        AzureWebAppCreator webAppCreator,
         PlatformDetector platformDetector,
         IBotConfigurator botConfigurator,
         GraphApiService graphApiService,

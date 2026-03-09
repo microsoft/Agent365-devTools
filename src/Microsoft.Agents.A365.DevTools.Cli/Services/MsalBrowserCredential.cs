@@ -3,6 +3,7 @@
 
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Client.Broker;
@@ -79,12 +80,15 @@ public sealed class MsalBrowserCredential : TokenCredential
     /// <param name="redirectUri">The redirect URI for authentication callbacks.</param>
     /// <param name="logger">Optional logger for diagnostic output.</param>
     /// <param name="useWam">Whether to use WAM on Windows. Default is true.</param>
+    /// <param name="authority">Optional authority URL. When provided, overrides the default AzurePublic authority.
+    /// Use this for government clouds (e.g., "https://login.microsoftonline.us/{tenantId}").</param>
     public MsalBrowserCredential(
         string clientId,
         string tenantId,
         string? redirectUri = null,
         ILogger? logger = null,
-        bool useWam = true)
+        bool useWam = true,
+        string? authority = null)
     {
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -118,9 +122,13 @@ public sealed class MsalBrowserCredential : TokenCredential
             }
         }
 
-        var builder = PublicClientApplicationBuilder
-            .Create(clientId)
-            .WithAuthority(AzureCloudInstance.AzurePublic, tenantId);
+        var builder = string.IsNullOrWhiteSpace(authority)
+            ? PublicClientApplicationBuilder
+                .Create(clientId)
+                .WithAuthority(AzureCloudInstance.AzurePublic, tenantId)
+            : PublicClientApplicationBuilder
+                .Create(clientId)
+                .WithAuthority(authority);
 
         if (_useWam)
         {
@@ -414,18 +422,7 @@ public sealed class MsalBrowserCredential : TokenCredential
         try
         {
             var deviceCodeResult = await _publicClientApp
-                .AcquireTokenWithDeviceCode(scopes, deviceCode =>
-                {
-                    _logger?.LogInformation("");
-                    _logger?.LogInformation("==========================================================================");
-                    _logger?.LogInformation("To sign in, use a web browser to open the page:");
-                    _logger?.LogInformation("    {VerificationUrl}", deviceCode.VerificationUrl);
-                    _logger?.LogInformation("");
-                    _logger?.LogInformation("And enter the code: {UserCode}", deviceCode.UserCode);
-                    _logger?.LogInformation("==========================================================================");
-                    _logger?.LogInformation("");
-                    return Task.CompletedTask;
-                })
+                .AcquireTokenWithDeviceCode(scopes, MsalHelper.CreateDeviceCodeCallback(_logger))
                 .ExecuteAsync(cancellationToken);
 
             _logger?.LogDebug("Successfully acquired token via device code authentication.");

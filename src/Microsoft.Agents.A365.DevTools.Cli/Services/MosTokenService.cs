@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Globalization;
+using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
-using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
 
@@ -11,51 +10,36 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
 /// Native C# service for acquiring MOS (Microsoft Office Store) tokens.
-/// Replaces GetToken.ps1 PowerShell script.
+/// Delegates to <see cref="MsalBrowserCredential"/> for interactive authentication
+/// with automatic device code fallback, leveraging MSAL's built-in token cache.
 /// </summary>
 public class MosTokenService
 {
     private readonly ILogger<MosTokenService> _logger;
     private readonly IConfigService _configService;
-    private readonly string _cacheFilePath;
 
     public MosTokenService(ILogger<MosTokenService> logger, IConfigService configService)
     {
         _logger = logger;
         _configService = configService;
-        
-        // Store token cache in user's home directory for security
-        // Avoid current directory which may have shared/inappropriate permissions
-        var cacheDir = FileHelper.GetSecureCrossOsDirectory();
-        _cacheFilePath = Path.Combine(cacheDir, "mos-token-cache.json");
     }
 
     /// <summary>
     /// Acquire MOS token for the specified environment.
-    /// Uses MSAL.NET for interactive authentication with caching.
+    /// Uses <see cref="MsalBrowserCredential"/> for interactive authentication with caching.
     /// </summary>
     public async Task<string?> AcquireTokenAsync(string environment, string? personalToken = null, CancellationToken cancellationToken = default)
     {
         environment = environment.ToLowerInvariant().Trim();
 
-        // If personal token provided, use it directly (no caching)
         if (!string.IsNullOrWhiteSpace(personalToken))
         {
             _logger.LogInformation("Using provided personal MOS token override");
             return personalToken.Trim();
         }
 
-        // Try cache first
-        var cached = TryGetCachedToken(environment);
-        if (cached.HasValue)
-        {
-            _logger.LogInformation("Using cached MOS token (valid until {Expiry:u})", cached.Value.Expiry);
-            return cached.Value.Token;
-        }
-
-        // Load config to get tenant ID
         var setupConfig = await _configService.LoadAsync();
-        if (setupConfig == null)
+        if (setupConfig is null)
         {
             _logger.LogError("Configuration not found. Run 'a365 config init' first.");
             return null;
@@ -67,63 +51,101 @@ public class MosTokenService
             return null;
         }
 
-        // Use Microsoft first-party client app for MOS token acquisition
-        // This is required because MOS APIs only accept tokens from first-party apps
-        var mosClientAppId = MosConstants.TpsAppServicesClientAppId;
-        _logger.LogDebug("Using Microsoft first-party client app for MOS tokens: {ClientAppId}", mosClientAppId);
-
-        // Get environment-specific configuration
-        var config = GetEnvironmentConfig(environment, mosClientAppId, setupConfig.TenantId);
-        if (config == null)
+        var config = GetEnvironmentConfig(environment, MosConstants.TpsAppServicesClientAppId, setupConfig.TenantId);
+        if (config is null)
         {
             _logger.LogError("Unsupported MOS environment: {Environment}", environment);
             return null;
         }
 
-        // Acquire new token using MSAL.NET
         try
         {
             _logger.LogInformation("Acquiring MOS token for environment: {Environment}", environment);
-            _logger.LogInformation("A browser window will open for authentication...");
 
-            var app = PublicClientApplicationBuilder
-                .Create(config.ClientId)
-                .WithAuthority(config.Authority)
-                .WithRedirectUri(MosConstants.RedirectUri)
-                .Build();
+            // useWam: false because TpsAppServicesClientAppId is a Microsoft first-party app.
+            // WAM would override the redirect URI to the WAM broker format, which is not
+            // registered for this app. The original flow used a system browser redirect.
+            var credential = new MsalBrowserCredential(
+                config.ClientId,
+                setupConfig.TenantId,
+                redirectUri: MosConstants.RedirectUri,
+                logger: _logger,
+                useWam: false,
+                authority: config.Authority);
 
-            var result = await app
-                .AcquireTokenInteractive(new[] { config.Scope })
-                .WithPrompt(Prompt.SelectAccount)
-                .ExecuteAsync(cancellationToken);
+            var tokenRequestContext = new TokenRequestContext(new[] { config.Scope });
+            var token = await credential.GetTokenAsync(tokenRequestContext, cancellationToken);
 
-            if (result?.AccessToken == null)
+            _logger.LogInformation("MOS token acquired successfully (expires {Expiry:u})", token.ExpiresOn.UtcDateTime);
+            return token.Token;
+        }
+        catch (MsalAuthenticationFailedException ex)
+        {
+            if (ex.InnerException is MsalServiceException msalEx)
             {
-                _logger.LogError("Failed to acquire MOS token");
-                return null;
-            }
-
-            // Log the scopes in the token for debugging
-            if (result.Scopes != null && result.Scopes.Any())
-            {
-                _logger.LogDebug("Token scopes: {Scopes}", string.Join(", ", result.Scopes));
+                LogMsalServiceError(msalEx, config.ClientId);
             }
             else
             {
-                _logger.LogWarning("Token has no scopes property");
+                _logger.LogError("Failed to acquire MOS token: {Message}", ex.Message);
             }
-
-            // Cache the token
-            var expiry = result.ExpiresOn.UtcDateTime;
-            CacheToken(environment, result.AccessToken, expiry);
-
-            _logger.LogInformation("MOS token acquired successfully (expires {Expiry:u})", expiry);
-            return result.AccessToken;
+            return null;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to acquire MOS token: {Message}", ex.Message);
             return null;
+        }
+    }
+
+    private void LogMsalServiceError(MsalServiceException ex, string clientAppId)
+    {
+        if (ex.ErrorCode == "invalid_client" && ex.Message.Contains("AADSTS650052"))
+        {
+            _logger.LogError("MOS token acquisition failed: Missing service principal or admin consent (Error: {ErrorCode})", ex.ErrorCode);
+            _logger.LogInformation("");
+            _logger.LogInformation("The MOS service principals exist, but admin consent may not be granted.");
+            _logger.LogInformation("Grant admin consent at:");
+            _logger.LogInformation("  {PortalUrl}", MosConstants.GetApiPermissionsPortalUrl(clientAppId));
+            _logger.LogInformation("");
+            _logger.LogInformation("Or authenticate interactively and consent when prompted.");
+            _logger.LogInformation("");
+        }
+        else if (ex.ErrorCode == "unauthorized_client" && ex.Message.Contains("AADSTS50194"))
+        {
+            _logger.LogError("MOS token acquisition failed: Single-tenant app cannot use /common endpoint (Error: {ErrorCode})", ex.ErrorCode);
+            _logger.LogInformation("");
+            _logger.LogInformation("AADSTS50194: The application is configured as single-tenant but is trying to use the /common authority.");
+            _logger.LogInformation("This should be automatically handled by using tenant-specific authority URLs.");
+            _logger.LogInformation("");
+            _logger.LogInformation("If this error persists:");
+            _logger.LogInformation("1. Verify your app registration is configured correctly in Azure Portal");
+            _logger.LogInformation("2. Check that tenantId in a365.config.json matches your app's home tenant");
+            _logger.LogInformation("3. Ensure the app's 'Supported account types' setting matches your use case");
+            _logger.LogInformation("");
+        }
+        else if (ex.ErrorCode == "invalid_grant")
+        {
+            _logger.LogError("MOS token acquisition failed: Invalid or expired credentials (Error: {ErrorCode})", ex.ErrorCode);
+            _logger.LogInformation("");
+            _logger.LogInformation("The authentication failed due to invalid credentials or expired tokens.");
+            _logger.LogInformation("Re-run the command to re-authenticate.");
+            _logger.LogInformation("");
+        }
+        else
+        {
+            _logger.LogError("MOS token acquisition failed with MSAL error");
+            _logger.LogError("Error Code: {ErrorCode}", ex.ErrorCode);
+            _logger.LogError("Error Message: {Message}", ex.Message);
+            _logger.LogInformation("");
+            _logger.LogInformation("Authentication failed. Common issues:");
+            _logger.LogInformation("1. Missing admin consent - Grant at:");
+            _logger.LogInformation("   {PortalUrl}", MosConstants.GetApiPermissionsPortalUrl(clientAppId));
+            _logger.LogInformation("2. Insufficient permissions - Verify required API permissions are configured");
+            _logger.LogInformation("3. Tenant configuration - Ensure app registration matches your tenant setup");
+            _logger.LogInformation("");
+            _logger.LogInformation("For detailed troubleshooting, search for error code: {ErrorCode}", ex.ErrorCode);
+            _logger.LogInformation("");
         }
     }
 
@@ -173,84 +195,6 @@ public class MosTokenService
             },
             _ => null
         };
-    }
-
-    private (string Token, DateTime Expiry)? TryGetCachedToken(string environment)
-    {
-        try
-        {
-            if (!File.Exists(_cacheFilePath))
-                return null;
-
-            var json = File.ReadAllText(_cacheFilePath);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-
-            if (doc.RootElement.TryGetProperty(environment, out var envElement))
-            {
-                var token = envElement.TryGetProperty("token", out var t) ? t.GetString() : null;
-                var expiryStr = envElement.TryGetProperty("expiry", out var e) ? e.GetString() : null;
-
-                if (!string.IsNullOrWhiteSpace(token) && DateTime.TryParse(expiryStr, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var expiry))
-                {
-                    // Return cached token if valid for at least 2 more minutes
-                    if (DateTime.UtcNow < expiry.AddMinutes(-2))
-                    {
-                        return (token, expiry);
-                    }
-                }
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to read token cache");
-            return null;
-        }
-    }
-
-    private void CacheToken(string environment, string token, DateTime expiry)
-    {
-        try
-        {
-            var cache = new Dictionary<string, object>();
-
-            if (File.Exists(_cacheFilePath))
-            {
-                var json = File.ReadAllText(_cacheFilePath);
-                cache = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
-            }
-
-            cache[environment] = new
-            {
-                token,
-                expiry = expiry.ToUniversalTime().ToString("o")
-            };
-
-            var updated = System.Text.Json.JsonSerializer.Serialize(cache, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_cacheFilePath, updated);
-
-            // Set file permissions to user-only on Unix systems
-            if (!OperatingSystem.IsWindows())
-            {
-                try
-                {
-                    var fileInfo = new FileInfo(_cacheFilePath);
-                    fileInfo.UnixFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-                    _logger.LogDebug("Set secure permissions (0600) on token cache file");
-                }
-                catch (Exception permEx)
-                {
-                    _logger.LogWarning(permEx, "Failed to set Unix file permissions on token cache");
-                }
-            }
-
-            _logger.LogDebug("Token cached for environment: {Environment} at {Path}", environment, _cacheFilePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to cache token");
-        }
     }
 
     private class MosEnvironmentConfig

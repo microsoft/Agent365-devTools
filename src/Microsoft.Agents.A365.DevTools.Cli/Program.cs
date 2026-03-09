@@ -90,9 +90,7 @@ class Program
             var configService = serviceProvider.GetRequiredService<IConfigService>();
             var executor = serviceProvider.GetRequiredService<CommandExecutor>();
             var authService = serviceProvider.GetRequiredService<AuthenticationService>();
-            var prerequisiteRunner = serviceProvider.GetRequiredService<IPrerequisiteRunner>();
             var authValidator = serviceProvider.GetRequiredService<AzureAuthValidator>();
-            var environmentValidator = serviceProvider.GetRequiredService<IAzureEnvironmentValidator>();
             var toolingService = serviceProvider.GetRequiredService<IAgent365ToolingService>();
 
             // Get services needed by commands
@@ -104,7 +102,6 @@ class Program
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
             var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
             var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
-            var webAppCreator = serviceProvider.GetRequiredService<AzureWebAppCreator>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
             var processService = serviceProvider.GetRequiredService<IProcessService>();
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
@@ -113,7 +110,7 @@ class Program
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, prerequisiteRunner, authValidator, environmentValidator, webAppCreator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
+                deploymentService, botConfigurator, authValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 botConfigurator, graphApiService));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
@@ -254,9 +251,6 @@ class Program
         services.AddSingleton<FederatedCredentialService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
-
-        // Register AzureWebAppCreator for SDK-based web app creation
-        services.AddSingleton<AzureWebAppCreator>();
 
         // Register ProcessService for cross-platform process launching
         services.AddSingleton<IProcessService, ProcessService>();

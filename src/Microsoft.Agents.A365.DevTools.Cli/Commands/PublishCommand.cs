@@ -12,7 +12,6 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Identity.Client;
 using System.CommandLine;
 using System.IO.Compression;
 using System.Net.Http.Headers;
@@ -355,66 +354,6 @@ public class PublishCommand
                 {
                     mosToken = await mosTokenService.AcquireTokenAsync(mosEnv, mosPersonalToken);
                     logger.LogDebug("MOS token acquired successfully");
-                }
-                catch (MsalServiceException ex) when (ex.ErrorCode == "invalid_client" && 
-                    ex.Message.Contains("AADSTS650052"))
-                {
-                    logger.LogError("MOS token acquisition failed: Missing service principal or admin consent (Error: {ErrorCode})", ex.ErrorCode);
-                    logger.LogInformation("");
-                    logger.LogInformation("The MOS service principals exist, but admin consent may not be granted.");
-                    logger.LogInformation("Grant admin consent at:");
-                    logger.LogInformation("  {PortalUrl}",
-                        MosConstants.GetApiPermissionsPortalUrl(config.ClientAppId));
-                    logger.LogInformation("");
-                    logger.LogInformation("Or authenticate interactively and consent when prompted.");
-                    logger.LogInformation("");
-                    return;
-                }
-                catch (MsalServiceException ex) when (ex.ErrorCode == "unauthorized_client" && 
-                    ex.Message.Contains("AADSTS50194"))
-                {
-                    logger.LogError("MOS token acquisition failed: Single-tenant app cannot use /common endpoint (Error: {ErrorCode})", ex.ErrorCode);
-                    logger.LogInformation("");
-                    logger.LogInformation("AADSTS50194: The application is configured as single-tenant but is trying to use the /common authority.");
-                    logger.LogInformation("This should be automatically handled by using tenant-specific authority URLs.");
-                    logger.LogInformation("");
-                    logger.LogInformation("If this error persists:");
-                    logger.LogInformation("1. Verify your app registration is configured correctly in Azure Portal");
-                    logger.LogInformation("2. Check that tenantId in a365.config.json matches your app's home tenant");
-                    logger.LogInformation("3. Ensure the app's 'Supported account types' setting matches your use case");
-                    logger.LogInformation("");
-                    return;
-                }
-                catch (MsalServiceException ex) when (ex.ErrorCode == "invalid_grant")
-                {
-                    logger.LogError("MOS token acquisition failed: Invalid or expired credentials (Error: {ErrorCode})", ex.ErrorCode);
-                    logger.LogInformation("");
-                    logger.LogInformation("The authentication failed due to invalid credentials or expired tokens.");
-                    logger.LogInformation("Try clearing the token cache and re-authenticating:");
-                    logger.LogInformation("  - Delete: ~/.a365/mos-token-cache.json");
-                    logger.LogInformation("  - Run: a365 publish");
-                    logger.LogInformation("");
-                    return;
-                }
-                catch (MsalServiceException ex)
-                {
-                    // Log all MSAL-specific errors with full context for debugging
-                    logger.LogError("MOS token acquisition failed with MSAL error");
-                    logger.LogError("Error Code: {ErrorCode}", ex.ErrorCode);
-                    logger.LogError("Error Message: {Message}", ex.Message);
-                    logger.LogDebug("Stack Trace: {StackTrace}", ex.StackTrace);
-                    
-                    logger.LogInformation("");
-                    logger.LogInformation("Authentication failed. Common issues:");
-                    logger.LogInformation("1. Missing admin consent - Grant at:");
-                    logger.LogInformation("   {PortalUrl}",
-                        MosConstants.GetApiPermissionsPortalUrl(config.ClientAppId));
-                    logger.LogInformation("2. Insufficient permissions - Verify required API permissions are configured");
-                    logger.LogInformation("3. Tenant configuration - Ensure app registration matches your tenant setup");
-                    logger.LogInformation("");
-                    logger.LogInformation("For detailed troubleshooting, search for error code: {ErrorCode}", ex.ErrorCode);
-                    logger.LogInformation("");
-                    return;
                 }
                 catch (Exception ex)
                 {
