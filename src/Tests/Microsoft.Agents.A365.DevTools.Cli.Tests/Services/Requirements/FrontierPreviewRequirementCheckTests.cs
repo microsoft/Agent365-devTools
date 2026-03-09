@@ -52,7 +52,7 @@ public class FrontierPreviewRequirementCheckTests
         // Act
         await check.CheckAsync(config, _mockLogger);
 
-        // Assert — [WARN] output is logged at Warning severity (not Information)
+        // Assert — [WARN] output is logged at Warning severity (yellow color, no WARNING: text prefix from formatter)
         _mockLogger.Received().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),

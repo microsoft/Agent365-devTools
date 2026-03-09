@@ -183,57 +183,38 @@ public class DeploymentService
         // Explicitly set the correct runtime configuration before deployment
         await EnsureCorrectRuntimeConfigurationAsync(config.ResourceGroup, config.AppName, platform, projectDir);
 
-        _logger.LogInformation("Deployment typically takes 2-5 minutes to complete");
         _logger.LogDebug("Using async deployment to avoid Azure SCM gateway timeout (4-5 minute limit)");
-        _logger.LogInformation("Monitor progress: https://{AppName}.scm.azurewebsites.net/api/deployments/latest", config.AppName);
-        _logger.LogInformation("");
 
         var deployArgs = $"webapp deploy --resource-group {config.ResourceGroup} --name {config.AppName} --src-path \"{zipPath}\" --type zip --async true";
         _logger.LogInformation("Uploading deployment package...");
 
-        var deployResult = await _executor.ExecuteWithStreamingAsync("az", deployArgs, projectDir, "[Azure] ");
+        var deployResult = await _executor.ExecuteWithStreamingAsync("az", deployArgs, projectDir, "[Azure] ", suppressErrorLogging: true);
 
         if (!deployResult.Success)
         {
-            _logger.LogError("Deployment upload failed with exit code {ExitCode}", deployResult.ExitCode);
-            if (!string.IsNullOrWhiteSpace(deployResult.StandardError))
-            {
-                _logger.LogError("Deployment error: {Error}", deployResult.StandardError);
+            bool isSiteStartTimeout =
+                deployResult.StandardError.Contains("site failed to start within 10 mins", StringComparison.OrdinalIgnoreCase) ||
+                deployResult.StandardError.Contains("worker proccess failed to start", StringComparison.OrdinalIgnoreCase);
 
-                // Graceful handling for site start timeout
-                if (deployResult.StandardError.Contains("site failed to start within 10 mins", StringComparison.OrdinalIgnoreCase) ||
-                    deployResult.StandardError.Contains("worker proccess failed to start", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogError("The deployment failed because the site did not start within the expected time.");
-                    _logger.LogError("This is often caused by application startup issues, missing dependencies, or misconfiguration.");
-                    _logger.LogError("Check the runtime logs for more details: https://{AppName}.scm.azurewebsites.net/api/logs/docker", config.AppName);
-                    _logger.LogError("Common causes include:");
-                    _logger.LogError("  - Incorrect startup command or entry point");
-                    _logger.LogError("  - Missing Python/Node/.NET dependencies");
-                    _logger.LogError("  - Application errors on startup");
-                    _logger.LogError("  - Port binding issues (ensure your app listens on the correct port)");
-                    _logger.LogError("  - Long initialization times");
-                    _logger.LogError("Review your application logs and configuration, then redeploy.");
-                }
+            if (isSiteStartTimeout)
+            {
+                _logger.LogInformation("");
+                _logger.LogInformation("Common causes for site startup failure:");
+                _logger.LogInformation("  - Incorrect startup command or entry point");
+                _logger.LogInformation("  - Missing dependencies");
+                _logger.LogInformation("  - Application errors on startup");
+                _logger.LogInformation("  - Port binding issues (app must listen on the port set by the PORT environment variable)");
+                throw new DeployAppException(
+                    $"Site failed to start within the allotted time. Check runtime logs: https://{config.AppName}.scm.azurewebsites.net/api/logs/docker");
             }
 
-            // Print a summary for the user
-            _logger.LogInformation("========================================");
-            _logger.LogInformation("Deployment Summary");
-            _logger.LogInformation("App Name: {AppName}", config.AppName);
-            _logger.LogInformation("App URL: https://{AppName}.azurewebsites.net", config.AppName);
-            _logger.LogInformation("Resource Group: {ResourceGroup}", config.ResourceGroup);
-            _logger.LogInformation("Deployment failed. See error details above.");
-            _logger.LogInformation("========================================");
-
-            throw new DeployAppException($"Azure deployment failed: {deployResult.StandardError}");
+            throw new DeployAppException($"az webapp deploy failed with exit code {deployResult.ExitCode}");
         }
 
         _logger.LogInformation("");
         _logger.LogInformation("Deployment package uploaded successfully!");
         _logger.LogInformation("");
-        _logger.LogInformation("Deployment is continuing in the background on Azure");
-        _logger.LogInformation("Application will be available in 2-5 minutes");
+        _logger.LogInformation("Build and startup are running on Azure. This may take several minutes.");
         _logger.LogInformation("");
         _logger.LogInformation("Monitor deployment status:");
         _logger.LogInformation("    Web: https://{AppName}.scm.azurewebsites.net/api/deployments/latest", config.AppName);
@@ -257,7 +238,7 @@ public class DeploymentService
     private async Task<string> CreateDeploymentPackageAsync(string projectDir, string publishPath, string deploymentZipName)
     {
         var zipPath = Path.Combine(projectDir, deploymentZipName);
-        _logger.LogInformation("[6/7] Creating deployment package: {ZipPath}", zipPath);
+        _logger.LogInformation("Creating deployment package: {ZipPath}", zipPath);
 
         // Delete old zip if exists with retry logic
         if (File.Exists(zipPath))

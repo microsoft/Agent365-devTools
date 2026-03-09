@@ -525,9 +525,11 @@ public class DeployCommand
                 logger.LogInformation("  3. Run 'a365 deploy' to perform a deployment");
                 logger.LogInformation("");
                 break;
+            case DeployAppException deployAppEx:
+                // Already a structured exception with clean message — let it propagate as-is
+                throw deployAppEx;
             default:
                 logger.LogError("Deployment failed: {Message}", ex.Message);
-
                 throw new DeployAppException($"Deployment failed: {ex.Message}", ex);
         }
     }

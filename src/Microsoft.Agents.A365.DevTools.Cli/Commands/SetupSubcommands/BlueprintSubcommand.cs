@@ -1208,14 +1208,7 @@ internal static class BlueprintSubcommand
             }
             else
             {
-                logger.LogError("Failed to create Federated Identity Credential: {Error}", ficCreateResult?.ErrorMessage ?? "Unknown error");
-                logger.LogError("The agent instance may not be able to authenticate using Managed Identity");
-            }
-
-            if (!ficSuccess)
-            {
-                logger.LogWarning("Federated Identity Credential configuration incomplete");
-                logger.LogWarning("You may need to create the credential manually in Entra ID");
+                logger.LogWarning("[WARN] Federated Identity Credential creation failed - you may need to create it manually in Entra ID");
             }
         }
         else if (!useManagedIdentity)

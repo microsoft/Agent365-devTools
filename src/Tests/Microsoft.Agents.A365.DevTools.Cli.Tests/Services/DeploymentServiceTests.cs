@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -152,5 +153,110 @@ public class DeploymentServiceTests
 
         // Assert
         result.Should().Be("DOTNETCORE|8.0", "Unknown platform should default to .NET 8.0 to avoid PHP container selection");
+    }
+
+    /// <summary>
+    /// Regression: DeployAppException message must not contain raw az cli stderr.
+    /// The site-start timeout case should produce a short, actionable message with the docker logs URL.
+    /// Uses restart=true to bypass the build pipeline and test only the Azure deploy error path.
+    /// </summary>
+    [Theory]
+    [InlineData("ERROR: Deployment failed because the site failed to start within 10 mins.\nInprogressInstances: 0")]
+    [InlineData("Error: Deployment for site 'myapp' failed because the worker proccess failed to start within the allotted time.")]
+    public async Task DeployAsync_SiteStartTimeout_ThrowsDeployAppExceptionWithDockerLogUrl(string azCliStderr)
+    {
+        // Arrange — create a temporary publish directory so restart=true path succeeds past the dir check
+        var publishDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString(), "publish");
+        Directory.CreateDirectory(publishDir);
+        File.WriteAllText(Path.Combine(publishDir, "index.js"), "// test");
+
+        try
+        {
+            var projectDir = Path.GetDirectoryName(publishDir)!;
+            var config = new DeploymentConfiguration
+            {
+                ResourceGroup = "rg-test",
+                AppName = "myapp",
+                ProjectPath = projectDir,
+                DeploymentZip = "app.zip",
+                PublishOutputPath = "publish",
+                Platform = ProjectPlatform.NodeJs
+            };
+
+            _mockExecutor
+                .ExecuteWithStreamingAsync(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>>(),
+                    Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                .Returns(new CommandResult { ExitCode = 1, StandardError = azCliStderr });
+
+            _mockExecutor
+                .ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>())
+                .Returns(new CommandResult { ExitCode = 0 });
+
+            // Act — restart=true skips build pipeline, goes directly to zip + deploy
+            var act = async () => await _deploymentService.DeployAsync(config, verbose: false, restart: true);
+
+            // Assert
+            var ex = await act.Should().ThrowAsync<DeployAppException>();
+            ex.Which.Message.Should().Contain("scm.azurewebsites.net", "docker log URL must be in the exception message");
+            ex.Which.Message.Should().NotContain("WARNING:", "raw az cli stderr must not leak into the exception message");
+            ex.Which.Message.Should().NotContain("InprogressInstances:", "raw az cli polling output must not leak into the exception message");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(publishDir)!, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Regression: a generic az cli failure (not timeout) should produce a short message with exit code only.
+    /// </summary>
+    [Fact]
+    public async Task DeployAsync_GenericAzCliFailure_ThrowsDeployAppExceptionWithExitCodeOnly()
+    {
+        // Arrange
+        var publishDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString(), "publish");
+        Directory.CreateDirectory(publishDir);
+        File.WriteAllText(Path.Combine(publishDir, "index.js"), "// test");
+
+        try
+        {
+            var projectDir = Path.GetDirectoryName(publishDir)!;
+            var config = new DeploymentConfiguration
+            {
+                ResourceGroup = "rg-test",
+                AppName = "myapp",
+                ProjectPath = projectDir,
+                DeploymentZip = "app.zip",
+                PublishOutputPath = "publish",
+                Platform = ProjectPlatform.NodeJs
+            };
+
+            _mockExecutor
+                .ExecuteWithStreamingAsync(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>>(),
+                    Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                .Returns(new CommandResult { ExitCode = 2, StandardError = "WARNING: Some az output\nERROR: Resource group not found" });
+
+            _mockExecutor
+                .ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(),
+                    Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>())
+                .Returns(new CommandResult { ExitCode = 0 });
+
+            // Act
+            var act = async () => await _deploymentService.DeployAsync(config, verbose: false, restart: true);
+
+            // Assert
+            var ex = await act.Should().ThrowAsync<DeployAppException>();
+            ex.Which.Message.Should().Contain("exit code 2");
+            ex.Which.Message.Should().NotContain("WARNING:", "raw az cli stderr must not appear in the exception message");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(publishDir)!, recursive: true);
+        }
     }
 }

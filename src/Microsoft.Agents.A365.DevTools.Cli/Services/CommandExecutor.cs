@@ -115,6 +115,7 @@ public class CommandExecutor
         string outputPrefix = "",
         bool interactive = false,
         Func<string, string?>? outputTransform = null,
+        bool suppressErrorLogging = false,
         CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("Executing with streaming: {Command} {Arguments} (Interactive={Interactive})", command, arguments, interactive);
@@ -178,10 +179,14 @@ public class CommandExecutor
                 errorBuilder.AppendLine(args.Data);
                 // Azure CLI writes informational messages to stderr with "WARNING:" prefix
                 // Strip it for cleaner output
-                var cleanData = IsAzureCliCommand(command) 
-                    ? StripAzureWarningPrefix(args.Data) 
+                var cleanData = IsAzureCliCommand(command)
+                    ? StripAzureWarningPrefix(args.Data)
                     : args.Data;
-                Console.WriteLine($"{outputPrefix}{cleanData}");
+                // Skip blank lines that result from stripping az cli prefixes
+                if (!string.IsNullOrWhiteSpace(cleanData))
+                {
+                    Console.WriteLine($"{outputPrefix}{cleanData}");
+                }
             }
         };
 
@@ -200,7 +205,7 @@ public class CommandExecutor
             StandardError = errorBuilder.ToString()
         };
 
-        if (result.ExitCode != 0)
+        if (result.ExitCode != 0 && !suppressErrorLogging)
         {
             _logger.LogError("Command failed with exit code {ExitCode}", result.ExitCode);
         }

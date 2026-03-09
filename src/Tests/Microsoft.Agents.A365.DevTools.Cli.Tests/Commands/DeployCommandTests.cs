@@ -5,8 +5,10 @@ using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -24,7 +26,6 @@ public class DeployCommandTests
     private readonly ConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly DeploymentService _mockDeploymentService;
-    private readonly IPrerequisiteRunner _mockPrerequisiteRunner;
     private readonly AzureAuthValidator _mockAuthValidator;
     private readonly GraphApiService _mockGraphApiService;
     private readonly AgentBlueprintService _mockBlueprintService;
@@ -54,7 +55,6 @@ public class DeployCommandTests
             mockNodeLogger,
             mockPythonLogger);
         
-        _mockPrerequisiteRunner = Substitute.For<IPrerequisiteRunner>();
         _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
@@ -119,6 +119,48 @@ public class DeployCommandTests
         Assert.Equal("Enable verbose logging", verboseOption.Description);
     }
 
+
+    /// <summary>
+    /// Regression: HandleDeploymentException must not wrap a DeployAppException in another DeployAppException.
+    /// Wrapping caused the full az cli stderr (stored in the exception message) to be printed 3 times.
+    /// </summary>
+    [Fact]
+    public void HandleDeploymentException_WithDeployAppException_RethrowsWithoutWrapping()
+    {
+        // Arrange
+        var original = new DeployAppException("Site failed to start. Check runtime logs: https://myapp.scm.azurewebsites.net/api/logs/docker");
+        var method = typeof(DeployCommand).GetMethod(
+            "HandleDeploymentException",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        // Act
+        var act = () => method!.Invoke(null, new object[] { original, _mockLogger });
+
+        // Assert — must rethrow the same type without wrapping
+        act.Should().Throw<System.Reflection.TargetInvocationException>()
+            .WithInnerException<DeployAppException>()
+            .Where(ex => ReferenceEquals(ex, original), "the same instance must be rethrown, not a new wrapper");
+    }
+
+    /// <summary>
+    /// Regression: HandleDeploymentException must wrap non-DeployAppException in DeployAppException.
+    /// </summary>
+    [Fact]
+    public void HandleDeploymentException_WithGenericException_WrapsInDeployAppException()
+    {
+        // Arrange
+        var original = new InvalidOperationException("Something unexpected");
+        var method = typeof(DeployCommand).GetMethod(
+            "HandleDeploymentException",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        // Act
+        var act = () => method!.Invoke(null, new object[] { original, _mockLogger });
+
+        // Assert — generic exceptions should be wrapped
+        act.Should().Throw<System.Reflection.TargetInvocationException>()
+            .WithInnerException<DeployAppException>();
+    }
 
     // NOTE: Integration tests that verify actual service invocation through command execution
     // are omitted here as they require complex mocking of logging infrastructure.
