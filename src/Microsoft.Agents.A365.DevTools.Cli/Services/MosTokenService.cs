@@ -4,6 +4,7 @@
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Extensions.Logging;
+using Microsoft.Identity.Client;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -78,10 +79,73 @@ public class MosTokenService
             _logger.LogInformation("MOS token acquired successfully (expires {Expiry:u})", token.ExpiresOn.UtcDateTime);
             return token.Token;
         }
+        catch (MsalAuthenticationFailedException ex)
+        {
+            if (ex.InnerException is MsalServiceException msalEx)
+            {
+                LogMsalServiceError(msalEx, config.ClientId);
+            }
+            else
+            {
+                _logger.LogError("Failed to acquire MOS token: {Message}", ex.Message);
+            }
+            return null;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to acquire MOS token: {Message}", ex.Message);
             return null;
+        }
+    }
+
+    private void LogMsalServiceError(MsalServiceException ex, string clientAppId)
+    {
+        if (ex.ErrorCode == "invalid_client" && ex.Message.Contains("AADSTS650052"))
+        {
+            _logger.LogError("MOS token acquisition failed: Missing service principal or admin consent (Error: {ErrorCode})", ex.ErrorCode);
+            _logger.LogInformation("");
+            _logger.LogInformation("The MOS service principals exist, but admin consent may not be granted.");
+            _logger.LogInformation("Grant admin consent at:");
+            _logger.LogInformation("  {PortalUrl}", MosConstants.GetApiPermissionsPortalUrl(clientAppId));
+            _logger.LogInformation("");
+            _logger.LogInformation("Or authenticate interactively and consent when prompted.");
+            _logger.LogInformation("");
+        }
+        else if (ex.ErrorCode == "unauthorized_client" && ex.Message.Contains("AADSTS50194"))
+        {
+            _logger.LogError("MOS token acquisition failed: Single-tenant app cannot use /common endpoint (Error: {ErrorCode})", ex.ErrorCode);
+            _logger.LogInformation("");
+            _logger.LogInformation("AADSTS50194: The application is configured as single-tenant but is trying to use the /common authority.");
+            _logger.LogInformation("This should be automatically handled by using tenant-specific authority URLs.");
+            _logger.LogInformation("");
+            _logger.LogInformation("If this error persists:");
+            _logger.LogInformation("1. Verify your app registration is configured correctly in Azure Portal");
+            _logger.LogInformation("2. Check that tenantId in a365.config.json matches your app's home tenant");
+            _logger.LogInformation("3. Ensure the app's 'Supported account types' setting matches your use case");
+            _logger.LogInformation("");
+        }
+        else if (ex.ErrorCode == "invalid_grant")
+        {
+            _logger.LogError("MOS token acquisition failed: Invalid or expired credentials (Error: {ErrorCode})", ex.ErrorCode);
+            _logger.LogInformation("");
+            _logger.LogInformation("The authentication failed due to invalid credentials or expired tokens.");
+            _logger.LogInformation("Re-run the command to re-authenticate.");
+            _logger.LogInformation("");
+        }
+        else
+        {
+            _logger.LogError("MOS token acquisition failed with MSAL error");
+            _logger.LogError("Error Code: {ErrorCode}", ex.ErrorCode);
+            _logger.LogError("Error Message: {Message}", ex.Message);
+            _logger.LogInformation("");
+            _logger.LogInformation("Authentication failed. Common issues:");
+            _logger.LogInformation("1. Missing admin consent - Grant at:");
+            _logger.LogInformation("   {PortalUrl}", MosConstants.GetApiPermissionsPortalUrl(clientAppId));
+            _logger.LogInformation("2. Insufficient permissions - Verify required API permissions are configured");
+            _logger.LogInformation("3. Tenant configuration - Ensure app registration matches your tenant setup");
+            _logger.LogInformation("");
+            _logger.LogInformation("For detailed troubleshooting, search for error code: {ErrorCode}", ex.ErrorCode);
+            _logger.LogInformation("");
         }
     }
 
