@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `a365 cleanup azure --dry-run` — preview resources that would be deleted without making any changes or requiring Azure authentication
+- `AppServiceAuthRequirementCheck` — validates App Service deployment token before `a365 deploy` begins, catching revoked grants (AADSTS50173) early
+- `MosPrerequisitesRequirementCheck` — validates MOS service principals before `a365 publish` proceeds
+
 ### Changed
 - `a365 publish` no longer uploads the agent automatically. It now updates manifest IDs, creates `manifest.zip`, and prints instructions for manually uploading via Microsoft 365 Admin Center (Agents > All agents > Upload custom agent).
 

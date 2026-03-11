@@ -1,11 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -17,6 +20,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class CopilotStudioSubcommand
 {
+    /// <summary>
+    /// Returns the requirement checks for <c>setup permissions copilotstudio</c>.
+    /// </summary>
+    public static List<IRequirementCheck> GetChecks(AzureAuthValidator auth)
+        => SetupCommand.GetBaseChecks(auth);
+
     /// <summary>
     /// Validates CopilotStudio permissions prerequisites without performing any actions.
     /// </summary>
@@ -30,6 +39,7 @@ internal static class CopilotStudioSubcommand
 
     public static Command CreateCommand(
         ILogger logger,
+        AzureAuthValidator authValidator,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -78,13 +88,8 @@ internal static class CopilotStudioSubcommand
             // which would be a side effect in a mode that is supposed to be non-mutating.
             if (!dryRun)
             {
-                var systemChecksOk = await RequirementsSubcommand.RunRequirementChecksAsync(
-                    RequirementsSubcommand.GetSystemRequirementChecks(), setupConfig, logger, category: null, CancellationToken.None);
-                if (!systemChecksOk)
-                {
-                    logger.LogError("Setup cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
+                var copilotChecks = CopilotStudioSubcommand.GetChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(copilotChecks, setupConfig, logger, CancellationToken.None);
             }
 
             if (dryRun)

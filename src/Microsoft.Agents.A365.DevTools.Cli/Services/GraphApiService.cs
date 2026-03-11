@@ -307,7 +307,12 @@ public class GraphApiService
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
-            _logger.LogError("Graph POST {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+            var errorMessage = TryExtractGraphErrorMessage(body);
+            if (errorMessage != null)
+                _logger.LogError("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
+            else
+                _logger.LogError("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+            _logger.LogDebug("Graph POST response body: {Body}", body);
             return null;
         }
 
@@ -366,7 +371,12 @@ public class GraphApiService
         if (!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+            var errorMessage = TryExtractGraphErrorMessage(body);
+            if (errorMessage != null)
+                _logger.LogError("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
+            else
+                _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+            _logger.LogDebug("Graph PATCH response body: {Body}", body);
         }
 
         return resp.IsSuccessStatusCode;
@@ -394,7 +404,12 @@ public class GraphApiService
         if (!resp.IsSuccessStatusCode)
         {
             var body = await resp.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+            var errorMessage = TryExtractGraphErrorMessage(body);
+            if (errorMessage != null)
+                _logger.LogError("Graph DELETE {Url} failed: {ErrorMessage}", url, errorMessage);
+            else
+                _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+            _logger.LogDebug("Graph DELETE response body: {Body}", body);
             return false;
         }
 
@@ -671,5 +686,25 @@ public class GraphApiService
             _logger.LogWarning(ex, "Error checking if user is owner of application: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Attempts to extract a human-readable error message from a Graph API JSON error response body.
+    /// Returns null if the body cannot be parsed or does not contain an error message.
+    /// </summary>
+    private static string? TryExtractGraphErrorMessage(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error) &&
+                error.TryGetProperty("message", out var msg))
+            {
+                return msg.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
     }
 }

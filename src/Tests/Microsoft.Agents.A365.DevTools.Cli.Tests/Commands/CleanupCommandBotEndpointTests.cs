@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using NSubstitute;
 using Xunit;
 
@@ -21,6 +23,8 @@ public class CleanupCommandBotEndpointTests
     private readonly FederatedCredentialService _federatedCredentialService;
     private readonly IMicrosoftGraphTokenProvider _mockTokenProvider;
     private readonly IConfirmationProvider _mockConfirmationProvider;
+    private readonly IPrerequisiteRunner _mockPrerequisiteRunner;
+    private readonly AzureAuthValidator _mockAuthValidator;
 
     public CleanupCommandBotEndpointTests()
     {
@@ -76,6 +80,15 @@ public class CleanupCommandBotEndpointTests
         _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
         _mockConfirmationProvider.ConfirmWithTypedResponseAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
+
+        _mockPrerequisiteRunner = Substitute.For<IPrerequisiteRunner>();
+        _mockPrerequisiteRunner.RunAsync(
+                Arg.Any<IEnumerable<IRequirementCheck>>(),
+                Arg.Any<Agent365Config>(),
+                Arg.Any<ILogger>(),
+                Arg.Any<CancellationToken>())
+            .Returns(true);
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
     }
 
     [Fact]
@@ -102,13 +115,14 @@ public class CleanupCommandBotEndpointTests
             AgentBlueprintId = "blueprint-id"
         };
         var command = CleanupCommand.CreateCommand(
-            _mockLogger, 
-            _mockConfigService, 
-            _mockBotConfigurator, 
-            _mockExecutor, 
+            _mockLogger,
+            _mockConfigService,
+            _mockBotConfigurator,
+            _mockExecutor,
             _agentBlueprintService,
             _mockConfirmationProvider,
-            _federatedCredentialService);
+            _federatedCredentialService,
+            _mockAuthValidator);
 
         Assert.NotNull(command);
         Assert.Equal("cleanup", command.Name);

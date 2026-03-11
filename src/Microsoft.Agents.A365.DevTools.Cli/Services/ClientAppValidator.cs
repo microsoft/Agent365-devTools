@@ -292,7 +292,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return;
             }
 
-            _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback on macOS/Linux).");
+            _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback).");
             _logger.LogInformation("Run 'a365 setup requirements' at any time to re-verify and auto-fix this setting.");
 
             var patchBody = "{\"isFallbackPublicClient\":true}";
@@ -325,6 +325,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         var tokenResult = await _executor.ExecuteAsync(
             "az",
             $"account get-access-token --resource {GraphTokenResource} --query accessToken -o tsv",
+            suppressErrorLogging: true,
             cancellationToken: ct);
 
         if (!tokenResult.Success || string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
@@ -343,6 +344,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         var appCheckResult = await _executor.ExecuteAsync(
             "az",
             $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
+            suppressErrorLogging: true,
             cancellationToken: ct);
 
         if (!appCheckResult.Success)
@@ -351,12 +353,13 @@ public sealed class ClientAppValidator : IClientAppValidator
             if (appCheckResult.StandardError.Contains("TokenCreatedWithOutdatedPolicies", StringComparison.OrdinalIgnoreCase) ||
                 appCheckResult.StandardError.Contains("InvalidAuthenticationToken", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("Azure CLI token is stale due to Continuous Access Evaluation. Refreshing token automatically...");
-                
+                _logger.LogDebug("Azure CLI token is stale due to Continuous Access Evaluation. Attempting token refresh...");
+
                 // Force token refresh
                 var refreshResult = await _executor.ExecuteAsync(
                     "az",
                     $"account get-access-token --resource {GraphTokenResource} --query accessToken -o tsv",
+                    suppressErrorLogging: true,
                     cancellationToken: ct);
                 
                 if (refreshResult.Success && !string.IsNullOrWhiteSpace(refreshResult.StandardOutput))
@@ -368,6 +371,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                     var retryResult = await _executor.ExecuteAsync(
                         "az",
                         $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(freshToken)}\"",
+                        suppressErrorLogging: true,
                         cancellationToken: ct);
                     
                     if (retryResult.Success)
@@ -376,14 +380,20 @@ public sealed class ClientAppValidator : IClientAppValidator
                     }
                     else
                     {
+                        // Token refresh succeeded but the Graph call still rejected it — the revocation
+                        // is server-side and cannot be silently recovered. Throw explicitly so the
+                        // caller shows "token revoked" rather than "app not found".
                         _logger.LogDebug("App query failed after token refresh: {Error}", retryResult.StandardError);
-                        return null;
+                        throw ClientAppValidationException.TokenRevoked(clientAppId);
                     }
                 }
             }
             
             if (!appCheckResult.Success)
             {
+                if (IsCaeError(appCheckResult.StandardError))
+                    throw ClientAppValidationException.TokenRevoked(clientAppId);
+
                 _logger.LogDebug("App query failed: {Error}", appCheckResult.StandardError);
                 return null;
             }
@@ -701,6 +711,11 @@ public sealed class ClientAppValidator : IClientAppValidator
     #endregion
 
     #region Helper Types
+
+    private static bool IsCaeError(string errorOutput) =>
+        errorOutput.Contains("TokenIssuedBeforeRevocationTimestamp", StringComparison.OrdinalIgnoreCase) ||
+        errorOutput.Contains("TokenCreatedWithOutdatedPolicies", StringComparison.OrdinalIgnoreCase) ||
+        errorOutput.Contains("InvalidAuthenticationToken", StringComparison.OrdinalIgnoreCase);
 
     private record ClientAppInfo(string ObjectId, string DisplayName, JsonArray? RequiredResourceAccess);
 

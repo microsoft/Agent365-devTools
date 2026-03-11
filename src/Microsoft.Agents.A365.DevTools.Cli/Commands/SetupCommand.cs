@@ -3,6 +3,8 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -14,14 +16,24 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
     /// </summary>
     public class SetupCommand
     {
+        /// <summary>
+        /// Returns the base requirement checks shared by all setup subcommands:
+        /// Azure authentication, Frontier Preview enrollment, and PowerShell modules.
+        /// </summary>
+        public static List<IRequirementCheck> GetBaseChecks(AzureAuthValidator auth)
+            => [
+                new AzureAuthRequirementCheck(auth),
+                new FrontierPreviewRequirementCheck(),
+                new PowerShellModulesRequirementCheck()
+            ];
+
         public static Command CreateCommand(
             ILogger<SetupCommand> logger,
             IConfigService configService,
             CommandExecutor executor,
             DeploymentService deploymentService,
             IBotConfigurator botConfigurator,
-            IAzureValidator azureValidator,
-            AzureWebAppCreator webAppCreator,
+            AzureAuthValidator authValidator,
             PlatformDetector platformDetector,
             GraphApiService graphApiService,
             AgentBlueprintService blueprintService,
@@ -29,7 +41,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             FederatedCredentialService federatedCredentialService,
             IClientAppValidator clientAppValidator)
         {
-            var command = new Command("setup", 
+            var command = new Command("setup",
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
                 "Recommended execution order:\n" +
                 "  0. a365 setup requirements           # Check prerequisites (optional)\n" +
@@ -43,19 +55,19 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
-                logger, configService, clientAppValidator));
+                logger, configService, authValidator, clientAppValidator));
 
             command.AddCommand(InfrastructureSubcommand.CreateCommand(
-                logger, configService, azureValidator, webAppCreator, platformDetector, executor));
+                logger, configService, authValidator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, azureValidator, webAppCreator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
-                logger, configService, executor, graphApiService, blueprintService));
+                logger, authValidator, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             return command;
         }

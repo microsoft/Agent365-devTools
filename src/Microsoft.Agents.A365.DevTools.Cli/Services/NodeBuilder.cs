@@ -51,7 +51,7 @@ public class NodeBuilder : IPlatformBuilder
 
     public async Task CleanAsync(string projectDir)
     {
-        _logger.LogInformation("Cleaning Node.js project...");
+        _logger.LogDebug("Cleaning Node.js publish output...");
 
         // Remove node_modules if it exists
         var nodeModulesPath = Path.Combine(projectDir, "node_modules");

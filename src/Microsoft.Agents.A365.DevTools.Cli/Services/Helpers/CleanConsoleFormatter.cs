@@ -64,14 +64,12 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 if (isConsole)
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.Write("WARNING: ");
                     Console.Write(message);
                     Console.ResetColor();
                     Console.WriteLine();
                 }
                 else
                 {
-                    textWriter.Write("WARNING: ");
                     textWriter.WriteLine(message);
                 }
                 break;

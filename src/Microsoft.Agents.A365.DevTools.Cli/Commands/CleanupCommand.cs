@@ -6,9 +6,12 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -17,6 +20,13 @@ public class CleanupCommand
     private const string AgenticUsersKey = "agentic users";
     private const string IdentitySpsKey = "identity SPs";
 
+    /// <summary>
+    /// Returns the base requirement checks for cleanup operations:
+    /// Azure authentication only.
+    /// </summary>
+    public static List<Services.Requirements.IRequirementCheck> GetBaseChecks(AzureAuthValidator auth)
+        => [new AzureAuthRequirementCheck(auth)];
+
     public static Command CreateCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
@@ -24,7 +34,8 @@ public class CleanupCommand
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
-        FederatedCredentialService federatedCredentialService)
+        FederatedCredentialService federatedCredentialService,
+        AzureAuthValidator authValidator)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
@@ -55,7 +66,7 @@ public class CleanupCommand
 
         // Add subcommands for granular control
         cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
-        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor));
+        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
         return cleanupCommand;
@@ -301,13 +312,20 @@ public class CleanupCommand
         return command;
     }
 
+    /// <summary>
+    /// Returns the requirement checks for the <c>cleanup azure</c> subcommand.
+    /// </summary>
+    internal static List<Services.Requirements.IRequirementCheck> GetAzureCleanupChecks(AzureAuthValidator auth)
+        => GetBaseChecks(auth);
+
     private static Command CreateAzureCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        AzureAuthValidator authValidator)
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
-        
+
         var configOption = new Option<FileInfo?>(
             new[] { "--config", "-c" },
             "Path to configuration file")
@@ -319,17 +337,27 @@ public class CleanupCommand
             new[] { "--verbose", "-v" },
             description: "Enable verbose logging");
 
+        var dryRunOption = new Option<bool>("--dry-run", "Show resources that would be deleted without making any changes");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
+        command.AddOption(dryRunOption);
 
-        command.SetHandler(async (configFile, verbose) =>
+        command.SetHandler(async (configFile, verbose, dryRun) =>
         {
             try
             {
-                logger.LogInformation("Starting Azure cleanup...");
-                
+                if (!dryRun)
+                    logger.LogInformation("Starting Azure cleanup...");
+
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
+
+                if (!dryRun)
+                {
+                    var checks = GetAzureCleanupChecks(authValidator);
+                    await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
+                }
 
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
@@ -340,6 +368,12 @@ public class CleanupCommand
                     logger.LogInformation("    Azure Bot: {BotId}", config.BotId);
                 logger.LogInformation("    Resource Group: {ResourceGroup}", config.ResourceGroup);
                 logger.LogInformation("");
+
+                if (dryRun)
+                {
+                    logger.LogInformation("DRY RUN: No changes made.");
+                    return;
+                }
 
                 Console.Write("Continue with Azure cleanup? (y/N): ");
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
@@ -397,7 +431,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Azure cleanup failed with exception");
             }
-        }, configOption, verboseOption);
+        }, configOption, verboseOption, dryRunOption);
 
         return command;
     }
@@ -962,9 +996,9 @@ public class CleanupCommand
             logger.LogInformation("Loaded configuration successfully from {ConfigFile}", configPath);
             return config;
         }
-        catch (FileNotFoundException ex)
+        catch (ConfigFileNotFoundException ex)
         {
-            logger.LogError("Configuration file not found: {Message}", ex.Message);
+            logger.LogError("{Message}", ex.IssueDescription);
             return null;
         }
         catch (Exception ex)

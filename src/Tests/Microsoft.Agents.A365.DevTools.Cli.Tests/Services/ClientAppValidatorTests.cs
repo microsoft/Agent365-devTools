@@ -271,6 +271,7 @@ public class ClientAppValidatorTests
         _executor.ExecuteAsync(
             Arg.Is<string>(s => s == "az"),
             Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/applications")),
+            suppressErrorLogging: Arg.Any<bool>(),
             cancellationToken: Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\": []}", StandardError = string.Empty });
 
@@ -324,6 +325,7 @@ public class ClientAppValidatorTests
         _executor.ExecuteAsync(
             Arg.Is<string>(s => s == "az"),
             Arg.Is<string>(s => s.Contains("account get-access-token")),
+            suppressErrorLogging: Arg.Any<bool>(),
             cancellationToken: Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = token, StandardError = string.Empty });
     }
@@ -347,6 +349,7 @@ public class ClientAppValidatorTests
         _executor.ExecuteAsync(
             Arg.Is<string>(s => s == "az"),
             Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/applications")),
+            suppressErrorLogging: Arg.Any<bool>(),
             cancellationToken: Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = appJson, StandardError = string.Empty });
     }

@@ -43,8 +43,6 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     /// </summary>
     private async Task<RequirementCheckResult> CheckImplementationAsync(Agent365Config config, ILogger logger, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Checking if PowerShell is available on this system...");
-
         // Check if PowerShell is available
         var powerShellAvailable = await CheckPowerShellAvailabilityAsync(logger, cancellationToken);
         if (!powerShellAvailable)
@@ -65,7 +63,6 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             );
         }
 
-        logger.LogInformation("Checking PowerShell modules...");
         var missingModules = new List<RequiredModule>();
         var installedModules = new List<RequiredModule>();
 
@@ -91,18 +88,18 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         if (missingModules.Count == 0)
         {
             return RequirementCheckResult.Success(
-                details: $"All required PowerShell modules are installed: {string.Join(", ", installedModules.Select(m => m.Name))}"
+                details: string.Join(", ", installedModules.Select(m => m.Name))
             );
         }
 
         // Attempt auto-install for missing modules
-        logger.LogInformation("Attempting to auto-install missing PowerShell modules...");
+        logger.LogDebug("Attempting to auto-install missing PowerShell modules...");
         var autoInstalled = new List<RequiredModule>();
         var stillMissing = new List<RequiredModule>();
 
         foreach (var module in missingModules)
         {
-            logger.LogInformation("Installing {ModuleName}...", module.Name);
+            logger.LogDebug("Installing {ModuleName}...", module.Name);
             var installSuccess = await InstallModuleAsync(module.Name, logger, cancellationToken);
 
             if (installSuccess)
@@ -111,12 +108,12 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
                 if (verified)
                 {
                     autoInstalled.Add(module);
-                    logger.LogInformation("Successfully installed {ModuleName}", module.Name);
+                    logger.LogDebug("Successfully installed {ModuleName}", module.Name);
                 }
                 else
                 {
                     stillMissing.Add(module);
-                    logger.LogWarning("Install succeeded but {ModuleName} not found in module path after install", module.Name);
+                    logger.LogDebug("Install succeeded but {ModuleName} not found in module path after install", module.Name);
                 }
             }
             else

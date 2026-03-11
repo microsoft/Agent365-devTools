@@ -68,8 +68,34 @@ public class MsalBrowserCredentialTests
     public void Constructor_WithNullOrEmptyTenantId_ShouldThrowArgumentNullException(string? tenantId)
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => 
+        Assert.Throws<ArgumentNullException>(() =>
             new MsalBrowserCredential(ValidClientId, tenantId!, ValidRedirectUri));
+    }
+
+    [Theory]
+    [InlineData("https://login.microsoftonline.us/tenant-id")]
+    [InlineData("https://login.microsoftonline.com/tenant-id")]
+    public void Constructor_WithCustomAuthority_ShouldSucceed(string authority)
+    {
+        // Custom authority is used for government clouds (gcch/dod) where
+        // AzureCloudInstance.AzurePublic is not appropriate.
+        var credential = new MsalBrowserCredential(
+            ValidClientId, ValidTenantId, redirectUri: null, authority: authority);
+
+        Assert.NotNull(credential);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Constructor_WithNullOrWhitespaceAuthority_UsesDefaultAzurePublicAuthority(string? authority)
+    {
+        // Null/whitespace authority falls back to AzureCloudInstance.AzurePublic + tenantId.
+        var credential = new MsalBrowserCredential(
+            ValidClientId, ValidTenantId, redirectUri: null, authority: authority);
+
+        Assert.NotNull(credential);
     }
 
     #endregion

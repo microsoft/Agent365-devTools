@@ -40,7 +40,7 @@ public class LocationRequirementCheck : RequirementCheck
         }
 
         return Task.FromResult(RequirementCheckResult.Success(
-            details: $"Location is configured: {config.Location}"
+            details: config.Location?.Trim()
         ));
     }
 }

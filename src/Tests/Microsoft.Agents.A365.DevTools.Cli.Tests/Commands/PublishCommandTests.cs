@@ -104,6 +104,7 @@ public class PublishCommandTests : IDisposable
                 AgentBlueprintId = "test-blueprint-id",
                 AgentBlueprintDisplayName = "Test Agent",
                 TenantId = "test-tenant",
+                ClientAppId = "test-client-app-id",
                 DeploymentProjectPath = tempDir
             };
             _configService.LoadAsync().Returns(config);

@@ -88,7 +88,7 @@ public class CleanConsoleFormatterTests : IDisposable
     }
 
     [Fact]
-    public void Write_WithWarningLevel_OutputsMessageWithWarningPrefix()
+    public void Write_WithWarningLevel_OutputsMessageWithoutWarningPrefix()
     {
         // Arrange
         var message = "This is a warning message";
@@ -97,9 +97,9 @@ public class CleanConsoleFormatterTests : IDisposable
         // Act
         _formatter.Write(logEntry, null, _consoleWriter);
 
-        // Assert
+        // Assert - warning messages are yellow but have no "WARNING:" prefix (message already contains [WARN] tag)
         var output = _consoleWriter.ToString();
-        output.Should().Contain("WARNING:");
+        output.Should().NotContain("WARNING:");
         output.Should().Contain(message);
     }
 
@@ -135,7 +135,7 @@ public class CleanConsoleFormatterTests : IDisposable
 
         // Assert
         var output = _consoleWriter.ToString();
-        output.Should().Contain("WARNING:");
+        output.Should().NotContain("WARNING:");
         output.Should().Contain(message);
         output.Should().Contain("Test warning exception");
         output.Should().Contain("ArgumentException");
@@ -229,6 +229,7 @@ public class CleanConsoleFormatterTests : IDisposable
 
     [Theory]
     [InlineData(LogLevel.Information)]
+    [InlineData(LogLevel.Warning)]
     [InlineData(LogLevel.Debug)]
     [InlineData(LogLevel.Trace)]
     public void Write_WithNonWarningOrErrorLevel_DoesNotIncludePrefix(LogLevel logLevel)

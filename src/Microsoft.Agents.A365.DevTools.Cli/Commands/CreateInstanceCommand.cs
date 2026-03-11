@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
@@ -18,7 +19,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public class CreateInstanceCommand
 {
     public static Command CreateCommand(ILogger<CreateInstanceCommand> logger, IConfigService configService, CommandExecutor executor,
-        IBotConfigurator botConfigurator, GraphApiService graphApiService, IAzureValidator azureValidator)
+        IBotConfigurator botConfigurator, GraphApiService graphApiService)
     {
         // Command description - deprecated
         // Old: Create and configure agent user identities with appropriate
@@ -75,12 +76,6 @@ public class CreateInstanceCommand
                 var instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
                 if (instanceConfig == null) Environment.Exit(1);
 
-                // Validate Azure CLI authentication, subscription, and environment
-                if (!await azureValidator.ValidateAllAsync(instanceConfig.SubscriptionId))
-                {
-                    logger.LogError("Instance creation cannot proceed without proper Azure CLI authentication and subscription");
-                    Environment.Exit(1);
-                }
                 logger.LogInformation("");
 
                 // Step 1-3: Identity, Licenses, and MCP Registration
@@ -505,16 +500,9 @@ public class CreateInstanceCommand
                 : await configService.LoadAsync();
             return config;
         }
-        catch (FileNotFoundException ex)
+        catch (ConfigFileNotFoundException ex)
         {
-            logger.LogError("Configuration file not found: {Message}", ex.Message);
-            logger.LogInformation("");
-            logger.LogInformation("To get started:");
-            logger.LogInformation("  1. Copy a365.config.example.json to a365.config.json");
-            logger.LogInformation("  2. Edit a365.config.json with your Azure tenant and subscription details");
-            logger.LogInformation("  3. Run 'a365 setup' to initialize your environment first");
-            logger.LogInformation("  4. Then run 'a365 createinstance' to create agent instances");
-            logger.LogInformation("");
+            logger.LogError("{Message}", ex.IssueDescription);
             return null;
         }
         catch (Exception ex)

@@ -6,6 +6,8 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.Text.Json;
@@ -24,85 +26,21 @@ public static class InfrastructureSubcommand
     private const int MaxSdkValidationAttempts = 3;
     private const int InitialRetryDelayMs = 500;
     private const int MaxRetryDelayMs = 5000; // Cap exponential backoff at 5 seconds
-    
-    /// <summary>
-    /// Validates infrastructure prerequisites without performing any actions.
-    /// Includes validation of App Service Plan SKU and provides recommendations.
-    /// </summary>
-    public static Task<List<string>> ValidateAsync(
-        Agent365Config config,
-        IAzureValidator azureValidator,
-        CancellationToken cancellationToken = default)
-    {
-        var errors = new List<string>();
-
-        if (!config.NeedDeployment)
-        {
-            return Task.FromResult(errors);
-        }
-
-        if (string.IsNullOrWhiteSpace(config.SubscriptionId))
-            errors.Add("subscriptionId is required for Azure hosting");
-
-        if (string.IsNullOrWhiteSpace(config.ResourceGroup))
-            errors.Add("resourceGroup is required for Azure hosting");
-
-        if (string.IsNullOrWhiteSpace(config.AppServicePlanName))
-            errors.Add("appServicePlanName is required for Azure hosting");
-
-        if (string.IsNullOrWhiteSpace(config.WebAppName))
-            errors.Add("webAppName is required for Azure hosting");
-
-        if (string.IsNullOrWhiteSpace(config.Location))
-            errors.Add("location is required for Azure hosting");
-
-        // Validate App Service Plan SKU
-        var sku = string.IsNullOrWhiteSpace(config.AppServicePlanSku) 
-            ? ConfigConstants.DefaultAppServicePlanSku 
-            : config.AppServicePlanSku;
-        
-        if (!IsValidAppServicePlanSku(sku))
-        {
-            errors.Add($"Invalid appServicePlanSku '{sku}'. Valid SKUs: F1 (Free), B1/B2/B3 (Basic), S1/S2/S3 (Standard), P1V2/P2V2/P3V2 (Premium V2), P1V3/P2V3/P3V3 (Premium V3)");
-        }
-        // Note: B1 quota warning is now logged at execution time with actual quota check
-
-        return Task.FromResult(errors);
-    }
 
     /// <summary>
-    /// Validates if the provided SKU is a valid App Service Plan SKU.
+    /// Requirement checks for setup infrastructure: Azure auth, Frontier Preview, PowerShell modules, and infrastructure config.
     /// </summary>
-    private static bool IsValidAppServicePlanSku(string sku)
+    internal static List<IRequirementCheck> GetChecks(AzureAuthValidator auth)
     {
-        if (string.IsNullOrWhiteSpace(sku))
-            return false;
-
-        // Common valid SKUs (case-insensitive)
-        var validSkus = new[]
-        {
-            // Free tier
-            "F1",
-            // Basic tier
-            "B1", "B2", "B3",
-            // Standard tier
-            "S1", "S2", "S3",
-            // Premium V2
-            "P1V2", "P2V2", "P3V2",
-            // Premium V3
-            "P1V3", "P2V3", "P3V3",
-            // Isolated (less common)
-            "I1", "I2", "I3",
-            "I1V2", "I2V2", "I3V2"
-        };
-
-        return validSkus.Contains(sku, StringComparer.OrdinalIgnoreCase);
+        var checks = SetupCommand.GetBaseChecks(auth);
+        checks.Add(new InfrastructureRequirementCheck());
+        return checks;
     }
+
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
-        IAzureValidator azureValidator,
-        AzureWebAppCreator webAppCreator,
+        AzureAuthValidator authValidator,
         PlatformDetector platformDetector,
         CommandExecutor executor)
     {
@@ -158,11 +96,8 @@ public static class InfrastructureSubcommand
             var setupConfig = await configService.LoadAsync(config.FullName);
             if (setupConfig.NeedDeployment)
             {
-                // Validate Azure CLI authentication, subscription, and environment
-                if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
-                {
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
+                await RequirementsSubcommand.RunChecksOrExitAsync(
+                    GetChecks(authValidator), setupConfig, logger, CancellationToken.None);
             }
             else
             {

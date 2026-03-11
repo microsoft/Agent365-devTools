@@ -1,11 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -21,13 +24,35 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class AllSubcommand
 {
+    /// <summary>
+    /// Returns the requirement checks for <c>setup all</c>.
+    /// Composes SetupCommand base checks + Location + ClientApp + optional Infrastructure.
+    /// </summary>
+    public static List<Services.Requirements.IRequirementCheck> GetChecks(
+        AzureAuthValidator auth,
+        IClientAppValidator clientAppValidator,
+        bool includeInfrastructure)
+    {
+        var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
+        {
+            new LocationRequirementCheck(),
+            new ClientAppRequirementCheck(clientAppValidator),
+        };
+
+        if (includeInfrastructure)
+        {
+            checks.Add(new InfrastructureRequirementCheck());
+        }
+
+        return checks;
+    }
+
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
         IBotConfigurator botConfigurator,
-        IAzureValidator azureValidator,
-        AzureWebAppCreator webAppCreator,
+        AzureAuthValidator authValidator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
@@ -76,7 +101,7 @@ internal static class AllSubcommand
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
-            logger.LogInformation("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
+            logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             if (dryRun)
             {
@@ -110,61 +135,12 @@ internal static class AllSubcommand
                 return;
             }
 
-            logger.LogInformation("Agent 365 Setup");
-            logger.LogInformation("Running all setup steps...");
-            
-            if (skipRequirements)
-            {
-                logger.LogInformation("NOTE: Skipping requirements validation (--skip-requirements flag used)");
-            }
-            
-            if (skipInfrastructure)
-            {
-                logger.LogInformation("NOTE: Skipping infrastructure creation (--skip-infrastructure flag used)");
-            }
-            
-            logger.LogInformation("");
 
             var setupResults = new SetupResults();
 
             try
             {
-                // PHASE 0a: CHECK SYSTEM REQUIREMENTS before loading config (if not skipped)
-                // Runs config-independent checks (PowerShell, Frontier Preview) so blockers
-                // are surfaced before the user is asked to fill in the configuration wizard.
-                if (!skipRequirements)
-                {
-                    logger.LogDebug("Validating system prerequisites...");
-
-                    try
-                    {
-                        var systemResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetSystemRequirementChecks(),
-                            new Agent365Config(),
-                            logger,
-                            category: null,
-                            CancellationToken.None);
-
-                        if (!systemResult)
-                        {
-                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
-                            ExceptionHandler.ExitWithCleanup(1);
-                        }
-                    }
-                    catch (Exception reqEx)
-                    {
-                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
-                        logger.LogError("Setup cannot proceed because system requirement validation failed unexpectedly.");
-                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
-                        ExceptionHandler.ExitWithCleanup(1);
-                    }
-                }
-                else
-                {
-                    logger.LogDebug("Skipping requirements validation (--skip-requirements flag used)");
-                }
-
-                // PHASE 0b: Load configuration (may trigger interactive wizard)
+                // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
 
                 // Configure GraphApiService with custom client app ID if available
@@ -174,93 +150,33 @@ internal static class AllSubcommand
                     graphApiService.CustomClientAppId = setupConfig.ClientAppId;
                 }
 
-                // PHASE 0c: CHECK CONFIG-DEPENDENT REQUIREMENTS after the wizard
+                // Validate all prerequisites in one pass
                 if (!skipRequirements)
                 {
-                    logger.LogDebug("Validating configuration prerequisites...");
+                    var includeInfra = !skipInfrastructure && setupConfig.NeedDeployment;
+                    var checks = AllSubcommand.GetChecks(authValidator, clientAppValidator, includeInfra);
 
                     try
                     {
-                        var configResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetConfigRequirementChecks(clientAppValidator),
-                            setupConfig,
-                            logger,
-                            category: null,
-                            CancellationToken.None);
-
-                        if (!configResult)
-                        {
-                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
-                            ExceptionHandler.ExitWithCleanup(1);
-                        }
+                        await RequirementsSubcommand.RunChecksOrExitAsync(
+                            checks, setupConfig, logger, CancellationToken.None);
                     }
-                    catch (Exception reqEx)
+                    catch (Exception reqEx) when (reqEx is not OperationCanceledException)
                     {
                         logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
-                        logger.LogError("Setup cannot proceed because configuration requirement validation failed unexpectedly.");
                         logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
                         ExceptionHandler.ExitWithCleanup(1);
                     }
                 }
 
-                // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
-                logger.LogDebug("Validating all prerequisites...");
-
-                var allErrors = new List<string>();
-
-                // Validate Azure CLI authentication first
-                logger.LogDebug("Validating Azure CLI authentication...");
-                if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
-                {
-                    allErrors.Add("Azure CLI authentication failed or subscription not set correctly");
-                    logger.LogError("Azure CLI authentication validation failed");
-                }
-                else
-                {
-                    logger.LogDebug("Azure CLI authentication: OK");
-                }
-
-                // Validate Infrastructure prerequisites
-                if (!skipInfrastructure && setupConfig.NeedDeployment)
-                {
-                    logger.LogDebug("Validating Infrastructure prerequisites...");
-                    var infraErrors = await InfrastructureSubcommand.ValidateAsync(setupConfig, azureValidator, CancellationToken.None);
-                    if (infraErrors.Count > 0)
-                    {
-                        allErrors.AddRange(infraErrors.Select(e => $"Infrastructure: {e}"));
-                    }
-                    else
-                    {
-                        logger.LogDebug("Infrastructure prerequisites: OK");
-                    }
-                }
-
-                // Validate Blueprint prerequisites
-                logger.LogDebug("Validating Blueprint prerequisites...");
-                var blueprintErrors = await BlueprintSubcommand.ValidateAsync(setupConfig, azureValidator, clientAppValidator, CancellationToken.None);
-                if (blueprintErrors.Count > 0)
-                {
-                    allErrors.AddRange(blueprintErrors.Select(e => $"Blueprint: {e}"));
-                }
-                else
-                {
-                    logger.LogDebug("Blueprint prerequisites: OK");
-                }
-
-                // Stop if any validation failed
-                if (allErrors.Count > 0)
-                {
-                    logger.LogError("Setup cannot proceed due to validation failures:");
-                    foreach (var error in allErrors)
-                    {
-                        logger.LogError("  - {Error}", error);
-                    }
-                    logger.LogError("Please fix the errors above and try again");
-                    setupResults.Errors.AddRange(allErrors);
-                    ExceptionHandler.ExitWithCleanup(1);
-                }
-
                 logger.LogDebug("All validations passed. Starting setup execution...");
+
+                logger.LogInformation("Running all setup steps... (TraceId: {TraceId})", correlationId);
+                if (skipRequirements)
+                    logger.LogInformation("NOTE: Requirements validation skipped (--skip-requirements flag used)");
+                if (skipInfrastructure)
+                    logger.LogInformation("NOTE: Infrastructure creation skipped (--skip-infrastructure flag used)");
+                logger.LogInformation("");
 
                 var generatedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -304,7 +220,7 @@ internal static class AllSubcommand
                         setupConfig,
                         config,
                         executor,
-                        azureValidator,
+                        authValidator,
                         logger,
                         skipInfrastructure,
                         true,

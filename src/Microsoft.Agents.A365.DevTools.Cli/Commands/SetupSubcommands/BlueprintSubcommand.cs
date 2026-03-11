@@ -3,12 +3,15 @@
 
 using Azure.Core;
 using Azure.Identity;
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
@@ -58,65 +61,32 @@ internal static class BlueprintSubcommand
 {
     // Client secret validation constants
     private const int ClientSecretValidationMaxRetries = 2;
+
+    /// <summary>
+    /// Returns the requirement checks for <c>setup blueprint</c>.
+    /// Composes SetupCommand base checks + Location + ClientApp.
+    /// </summary>
+    public static List<Services.Requirements.IRequirementCheck> GetChecks(
+        AzureAuthValidator auth,
+        IClientAppValidator clientAppValidator)
+    {
+        var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
+        {
+            new LocationRequirementCheck(),
+            new ClientAppRequirementCheck(clientAppValidator),
+        };
+
+        return checks;
+    }
     private const int ClientSecretValidationRetryDelayMs = 1000;
     private const int ClientSecretValidationTimeoutSeconds = 10;
     private const string MicrosoftLoginOAuthTokenEndpoint = "https://login.microsoftonline.com/{0}/oauth2/v2.0/token";
-
-    /// <summary>
-    /// Validates blueprint prerequisites without performing any actions.
-    /// </summary>
-    public static async Task<List<string>> ValidateAsync(
-        Models.Agent365Config config,
-        IAzureValidator azureValidator,
-        IClientAppValidator clientAppValidator,
-        CancellationToken cancellationToken = default)
-    {
-        var errors = new List<string>();
-
-        if (string.IsNullOrWhiteSpace(config.ClientAppId))
-        {
-            errors.Add("clientAppId is required in configuration");
-            errors.Add("Please configure a custom client app in your tenant with required permissions");
-            errors.Add($"See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions");
-            return errors;
-        }
-
-        // Validate client app exists and has required permissions
-        try
-        {
-            await clientAppValidator.EnsureValidClientAppAsync(
-                config.ClientAppId,
-                config.TenantId,
-                cancellationToken);
-        }
-        catch (ClientAppValidationException ex)
-        {
-            // Add issue description and error details
-            errors.Add(ex.IssueDescription);
-            errors.AddRange(ex.ErrorDetails);
-            
-            // Add mitigation steps if available
-            if (ex.MitigationSteps.Count > 0)
-            {
-                errors.AddRange(ex.MitigationSteps);
-            }
-        }
-        catch (Exception ex)
-        {
-            // Catch any unexpected validation errors (Graph API failures, etc.)
-            errors.Add($"Client app validation failed: {ex.Message}");
-            errors.Add("Ensure Azure CLI is authenticated and you have access to the tenant.");
-        }
-
-        return errors;
-    }
 
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
-        IAzureValidator azureValidator,
-        AzureWebAppCreator webAppCreator,
+        AzureAuthValidator authValidator,
         PlatformDetector platformDetector,
         IBotConfigurator botConfigurator,
         GraphApiService graphApiService,
@@ -171,7 +141,7 @@ internal static class BlueprintSubcommand
         {
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
-            logger.LogInformation("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
+            logger.LogDebug("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
 
             // Validate mutually exclusive options
             if (!ValidateMutuallyExclusiveOptions(
@@ -230,21 +200,11 @@ internal static class BlueprintSubcommand
             {
                 try
                 {
-                    var requirementsResult = await RequirementsSubcommand.RunRequirementChecksAsync(
-                        RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
-                        setupConfig,
-                        logger,
-                        category: null,
-                        CancellationToken.None);
-
-                    if (!requirementsResult)
-                    {
-                        logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
-                        logger.LogError("Use the resolution guidance provided for each failed check.");
-                        ExceptionHandler.ExitWithCleanup(1);
-                    }
+                    var checks = BlueprintSubcommand.GetChecks(authValidator, clientAppValidator);
+                    await RequirementsSubcommand.RunChecksOrExitAsync(
+                        checks, setupConfig, logger, CancellationToken.None);
                 }
-                catch (Exception reqEx)
+                catch (Exception reqEx) when (reqEx is not OperationCanceledException)
                 {
                     logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
                     logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
@@ -265,6 +225,8 @@ internal static class BlueprintSubcommand
                 }
                 return;
             }
+
+            logger.LogInformation("Starting blueprint setup... (TraceId: {TraceId})", correlationId);
 
             // Handle --endpoint-only flag
             if (endpointOnly)
@@ -303,7 +265,7 @@ internal static class BlueprintSubcommand
                 setupConfig,
                 config,
                 executor,
-                azureValidator,
+                authValidator,
                 logger,
                 false,
                 false,
@@ -367,7 +329,7 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         FileInfo config,
         CommandExecutor executor,
-        IAzureValidator azureValidator,
+        AzureAuthValidator authValidator,
         ILogger logger,
         bool skipInfrastructure,
         bool isSetupAll,
@@ -399,17 +361,6 @@ internal static class BlueprintSubcommand
 
         logger.LogInformation("");
         logger.LogInformation("==> Creating Agent Blueprint");
-
-        // Validate Azure authentication
-        if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
-        {
-            return new BlueprintCreationResult
-            {
-                BlueprintCreated = false,
-                EndpointRegistered = false,
-                EndpointRegistrationAttempted = false
-            };
-        }
 
         var generatedConfigPath = Path.Combine(
             config.DirectoryName ?? Environment.CurrentDirectory,
@@ -1184,7 +1135,8 @@ internal static class BlueprintSubcommand
                 tenantId,
                 objectId,
                 userObjectId: null,
-                ct);
+                ct,
+                scopes: AuthenticationConstants.RequiredClientAppPermissions);
 
             if (isOwner)
             {
@@ -1256,14 +1208,7 @@ internal static class BlueprintSubcommand
             }
             else
             {
-                logger.LogError("Failed to create Federated Identity Credential: {Error}", ficCreateResult?.ErrorMessage ?? "Unknown error");
-                logger.LogError("The agent instance may not be able to authenticate using Managed Identity");
-            }
-
-            if (!ficSuccess)
-            {
-                logger.LogWarning("Federated Identity Credential configuration incomplete");
-                logger.LogWarning("You may need to create the credential manually in Entra ID");
+                logger.LogWarning("[WARN] Federated Identity Credential creation failed - you may need to create it manually in Entra ID");
             }
         }
         else if (!useManagedIdentity)

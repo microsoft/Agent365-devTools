@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.CommandLine;
 using Xunit;
@@ -19,6 +20,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 public class PermissionsSubcommandTests
 {
     private readonly ILogger _mockLogger;
+    private readonly AzureAuthValidator _mockAuthValidator;
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _mockGraphApiService;
@@ -30,6 +32,7 @@ public class PermissionsSubcommandTests
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
     }
@@ -42,6 +45,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -57,6 +61,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -72,6 +77,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -86,6 +92,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -104,6 +111,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -124,6 +132,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -140,6 +149,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -159,6 +169,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -178,6 +189,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -196,6 +208,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -217,6 +230,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -233,6 +247,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -252,6 +267,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -271,6 +287,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -289,6 +306,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -305,6 +323,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -501,6 +520,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -521,6 +541,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);

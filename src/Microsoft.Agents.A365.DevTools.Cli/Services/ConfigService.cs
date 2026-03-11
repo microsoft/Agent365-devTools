@@ -241,7 +241,6 @@ public class ConfigService : IConfigService
         // Validate static config file exists
         if (!File.Exists(resolvedConfigPath))
         {
-            _logger?.LogError("Static configuration file not found: {ConfigPath}", resolvedConfigPath);
             throw new ConfigFileNotFoundException(resolvedConfigPath);
         }
 

@@ -316,14 +316,13 @@ public class FederatedCredentialService
                     continue;
                 }
 
-                // Both endpoints failed
-                _logger.LogError("Failed to create federated credential: HTTP {StatusCode} {ReasonPhrase}", response.StatusCode, response.ReasonPhrase);
-                if (!string.IsNullOrWhiteSpace(response.Body))
-                {
-                    _logger.LogError("Error details: {Body}", response.Body);
-                }
-
-                _logger.LogError("Failed to create federated credential: {Name}", name);
+                // Both endpoints failed — log one clean error
+                var graphError = TryExtractGraphErrorMessage(response.Body);
+                if (graphError != null)
+                    _logger.LogError("Failed to create federated credential '{Name}': {ErrorMessage}", name, graphError);
+                else
+                    _logger.LogError("Failed to create federated credential '{Name}': HTTP {StatusCode} {ReasonPhrase}", name, response.StatusCode, response.ReasonPhrase);
+                _logger.LogDebug("Federated credential error response body: {Body}", response.Body);
                 return new FederatedCredentialCreateResult
                 {
                     Success = false,
@@ -470,5 +469,21 @@ public class FederatedCredentialService
             _logger.LogError(ex, "Exception deleting federated credentials from blueprint: {ObjectId}", blueprintObjectId);
             return false;
         }
+    }
+
+    private static string? TryExtractGraphErrorMessage(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error) &&
+                error.TryGetProperty("message", out var msg))
+            {
+                return msg.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
     }
 }
