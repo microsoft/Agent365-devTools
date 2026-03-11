@@ -13,18 +13,14 @@ using System.Text.Json.Nodes;
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
 /// <summary>
-/// Publish command – updates manifest.json ids based on the generated agent blueprint id
+/// Publish command – updates manifest.json IDs based on the agent blueprint ID
 /// and packages the manifest files into a zip ready for manual upload.
 /// </summary>
 public class PublishCommand
 {
     /// <summary>
     /// Gets the project directory from config, with fallback to current directory.
-    /// Ensures absolute path resolution for portability.
     /// </summary>
-    /// <param name="config">Configuration containing deploymentProjectPath</param>
-    /// <param name="logger">Logger for warnings</param>
-    /// <returns>Absolute path to project directory</returns>
     private static string GetProjectDirectory(Agent365Config config, ILogger logger)
     {
         var projectPath = config.DeploymentProjectPath;
@@ -35,7 +31,6 @@ public class PublishCommand
             return Environment.CurrentDirectory;
         }
 
-        // Resolve to absolute path (handles both relative and absolute paths)
         try
         {
             var absolutePath = Path.IsPathRooted(projectPath)
@@ -62,9 +57,9 @@ public class PublishCommand
         IConfigService configService,
         ManifestTemplateService manifestTemplateService)
     {
-        var command = new Command("publish", "Update manifest.json IDs and create a manifest package for upload to the Microsoft 365 Admin Center");
+        var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
 
-        var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing file or calling APIs");
+        var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files");
 
         command.AddOption(dryRunOption);
 
@@ -76,12 +71,9 @@ public class PublishCommand
 
             try
             {
-                // Load configuration using ConfigService
                 var config = await configService.LoadAsync();
-
-                // Extract required values from config
-                var agentBlueprintDisplayName = config.AgentBlueprintDisplayName;
                 var blueprintId = config.AgentBlueprintId;
+                var displayName = config.AgentBlueprintDisplayName;
 
                 if (string.IsNullOrWhiteSpace(blueprintId))
                 {
@@ -89,172 +81,120 @@ public class PublishCommand
                     return;
                 }
 
-                // Use deploymentProjectPath from config for portability
                 var baseDir = GetProjectDirectory(config, logger);
                 var manifestDir = Path.Combine(baseDir, "manifest");
                 var manifestPath = Path.Combine(manifestDir, "manifest.json");
-                var agenticUserManifestTemplatePath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
+                var agenticUserManifestPath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
 
-                logger.LogDebug("Using project directory: {BaseDir}", baseDir);
-                logger.LogDebug("Using manifest directory: {ManifestDir}", manifestDir);
-                logger.LogDebug("Using blueprint ID: {BlueprintId}", blueprintId);
+                logger.LogDebug("Project directory: {BaseDir}", baseDir);
+                logger.LogDebug("Blueprint ID: {BlueprintId}", blueprintId);
 
-                // If manifest directory doesn't exist, extract templates from embedded resources
                 if (!Directory.Exists(manifestDir))
                 {
-                    logger.LogInformation("Manifest directory not found. Extracting templates from embedded resources...");
+                    logger.LogInformation("Extracting manifest templates...");
                     Directory.CreateDirectory(manifestDir);
 
                     if (!manifestTemplateService.ExtractTemplates(manifestDir))
                     {
-                        logger.LogError("Failed to extract manifest templates from embedded resources");
+                        logger.LogError("Failed to extract manifest templates from embedded resources.");
                         return;
                     }
-
-                    logger.LogInformation("Successfully extracted manifest templates to {ManifestDir}", manifestDir);
-                    logger.LogInformation("Please customize the manifest files before publishing");
                 }
 
-                // Ensure agenticUserTemplateManifest.json exists in the manifest directory.
-                // It may be missing if the manifest directory was created by a previous partial run
-                // or an older CLI version that did not include this file.
-                if (!File.Exists(agenticUserManifestTemplatePath))
+                if (!File.Exists(agenticUserManifestPath))
                 {
-                    logger.LogInformation("agenticUserTemplateManifest.json not found. Extracting from embedded resources...");
                     if (!manifestTemplateService.EnsureTemplateFile(manifestDir, "agenticUserTemplateManifest.json"))
                     {
-                        logger.LogError("Failed to extract agenticUserTemplateManifest.json from embedded resources");
+                        logger.LogError("Failed to extract agenticUserTemplateManifest.json from embedded resources.");
                         return;
                     }
                 }
 
                 if (!File.Exists(manifestPath))
                 {
-                    logger.LogError("Manifest file not found at {Path}", manifestPath);
-                    logger.LogError("Expected location based on deploymentProjectPath: {ProjectPath}", baseDir);
+                    logger.LogError("Manifest not found: {Path}", manifestPath);
                     return;
                 }
 
-                string updatedManifest = await UpdateManifestFileAsync(logger, agentBlueprintDisplayName, blueprintId, manifestPath);
-
-                string updatedAgenticUserManifestTemplate = await UpdateAgenticUserManifestTemplateFileAsync(logger, agentBlueprintDisplayName, blueprintId, agenticUserManifestTemplatePath);
+                var updatedManifest = await UpdateManifestFileAsync(displayName, blueprintId, manifestPath);
+                var updatedAgenticUserManifest = await UpdateAgenticUserManifestTemplateFileAsync(blueprintId, agenticUserManifestPath);
 
                 if (dryRun)
                 {
-                    logger.LogInformation("DRY RUN: Updated manifest (not saved):\n{Json}", updatedManifest);
-                    logger.LogInformation("DRY RUN: Updated agentic user manifest template (not saved):\n{Json}", updatedAgenticUserManifestTemplate);
-                    logger.LogInformation("DRY RUN: Skipping zipping");
+                    logger.LogInformation("DRY RUN: manifest.json (not saved):\n{Json}", updatedManifest);
+                    logger.LogInformation("DRY RUN: agenticUserTemplateManifest.json (not saved):\n{Json}", updatedAgenticUserManifest);
                     isNormalExit = true;
                     return;
                 }
 
                 await File.WriteAllTextAsync(manifestPath, updatedManifest);
-                logger.LogInformation("Manifest updated successfully with agentBlueprintId {Id}", blueprintId);
+                await File.WriteAllTextAsync(agenticUserManifestPath, updatedAgenticUserManifest);
 
-                await File.WriteAllTextAsync(agenticUserManifestTemplatePath, updatedAgenticUserManifestTemplate);
-                logger.LogInformation("Agentic user manifest template updated successfully with agentBlueprintId {Id}", blueprintId);
+                logger.LogInformation("Manifest updated: {Path}", manifestPath);
+                logger.LogInformation("");
+                logger.LogInformation("Customize before packaging:");
+                logger.LogInformation("  version              - increment for republishing (e.g., 1.0.1), must be higher than previous");
 
-                logger.LogDebug("Manifest files written to disk");
+                if (!string.IsNullOrWhiteSpace(displayName) && displayName.Length > 30)
+                    logger.LogWarning("  name.short           - EXCEEDS 30 chars ({Length}), currently: \"{Name}\" -- shorten before packaging", displayName.Length, displayName);
+                else
+                    logger.LogInformation("  name.short           - 30 chars max, currently: \"{Name}\"", displayName);
 
-                // Interactive pause for user customization
-                logger.LogInformation("");
-                logger.LogInformation("=== MANIFEST UPDATED ===");
-                Console.WriteLine($"Location: {manifestPath}");
-                logger.LogInformation("");
-                logger.LogInformation("");
-                logger.LogInformation("=== CUSTOMIZE YOUR AGENT MANIFEST ===");
-                logger.LogInformation("");
-                logger.LogInformation("Please customize these fields before publishing:");
-                logger.LogInformation("");
-                logger.LogInformation("  Version ('version')");
-                logger.LogInformation("    - Increment for republishing (e.g., 1.0.0 to 1.0.1)");
-                logger.LogInformation("    - REQUIRED: Must be higher than previously published version");
-                logger.LogInformation("");
-                logger.LogInformation("  Agent Name ('name.short' and 'name.full')");
-                logger.LogInformation("    - Make it descriptive and user-friendly");
-                logger.LogInformation("    - Currently: {Name}", agentBlueprintDisplayName);
-                logger.LogInformation("    - IMPORTANT: 'name.short' must be 30 characters or less");
-                logger.LogInformation("");
-                logger.LogInformation("  Descriptions ('description.short' and 'description.full')");
-                logger.LogInformation("    - Short: 1-2 sentences");
-                logger.LogInformation("    - Full: Detailed capabilities");
-                logger.LogInformation("");
-                logger.LogInformation("  Developer Info ('developer.name', 'developer.websiteUrl', 'developer.privacyUrl')");
-                logger.LogInformation("    - Should reflect your organization details");
-                logger.LogInformation("");
-                logger.LogInformation("  Icons");
-                logger.LogInformation("    - Replace 'color.png' and 'outline.png' with your custom branding");
+                logger.LogInformation("  name.full            - displayed in Microsoft 365");
+                logger.LogInformation("  description.short    - 1-2 sentences");
+                logger.LogInformation("  description.full     - detailed capabilities");
+                logger.LogInformation("  developer.*          - name, websiteUrl, privacyUrl");
+                logger.LogInformation("  icons                - replace color.png and outline.png with your branding");
                 logger.LogInformation("");
 
-                // Ask if user wants to open the file now (skip when stdin is not a terminal)
                 if (!Console.IsInputRedirected)
                 {
                     Console.Write("Open manifest in your default editor now? (Y/n): ");
                     var openResponse = Console.ReadLine()?.Trim().ToLowerInvariant();
-
                     if (openResponse != "n" && openResponse != "no")
-                    {
                         FileHelper.TryOpenFileInDefaultEditor(manifestPath, logger);
-                    }
 
                     Console.Write("Press Enter when you have finished editing the manifest to continue: ");
                     Console.Out.Flush();
                     Console.ReadLine();
+                    Console.WriteLine();
                 }
 
-                logger.LogInformation("Creating manifest package...");
-                logger.LogInformation("");
-
-                // Create manifest.zip including the required files
                 var zipPath = Path.Combine(manifestDir, "manifest.zip");
                 if (File.Exists(zipPath))
                 {
                     try { File.Delete(zipPath); } catch { /* ignore */ }
                 }
 
-                // Collect all known manifest files that exist; order is deterministic
                 string[] candidateNames = ["manifest.json", "agenticUserTemplateManifest.json", "color.png", "outline.png", "logo.png", "icon.png"];
-                var expectedFiles = candidateNames
+                var filesToZip = candidateNames
                     .Select(name => Path.Combine(manifestDir, name))
                     .Where(File.Exists)
                     .ToList();
 
-                if (expectedFiles.Count == 0)
+                if (filesToZip.Count == 0)
                 {
-                    logger.LogError("No manifest files found to zip in {Dir}", manifestDir);
+                    logger.LogError("No manifest files found in {Dir}", manifestDir);
                     return;
                 }
 
                 using (var zipStream = new FileStream(zipPath, FileMode.Create, FileAccess.ReadWrite))
                 using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
                 {
-                    foreach (var file in expectedFiles)
+                    foreach (var file in filesToZip)
                     {
-                        var entryName = Path.GetFileName(file);
-                        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+                        logger.LogDebug("Adding {File} to manifest.zip", Path.GetFileName(file));
+                        var entry = archive.CreateEntry(Path.GetFileName(file), CompressionLevel.Optimal);
                         await using var entryStream = entry.Open();
                         await using var src = File.OpenRead(file);
                         await src.CopyToAsync(entryStream);
-                        logger.LogInformation("Added {File} to manifest.zip", entryName);
                     }
                 }
-                logger.LogInformation("Created archive {ZipPath}", zipPath);
 
-                // Print manual upload instructions
+                logger.LogInformation("Package created: {ZipPath}", zipPath);
                 logger.LogInformation("");
-                logger.LogInformation("=== NEXT STEP: UPLOAD YOUR AGENT ===");
-                logger.LogInformation("");
-                logger.LogInformation("Your manifest package is ready at:");
-                Console.WriteLine($"  {zipPath}");
-                logger.LogInformation("");
-                logger.LogInformation("To publish your agent to Microsoft 365:");
-                logger.LogInformation("  1. Go to the Microsoft 365 Admin Center (https://admin.microsoft.com)");
-                logger.LogInformation("  2. Navigate to Agents > All agents");
-                logger.LogInformation("  3. Click 'Upload custom agent' and upload the manifest.zip file");
-                logger.LogInformation("");
-                logger.LogInformation("For detailed upload instructions, see:");
-                logger.LogInformation("  https://learn.microsoft.com/en-us/copilot/microsoft-365/agent-essentials/agent-lifecycle/agent-upload-agents");
-                logger.LogInformation("");
+                logger.LogInformation("To publish: https://admin.microsoft.com > Agents > All agents > Upload custom agent");
+                logger.LogInformation("For details: https://learn.microsoft.com/en-us/copilot/microsoft-365/agent-essentials/agent-lifecycle/agent-upload-agents");
 
                 isNormalExit = true;
             }
@@ -274,67 +214,45 @@ public class PublishCommand
         return command;
     }
 
-    private static async Task<string> UpdateManifestFileAsync(ILogger<PublishCommand> logger, string? agentBlueprintDisplayName, string blueprintId, string manifestPath)
+    private static async Task<string> UpdateManifestFileAsync(string? displayName, string blueprintId, string manifestPath)
     {
-        // Load manifest as mutable JsonNode
         var manifestText = await File.ReadAllTextAsync(manifestPath);
         var node = JsonNode.Parse(manifestText) ?? new JsonObject();
 
-        // Update top-level id
         node["id"] = blueprintId;
 
-        // Update name.short and name.full if agentBlueprintDisplayName is available
-        if (!string.IsNullOrWhiteSpace(agentBlueprintDisplayName))
+        if (!string.IsNullOrWhiteSpace(displayName))
         {
             if (node["name"] is not JsonObject nameObj)
             {
                 nameObj = new JsonObject();
                 node["name"] = nameObj;
             }
-            else
-            {
-                nameObj = (JsonObject)node["name"]!;
-            }
 
-            nameObj["short"] = agentBlueprintDisplayName;
-            nameObj["full"] = agentBlueprintDisplayName;
-            logger.LogInformation("Updated manifest name to: {Name}", agentBlueprintDisplayName);
+            nameObj["short"] = displayName;
+            nameObj["full"] = displayName;
         }
 
-        // bots[0].botId
         if (node["bots"] is JsonArray bots && bots.Count > 0 && bots[0] is JsonObject botObj)
-        {
             botObj["botId"] = blueprintId;
-        }
 
-        // webApplicationInfo.id + resource
         if (node["webApplicationInfo"] is JsonObject webInfo)
         {
             webInfo["id"] = blueprintId;
             webInfo["resource"] = $"api://{blueprintId}";
         }
 
-        // copilotAgents.customEngineAgents[0].id
         if (node["copilotAgents"] is JsonObject ca && ca["customEngineAgents"] is JsonArray cea && cea.Count > 0 && cea[0] is JsonObject ceObj)
-        {
             ceObj["id"] = blueprintId;
-        }
 
-        var updated = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-        return updated;
+        return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
-    private static async Task<string> UpdateAgenticUserManifestTemplateFileAsync(ILogger<PublishCommand> logger, string? agentBlueprintDisplayName, string blueprintId, string agenticUserManifestTemplateFilePath)
+    private static async Task<string> UpdateAgenticUserManifestTemplateFileAsync(string blueprintId, string agenticUserManifestPath)
     {
-        // Load manifest as mutable JsonNode
-        var agenticUserManifestTemplateFileContents = await File.ReadAllTextAsync(agenticUserManifestTemplateFilePath);
-        var node = JsonNode.Parse(agenticUserManifestTemplateFileContents) ?? new JsonObject();
-
-        // Update top-level id
+        var contents = await File.ReadAllTextAsync(agenticUserManifestPath);
+        var node = JsonNode.Parse(contents) ?? new JsonObject();
         node["agentIdentityBlueprintId"] = blueprintId;
-
-        var updated = node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-        return updated;
+        return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
-
 }
