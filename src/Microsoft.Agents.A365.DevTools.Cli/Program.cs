@@ -48,16 +48,27 @@ class Program
             ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
 
-            // Notice check — runs first, independent timeout so a slow network call
-            // cannot starve the version check.
+            // Notice and version checks run concurrently — worst-case startup delay is ~2s, not ~4s.
+            using var noticeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var versionCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+            var noticeService = serviceProvider.GetRequiredService<INoticeService>();
+            var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
+
+            var noticeTask = noticeService.CheckForNoticeAsync(noticeCts.Token);
+            var versionTask = versionCheckService.CheckForUpdatesAsync(versionCts.Token);
+
+            await Task.WhenAll(
+                noticeTask.ContinueWith(_ => { }, TaskContinuationOptions.None),
+                versionTask.ContinueWith(_ => { }, TaskContinuationOptions.None));
+
+            // Display notice result
             try
             {
-                var noticeService = serviceProvider.GetRequiredService<INoticeService>();
-                using var noticeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                var noticeResult = await noticeService.CheckForNoticeAsync(noticeCts.Token);
+                var noticeResult = await noticeTask;
                 if (noticeResult.HasNotice)
                 {
-                    var separator = new string('-', 60);
+                    const string separator = "------------------------------------------------------------";
                     startupLogger.LogWarning("");
                     startupLogger.LogWarning(separator);
                     startupLogger.LogWarning("URGENT NOTICE");
@@ -78,12 +89,10 @@ class Program
                 startupLogger.LogDebug(ex, "Notice check failed: {Message}", ex.Message);
             }
 
-            // Version update check — independent timeout
+            // Display version check result
             try
             {
-                var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
-                using var versionCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                var result = await versionCheckService.CheckForUpdatesAsync(versionCts.Token);
+                var result = await versionTask;
                 if (result.UpdateAvailable)
                 {
                     startupLogger.LogWarning("");

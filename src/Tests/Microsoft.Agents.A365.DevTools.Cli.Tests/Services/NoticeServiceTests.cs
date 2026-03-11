@@ -79,27 +79,43 @@ public class NoticeServiceTests : IDisposable
     [Fact]
     public async Task CheckForNoticeAsync_WhenNoticeHasNoExpiry_ReturnsNotice()
     {
-        WriteCacheFile(new NoticeCache(
-            DateTimeOffset.UtcNow,
-            new Notice("Critical issue - upgrade now.", null, null)));
+        ClearCiEnvironment();
+        try
+        {
+            WriteCacheFile(new NoticeCache(
+                DateTimeOffset.UtcNow,
+                new Notice("Critical issue - upgrade now.", null, null)));
 
-        var result = await _service.CheckForNoticeAsync();
+            var result = await _service.CheckForNoticeAsync();
 
-        result.HasNotice.Should().BeTrue();
-        result.Message.Should().Be("Critical issue - upgrade now.");
+            result.HasNotice.Should().BeTrue();
+            result.Message.Should().Be("Critical issue - upgrade now.");
+        }
+        finally
+        {
+            RestoreCiEnvironment();
+        }
     }
 
     [Fact]
     public async Task CheckForNoticeAsync_WhenNoticeHasFutureExpiry_ReturnsNotice()
     {
-        WriteCacheFile(new NoticeCache(
-            DateTimeOffset.UtcNow,
-            new Notice("Security advisory.", null, DateTimeOffset.UtcNow.AddDays(30))));
+        ClearCiEnvironment();
+        try
+        {
+            WriteCacheFile(new NoticeCache(
+                DateTimeOffset.UtcNow,
+                new Notice("Security advisory.", null, DateTimeOffset.UtcNow.AddDays(30))));
 
-        var result = await _service.CheckForNoticeAsync();
+            var result = await _service.CheckForNoticeAsync();
 
-        result.HasNotice.Should().BeTrue();
-        result.Message.Should().Be("Security advisory.");
+            result.HasNotice.Should().BeTrue();
+            result.Message.Should().Be("Security advisory.");
+        }
+        finally
+        {
+            RestoreCiEnvironment();
+        }
     }
 
     [Fact]
@@ -118,17 +134,25 @@ public class NoticeServiceTests : IDisposable
     [Fact]
     public async Task CheckForNoticeAsync_WhenCurrentVersionBelowMinimum_ReturnsNotice()
     {
-        // Any realistic build version is below 99.99.99
-        WriteCacheFile(new NoticeCache(
-            DateTimeOffset.UtcNow,
-            new Notice("Please upgrade to v99.99.99.", "99.99.99", null)));
+        ClearCiEnvironment();
+        try
+        {
+            // Any realistic build version is below 99.99.99
+            WriteCacheFile(new NoticeCache(
+                DateTimeOffset.UtcNow,
+                new Notice("Please upgrade to v99.99.99.", "99.99.99", null)));
 
-        var result = await _service.CheckForNoticeAsync();
+            var result = await _service.CheckForNoticeAsync();
 
-        result.HasNotice.Should().BeTrue();
-        result.Message.Should().Be("Please upgrade to v99.99.99.");
-        result.UpdateCommand.Should().Contain("dotnet tool update")
-            .And.Contain("Microsoft.Agents.A365.DevTools.Cli");
+            result.HasNotice.Should().BeTrue();
+            result.Message.Should().Be("Please upgrade to v99.99.99.");
+            result.UpdateCommand.Should().Contain("dotnet tool update")
+                .And.Contain("Microsoft.Agents.A365.DevTools.Cli");
+        }
+        finally
+        {
+            RestoreCiEnvironment();
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -165,5 +189,30 @@ public class NoticeServiceTests : IDisposable
         var path = NoticeService.GetCacheFilePath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(cache));
+    }
+
+    // CI env vars that IsRunningInCiCd() checks — cleared so notice-display tests pass in CI.
+    private static readonly string[] CiEnvVars =
+    [
+        "CI", "TF_BUILD", "GITHUB_ACTIONS", "JENKINS_HOME", "GITLAB_CI",
+        "CIRCLECI", "TRAVIS", "TEAMCITY_VERSION", "BUILDKITE", "CODEBUILD_BUILD_ID"
+    ];
+
+    private readonly Dictionary<string, string?> _savedCiEnv = new();
+
+    private void ClearCiEnvironment()
+    {
+        foreach (var key in CiEnvVars)
+        {
+            _savedCiEnv[key] = Environment.GetEnvironmentVariable(key);
+            Environment.SetEnvironmentVariable(key, null);
+        }
+    }
+
+    private void RestoreCiEnvironment()
+    {
+        foreach (var (key, value) in _savedCiEnv)
+            Environment.SetEnvironmentVariable(key, value);
+        _savedCiEnv.Clear();
     }
 }
