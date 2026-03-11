@@ -98,7 +98,6 @@ class Program
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
-            var agentPublishService = serviceProvider.GetRequiredService<AgentPublishService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
             var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
             var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
@@ -126,7 +125,7 @@ class Program
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentPublishService, graphApiService, agentBlueprintService, manifestTemplateService));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentBlueprintService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
@@ -246,7 +245,6 @@ class Program
         services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
 
         services.AddSingleton<GraphApiService>();
-        services.AddSingleton<AgentPublishService>();
         services.AddSingleton<AgentBlueprintService>();
         services.AddSingleton<BlueprintLookupService>();
         services.AddSingleton<FederatedCredentialService>();

@@ -182,48 +182,5 @@ public static class ErrorMessages
         };
     }
 
-    /// <summary>
-    /// Gets mitigation steps for first-party client app service principal creation.
-    /// </summary>
-    public static List<string> GetFirstPartyClientAppServicePrincipalMitigation()
-    {
-        return new List<string>
-        {
-            "Insufficient privileges to create service principal for Microsoft first-party client app.",
-            "This app is required for MOS token acquisition.",
-            "Required role: Application Administrator, Cloud Application Administrator, or Global Administrator.",
-            $"Ask your tenant administrator to run: az ad sp create --id {MosConstants.TpsAppServicesClientAppId}"
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for all MOS resource app service principals.
-    /// </summary>
-    public static List<string> GetMosResourceAppsServicePrincipalMitigation()
-    {
-        return new List<string>
-        {
-            "Insufficient privileges to create service principals for MOS resource applications.",
-            "Required role: Application Administrator, Cloud Application Administrator, or Global Administrator.",
-            "Ask your tenant administrator to run:",
-            "  az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1",
-            "  az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43",
-            "  az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda"
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for MOS admin consent issues.
-    /// </summary>
-    public static List<string> GetMosAdminConsentMitigation(string clientAppId)
-    {
-        return new List<string>
-        {
-            "Admin consent required for MOS API permissions.",
-            $"Grant consent at: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{clientAppId}",
-            "Click 'Grant admin consent for [Your Organization]' and wait 1-2 minutes for propagation."
-        };
-    }
-
     #endregion
 }

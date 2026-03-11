@@ -21,16 +21,13 @@ public class PublishCommandTestCollection { }
 /// <summary>
 /// Tests for PublishCommand exit code behavior.
 /// Tests are limited to paths that exit before the interactive Console.ReadLine() prompts
-/// in the publish flow. Paths that reach those prompts (--skip-graph, missing tenantId,
-/// missing manifest file) require full HTTP/MOS mocking infrastructure to test reliably.
+/// in the publish flow.
 /// </summary>
 [Collection("PublishCommandTests")]
 public class PublishCommandTests : IDisposable
 {
     private readonly ILogger<PublishCommand> _logger;
     private readonly IConfigService _configService;
-    private readonly AgentPublishService _agentPublishService;
-    private readonly GraphApiService _graphApiService;
     private readonly AgentBlueprintService _blueprintService;
     private readonly ManifestTemplateService _manifestTemplateService;
     private readonly TextReader _originalConsoleIn = Console.In;
@@ -40,19 +37,12 @@ public class PublishCommandTests : IDisposable
         _logger = Substitute.For<ILogger<PublishCommand>>();
         _configService = Substitute.For<IConfigService>();
 
-        // For concrete classes, create partial substitutes with correct constructor parameters
-        // GraphApiService has a parameterless constructor
-        _graphApiService = Substitute.ForPartsOf<GraphApiService>();
-
-        // AgentPublishService needs (ILogger, GraphApiService)
-        _agentPublishService = Substitute.ForPartsOf<AgentPublishService>(
-            Substitute.For<ILogger<AgentPublishService>>(),
-            _graphApiService);
+        var graphApiService = Substitute.ForPartsOf<GraphApiService>();
 
         // AgentBlueprintService needs (ILogger, GraphApiService)
         _blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
             Substitute.For<ILogger<AgentBlueprintService>>(),
-            _graphApiService);
+            graphApiService);
 
         // ManifestTemplateService needs only ILogger
         _manifestTemplateService = Substitute.ForPartsOf<ManifestTemplateService>(
@@ -81,8 +71,6 @@ public class PublishCommandTests : IDisposable
         var command = PublishCommand.CreateCommand(
             _logger,
             _configService,
-            _agentPublishService,
-            _graphApiService,
             _blueprintService,
             _manifestTemplateService);
 
@@ -132,8 +120,6 @@ public class PublishCommandTests : IDisposable
             var command = PublishCommand.CreateCommand(
                 _logger,
                 _configService,
-                _agentPublishService,
-                _graphApiService,
                 _blueprintService,
                 _manifestTemplateService);
 
@@ -164,6 +150,58 @@ public class PublishCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishCommand_WithValidConfig_CreatesZipAndReturnsExitCode0()
+    {
+        // Arrange
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var manifestDir = Path.Combine(tempDir, "manifest");
+        Directory.CreateDirectory(manifestDir);
+
+        try
+        {
+            var manifestPath = Path.Combine(manifestDir, "manifest.json");
+            var agenticUserManifestPath = Path.Combine(manifestDir, "agenticUserTemplateManifest.json");
+            await File.WriteAllTextAsync(manifestPath, "{\"id\":\"old-id\"}");
+            await File.WriteAllTextAsync(agenticUserManifestPath, "{\"agentIdentityBlueprintId\":\"old-id\"}");
+
+            var config = new Agent365Config
+            {
+                AgentBlueprintId = "test-blueprint-id",
+                AgentBlueprintDisplayName = "Test Agent",
+                TenantId = "test-tenant",
+                DeploymentProjectPath = tempDir
+            };
+            _configService.LoadAsync().Returns(config);
+
+            // Redirect stdin so interactive prompts auto-answer
+            Console.SetIn(new StringReader("n\n\n"));
+
+            var command = PublishCommand.CreateCommand(
+                _logger,
+                _configService,
+                _blueprintService,
+                _manifestTemplateService);
+
+            var root = new RootCommand();
+            root.AddCommand(command);
+
+            // Act
+            var exitCode = await root.InvokeAsync("publish");
+
+            // Assert
+            exitCode.Should().Be(0, "successful zip creation should return exit code 0");
+            File.Exists(Path.Combine(manifestDir, "manifest.zip")).Should().BeTrue("manifest.zip should be created");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task PublishCommand_WithException_ShouldReturnExitCode1()
     {
         // Arrange - Simulate exception during config loading
@@ -173,8 +211,6 @@ public class PublishCommandTests : IDisposable
         var command = PublishCommand.CreateCommand(
             _logger,
             _configService,
-            _agentPublishService,
-            _graphApiService,
             _blueprintService,
             _manifestTemplateService);
 
@@ -197,7 +233,7 @@ public class PublishCommandTests : IDisposable
     }
 
     /// <summary>
-    /// Documents the four normal exit scenarios (exit code 0) and the main error scenarios (exit code 1).
+    /// Documents the normal exit scenarios (exit code 0) and the main error scenarios (exit code 1).
     /// </summary>
     [Fact]
     public void PublishCommand_DocumentsNormalExitScenarios()
@@ -205,9 +241,7 @@ public class PublishCommandTests : IDisposable
         var normalExitScenarios = new[]
         {
             "Dry-run: --dry-run specified, manifest updated but not saved",
-            "Skip Graph: --skip-graph specified, MOS publish succeeded",
-            "Missing tenantId: MOS publish succeeded but tenantId unavailable for Graph operations",
-            "Complete success: MOS publish and Graph operations both succeeded"
+            "Complete success: manifest updated and manifest.zip created"
         };
 
         var errorExitScenarios = new[]
@@ -215,12 +249,11 @@ public class PublishCommandTests : IDisposable
             "Missing blueprintId in configuration",
             "Failed to extract manifest templates",
             "Manifest file not found",
-            "MOS API call failed",
-            "Graph API operations failed",
+            "No manifest files found to zip",
             "Exception thrown during execution"
         };
 
-        normalExitScenarios.Should().HaveCount(4, "there are exactly 4 normal exit scenarios");
-        errorExitScenarios.Length.Should().BeGreaterThan(5, "there are many error exit scenarios");
+        normalExitScenarios.Should().HaveCount(2, "there are exactly 2 normal exit scenarios");
+        errorExitScenarios.Length.Should().BeGreaterThan(3, "there are multiple error exit scenarios");
     }
 }
