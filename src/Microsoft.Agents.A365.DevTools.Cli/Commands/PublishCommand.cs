@@ -60,18 +60,13 @@ public class PublishCommand
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
-        AgentBlueprintService agentBlueprintService,
         ManifestTemplateService manifestTemplateService)
     {
         var command = new Command("publish", "Update manifest.json IDs and create a manifest package for upload to the Microsoft 365 Admin Center");
 
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing file or calling APIs");
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            description: "Enable verbose logging");
 
         command.AddOption(dryRunOption);
-        command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -217,25 +212,12 @@ public class PublishCommand
                     try { File.Delete(zipPath); } catch { /* ignore */ }
                 }
 
-                // Identify files to include in zip; agenticUserTemplateManifest.json is explicitly listed
-                // to ensure it is always included regardless of other files present in the directory
-                var expectedFiles = new List<string>();
+                // Collect all known manifest files that exist; order is deterministic
                 string[] candidateNames = ["manifest.json", "agenticUserTemplateManifest.json", "color.png", "outline.png", "logo.png", "icon.png"];
-                foreach (var name in candidateNames)
-                {
-                    var p = Path.Combine(manifestDir, name);
-                    if (File.Exists(p)) expectedFiles.Add(p);
-                    if (expectedFiles.Count == 4) break;
-                }
-                // If still fewer than 4, add any other files to reach 4 (non recursive)
-                if (expectedFiles.Count < 4)
-                {
-                    foreach (var f in Directory.EnumerateFiles(manifestDir).Where(f => !expectedFiles.Contains(f)))
-                    {
-                        expectedFiles.Add(f);
-                        if (expectedFiles.Count == 4) break;
-                    }
-                }
+                var expectedFiles = candidateNames
+                    .Select(name => Path.Combine(manifestDir, name))
+                    .Where(File.Exists)
+                    .ToList();
 
                 if (expectedFiles.Count == 0)
                 {

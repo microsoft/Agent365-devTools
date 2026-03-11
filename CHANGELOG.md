@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `a365 publish` no longer uploads the agent automatically. It now updates manifest IDs, creates `manifest.zip`, and prints instructions for manually uploading via Microsoft 365 Admin Center (Agents > All agents > Upload custom agent).
+
 ### Fixed
 - macOS/Linux: device code fallback when browser authentication is unavailable (#309)
 - Linux: MSAL fallback when PowerShell `Connect-MgGraph` fails in non-TTY environments (#309)

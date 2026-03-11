@@ -28,7 +28,6 @@ public class PublishCommandTests : IDisposable
 {
     private readonly ILogger<PublishCommand> _logger;
     private readonly IConfigService _configService;
-    private readonly AgentBlueprintService _blueprintService;
     private readonly ManifestTemplateService _manifestTemplateService;
     private readonly TextReader _originalConsoleIn = Console.In;
 
@@ -36,13 +35,6 @@ public class PublishCommandTests : IDisposable
     {
         _logger = Substitute.For<ILogger<PublishCommand>>();
         _configService = Substitute.For<IConfigService>();
-
-        var graphApiService = Substitute.ForPartsOf<GraphApiService>();
-
-        // AgentBlueprintService needs (ILogger, GraphApiService)
-        _blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
-            Substitute.For<ILogger<AgentBlueprintService>>(),
-            graphApiService);
 
         // ManifestTemplateService needs only ILogger
         _manifestTemplateService = Substitute.ForPartsOf<ManifestTemplateService>(
@@ -71,7 +63,6 @@ public class PublishCommandTests : IDisposable
         var command = PublishCommand.CreateCommand(
             _logger,
             _configService,
-            _blueprintService,
             _manifestTemplateService);
 
         var root = new RootCommand();
@@ -120,7 +111,6 @@ public class PublishCommandTests : IDisposable
             var command = PublishCommand.CreateCommand(
                 _logger,
                 _configService,
-                _blueprintService,
                 _manifestTemplateService);
 
             var root = new RootCommand();
@@ -173,13 +163,9 @@ public class PublishCommandTests : IDisposable
             };
             _configService.LoadAsync().Returns(config);
 
-            // Redirect stdin so interactive prompts auto-answer
-            Console.SetIn(new StringReader("n\n\n"));
-
             var command = PublishCommand.CreateCommand(
                 _logger,
                 _configService,
-                _blueprintService,
                 _manifestTemplateService);
 
             var root = new RootCommand();
@@ -211,7 +197,6 @@ public class PublishCommandTests : IDisposable
         var command = PublishCommand.CreateCommand(
             _logger,
             _configService,
-            _blueprintService,
             _manifestTemplateService);
 
         var root = new RootCommand();
