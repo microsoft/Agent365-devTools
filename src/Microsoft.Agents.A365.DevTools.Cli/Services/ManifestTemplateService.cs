@@ -247,10 +247,10 @@ public class ManifestTemplateService
                 await using var fileStream = File.OpenRead(filePath);
                 await fileStream.CopyToAsync(entryStream);
                 
-                _logger.LogInformation("Added {File} to manifest.zip", fileName);
+                _logger.LogDebug("Added {File} to manifest.zip", fileName);
             }
 
-            _logger.LogInformation("Created manifest archive: {ZipPath}", outputZipPath);
+            _logger.LogDebug("Created manifest archive: {ZipPath}", outputZipPath);
             return true;
         }
         catch (Exception ex)

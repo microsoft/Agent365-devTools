@@ -6,7 +6,6 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
-using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -59,7 +58,7 @@ public class PublishCommand
     {
         var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
 
-        var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files");
+        var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
         command.AddOption(dryRunOption);
 
@@ -135,7 +134,9 @@ public class PublishCommand
                 logger.LogInformation("Customize before packaging:");
                 logger.LogInformation("  version              - increment for republishing (e.g., 1.0.1), must be higher than previous");
 
-                if (!string.IsNullOrWhiteSpace(displayName) && displayName.Length > 30)
+                if (string.IsNullOrWhiteSpace(displayName))
+                    logger.LogWarning("  name.short           - not set; edit manifest.json to provide a short name (30 chars max) before packaging");
+                else if (displayName.Length > 30)
                     logger.LogWarning("  name.short           - EXCEEDS 30 chars ({Length}), currently: \"{Name}\" -- shorten before packaging", displayName.Length, displayName);
                 else
                     logger.LogInformation("  name.short           - 30 chars max, currently: \"{Name}\"", displayName);
@@ -161,34 +162,11 @@ public class PublishCommand
                 }
 
                 var zipPath = Path.Combine(manifestDir, "manifest.zip");
-                if (File.Exists(zipPath))
-                {
-                    try { File.Delete(zipPath); } catch { /* ignore */ }
-                }
 
-                string[] candidateNames = ["manifest.json", "agenticUserTemplateManifest.json", "color.png", "outline.png", "logo.png", "icon.png"];
-                var filesToZip = candidateNames
-                    .Select(name => Path.Combine(manifestDir, name))
-                    .Where(File.Exists)
-                    .ToList();
-
-                if (filesToZip.Count == 0)
+                if (!await manifestTemplateService.CreateManifestZipAsync(manifestDir, zipPath))
                 {
-                    logger.LogError("No manifest files found in {Dir}", manifestDir);
+                    logger.LogError("Failed to create manifest package in {Dir}", manifestDir);
                     return;
-                }
-
-                using (var zipStream = new FileStream(zipPath, FileMode.Create, FileAccess.ReadWrite))
-                using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
-                {
-                    foreach (var file in filesToZip)
-                    {
-                        logger.LogDebug("Adding {File} to manifest.zip", Path.GetFileName(file));
-                        var entry = archive.CreateEntry(Path.GetFileName(file), CompressionLevel.Optimal);
-                        await using var entryStream = entry.Open();
-                        await using var src = File.OpenRead(file);
-                        await src.CopyToAsync(entryStream);
-                    }
                 }
 
                 logger.LogInformation("Package created: {ZipPath}", zipPath);

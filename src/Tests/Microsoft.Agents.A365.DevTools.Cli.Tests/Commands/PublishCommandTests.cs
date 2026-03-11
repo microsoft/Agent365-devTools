@@ -13,7 +13,8 @@ using Xunit;
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
 /// <summary>
-/// Tests must run sequentially because some tests redirect Console.In (global state).
+/// Tests must run sequentially because the constructor redirects Console.In (global state)
+/// to auto-answer interactive prompts without blocking.
 /// </summary>
 [CollectionDefinition("PublishCommandTests", DisableParallelization = true)]
 public class PublishCommandTestCollection { }
