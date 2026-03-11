@@ -16,3 +16,8 @@ public record VersionCheckResult(
     string? CurrentVersion,
     string? LatestVersion,
     string? UpdateCommand);
+
+/// <summary>
+/// On-disk cache envelope for the version check result, keyed by fetch timestamp.
+/// </summary>
+public record VersionCheckCache(DateTimeOffset CachedAt, string? LatestVersion);

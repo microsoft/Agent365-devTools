@@ -48,13 +48,42 @@ class Program
             ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
 
-            // Check for updates (non-blocking, with timeout)
+            // Notice check — runs first, independent timeout so a slow network call
+            // cannot starve the version check.
+            try
+            {
+                var noticeService = serviceProvider.GetRequiredService<INoticeService>();
+                using var noticeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                var noticeResult = await noticeService.CheckForNoticeAsync(noticeCts.Token);
+                if (noticeResult.HasNotice)
+                {
+                    var separator = new string('-', 60);
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("URGENT NOTICE");
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("{Message}", noticeResult.Message);
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning("To update, run: {Command}", noticeResult.UpdateCommand);
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                startupLogger.LogDebug("Notice check timed out");
+            }
+            catch (Exception ex)
+            {
+                startupLogger.LogDebug(ex, "Notice check failed: {Message}", ex.Message);
+            }
+
+            // Version update check — independent timeout
             try
             {
                 var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                var result = await versionCheckService.CheckForUpdatesAsync(cts.Token);
-
+                using var versionCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                var result = await versionCheckService.CheckForUpdatesAsync(versionCts.Token);
                 if (result.UpdateAvailable)
                 {
                     startupLogger.LogWarning("");
@@ -194,6 +223,7 @@ class Program
         services.AddSingleton<AuthenticationService>();
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
         services.AddSingleton<IVersionCheckService, VersionCheckService>();
+        services.AddSingleton<INoticeService, NoticeService>();
 
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
