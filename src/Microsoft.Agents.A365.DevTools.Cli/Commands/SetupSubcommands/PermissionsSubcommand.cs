@@ -463,7 +463,7 @@ internal static class PermissionsSubcommand
                 graphService,
                 blueprintService,
                 setupConfig,
-                MosConstants.PowerPlatformApiResourceAppId,
+                PowerPlatformConstants.PowerPlatformApiResourceAppId,
                 "Power Platform API",
                 new[] { "Connectivity.Connections.Read" },
                 logger,
@@ -514,7 +514,7 @@ internal static class PermissionsSubcommand
             ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment),
             ConfigConstants.MessagingBotApiAppId,
             ConfigConstants.ObservabilityApiAppId,
-            MosConstants.PowerPlatformApiResourceAppId,
+            PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };
 

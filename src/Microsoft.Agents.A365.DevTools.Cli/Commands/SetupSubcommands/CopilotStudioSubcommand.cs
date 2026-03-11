@@ -97,7 +97,7 @@ internal static class CopilotStudioSubcommand
                 logger.LogInformation("DRY RUN: Configure CopilotStudio Permissions");
                 logger.LogInformation("Would configure Power Platform API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Resource: Power Platform API ({ResourceAppId})", MosConstants.PowerPlatformApiResourceAppId);
+                logger.LogInformation("  - Resource: Power Platform API ({ResourceAppId})", PowerPlatformConstants.PowerPlatformApiResourceAppId);
                 logger.LogInformation("  - Scopes: CopilotStudio.Copilots.Invoke");
                 return;
             }
@@ -144,9 +144,9 @@ internal static class CopilotStudioSubcommand
                 graphService,
                 blueprintService,
                 setupConfig,
-                MosConstants.PowerPlatformApiResourceAppId,
+                PowerPlatformConstants.PowerPlatformApiResourceAppId,
                 "Power Platform API (CopilotStudio)",
-                new[] { MosConstants.PermissionNames.PowerPlatformCopilotStudioInvoke },
+                new[] { PowerPlatformConstants.PermissionNames.PowerPlatformCopilotStudioInvoke },
                 logger,
                 addToRequiredResourceAccess: false,
                 setInheritablePermissions: true,

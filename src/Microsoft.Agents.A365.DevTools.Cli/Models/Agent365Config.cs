@@ -460,7 +460,7 @@ public class Agent365Config
         var botResources = ResourceConsents
             .Where(rc => rc.ResourceAppId.Equals(ConfigConstants.MessagingBotApiAppId, StringComparison.OrdinalIgnoreCase) ||
                          rc.ResourceAppId.Equals(ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase) ||
-                         rc.ResourceAppId.Equals(MosConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
+                         rc.ResourceAppId.Equals(PowerPlatformConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
             .Where(rc => rc.InheritablePermissionsConfigured.HasValue)
             .ToList();
 

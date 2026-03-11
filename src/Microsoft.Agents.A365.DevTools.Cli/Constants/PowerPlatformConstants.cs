@@ -6,7 +6,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 /// <summary>
 /// Constants for Microsoft Power Platform API authentication and permissions
 /// </summary>
-public static class MosConstants
+public static class PowerPlatformConstants
 {
     /// <summary>
     /// Power Platform API resource app ID

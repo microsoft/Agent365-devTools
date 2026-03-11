@@ -392,7 +392,7 @@ internal static class GetTokenSubcommand
         return keyword.ToLowerInvariant() switch
         {
             "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)", ConfigConstants.GetDiscoverEndpointUrl(environment)),
-            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API", null),
+            "powerplatform" => (PowerPlatformConstants.PowerPlatformApiResourceAppId, "Power Platform API", null),
             _ => null
         };
     }
