@@ -24,7 +24,7 @@ AI workflows are structured markdown documents that guide AI agents (like GitHub
 - Setup commands (infrastructure, blueprint, permissions)
 - Development commands (MCP management, Dataverse integration)
 - Deployment to Azure (multi-platform support)
-- Publishing to MOS (Microsoft Online Services)
+- Publishing agent manifests for upload to Microsoft 365 Admin Center
 - Query operations (Entra ID scopes and permissions)
 - Cleanup operations (blueprint, instance, Azure resources)
 - Error handling and edge cases

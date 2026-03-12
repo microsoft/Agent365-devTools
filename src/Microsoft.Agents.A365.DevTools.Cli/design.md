@@ -20,7 +20,7 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   ├── QueryEntraCommand.cs      # a365 query-entra (blueprint-scopes, instance-scopes)
 │   ├── DevelopCommand.cs         # a365 develop (development utilities)
 │   ├── DevelopMcpCommand.cs      # a365 develop-mcp (MCP server management)
-│   ├── PublishCommand.cs         # a365 publish (MOS Titles publishing)
+│   ├── PublishCommand.cs         # a365 publish (manifest packaging for upload)
 │   └── SetupSubcommands/         # Setup workflow components
 ├── Services/                     # Business logic services
 │   ├── ConfigService.cs          # Configuration management
@@ -155,7 +155,6 @@ For security and flexibility, the CLI supports environment variable overrides:
 | `A365_MCP_APP_ID` | Override Agent 365 Tools App ID for authentication |
 | `A365_MCP_APP_ID_{ENV}` | Per-environment MCP Platform App ID |
 | `A365_DISCOVER_ENDPOINT_{ENV}` | Per-environment discover endpoint URL |
-| `MOS_TITLES_URL` | Override MOS Titles service URL |
 | `POWERPLATFORM_API_URL` | Override Power Platform API URL |
 
 **Design Decision:** All test/preprod App IDs and URLs have been removed from the codebase. The production App ID is the only hardcoded value. Internal Microsoft developers use environment variables for non-production testing.
@@ -272,7 +271,6 @@ Commands supporting `--dry-run` skip checks entirely — the `RunChecksOrExitAsy
 | `FrontierPreviewRequirementCheck` | Tenant Enrollment | setup all, setup infra |
 | `PowerShellModulesRequirementCheck` | Tools | setup all, setup infra |
 | `InfrastructureRequirementCheck` | Configuration | setup infra |
-| `MosPrerequisitesRequirementCheck` | MOS | publish |
 | `LocationRequirementCheck` | Configuration | setup endpoint |
 | `ClientAppRequirementCheck` | Configuration | setup blueprint |
 

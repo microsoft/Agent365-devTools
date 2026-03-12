@@ -453,7 +453,7 @@ internal static class PermissionsSubcommand
                 cancellationToken);
 
             // Configure Power Platform API permissions using unified method
-            // Note: Using the MOS Power Platform API (8578e004-a5c6-46e7-913e-12f58912df43) which is
+            // Note: Using the Power Platform API (8578e004-a5c6-46e7-913e-12f58912df43) which is
             // the Power Platform API for agent operations. This API exposes Connectivity.Connections.Read
             // for reading Power Platform connections.
             // Similar to Messaging Bot API, we skip addToRequiredResourceAccess because the scopes

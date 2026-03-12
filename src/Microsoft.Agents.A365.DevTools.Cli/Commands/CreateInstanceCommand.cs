@@ -520,11 +520,11 @@ public class CreateInstanceCommand
     {
         logger.LogError("ERROR: Command '{Command}' has been deprecated.", commandName);
         logger.LogError("");
-        logger.LogError("This command bypasses the Microsoft Online Services (MOS) workflow,");
+        logger.LogError("This command bypasses the standard agent registration workflow,");
         logger.LogError("which prevents proper agent registration and event propagation.");
         logger.LogError("");
         logger.LogError("Use the recommended workflow instead:");
-        logger.LogError("  1. Run 'a365 publish' to publish your agent to MOS");
+        logger.LogError("  1. Run 'a365 publish' to package and upload your agent manifest");
         logger.LogError("  2. Run 'a365 deploy' to deploy your application (if Azure-hosted)");
         logger.LogError("  3. Create an agent instance through Microsoft Teams");
         logger.LogError("");

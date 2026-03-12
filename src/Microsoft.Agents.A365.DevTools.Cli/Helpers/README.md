@@ -13,7 +13,6 @@ This folder contains utility helper classes that provide common functionality us
 | **FileHelper** | `FileHelper.cs` | File system operations (read, write, copy, delete) |
 | **CommandStringHelper** | `CommandStringHelper.cs` | Command-line argument building and escaping |
 | **ManifestHelper** | `ManifestHelper.cs` | Teams app manifest parsing and modification |
-| **PublishHelpers** | `PublishHelpers.cs` | MOS publishing workflow helpers |
 | **SecretProtectionHelper** | `SecretProtectionHelper.cs` | Mask secrets in logs and output |
 | **TenantDetectionHelper** | `TenantDetectionHelper.cs` | Detect tenant from Azure CLI or environment |
 | **PackageMCPServerHelper** | `PackageMCPServerHelper.cs` | Package MCP servers for deployment |
@@ -73,31 +72,6 @@ public static class SecretProtectionHelper
 
     // Mask secrets in a string
     public static string MaskSecrets(string text, IEnumerable<string> secrets);
-}
-```
-
----
-
-## PublishHelpers
-
-MOS publishing workflow helpers:
-
-```csharp
-public static class PublishHelpers
-{
-    // Ensure MOS prerequisites (service principals) exist
-    public static async Task EnsureMosPrerequisitesAsync(
-        GraphApiService graphService,
-        string tenantId,
-        ILogger logger);
-
-    // Check if admin consent is granted
-    public static async Task<bool> CheckAdminConsentAsync(
-        GraphApiService graphService,
-        string clientAppId);
-
-    // Get admin consent URL
-    public static string GetAdminConsentUrl(string tenantId, string clientAppId);
 }
 ```
 

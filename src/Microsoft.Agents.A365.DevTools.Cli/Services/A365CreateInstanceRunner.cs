@@ -49,13 +49,13 @@ public sealed class A365CreateInstanceRunner
         string step = "all",
         CancellationToken cancellationToken = default)
     {
-        // DEPRECATED: This service bypasses MOS workflows
+        // DEPRECATED: This service bypasses the standard agent registration workflow
         _logger.LogError("===============================================================================");
-        _logger.LogError("WARNING: A365CreateInstanceRunner bypasses MOS workflow");
+        _logger.LogError("WARNING: A365CreateInstanceRunner bypasses the standard agent registration workflow");
         _logger.LogError("===============================================================================");
         _logger.LogError("");
-        _logger.LogError("This service uses Graph API directly and skips Microsoft Online Services");
-        _logger.LogError("(MOS) workflows. Agents provisioned this way will NOT:");
+        _logger.LogError("This service uses Graph API directly and skips the standard agent registration");
+        _logger.LogError("workflow. Agents provisioned this way will NOT:");
         _logger.LogError("  - Be properly registered with Microsoft 365 partners");
         _logger.LogError("  - Receive OnHire events");
         _logger.LogError("  - Work correctly with messaging and event propagation");

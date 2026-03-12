@@ -51,7 +51,7 @@ flowchart TB
         Azure["Azure Resource Manager<br/>(App Service, Web Apps)"]
         Graph["Microsoft Graph API<br/>(Entra ID, Permissions)"]
         Bot["Azure Bot Service<br/>(Messaging Endpoints)"]
-        MOS["MOS Titles Service<br/>(Agent Publishing)"]
+        M365["Microsoft 365 Admin Center<br/>(Agent Upload)"]
         Dataverse["Dataverse<br/>(MCP Server Management)"]
     end
 
@@ -65,7 +65,7 @@ flowchart TB
     Services --> Azure
     Services --> Graph
     Services --> Bot
-    Services --> MOS
+    Services --> M365
     Services --> Dataverse
     Services --> Config
 ```

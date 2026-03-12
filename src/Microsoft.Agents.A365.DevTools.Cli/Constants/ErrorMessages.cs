@@ -155,32 +155,4 @@ public static class ErrorMessages
 
     #endregion
 
-    #region MOS Token and Prerequisites Messages
-
-    public const string MosClientAppIdMissing = 
-        "Custom client app ID not found in configuration. Run 'a365 config init' first.";
-
-    public const string MosClientAppNotFound = 
-        "Custom client app not found in tenant. Verify the app exists and you have access.";
-
-    public const string MosTokenAcquisitionFailed = 
-        "Failed to acquire MOS token. Check your authentication and permissions.";
-
-    public const string MosAdminConsentRequired = 
-        "Admin consent required for MOS API permissions. Visit the Azure Portal to grant consent.";
-
-    /// <summary>
-    /// Gets mitigation steps for MOS service principal creation failures.
-    /// </summary>
-    public static List<string> GetMosServicePrincipalMitigation(string appId)
-    {
-        return new List<string>
-        {
-            $"Insufficient privileges to create service principal for {appId}.",
-            "Required role: Application Administrator, Cloud Application Administrator, or Global Administrator.",
-            $"Ask your tenant administrator to run: az ad sp create --id {appId}"
-        };
-    }
-
-    #endregion
 }

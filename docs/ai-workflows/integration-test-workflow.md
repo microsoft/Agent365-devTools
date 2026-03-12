@@ -638,7 +638,7 @@ a365 deploy mcp
 ---
 
 ### Section 9: Publish Command
-**Objective**: Test manifest publication to MOS
+**Objective**: Test manifest packaging and upload preparation
 
 #### Test 9.1: Create Manifest File
 ```bash
@@ -679,15 +679,13 @@ a365 publish --dry-run
 
 #### Test 9.3: Publish Manifest (Actual)
 ```bash
-# Publish to MOS
+# Package manifest for upload
 a365 publish
 
 # Expected:
 # - Manifest updated with blueprint IDs
-# - Package created
-# - Published to MOS (Microsoft Online Services)
-# - Federated identity configured
-# - App role assignments updated
+# - Package created (manifest.zip)
+# - Upload package to Microsoft 365 Admin Center manually
 
 # Record: Publish succeeded (Yes/No)
 # Note: After publish, hire agent through Teams to complete onboarding
