@@ -59,10 +59,10 @@ public class VersionCheckService : IVersionCheckService
 
             var updateAvailable = IsNewerVersion(_currentVersion, latestVersion);
 
-            _logger.LogDebug(updateAvailable
-                ? "Update available: {Latest} (current: {Current})"
-                : "Running latest version: {Current}",
-                latestVersion, _currentVersion);
+            if (updateAvailable)
+                _logger.LogDebug("Update available: {Latest} (current: {Current})", latestVersion, _currentVersion);
+            else
+                _logger.LogDebug("Running latest version: {Current}", _currentVersion);
 
             return new VersionCheckResult(updateAvailable, _currentVersion, latestVersion,
                 VersionCheckHelper.GetUpdateCommand(latestVersion));

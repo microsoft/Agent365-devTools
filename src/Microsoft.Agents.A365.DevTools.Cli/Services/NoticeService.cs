@@ -44,7 +44,10 @@ public class NoticeService : INoticeService
             var notice = await GetNoticeWithCacheAsync(cancellationToken);
 
             if (notice == null || string.IsNullOrWhiteSpace(notice.Message))
+            {
+                _logger.LogDebug("No active notice");
                 return new NoticeResult(false, null, null);
+            }
 
             if (notice.ExpiresAt.HasValue && notice.ExpiresAt.Value <= DateTimeOffset.UtcNow)
             {
