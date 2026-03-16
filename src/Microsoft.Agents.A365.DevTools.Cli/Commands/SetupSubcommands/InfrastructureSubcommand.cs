@@ -569,64 +569,56 @@ public static class InfrastructureSubcommand
                 if (userResult.Success && !string.IsNullOrWhiteSpace(userResult.StandardOutput))
                 {
                     var userObjectId = userResult.StandardOutput.Trim();
-                    
+
                     // Validate that userObjectId is a valid GUID to prevent command injection
                     if (!Guid.TryParse(userObjectId, out _))
                     {
                         logger.LogWarning("Retrieved user object ID is not a valid GUID: {UserId}", userObjectId);
                         return (principalId, anyAlreadyExisted);
                     }
-                    
+
                     logger.LogDebug("Current user object ID: {UserId}", userObjectId);
 
-                    // Create the WebApp resource scope
                     var webAppScope = $"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Web/sites/{webAppName}";
 
-                    // Assign the "Website Contributor" role to the user
-                    // Website Contributor allows viewing logs and diagnostic info without full Owner permissions
-                    var roleAssignResult = await executor.ExecuteAsync("az", 
-                        $"role assignment create --role \"Website Contributor\" --assignee-object-id {userObjectId} --scope {webAppScope} --assignee-principal-type User", 
-                        captureOutput: true, 
-                        suppressErrorLogging: true);
-
-                    if (roleAssignResult.Success)
-                    {
-                        logger.LogInformation("Successfully assigned Website Contributor role to current user");
-                    }
-                    else if (roleAssignResult.StandardError.Contains("already exists", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Role assignment already exists - this is fine
-                        logger.LogDebug("Role assignment already exists: {Error}", roleAssignResult.StandardError.Trim());
-                    }
-                    else if (roleAssignResult.StandardError.Contains("PrincipalNotFound", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Principal not found (possibly using service principal)
-                        logger.LogDebug("User principal not available: {Error}", roleAssignResult.StandardError.Trim());
-                    }
-                    else
-                    {
-                        logger.LogWarning("Could not assign Website Contributor role to user. Diagnostic logs may not be accessible. Error: {Error}", roleAssignResult.StandardError.Trim());
-                    }
-
-                    // Verify the role assignment
-                    logger.LogInformation("Validating Website Contributor role assignment...");
-                    var verifyResult = await executor.ExecuteAsync("az",
-                        $"role assignment list --scope {webAppScope} --assignee {userObjectId} --role \"Website Contributor\" --query \"[].roleDefinitionName\" -o tsv",
+                    // Before attempting assignment, check whether the user already has sufficient
+                    // access via inheritance (Owner or Contributor at subscription/RG level both
+                    // supersede Website Contributor and include log access).
+                    // --include-inherited follows the scope chain up to the subscription.
+                    // --query filters to the first matching role name; empty output means no match.
+                    var existingRoleResult = await executor.ExecuteAsync("az",
+                        $"role assignment list --assignee {userObjectId} --scope {webAppScope} --include-inherited" +
+                        " --query \"[?roleDefinitionName=='Owner' || roleDefinitionName=='Contributor' || roleDefinitionName=='Website Contributor'].roleDefinitionName | [0]\"" +
+                        " -o tsv",
                         captureOutput: true,
                         suppressErrorLogging: true);
 
-                    if (verifyResult.Success && !string.IsNullOrWhiteSpace(verifyResult.StandardOutput))
+                    if (existingRoleResult.Success && !string.IsNullOrWhiteSpace(existingRoleResult.StandardOutput))
                     {
-                        logger.LogInformation("Current user is confirmed as Website Contributor for the web app");
+                        logger.LogInformation("User already has '{Role}' access on the web app — log access confirmed, skipping Website Contributor assignment",
+                            existingRoleResult.StandardOutput.Trim());
                     }
                     else
                     {
-                        logger.LogWarning("WARNING: Could not verify Website Contributor role assignment");
-                        logger.LogWarning("You may need to manually assign the role via Azure Portal:");
-                        logger.LogWarning("  1. Go to Azure Portal -> Your Web App");
-                        logger.LogWarning("  2. Navigate to Access control (IAM)");
-                        logger.LogWarning("  3. Add role assignment -> Website Contributor");
-                        logger.LogWarning("Without this role, you may not be able to access diagnostic logs and log streams");
+                        // Attempt assignment. If it fails (e.g. no roleAssignments/write permission),
+                        // log a single warning with remediation guidance — no further verification needed.
+                        var roleAssignResult = await executor.ExecuteAsync("az",
+                            $"role assignment create --role \"Website Contributor\" --assignee-object-id {userObjectId} --scope {webAppScope} --assignee-principal-type User",
+                            captureOutput: true,
+                            suppressErrorLogging: true);
+
+                        if (roleAssignResult.Success)
+                        {
+                            logger.LogInformation("Successfully assigned Website Contributor role to current user");
+                        }
+                        else
+                        {
+                            logger.LogWarning("Could not assign Website Contributor role to user. Diagnostic logs may not be accessible.");
+                            logger.LogWarning("You may need to manually assign the role via Azure Portal:");
+                            logger.LogWarning("  1. Go to Azure Portal -> Your Web App -> Access control (IAM)");
+                            logger.LogWarning("  2. Add role assignment -> Website Contributor");
+                            logger.LogDebug("Role assignment error detail: {Error}", roleAssignResult.StandardError.Trim());
+                        }
                     }
                 }
                 else

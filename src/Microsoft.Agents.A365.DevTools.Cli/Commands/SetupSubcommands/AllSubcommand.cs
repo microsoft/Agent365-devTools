@@ -249,20 +249,36 @@ internal static class AllSubcommand
                     // Do NOT add error if registration was skipped (--no-endpoint or missing config)
                     if (result.EndpointRegistrationAttempted && !result.EndpointRegistered)
                     {
-                        setupResults.Errors.Add("Messaging endpoint registration failed");
+                        var endpointErrorDetail = result.EndpointRegistrationFailureReason;
+                        setupResults.Errors.Add(string.IsNullOrWhiteSpace(endpointErrorDetail)
+                            ? "Messaging endpoint registration failed. Check log output above for details."
+                            : $"Messaging endpoint registration failed: {endpointErrorDetail}");
                     }
 
                     // Track Graph permissions status - critical for agent token exchange
                     setupResults.GraphPermissionsConfigured = result.GraphPermissionsConfigured;
+                    if (!result.GraphPermissionsConfigured && !string.IsNullOrWhiteSpace(result.AdminConsentUrl))
+                    {
+                        setupResults.AdminConsentUrl = result.AdminConsentUrl;
+                        setupResults.Errors.Add("Admin consent required: current user does not have an admin role to grant tenant-wide consent.");
+                    }
                     if (result.GraphInheritablePermissionsFailed)
                     {
-                        setupResults.GraphInheritablePermissionsError = result.GraphInheritablePermissionsError 
+                        setupResults.GraphInheritablePermissionsError = result.GraphInheritablePermissionsError
                             ?? "Microsoft Graph inheritable permissions failed to configure";
                         setupResults.Warnings.Add($"Microsoft Graph inheritable permissions: {setupResults.GraphInheritablePermissionsError}");
                     }
                     else
                     {
                         setupResults.GraphInheritablePermissionsConfigured = true;
+                    }
+
+                    // Track Federated Identity Credential status
+                    setupResults.FederatedCredentialConfigured = result.FederatedCredentialConfigured;
+                    if (!result.FederatedCredentialConfigured && !string.IsNullOrWhiteSpace(result.FederatedCredentialError))
+                    {
+                        setupResults.FederatedCredentialError = result.FederatedCredentialError;
+                        setupResults.Warnings.Add($"Federated Identity Credential: {result.FederatedCredentialError}");
                     }
 
                     if (!result.BlueprintCreated)

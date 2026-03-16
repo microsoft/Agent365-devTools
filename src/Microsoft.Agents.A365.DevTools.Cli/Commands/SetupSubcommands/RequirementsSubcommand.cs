@@ -21,7 +21,8 @@ internal static class RequirementsSubcommand
         ILogger logger,
         IConfigService configService,
         AzureAuthValidator authValidator,
-        IClientAppValidator clientAppValidator)
+        IClientAppValidator clientAppValidator,
+        CommandExecutor executor)
     {
         var command = new Command("requirements", 
             "Validate prerequisites for Agent 365 setup\n" +
@@ -59,7 +60,7 @@ internal static class RequirementsSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                var requirementChecks = GetRequirementChecks(authValidator, clientAppValidator);
+                var requirementChecks = GetRequirementChecks(authValidator, clientAppValidator, executor);
                 await RunRequirementChecksAsync(requirementChecks, setupConfig, logger, category);
             }
             catch (Exception ex)
@@ -159,10 +160,10 @@ internal static class RequirementsSubcommand
     /// Gets all available requirement checks.
     /// Derived from the union of system and config checks to keep a single source of truth.
     /// </summary>
-    public static List<IRequirementCheck> GetRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
+    public static List<IRequirementCheck> GetRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator, CommandExecutor executor)
     {
         return GetSystemRequirementChecks()
-            .Concat(GetConfigRequirementChecks(authValidator, clientAppValidator))
+            .Concat(GetConfigRequirementChecks(authValidator, clientAppValidator, executor))
             .ToList();
     }
 
@@ -185,7 +186,7 @@ internal static class RequirementsSubcommand
     /// <summary>
     /// Gets configuration-dependent requirement checks that must run after the configuration is loaded.
     /// </summary>
-    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
+    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator, CommandExecutor executor)
     {
         return new List<IRequirementCheck>
         {
@@ -195,7 +196,7 @@ internal static class RequirementsSubcommand
             // Location configuration — required for endpoint registration
             new LocationRequirementCheck(),
 
-            // Client app configuration validation
+            // Client app configuration validation (checks all required Graph permissions incl. UpdateAuthProperties.All)
             new ClientAppRequirementCheck(clientAppValidator),
         };
     }

@@ -159,7 +159,19 @@ public class BotConfigurator : IBotConfigurator
                     
                     // Log error only for actual failures (not idempotent "already exists" scenarios)
                     _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
-                    
+
+                    // Check for "Invalid roles" error code — user lacks the required role in the Agent 365 service.
+                    // Use the structured JSON "error" code field rather than the localised "message" field.
+                    if (TryGetErrorCode(errorContent) == "Invalid roles")
+                    {
+                        _logger.LogError("Your account does not have the required role in the Agent 365 service to register messaging endpoints.");
+                        _logger.LogError("Contact your Agent 365 tenant administrator to assign the required role to: {Account}",
+                            "your account (visible in 'az ad signed-in-user show')");
+                        _logger.LogError("In Entra ID: Enterprise Applications -> Agent 365 Tools -> Users and groups -> Add user/group");
+                        _logger.LogError("After the role is assigned, re-run: a365 setup blueprint --endpoint-only");
+                        return EndpointRegistrationResult.Failed;
+                    }
+
                     if (errorContent.Contains("Failed to provision bot resource via Azure Management API. Status: BadRequest", StringComparison.OrdinalIgnoreCase))
                     {
                         _logger.LogError("Please ensure that the Agent 365 CLI is supported in the selected region ('{Location}') and that your web app name ('{EndpointName}') is globally unique.", location, endpointName);
@@ -383,6 +395,26 @@ public class BotConfigurator : IBotConfigurator
             _logger.LogError(ex, "Unexpected error deleting endpoint with agent blueprint: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Parses a JSON error response and returns the value of the top-level "error" field,
+    /// which is a stable machine-readable code. Returns null if parsing fails or field is absent.
+    /// </summary>
+    private static string? TryGetErrorCode(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (doc.RootElement.TryGetProperty("error", out var errorElement) &&
+                errorElement.ValueKind == JsonValueKind.String)
+            {
+                return errorElement.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
     }
 
     private string NormalizeLocation(string location)

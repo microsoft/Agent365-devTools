@@ -166,7 +166,7 @@ public class RequirementsSubcommandTests
         var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
         var mockValidator = Substitute.For<IClientAppValidator>();
 
-        var checks = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
+        var checks = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator, mockExecutor);
 
         checks.Should().HaveCount(5, "system (2) + config (3) checks");
         checks.Should().ContainSingle(c => c is FrontierPreviewRequirementCheck);
@@ -185,7 +185,7 @@ public class RequirementsSubcommandTests
         var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
         var mockValidator = Substitute.For<IClientAppValidator>();
 
-        var all = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
+        var all = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator, mockExecutor);
 
         // System checks come first
         var types = all.Select(c => c.GetType()).ToList();

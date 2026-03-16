@@ -51,7 +51,8 @@ public class FederatedCredentialService
             var doc = await _graphApiService.GraphGetAsync(
                 tenantId,
                 $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
-                cancellationToken);
+                cancellationToken,
+                scopes: ["Application.ReadWrite.All"]);
 
             // If standard endpoint returns data with credentials, use it
             if (doc != null && doc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
@@ -65,7 +66,8 @@ public class FederatedCredentialService
                 doc = await _graphApiService.GraphGetAsync(
                     tenantId,
                     $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials",
-                    cancellationToken);
+                    cancellationToken,
+                    scopes: ["Application.ReadWrite.All"]);
             }
 
             if (doc == null)
@@ -259,7 +261,8 @@ public class FederatedCredentialService
                     tenantId,
                     endpoint,
                     payload,
-                    cancellationToken);
+                    cancellationToken,
+                    scopes: ["Application.ReadWrite.All"]);
 
                 if (response.IsSuccess)
                 {
@@ -309,15 +312,40 @@ public class FederatedCredentialService
                     };
                 }
 
-                // For other errors on first endpoint, try second endpoint
-                if (endpoint == endpoints[0])
+                // For non-403 errors on first endpoint, try second endpoint
+                if (response.StatusCode != 403 && endpoint == endpoints[0])
                 {
                     _logger.LogDebug("First endpoint failed with HTTP {StatusCode}, trying second endpoint...", response.StatusCode);
                     continue;
                 }
 
-                // Both endpoints failed — log one clean error
+                // For 403 on first endpoint, try second endpoint (different identity path may succeed)
+                if (response.StatusCode == 403 && endpoint == endpoints[0])
+                {
+                    _logger.LogDebug("First endpoint returned HTTP 403, trying alternative endpoint...");
+                    continue;
+                }
+
+                // Both endpoints failed or single endpoint returned a non-retriable error
                 var graphError = TryExtractGraphErrorMessage(response.Body);
+
+                // 403 on second endpoint is a deterministic auth failure — do not retry
+                if (response.StatusCode == 403)
+                {
+                    var errorDetail = graphError ?? "Insufficient privileges to complete the operation";
+                    _logger.LogError("Failed to create federated credential '{Name}': {ErrorMessage}", name, errorDetail);
+                    _logger.LogError("The authenticated account does not have sufficient privileges for this operation.");
+                    _logger.LogError("Ensure the account has Application Administrator or Cloud App Administrator role,");
+                    _logger.LogError("or that the user is an owner of the blueprint application in Entra ID.");
+                    _logger.LogDebug("Federated credential error response body: {Body}", response.Body);
+                    return new FederatedCredentialCreateResult
+                    {
+                        Success = false,
+                        ErrorMessage = errorDetail,
+                        ShouldRetry = false
+                    };
+                }
+
                 if (graphError != null)
                     _logger.LogError("Failed to create federated credential '{Name}': {ErrorMessage}", name, graphError);
                 else
@@ -326,7 +354,8 @@ public class FederatedCredentialService
                 return new FederatedCredentialCreateResult
                 {
                     Success = false,
-                    ErrorMessage = $"HTTP {response.StatusCode}: {response.ReasonPhrase}"
+                    ErrorMessage = $"HTTP {response.StatusCode}: {response.ReasonPhrase}",
+                    ShouldRetry = false
                 };
             }
 
@@ -369,12 +398,13 @@ public class FederatedCredentialService
 
             // Try the standard endpoint first
             var endpoint = $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";
-            
+
             var success = await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 endpoint,
                 cancellationToken,
-                treatNotFoundAsSuccess: true);
+                treatNotFoundAsSuccess: true,
+                scopes: ["Application.ReadWrite.All"]);
 
             if (success)
             {
@@ -385,12 +415,13 @@ public class FederatedCredentialService
             // Try fallback endpoint for agent blueprint
             _logger.LogDebug("Standard endpoint failed, trying fallback endpoint for agent blueprint");
             endpoint = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";
-            
+
             success = await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 endpoint,
                 cancellationToken,
-                treatNotFoundAsSuccess: true);
+                treatNotFoundAsSuccess: true,
+                scopes: ["Application.ReadWrite.All"]);
 
             if (success)
             {

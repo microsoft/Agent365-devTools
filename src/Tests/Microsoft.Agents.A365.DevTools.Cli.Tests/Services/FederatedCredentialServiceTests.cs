@@ -62,7 +62,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             $"/beta/applications/{TestBlueprintObjectId}/federatedIdentityCredentials",
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(jsonDoc);
 
         // Act
@@ -86,7 +87,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             $"/beta/applications/{TestBlueprintObjectId}/federatedIdentityCredentials",
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(jsonDoc);
 
         // Act
@@ -117,7 +119,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             $"/beta/applications/{TestBlueprintObjectId}/federatedIdentityCredentials",
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(jsonDoc);
 
         // Act
@@ -155,7 +158,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             $"/beta/applications/{TestBlueprintObjectId}/federatedIdentityCredentials",
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(jsonDoc);
 
         // Act
@@ -191,7 +195,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             $"/beta/applications/{TestBlueprintObjectId}/federatedIdentityCredentials",
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(jsonDoc);
 
         // Act - Pass in different casing
@@ -397,7 +402,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             Arg.Any<string>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Throws(new Exception("Network error"));
 
         // Act
@@ -422,7 +428,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             standardEndpoint,
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(emptyJsonDoc);
 
         // Fallback endpoint returns credentials
@@ -442,7 +449,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             fallbackEndpoint,
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(fallbackJsonDoc);
 
         // Act
@@ -458,12 +466,14 @@ public class FederatedCredentialServiceTests
         await _graphApiService.Received(1).GraphGetAsync(
             TestTenantId,
             standardEndpoint,
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>());
 
         await _graphApiService.Received(1).GraphGetAsync(
             TestTenantId,
             fallbackEndpoint,
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>());
     }
 
     [Fact]
@@ -501,7 +511,8 @@ public class FederatedCredentialServiceTests
         _graphApiService.GraphGetAsync(
             TestTenantId,
             $"/beta/applications/{TestBlueprintObjectId}/federatedIdentityCredentials",
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
             .Returns(jsonDoc);
 
         // Act

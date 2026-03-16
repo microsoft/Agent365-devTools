@@ -114,6 +114,10 @@ internal static class SetupHelpers
         {
             logger.LogInformation("  [OK] Custom blueprint permissions configured");
         }
+        if (results.FederatedCredentialConfigured)
+        {
+            logger.LogInformation("  [OK] Federated Identity Credential configured");
+        }
         if (results.MessagingEndpointRegistered)
         {
             var status = results.EndpointAlreadyExisted ? "configured (already exists)" : "created";
@@ -163,7 +167,16 @@ internal static class SetupHelpers
             
             if (!results.GraphPermissionsConfigured || !results.GraphInheritablePermissionsConfigured)
             {
-                logger.LogInformation("  - Microsoft Graph Permissions: Run 'a365 setup blueprint' to retry");
+                if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
+                {
+                    logger.LogInformation("  - Microsoft Graph Permissions: Admin consent is required.");
+                    logger.LogInformation("    Ask your tenant administrator to grant consent at:");
+                    logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
+                }
+                else
+                {
+                    logger.LogInformation("  - Microsoft Graph Permissions: Run 'a365 setup blueprint' to retry");
+                }
             }
 
             if (!results.CustomPermissionsConfigured && results.Errors.Any(e => e.Contains("custom", StringComparison.OrdinalIgnoreCase)))
@@ -174,6 +187,7 @@ internal static class SetupHelpers
             if (!results.MessagingEndpointRegistered)
             {
                 logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
+                logger.LogInformation("    Run 'a365 setup requirements' to check for missing prerequisites (e.g. Agent 365 service role)");
                 logger.LogInformation("    If there's a conflicting endpoint, delete it first: a365 cleanup blueprint --endpoint-only");
             }
         }
@@ -182,12 +196,18 @@ internal static class SetupHelpers
             logger.LogInformation("Setup completed successfully with warnings");
             logger.LogInformation("");
             logger.LogInformation("Recovery Actions:");
-            
+
             if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
             {
                 logger.LogInformation("  - Graph Inheritable Permissions: Run 'a365 setup blueprint' to retry");
             }
-            
+
+            if (!string.IsNullOrEmpty(results.FederatedCredentialError))
+            {
+                logger.LogInformation("  - Federated Identity Credential: Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' consented,");
+                logger.LogInformation("    then run 'a365 setup blueprint' to retry");
+            }
+
             logger.LogInformation("");
             logger.LogInformation("Review warnings above and take action if needed");
         }

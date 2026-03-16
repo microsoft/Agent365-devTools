@@ -689,6 +689,53 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Checks whether the currently signed-in user holds one of the Entra directory roles
+    /// that can grant tenant-wide admin consent (Global Administrator, Privileged Role Administrator,
+    /// Application Administrator, Cloud Application Administrator).
+    /// Requires the <c>RoleManagement.Read.Directory</c> delegated permission on the client app.
+    /// Returns false (non-blocking) if the check cannot be completed.
+    /// </summary>
+    public virtual async Task<bool> IsCurrentUserAdminAsync(
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        // Well-known role template IDs that can grant admin consent
+        var adminRoleTemplateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "62e90394-69f5-4237-9190-012177145e10", // Global Administrator
+            "e8611ab8-c189-46e8-94e1-60213ab1f814", // Privileged Role Administrator
+            "9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c1", // Application Administrator
+            "158c047a-c907-4556-b7ef-446551a6b5f7",  // Cloud Application Administrator
+        };
+
+        try
+        {
+            var doc = await GraphGetAsync(
+                tenantId,
+                "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId",
+                ct,
+                scopes: ["Directory.Read.All"]);
+
+            if (doc == null || !doc.RootElement.TryGetProperty("value", out var roles))
+                return false;
+
+            foreach (var role in roles.EnumerateArray())
+            {
+                if (role.TryGetProperty("roleTemplateId", out var id) &&
+                    adminRoleTemplateIds.Contains(id.GetString() ?? ""))
+                    return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not determine admin role for current user: {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Attempts to extract a human-readable error message from a Graph API JSON error response body.
     /// Returns null if the body cannot be parsed or does not contain an error message.
     /// </summary>

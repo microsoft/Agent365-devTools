@@ -25,6 +25,17 @@ public class SetupResults
     /// Non-null indicates failure. This is critical for agent token exchange functionality.
     /// </summary>
     public string? GraphInheritablePermissionsError { get; set; }
+
+    /// <summary>
+    /// Whether the Federated Identity Credential was configured for the managed identity.
+    /// False (with FederatedCredentialError set) means agent token exchange may not work.
+    /// </summary>
+    public bool FederatedCredentialConfigured { get; set; }
+
+    /// <summary>
+    /// Error message when Federated Identity Credential configuration failed.
+    /// </summary>
+    public string? FederatedCredentialError { get; set; }
     
     // Idempotency tracking flags - track whether resources already existed (vs newly created)
     public bool InfrastructureAlreadyExisted { get; set; }
@@ -37,6 +48,12 @@ public class SetupResults
     public bool GraphPermissionsAlreadyExisted { get; set; }
     public bool GraphInheritablePermissionsAlreadyExisted { get; set; }
     public bool CustomPermissionsAlreadyExisted { get; set; }
+
+    /// <summary>
+    /// Consent URL to present when admin consent was not granted because the user lacks an admin role.
+    /// Non-null indicates a tenant administrator needs to complete consent at this URL.
+    /// </summary>
+    public string? AdminConsentUrl { get; set; }
 
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();

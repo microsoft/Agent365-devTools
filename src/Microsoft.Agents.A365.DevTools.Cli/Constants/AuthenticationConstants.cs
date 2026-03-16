@@ -87,10 +87,17 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
 
     /// <summary>
+    /// Delegated scope required to check the signed-in user's Entra directory roles.
+    /// Used by <see cref="GraphApiService.IsCurrentUserAdminAsync"/> to determine whether
+    /// the user can grant tenant-wide admin consent without opening the browser.
+    /// </summary>
+    public const string RoleManagementReadDirectoryScope = "RoleManagement.Read.Directory";
+
+    /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
     /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
     /// All permissions require admin consent.
-    /// 
+    ///
     /// Permission GUIDs are resolved dynamically at runtime from Microsoft Graph to ensure
     /// compatibility across different tenants and API versions.
     /// </summary>
@@ -101,6 +108,11 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All"
+        // Note: RoleManagementReadDirectoryScope is intentionally excluded.
+        // It enables admin-role detection (IsCurrentUserAdminAsync) but is not a hard
+        // requirement — when absent, IsCurrentUserAdminAsync returns false and the browser
+        // consent flow is used as a safe fallback. Requiring it would block non-admin users
+        // who cannot patch an admin-owned app registration.
     };
 
     /// <summary>

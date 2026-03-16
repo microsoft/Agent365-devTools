@@ -92,13 +92,39 @@ public sealed class ClientAppValidator : IClientAppValidator
                 var consentedPermissions = await GetConsentedPermissionsAsync(clientAppId, graphToken, ct);
                 // Remove permissions that have been consented even if not in app registration
                 missingPermissions.RemoveAll(p => consentedPermissions.Contains(p, StringComparer.OrdinalIgnoreCase));
-                
+
                 if (consentedPermissions.Count > 0)
                 {
                     _logger.LogDebug("Found {Count} consented permissions via oauth2PermissionGrants (including beta APIs)", consentedPermissions.Count);
                 }
             }
-            
+
+            // Step 4.6: Auto-provision any remaining missing permissions (self-healing)
+            if (missingPermissions.Count > 0)
+            {
+                _logger.LogInformation("Auto-provisioning {Count} missing permission(s): {Permissions}",
+                    missingPermissions.Count, string.Join(", ", missingPermissions));
+
+                var provisioned = await EnsurePermissionsConfiguredAsync(appInfo, missingPermissions, clientAppId, graphToken, ct);
+
+                if (provisioned)
+                {
+                    // Re-fetch fresh app info and re-validate to confirm provisioning succeeded
+                    var freshAppInfo = await GetClientAppInfoAsync(clientAppId, graphToken, ct);
+                    if (freshAppInfo != null)
+                    {
+                        missingPermissions = await ValidatePermissionsConfiguredAsync(freshAppInfo, graphToken, ct);
+
+                        // Re-run the consent fallback check on the remaining missing list
+                        if (missingPermissions.Count > 0)
+                        {
+                            var consentedAfterProvision = await GetConsentedPermissionsAsync(clientAppId, graphToken, ct);
+                            missingPermissions.RemoveAll(p => consentedAfterProvision.Contains(p, StringComparer.OrdinalIgnoreCase));
+                        }
+                    }
+                }
+            }
+
             if (missingPermissions.Count > 0)
             {
                 throw ClientAppValidationException.MissingPermissions(clientAppId, missingPermissions);
@@ -313,6 +339,251 @@ public sealed class ClientAppValidator : IClientAppValidator
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error ensuring 'Allow public client flows' is enabled (non-fatal)");
+        }
+    }
+
+    /// <summary>
+    /// Auto-provisions missing permissions onto the client app registration (self-healing).
+    /// Patches requiredResourceAccess to add missing permission GUIDs, then tries to extend
+    /// the existing oauth2PermissionGrant scope so the consent is effective immediately.
+    /// Returns true if the requiredResourceAccess patch succeeded; false if it could not be applied.
+    /// </summary>
+    private async Task<bool> EnsurePermissionsConfiguredAsync(
+        ClientAppInfo appInfo,
+        List<string> missingPermissions,
+        string clientAppId,
+        string graphToken,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Resolve permission GUIDs for the missing permission names
+            var permissionNameToIdMap = await ResolvePermissionIdsAsync(graphToken, ct);
+
+            // Build an updated requiredResourceAccess array, inserting the missing GUIDs
+            // into (or alongside) the Microsoft Graph resource entry.
+            var updatedResourceAccess = new System.Text.Json.Nodes.JsonArray();
+            bool graphEntryFound = false;
+
+            if (appInfo.RequiredResourceAccess != null)
+            {
+                foreach (var resourceNode in appInfo.RequiredResourceAccess)
+                {
+                    var resourceObj = resourceNode?.AsObject();
+                    if (resourceObj == null) continue;
+
+                    var resourceAppId = resourceObj["resourceAppId"]?.GetValue<string>();
+                    if (string.Equals(resourceAppId, AuthenticationConstants.MicrosoftGraphResourceAppId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        graphEntryFound = true;
+
+                        // Collect existing permission IDs
+                        var existingAccess = resourceObj["resourceAccess"]?.AsArray();
+                        var existingIds = existingAccess?
+                            .Select(a => a?.AsObject()?["id"]?.GetValue<string>())
+                            .Where(id => !string.IsNullOrWhiteSpace(id))
+                            .Select(id => id!)
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                            ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                        // Clone existing entries
+                        var newAccess = new System.Text.Json.Nodes.JsonArray();
+                        if (existingAccess != null)
+                        {
+                            foreach (var item in existingAccess)
+                                newAccess.Add(item?.DeepClone());
+                        }
+
+                        // Append each missing permission that could be resolved
+                        foreach (var permName in missingPermissions)
+                        {
+                            if (permissionNameToIdMap.TryGetValue(permName, out var permId)
+                                && !existingIds.Contains(permId))
+                            {
+                                newAccess.Add(new System.Text.Json.Nodes.JsonObject
+                                {
+                                    ["id"] = permId,
+                                    ["type"] = "Scope"
+                                });
+                                _logger.LogDebug("Staging permission for manifest: {Permission} ({Id})", permName, permId);
+                            }
+                        }
+
+                        updatedResourceAccess.Add(new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["resourceAppId"] = AuthenticationConstants.MicrosoftGraphResourceAppId,
+                            ["resourceAccess"] = newAccess
+                        });
+                    }
+                    else
+                    {
+                        updatedResourceAccess.Add(resourceNode?.DeepClone());
+                    }
+                }
+            }
+
+            if (!graphEntryFound)
+            {
+                // No existing Microsoft Graph entry — create one from scratch
+                var newAccess = new System.Text.Json.Nodes.JsonArray();
+                foreach (var permName in missingPermissions)
+                {
+                    if (permissionNameToIdMap.TryGetValue(permName, out var permId))
+                    {
+                        newAccess.Add(new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["id"] = permId,
+                            ["type"] = "Scope"
+                        });
+                    }
+                }
+                updatedResourceAccess.Add(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["resourceAppId"] = AuthenticationConstants.MicrosoftGraphResourceAppId,
+                    ["resourceAccess"] = newAccess
+                });
+            }
+
+            // PATCH the application's requiredResourceAccess
+            var patchBody = new System.Text.Json.Nodes.JsonObject
+            {
+                ["requiredResourceAccess"] = updatedResourceAccess
+            }.ToJsonString();
+
+            var escapedBody = patchBody.Replace("\"", "\"\"");
+            var patchResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method PATCH --url \"{GraphApiBaseUrl}/applications/{CommandStringHelper.EscapePowerShellString(appInfo.ObjectId)}\" " +
+                $"--headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" " +
+                $"--body \"{escapedBody}\"",
+                cancellationToken: ct);
+
+            if (!patchResult.Success)
+            {
+                _logger.LogWarning("Failed to update app registration with missing permissions: {Error}", patchResult.StandardError);
+                return false;
+            }
+
+            _logger.LogInformation("Added {Count} permission(s) to app registration: {Permissions}",
+                missingPermissions.Count, string.Join(", ", missingPermissions));
+
+            // Best-effort: also extend the existing oauth2PermissionGrant so consent takes effect immediately
+            await TryExtendConsentGrantScopesAsync(clientAppId, missingPermissions, graphToken, ct);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error auto-provisioning permissions (non-fatal): {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Best-effort: appends new scope names to the existing oauth2PermissionGrant so that the
+    /// delegated consent is effective without requiring a fresh admin consent flow.
+    /// Silently logs and returns on any failure.
+    /// </summary>
+    private async Task TryExtendConsentGrantScopesAsync(
+        string clientAppId,
+        List<string> newScopes,
+        string graphToken,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Look up the service principal for the client app
+            var spResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id\" " +
+                $"--headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
+                cancellationToken: ct);
+
+            if (!spResult.Success) return;
+
+            var sanitizedSp = JsonDeserializationHelper.CleanAzureCliJsonOutput(spResult.StandardOutput);
+            var spJson = System.Text.Json.Nodes.JsonNode.Parse(sanitizedSp);
+            var spObjectId = spJson?["value"]?.AsArray().FirstOrDefault()?.AsObject()["id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(spObjectId)) return;
+
+            // Find the oauth2PermissionGrant that targets Microsoft Graph
+            var grantsResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{CommandStringHelper.EscapePowerShellString(spObjectId)}'\" " +
+                $"--headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
+                cancellationToken: ct);
+
+            if (!grantsResult.Success) return;
+
+            var sanitizedGrants = JsonDeserializationHelper.CleanAzureCliJsonOutput(grantsResult.StandardOutput);
+            var grantsJson = System.Text.Json.Nodes.JsonNode.Parse(sanitizedGrants);
+            var grants = grantsJson?["value"]?.AsArray();
+            if (grants == null) return;
+
+            // Look up the Microsoft Graph service principal ID to match against resourceId
+            var graphSpResult = await _executor.ExecuteAsync(
+                "az",
+                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id\" " +
+                $"--headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
+                cancellationToken: ct);
+
+            string? graphSpObjectId = null;
+            if (graphSpResult.Success)
+            {
+                var sanitizedGraphSp = JsonDeserializationHelper.CleanAzureCliJsonOutput(graphSpResult.StandardOutput);
+                var graphSpJson = System.Text.Json.Nodes.JsonNode.Parse(sanitizedGraphSp);
+                graphSpObjectId = graphSpJson?["value"]?.AsArray().FirstOrDefault()?.AsObject()["id"]?.GetValue<string>();
+            }
+
+            foreach (var grantNode in grants)
+            {
+                var grant = grantNode?.AsObject();
+                if (grant == null) continue;
+
+                var grantId = grant["id"]?.GetValue<string>();
+                var resourceId = grant["resourceId"]?.GetValue<string>();
+                var existingScope = grant["scope"]?.GetValue<string>() ?? string.Empty;
+
+                // Match on the Microsoft Graph resource (by SP object ID if available, always fallback to scope content)
+                bool isGraphGrant = (!string.IsNullOrWhiteSpace(graphSpObjectId) &&
+                                     string.Equals(resourceId, graphSpObjectId, StringComparison.OrdinalIgnoreCase))
+                                    || AuthenticationConstants.RequiredClientAppPermissions
+                                        .Any(p => existingScope.Contains(p, StringComparison.OrdinalIgnoreCase));
+
+                if (!isGraphGrant || string.IsNullOrWhiteSpace(grantId)) continue;
+
+                // Append any scopes not already in the grant
+                var existingScopes = existingScope.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var scopesToAdd = newScopes.Where(s => !existingScopes.Contains(s)).ToList();
+                if (scopesToAdd.Count == 0) continue;
+
+                var updatedScope = string.Join(' ', existingScopes.Concat(scopesToAdd));
+                var patchBody = $"{{\"scope\":\"{updatedScope}\"}}";
+                var escapedBody = patchBody.Replace("\"", "\"\"");
+
+                var patchResult = await _executor.ExecuteAsync(
+                    "az",
+                    $"rest --method PATCH --url \"{GraphApiBaseUrl}/oauth2PermissionGrants/{CommandStringHelper.EscapePowerShellString(grantId)}\" " +
+                    $"--headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" " +
+                    $"--body \"{escapedBody}\"",
+                    cancellationToken: ct);
+
+                if (patchResult.Success)
+                {
+                    _logger.LogInformation("Extended consent grant with scope(s): {Scopes}", string.Join(", ", scopesToAdd));
+                }
+                else
+                {
+                    _logger.LogDebug("Could not extend consent grant (may require admin role): {Error}", patchResult.StandardError);
+                }
+
+                break; // Only one grant per resource
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("TryExtendConsentGrantScopesAsync failed (non-fatal): {Message}", ex.Message);
         }
     }
 
