@@ -375,22 +375,17 @@ internal static class AllSubcommand
                             specs, logger, setupResults, CancellationToken.None,
                             knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
 
-                    setupResults.McpPermissionsConfigured = consentGranted;
-                    setupResults.InheritablePermissionsConfigured = inheritedPermissionsConfigured;
-                    setupResults.BotApiPermissionsConfigured = consentGranted;
-                    setupResults.BotInheritablePermissionsConfigured = inheritedPermissionsConfigured;
-                    setupResults.GraphPermissionsConfigured = consentGranted;
-                    setupResults.GraphInheritablePermissionsConfigured = inheritedPermissionsConfigured;
-                    setupResults.CustomPermissionsConfigured = consentGranted;
+                    setupResults.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
+                    setupResults.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
+                    setupResults.AdminConsentGranted = consentGranted;
                     setupResults.AdminConsentUrl = adminConsentUrl;
 
                     await configService.SaveStateAsync(setupConfig);
                 }
                 catch (Exception permEx)
                 {
-                    setupResults.McpPermissionsConfigured = false;
-                    setupResults.BotApiPermissionsConfigured = false;
-                    setupResults.CustomPermissionsConfigured = false;
+                    setupResults.BatchPermissionsPhase2Completed = false;
+                    setupResults.AdminConsentGranted = false;
                     setupResults.Errors.Add($"Permissions: {permEx.Message}");
                     logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
                 }

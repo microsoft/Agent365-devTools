@@ -691,7 +691,7 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Global Administrator role,
     /// which is required to grant tenant-wide admin consent interactively.
-    /// Requires the <c>RoleManagement.Read.Directory</c> delegated permission on the client app.
+    /// Requires the <c>Directory.Read.All</c> delegated permission on the client app.
     /// Returns false (non-blocking) if the check cannot be completed.
     /// </summary>
     public virtual async Task<bool> IsCurrentUserAdminAsync(

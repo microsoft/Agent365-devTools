@@ -349,7 +349,7 @@ The CLI configures two active layers of permissions for agent blueprints:
 
 > **Note:** `requiredResourceAccess` (portal "API permissions") is **not** configured for Agent Blueprints — it is not supported by the Agent ID API. `Application.ReadWrite.All` will no longer allow writes to Agent ID entities in a future breaking change.
 
-```mermard
+```mermaid
 flowchart TD
     Blueprint["Agent Blueprint<br/>(Application Registration)"]
     OAuth2["OAuth2 Permission Grants<br/>(Admin Consent, Global Admin)"]

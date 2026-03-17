@@ -374,8 +374,9 @@ internal static class BatchPermissionsOrchestrator
         CancellationToken ct)
     {
         // Build a consolidated consent URL that covers all scopes across all specs.
-        // Because Phase 1 added all resources to requiredResourceAccess, this single URL
-        // grants admin consent for everything when an admin visits it.
+        // The scopes are passed directly via the scope= query parameter; requiredResourceAccess
+        // is not used (not supported for Agent Blueprints). An admin visiting this URL grants
+        // consent for all resources in one step.
         var allScopes = specs.SelectMany(s => s.Scopes).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var allScopesEscaped = Uri.EscapeDataString(string.Join(' ', allScopes));
         var consentUrl =

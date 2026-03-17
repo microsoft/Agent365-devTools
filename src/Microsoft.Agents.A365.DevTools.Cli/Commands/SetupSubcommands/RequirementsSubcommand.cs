@@ -60,7 +60,7 @@ internal static class RequirementsSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                var requirementChecks = GetRequirementChecks(authValidator, clientAppValidator, executor);
+                var requirementChecks = GetRequirementChecks(authValidator, clientAppValidator);
                 await RunRequirementChecksAsync(requirementChecks, setupConfig, logger, category);
             }
             catch (Exception ex)
@@ -160,10 +160,10 @@ internal static class RequirementsSubcommand
     /// Gets all available requirement checks.
     /// Derived from the union of system and config checks to keep a single source of truth.
     /// </summary>
-    public static List<IRequirementCheck> GetRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator, CommandExecutor executor)
+    public static List<IRequirementCheck> GetRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
     {
         return GetSystemRequirementChecks()
-            .Concat(GetConfigRequirementChecks(authValidator, clientAppValidator, executor))
+            .Concat(GetConfigRequirementChecks(authValidator, clientAppValidator))
             .ToList();
     }
 
@@ -186,7 +186,7 @@ internal static class RequirementsSubcommand
     /// <summary>
     /// Gets configuration-dependent requirement checks that must run after the configuration is loaded.
     /// </summary>
-    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator, CommandExecutor executor)
+    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
     {
         return new List<IRequirementCheck>
         {

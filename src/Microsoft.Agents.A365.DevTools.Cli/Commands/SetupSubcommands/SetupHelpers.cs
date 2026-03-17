@@ -62,7 +62,6 @@ internal static class SetupHelpers
 
             logger.LogInformation("");
             logger.LogInformation("Verification URLs:");
-            logger.LogInformation("==========================================");
 
             foreach (var (label, url) in urls)
             {
@@ -81,10 +80,8 @@ internal static class SetupHelpers
     public static void DisplaySetupSummary(SetupResults results, ILogger logger)
     {
         logger.LogInformation("");
-        logger.LogInformation("==========================================");
         logger.LogInformation("Setup Summary");
-        logger.LogInformation("==========================================");
-        
+
         // Show what succeeded
         logger.LogInformation("Completed Steps:");
         if (results.InfrastructureCreated)
@@ -97,31 +94,18 @@ internal static class SetupHelpers
             var status = results.BlueprintAlreadyExisted ? "configured (already exists)" : "created";
             logger.LogInformation("  [OK] Agent blueprint {Status} (Blueprint ID: {BlueprintId})", status, results.BlueprintId ?? "unknown");
         }
-        if (results.McpPermissionsConfigured && results.InheritablePermissionsConfigured)
+        if (results.BatchPermissionsPhase2Completed)
         {
-            var permStatus = results.McpPermissionsAlreadyExisted ? "verified" : "configured";
-            var inheritStatus = results.InheritablePermissionsAlreadyExisted ? "verified" : "configured";
-            logger.LogInformation("  [OK] MCP Tools permissions {PermStatus}, inheritable permissions {InheritStatus}", permStatus, inheritStatus);
-        }
-        if (results.BotApiPermissionsConfigured && results.BotInheritablePermissionsConfigured)
-        {
-            var permStatus = results.BotApiPermissionsAlreadyExisted ? "verified" : "configured";
-            var inheritStatus = results.BotInheritablePermissionsAlreadyExisted ? "verified" : "configured";
-            logger.LogInformation("  [OK] Messaging Bot API permissions {PermStatus}, inheritable permissions {InheritStatus}", permStatus, inheritStatus);
-        }
-        if (results.GraphPermissionsConfigured && results.GraphInheritablePermissionsConfigured)
-        {
-            var permStatus = results.GraphPermissionsAlreadyExisted ? "verified" : "configured";
-            var inheritStatus = results.GraphInheritablePermissionsAlreadyExisted ? "verified" : "configured";
-            logger.LogInformation("  [OK] Microsoft Graph permissions {PermStatus}, inheritable permissions {InheritStatus}", permStatus, inheritStatus);
-        }
-        if (results.CustomPermissionsConfigured)
-        {
-            logger.LogInformation("  [OK] Custom blueprint permissions configured");
-        }
-        if (results.FederatedCredentialConfigured)
-        {
-            logger.LogInformation("  [OK] Federated Identity Credential configured");
+            if (results.AdminConsentGranted)
+            {
+                logger.LogInformation("  [OK] OAuth2 grants and inheritable permissions configured");
+                logger.LogInformation("  [OK] Admin consent granted");
+            }
+            else if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
+            {
+                // Phase 2 succeeded but Phase 3 is pending — the consent URL appears in Recovery Actions
+                logger.LogInformation("  [OK] OAuth2 grants and inheritable permissions configured (admin consent pending — see Recovery Actions)");
+            }
         }
         if (results.MessagingEndpointRegistered)
         {
@@ -166,28 +150,13 @@ internal static class SetupHelpers
                 logger.LogInformation("  - Permissions: Admin consent is required to complete permission setup.");
                 logger.LogInformation("    Ask your tenant administrator to grant consent at:");
                 logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
-                logger.LogInformation("    After consent is granted, run 'a365 setup admin' to complete the consent step.");
+                logger.LogInformation("    After consent is granted, run 'a365 setup all' to complete the remaining setup steps.");
             }
             else
             {
-                if (!results.McpPermissionsConfigured || !results.InheritablePermissionsConfigured)
+                if (!results.BatchPermissionsPhase2Completed || !results.AdminConsentGranted)
                 {
-                    logger.LogInformation("  - MCP Tools Permissions: Run 'a365 setup permissions mcp' to retry");
-                }
-
-                if (!results.BotApiPermissionsConfigured || !results.BotInheritablePermissionsConfigured)
-                {
-                    logger.LogInformation("  - Messaging Bot API Permissions: Run 'a365 setup permissions bot' to retry");
-                }
-
-                if (!results.GraphPermissionsConfigured || !results.GraphInheritablePermissionsConfigured)
-                {
-                    logger.LogInformation("  - Microsoft Graph Permissions: Run 'a365 setup blueprint' to retry");
-                }
-
-                if (!results.CustomPermissionsConfigured && results.Errors.Any(e => e.Contains("custom", StringComparison.OrdinalIgnoreCase)))
-                {
-                    logger.LogInformation("  - Custom Blueprint Permissions: Run 'a365 setup permissions custom' to retry");
+                    logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
                 }
             }
 
@@ -222,8 +191,6 @@ internal static class SetupHelpers
             logger.LogInformation("Setup completed successfully");
             logger.LogInformation("All components configured correctly");
         }
-        
-        logger.LogInformation("==========================================");
     }
 
     /// <summary>

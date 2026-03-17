@@ -20,6 +20,21 @@ public class SetupResults
     public bool GraphInheritablePermissionsConfigured { get; set; }
     public bool CustomPermissionsConfigured { get; set; }
 
+    // Batch phase results — set by AllSubcommand after BatchPermissionsOrchestrator completes.
+    // These replace the per-resource flags for the setup all summary display.
+
+    /// <summary>Phase 1: Service principal resolution completed for all specs.</summary>
+    public bool BatchPermissionsPhase1Completed { get; set; }
+
+    /// <summary>Phase 2: OAuth2 grants and inheritable permissions configured for all resources.</summary>
+    public bool BatchPermissionsPhase2Completed { get; set; }
+
+    /// <summary>
+    /// Phase 3: Admin consent was granted or already existed.
+    /// False with <see cref="AdminConsentUrl"/> set means the user is non-admin and consent is pending.
+    /// </summary>
+    public bool AdminConsentGranted { get; set; }
+
     /// <summary>
     /// Error message when Microsoft Graph inheritable permissions fail to configure.
     /// Non-null indicates failure. This is critical for agent token exchange functionality.

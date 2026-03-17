@@ -95,21 +95,8 @@ public class BotConfigurator : IBotConfigurator
 
                 _logger.LogInformation("Calling create endpoint directly...");
 
-                // Get authentication token interactively (unless skip-auth is specified)
-                string? authToken = null;
-                _logger.LogInformation("Getting authentication token...");
-
                 // Determine the audience (App ID) based on the environment
                 var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
-                authToken = await _authService.GetAccessTokenAsync(audience, tenantId);
-
-                if (string.IsNullOrWhiteSpace(authToken))
-                {
-                    _logger.LogError("Failed to acquire authentication token");
-                    return EndpointRegistrationResult.Failed;
-                }
-                _logger.LogInformation("Successfully acquired access token");
-
                 var normalizedLocation = NormalizeLocation(location);
                 var createEndpointBody = new JsonObject
                 {
@@ -122,30 +109,50 @@ public class BotConfigurator : IBotConfigurator
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
-                // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                // Call the endpoint
-                _logger.LogInformation("Making request to create endpoint (Location: {Location}).", normalizedLocation);
-
-                var response = await httpClient.PostAsync(createEndpointUrl,
-                 new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
-
-                if (!response.IsSuccessStatusCode)
+                // Attempt the request up to twice: first with a cached token, then with a
+                // force-refreshed token if the backend rejects with "Invalid roles".
+                // The "Invalid roles" 400 means the token's wids claim does not yet include
+                // the Agent ID role — this happens when a role was assigned after the token
+                // was cached. A forced refresh picks up the new role assignment.
+                for (int attempt = 0; attempt < 2; attempt++)
                 {
+                    bool forceRefresh = attempt > 0;
+
+                    _logger.LogInformation("Getting authentication token...");
+                    var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh);
+
+                    if (string.IsNullOrWhiteSpace(authToken))
+                    {
+                        _logger.LogError("Failed to acquire authentication token");
+                        return EndpointRegistrationResult.Failed;
+                    }
+                    _logger.LogInformation("Successfully acquired access token");
+
+                    using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+                    _logger.LogInformation("Making request to create endpoint (Location: {Location}).", normalizedLocation);
+
+                    using var response = await httpClient.PostAsync(createEndpointUrl,
+                        new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Successfully received response from create endpoint");
+                        return EndpointRegistrationResult.Created;
+                    }
+
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    
-                    // Check for "already exists" condition - must be bot/endpoint-specific to avoid false positives
-                    // Valid patterns:
+
+                    // Check for "already exists" condition — must be bot/endpoint-specific to avoid false positives.
                     // 1. HTTP 409 Conflict (standard REST pattern for resource conflicts)
                     // 2. HTTP 500 with bot-specific "already exists" message (Azure Bot Service pattern)
-                    //    - Must contain "already exists" AND at least one bot-specific keyword
                     bool isBotAlreadyExists = response.StatusCode == System.Net.HttpStatusCode.Conflict ||
                         (errorContent.Contains(AlreadyExistsErrorMessage, StringComparison.OrdinalIgnoreCase) &&
                          (errorContent.Contains("bot", StringComparison.OrdinalIgnoreCase) ||
                           errorContent.Contains("endpoint", StringComparison.OrdinalIgnoreCase) ||
                           errorContent.Contains(endpointName, StringComparison.OrdinalIgnoreCase)));
-                    
+
                     if (isBotAlreadyExists)
                     {
                         _logger.LogWarning("Endpoint '{EndpointName}' {AlreadyExistsMessage} in the resource group", endpointName, AlreadyExistsErrorMessage);
@@ -156,19 +163,54 @@ public class BotConfigurator : IBotConfigurator
                         _logger.LogInformation("  2. Register new endpoint: a365 setup blueprint --endpoint-only");
                         return EndpointRegistrationResult.AlreadyExists;
                     }
-                    
-                    // Log error only for actual failures (not idempotent "already exists" scenarios)
+
                     _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
 
-                    // Check for "Invalid roles" error code — user lacks the required role in the Agent 365 service.
-                    // Use the structured JSON "error" code field rather than the localised "message" field.
+                    // "Invalid roles" means the backend rejected the token's role claims.
+                    // On the first attempt, retry with a fresh token in case a role was assigned
+                    // after the token was cached. On the second attempt, inspect the token to
+                    // distinguish between a backend configuration issue and a missing role assignment.
                     if (TryGetErrorCode(errorContent) == "Invalid roles")
                     {
-                        var apiMessage = TryGetErrorMessage(errorContent);
-                        if (!string.IsNullOrWhiteSpace(apiMessage))
-                            _logger.LogError("{Message}", apiMessage);
+                        if (attempt == 0)
+                        {
+                            _logger.LogWarning(
+                                "Access token does not include the required Agent ID role — " +
+                                "this can happen when a role was assigned after the token was cached. " +
+                                "Retrying with a fresh token...");
+                            continue;
+                        }
+
+                        // Decode the token to understand why the backend rejected it.
+                        // If wids is absent but the correct delegated scope is present, the issue
+                        // is that the Agent365 Tools app registration has not configured wids as
+                        // an optional claim — the backend cannot see roles even if the user has them.
+                        var payload = TryDecodeJwtPayload(authToken);
+                        var hasWids = payload.HasValue && payload.Value.TryGetProperty("wids", out _);
+                        var hasBlueprintScope = payload.HasValue
+                            && payload.Value.TryGetProperty("scp", out var scp)
+                            && scp.GetString()?.Contains("AgentTools.AgentBluePrint", StringComparison.OrdinalIgnoreCase) == true;
+
+                        _logger.LogDebug("Token wids present: {HasWids}, blueprint scope present: {HasScope}", hasWids, hasBlueprintScope);
+
+                        if (!hasWids && hasBlueprintScope)
+                        {
+                            _logger.LogError(
+                                "The access token contains the required scope (AgentTools.AgentBluePrint.Create) " +
+                                "but is missing the wids claim that the backend uses for role validation. " +
+                                "This is a service configuration issue — the Agent365 Tools app registration " +
+                                "needs 'wids' added as an optional access token claim. " +
+                                "Please report this to the Agent365 team.");
+                        }
                         else
-                            _logger.LogError("API response: {Error}", errorContent);
+                        {
+                            var apiMessage = TryGetErrorMessage(errorContent);
+                            if (!string.IsNullOrWhiteSpace(apiMessage))
+                                _logger.LogError("{Message}", apiMessage);
+                            _logger.LogError(
+                                "Please verify that your account has the Agent ID Developer, " +
+                                "Agent ID Administrator, or Global Administrator role in Entra ID.");
+                        }
                         return EndpointRegistrationResult.Failed;
                     }
 
@@ -187,8 +229,8 @@ public class BotConfigurator : IBotConfigurator
                     return EndpointRegistrationResult.Failed;
                 }
 
-                _logger.LogInformation("Successfully received response from create endpoint");
-                return EndpointRegistrationResult.Created;
+                // Unreachable — the loop always returns. Satisfies the compiler.
+                return EndpointRegistrationResult.Failed;
             }
             catch (Exception ex)
             {
@@ -395,6 +437,33 @@ public class BotConfigurator : IBotConfigurator
             _logger.LogError(ex, "Unexpected error deleting endpoint with agent blueprint: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Base64url-decodes the JWT payload segment and returns it as a parsed JsonElement.
+    /// Returns null if the input is not a valid JWT or decoding fails.
+    /// Used to inspect token claims (e.g. wids, scp) for diagnostic purposes only.
+    /// </summary>
+    private static JsonElement? TryDecodeJwtPayload(string? jwt)
+    {
+        if (string.IsNullOrWhiteSpace(jwt)) return null;
+        var parts = jwt.Split('.');
+        if (parts.Length < 2) return null;
+        try
+        {
+            // Base64url → standard base64 → bytes → UTF-8 JSON
+            var padded = parts[1].Replace('-', '+').Replace('_', '/');
+            padded = (padded.Length % 4) switch
+            {
+                2 => padded + "==",
+                3 => padded + "=",
+                _ => padded
+            };
+            var bytes = Convert.FromBase64String(padded);
+            var json = System.Text.Encoding.UTF8.GetString(bytes);
+            return JsonDocument.Parse(json).RootElement.Clone();
+        }
+        catch { return null; }
     }
 
     /// <summary>

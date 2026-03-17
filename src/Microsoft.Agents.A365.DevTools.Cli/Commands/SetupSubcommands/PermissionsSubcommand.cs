@@ -334,7 +334,10 @@ internal static class PermissionsSubcommand
     /// </summary>
     internal static async Task<string[]> ReadMcpScopesAsync(string manifestPath, ILogger logger)
     {
-        return await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+        var scopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+        if (scopes.Length == 0)
+            logger.LogDebug("No MCP scopes found in manifest at {ManifestPath} — MCP permissions will be skipped.", manifestPath);
+        return scopes;
     }
 
     /// <summary>
