@@ -26,8 +26,8 @@ public class FrontierPreviewRequirementCheck : RequirementCheck
     {
         return ExecuteCheckWithLoggingAsync(config, logger, (_, __, ___) => Task.FromResult(
             RequirementCheckResult.Warning(
-                message: "Cannot automatically verify Frontier Preview Program enrollment",
-                details: "enrollment cannot be auto-verified. See: https://adoption.microsoft.com/copilot/frontier-program/"
+                message: "Tenant enrollment cannot be verified automatically",
+                details: "Ensure your tenant is enrolled before proceeding. See: https://adoption.microsoft.com/copilot/frontier-program/"
             )), cancellationToken);
     }
 }

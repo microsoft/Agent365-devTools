@@ -231,37 +231,15 @@ internal static class AllSubcommand
                         blueprintService,
                         blueprintLookupService,
                         federatedCredentialService,
-                        skipEndpointRegistration: false,
-                        correlationId: correlationId
-                        );
+                        skipEndpointRegistration: true,
+                        correlationId: correlationId,
+                        options: new BlueprintCreationOptions(DeferConsent: true));
 
                     setupResults.BlueprintCreated = result.BlueprintCreated;
                     setupResults.BlueprintAlreadyExisted = result.BlueprintAlreadyExisted;
-                    setupResults.MessagingEndpointRegistered = result.EndpointRegistered;
-                    setupResults.EndpointAlreadyExisted = result.EndpointAlreadyExisted;
-                    
-                    if (result.EndpointAlreadyExisted)
-                    {
-                        setupResults.Warnings.Add("Messaging endpoint already exists (not newly created)");
-                    }
 
-                    // If endpoint registration was attempted but failed, add to errors
-                    // Do NOT add error if registration was skipped (--no-endpoint or missing config)
-                    if (result.EndpointRegistrationAttempted && !result.EndpointRegistered)
-                    {
-                        var endpointErrorDetail = result.EndpointRegistrationFailureReason;
-                        setupResults.Errors.Add(string.IsNullOrWhiteSpace(endpointErrorDetail)
-                            ? "Messaging endpoint registration failed. Check log output above for details."
-                            : $"Messaging endpoint registration failed: {endpointErrorDetail}");
-                    }
-
-                    // Track Graph permissions status - critical for agent token exchange
-                    setupResults.GraphPermissionsConfigured = result.GraphPermissionsConfigured;
-                    if (!result.GraphPermissionsConfigured && !string.IsNullOrWhiteSpace(result.AdminConsentUrl))
-                    {
-                        setupResults.AdminConsentUrl = result.AdminConsentUrl;
-                        setupResults.Errors.Add("Admin consent required: current user does not have an admin role to grant tenant-wide consent.");
-                    }
+                    // Graph permissions and admin consent are deferred to the batch orchestrator
+                    // (DeferConsent: true above). Flags are updated in Step 4 after the orchestrator runs.
                     if (result.GraphInheritablePermissionsFailed)
                     {
                         setupResults.GraphInheritablePermissionsError = result.GraphInheritablePermissionsError
@@ -291,8 +269,8 @@ internal static class AllSubcommand
 
                     // CRITICAL: Wait for file system to ensure config file is fully written
                     // Blueprint creation writes directly to disk and may not be immediately readable
-                    logger.LogInformation("Ensuring configuration file is synchronized...");
-                    await Task.Delay(2000); // 2 second delay to ensure file write is complete
+                    logger.LogDebug("Waiting for config file write to complete...");
+                    await Task.Delay(2000);
 
                     // Reload config to get blueprint ID
                     // Use full path to ensure we're reading from the correct location
@@ -324,85 +302,121 @@ internal static class AllSubcommand
                     throw;
                 }
 
-                // Step 3: MCP Permissions
+                // Step 3: Configure all permissions (Graph + MCP + Bot x3 + Custom) in a single batch.
+                // Phase 1 — update blueprint requiredResourceAccess + resolve SPs once (non-admin).
+                // Phase 2 — create OAuth2 grants and inheritable permissions (non-admin).
+                // Phase 3 — single admin consent browser or one consolidated URL for non-admins.
                 try
                 {
-                    bool mcpPermissionSetup = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        executor,
-                        graphApiService,
-                        blueprintService,
-                        setupConfig,
-                        true,
-                        setupResults);
+                    // Pre-step: remove stale custom permissions before building the spec list.
+                    var desiredCustomIds = new HashSet<string>(
+                        (setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+                            .Select(p => p.ResourceAppId),
+                        StringComparer.OrdinalIgnoreCase);
+                    await PermissionsSubcommand.RemoveStaleCustomPermissionsAsync(
+                        logger, graphApiService, blueprintService, setupConfig, desiredCustomIds, CancellationToken.None);
 
-                    setupResults.McpPermissionsConfigured = mcpPermissionSetup;
-                    if (mcpPermissionSetup)
+                    // Build combined spec list.
+                    var mcpManifestPath = Path.Combine(
+                        setupConfig.DeploymentProjectPath ?? string.Empty,
+                        McpConstants.ToolingManifestFileName);
+                    var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
+                    var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+
+                    var specs = new List<ResourcePermissionSpec>
                     {
-                        setupResults.InheritablePermissionsConfigured = setupConfig.IsInheritanceConfigured();
+                        new ResourcePermissionSpec(
+                            AuthenticationConstants.MicrosoftGraphResourceAppId,
+                            "Microsoft Graph",
+                            setupConfig.AgentApplicationScopes.ToArray(),
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            mcpResourceAppId,
+                            "Agent 365 Tools",
+                            mcpScopes,
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            ConfigConstants.MessagingBotApiAppId,
+                            "Messaging Bot API",
+                            new[] { "Authorization.ReadWrite", "user_impersonation" },
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            ConfigConstants.ObservabilityApiAppId,
+                            "Observability API",
+                            new[] { "user_impersonation" },
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            PowerPlatformConstants.PowerPlatformApiResourceAppId,
+                            "Power Platform API",
+                            new[] { "Connectivity.Connections.Read" },
+                            SetInheritable: true),
+                    };
+
+                    foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+                    {
+                        var (isValid, _) = customPerm.Validate();
+                        if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+                        {
+                            var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                                ? customPerm.ResourceAppId
+                                : customPerm.ResourceName;
+                            specs.Add(new ResourcePermissionSpec(
+                                customPerm.ResourceAppId,
+                                resourceName,
+                                customPerm.Scopes.ToArray(),
+                                SetInheritable: true));
+                        }
                     }
+
+                    var (blueprintPermissionsUpdated, inheritedPermissionsConfigured, consentGranted, adminConsentUrl) =
+                        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                            graphApiService, blueprintService, setupConfig,
+                            setupConfig.AgentBlueprintId!, setupConfig.TenantId,
+                            specs, logger, setupResults, CancellationToken.None,
+                            knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+
+                    setupResults.McpPermissionsConfigured = consentGranted;
+                    setupResults.InheritablePermissionsConfigured = inheritedPermissionsConfigured;
+                    setupResults.BotApiPermissionsConfigured = consentGranted;
+                    setupResults.BotInheritablePermissionsConfigured = inheritedPermissionsConfigured;
+                    setupResults.GraphPermissionsConfigured = consentGranted;
+                    setupResults.GraphInheritablePermissionsConfigured = inheritedPermissionsConfigured;
+                    setupResults.CustomPermissionsConfigured = consentGranted;
+                    setupResults.AdminConsentUrl = adminConsentUrl;
+
+                    await configService.SaveStateAsync(setupConfig);
                 }
-                catch (Exception mcpPermEx)
+                catch (Exception permEx)
                 {
                     setupResults.McpPermissionsConfigured = false;
-                    setupResults.Errors.Add($"MCP Permissions: {mcpPermEx.Message}");
-                    logger.LogWarning("MCP permissions failed: {Message}. Setup will continue, but MCP server permissions must be configured manually", mcpPermEx.Message);
-                }
-
-                // Step 4: Bot API Permissions
-                try
-                {
-                    bool botPermissionSetup = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        executor,
-                        setupConfig,
-                        graphApiService,
-                        blueprintService,
-                        true,
-                        setupResults);
-
-                    setupResults.BotApiPermissionsConfigured = botPermissionSetup;
-                    if (botPermissionSetup)
-                    {
-                        setupResults.BotInheritablePermissionsConfigured = setupConfig.IsBotInheritanceConfigured();
-                    }
-                }
-                catch (Exception botPermEx)
-                {
                     setupResults.BotApiPermissionsConfigured = false;
-                    setupResults.Errors.Add($"Bot API Permissions: {botPermEx.Message}");
-                    logger.LogWarning("Bot permissions failed: {Message}. Setup will continue, but Bot API permissions must be configured manually", botPermEx.Message);
+                    setupResults.CustomPermissionsConfigured = false;
+                    setupResults.Errors.Add($"Permissions: {permEx.Message}");
+                    logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
                 }
 
-                // Step 5: Reconcile custom blueprint permissions — apply desired and remove stale entries.
-                // Always run (even when config is empty) to clean up any permissions no longer in config.
+                // Step 4: Register messaging endpoint — runs after blueprint is fully configured with permissions.
+                logger.LogInformation("");
+                logger.LogInformation("Registering blueprint messaging endpoint...");
                 try
                 {
-                    bool customPermissionsSetup = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        executor,
-                        graphApiService,
-                        blueprintService,
-                        setupConfig,
-                        true,
-                        setupResults);
+                    var (endpointSuccess, endpointAlreadyExisted) =
+                        await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+                            setupConfig, logger, botConfigurator, correlationId: correlationId);
 
-                    setupResults.CustomPermissionsConfigured = customPermissionsSetup;
+                    setupResults.MessagingEndpointRegistered = endpointSuccess;
+                    setupResults.EndpointAlreadyExisted = endpointAlreadyExisted;
                 }
-                catch (Exception customPermEx)
+                catch (Exception endpointEx)
                 {
-                    setupResults.CustomPermissionsConfigured = false;
-                    setupResults.Errors.Add($"Custom Blueprint Permissions: {customPermEx.Message}");
-                    logger.LogWarning("Custom permissions failed: {Message}. Setup will continue, but custom permissions must be configured manually", customPermEx.Message);
+                    setupResults.MessagingEndpointRegistered = false;
+                    setupResults.Errors.Add($"Messaging endpoint registration failed: {endpointEx.Message}");
+                    logger.LogWarning("Endpoint registration failed: {Message}", endpointEx.Message);
+                    logger.LogWarning("To retry after resolving the issue: a365 setup blueprint --endpoint-only");
                 }
 
-                // Display setup summary
+                // Display verification URLs and setup summary
+                await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
                 logger.LogInformation("");
                 SetupHelpers.DisplaySetupSummary(setupResults, logger);
             }

@@ -117,7 +117,8 @@ public sealed class MsalBrowserCredential : TokenCredential
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Failed to get window handle, falling back to system browser");
+                _logger?.LogDebug(ex, "Failed to get window handle");
+                _logger?.LogWarning("Failed to get window handle, falling back to system browser");
                 _useWam = false;
             }
         }
@@ -240,7 +241,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         {
             // Cache registration failure is non-fatal - authentication will still work,
             // but users may see more prompts during multi-step operations
-            logger?.LogWarning(ex, "Failed to register persistent token cache. Authentication prompts may be repeated.");
+            logger?.LogDebug(ex, "Failed to register persistent token cache");
+            logger?.LogWarning("Failed to register persistent token cache. Authentication prompts may be repeated.");
         }
     }
 
@@ -375,7 +377,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
         catch (MsalException ex)
         {
-            _logger?.LogError(ex, "MSAL authentication failed: {Message}", ex.Message);
+            _logger?.LogDebug(ex, "MSAL authentication failed");
+            _logger?.LogError("MSAL authentication failed: {Message}", ex.Message);
             throw new MsalAuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
         }
     }
@@ -444,7 +447,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
         catch (MsalException msalEx)
         {
-            _logger?.LogError(msalEx, "Device code authentication failed: {Message}", msalEx.Message);
+            _logger?.LogDebug(msalEx, "Device code authentication failed");
+            _logger?.LogError("Device code authentication failed: {Message}", msalEx.Message);
             throw new MsalAuthenticationFailedException($"Device code authentication failed: {msalEx.Message}", msalEx);
         }
     }

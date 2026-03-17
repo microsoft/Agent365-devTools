@@ -33,8 +33,15 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
         TextWriter textWriter)
     {
         var message = logEntry.Formatter?.Invoke(logEntry.State, logEntry.Exception);
-        if (string.IsNullOrEmpty(message))
+        if (message == null)
         {
+            return;
+        }
+
+        // Allow empty strings as intentional blank lines for visual spacing
+        if (message.Length == 0)
+        {
+            textWriter.WriteLine();
             return;
         }
 

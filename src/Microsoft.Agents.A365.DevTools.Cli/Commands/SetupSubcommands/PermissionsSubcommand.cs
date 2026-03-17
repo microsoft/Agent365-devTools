@@ -329,6 +329,15 @@ internal static class PermissionsSubcommand
     }
 
     /// <summary>
+    /// Reads the required MCP server OAuth2 scopes from the tooling manifest file.
+    /// Returns an empty array when the manifest is absent or unreadable.
+    /// </summary>
+    internal static async Task<string[]> ReadMcpScopesAsync(string manifestPath, ILogger logger)
+    {
+        return await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+    }
+
+    /// <summary>
     /// Configures MCP server permissions (OAuth2 grants and inheritable permissions).
     /// Public method that can be called by AllSubcommand.
     /// </summary>
@@ -350,25 +359,20 @@ internal static class PermissionsSubcommand
 
         try
         {
-            // Read scopes from ToolingManifest.json
             var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
-            var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
-
+            var toolingScopes = await ReadMcpScopesAsync(manifestPath, logger);
             var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
 
-            // Configure all permissions using unified method
-            await SetupHelpers.EnsureResourcePermissionsAsync(
-                graphApiService,
-                blueprintService,
-                setupConfig,
-                resourceAppId,
-                "Agent 365 Tools",
-                toolingScopes,
-                logger,
-                addToRequiredResourceAccess: false,
-                setInheritablePermissions: true,
-                setupResults,
-                cancellationToken);
+            var specs = new List<ResourcePermissionSpec>
+            {
+                new ResourcePermissionSpec(resourceAppId, "Agent 365 Tools", toolingScopes, SetInheritable: true),
+            };
+
+            var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                graphApiService, blueprintService, setupConfig,
+                setupConfig.AgentBlueprintId!, setupConfig.TenantId,
+                specs, logger, setupResults, cancellationToken,
+                knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
 
             logger.LogInformation("");
             logger.LogInformation("MCP server permissions configured successfully");
@@ -378,9 +382,8 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Next step: 'a365 setup permissions bot' to configure Bot API permissions");
             }
 
-            // write changes to generated config
             await configService.SaveStateAsync(setupConfig);
-            return true;
+            return consentGranted;
         }
         catch (Exception mcpEx)
         {
@@ -419,60 +422,31 @@ internal static class PermissionsSubcommand
 
         try
         {
-            // Configure Messaging Bot API permissions using unified method
-            // Note: Messaging Bot API is a first-party Microsoft service with custom OAuth2 scopes
-            // that are not published in the standard service principal permissions.
-            // We skip addToRequiredResourceAccess because the scopes won't be found there.
-            // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
-            await SetupHelpers.EnsureResourcePermissionsAsync(
-                graphService,
-                blueprintService,
-                setupConfig,
-                ConfigConstants.MessagingBotApiAppId,
-                "Messaging Bot API",
-                new[] { "Authorization.ReadWrite", "user_impersonation" },
-                logger,
-                addToRequiredResourceAccess: false,
-                setInheritablePermissions: true,
-                setupResults,
-                cancellationToken);
+            var specs = new List<ResourcePermissionSpec>
+            {
+                new ResourcePermissionSpec(
+                    ConfigConstants.MessagingBotApiAppId,
+                    "Messaging Bot API",
+                    new[] { "Authorization.ReadWrite", "user_impersonation" },
+                    SetInheritable: true),
+                new ResourcePermissionSpec(
+                    ConfigConstants.ObservabilityApiAppId,
+                    "Observability API",
+                    new[] { "user_impersonation" },
+                    SetInheritable: true),
+                new ResourcePermissionSpec(
+                    PowerPlatformConstants.PowerPlatformApiResourceAppId,
+                    "Power Platform API",
+                    new[] { "Connectivity.Connections.Read" },
+                    SetInheritable: true),
+            };
 
-            // Configure Observability API permissions using unified method
-            // Note: Observability API is also a first-party Microsoft service
-            await SetupHelpers.EnsureResourcePermissionsAsync(
-                graphService,
-                blueprintService,
-                setupConfig,
-                ConfigConstants.ObservabilityApiAppId,
-                "Observability API",
-                new[] { "user_impersonation" },
-                logger,
-                addToRequiredResourceAccess: false,
-                setInheritablePermissions: true,
-                setupResults,
-                cancellationToken);
+            var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                graphService, blueprintService, setupConfig,
+                setupConfig.AgentBlueprintId!, setupConfig.TenantId,
+                specs, logger, setupResults, cancellationToken,
+                knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
 
-            // Configure Power Platform API permissions using unified method
-            // Note: Using the Power Platform API (8578e004-a5c6-46e7-913e-12f58912df43) which is
-            // the Power Platform API for agent operations. This API exposes Connectivity.Connections.Read
-            // for reading Power Platform connections.
-            // Similar to Messaging Bot API, we skip addToRequiredResourceAccess because the scopes
-            // won't be found in the standard service principal permissions.
-            // The permissions appear in the portal via OAuth2 grants and inheritable permissions.
-            await SetupHelpers.EnsureResourcePermissionsAsync(
-                graphService,
-                blueprintService,
-                setupConfig,
-                PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                "Power Platform API",
-                new[] { "Connectivity.Connections.Read" },
-                logger,
-                addToRequiredResourceAccess: false,
-                setInheritablePermissions: true,
-                setupResults,
-                cancellationToken);
-
-            // write changes to generated config
             await configService.SaveStateAsync(setupConfig);
 
             logger.LogInformation("");
@@ -482,11 +456,11 @@ internal static class PermissionsSubcommand
             {
                 logger.LogInformation("Next step: Deploy your agent (run 'a365 deploy' if hosting on Azure)");
             }
-            return true;
+            return consentGranted;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to configure Bot API permissions: {Message}", ex.Message);
+            logger.LogError("Failed to configure Bot API permissions: {Message}", ex.Message);
             if (iSetupAll)
             {
                 throw;
@@ -500,7 +474,7 @@ internal static class PermissionsSubcommand
     /// Standard (CLI-managed) permissions (MCP, Bot API, Graph, etc.) are never touched.
     /// OAuth2 grants for removed entries are also revoked on a best-effort basis.
     /// </summary>
-    private static async Task RemoveStaleCustomPermissionsAsync(
+    internal static async Task RemoveStaleCustomPermissionsAsync(
         ILogger logger,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
@@ -675,6 +649,8 @@ internal static class PermissionsSubcommand
             }
 
             var hasValidationFailures = false;
+            var specList = new List<ResourcePermissionSpec>();
+
             foreach (var customPerm in setupConfig.CustomBlueprintPermissions)
             {
                 // Auto-resolve resource name if not provided
@@ -697,7 +673,6 @@ internal static class PermissionsSubcommand
                         }
                         else
                         {
-                            // Fallback if lookup fails - use safe helper method
                             customPerm.ResourceName = CreateFallbackResourceName(customPerm.ResourceAppId);
                             logger.LogWarning("  - Could not resolve resource name, using fallback: {ResourceName}",
                                 customPerm.ResourceName);
@@ -705,15 +680,11 @@ internal static class PermissionsSubcommand
                     }
                     catch (Exception ex)
                     {
-                        // Fallback if lookup fails - use safe helper method
                         customPerm.ResourceName = CreateFallbackResourceName(customPerm.ResourceAppId);
-                        logger.LogWarning(ex, "  - Failed to auto-resolve resource name: {Message}. Using fallback: {ResourceName}",
+                        logger.LogWarning("  - Failed to auto-resolve resource name: {Message}. Using fallback: {ResourceName}",
                             ex.Message, customPerm.ResourceName);
                     }
                 }
-
-                logger.LogInformation("Configuring {ResourceName} ({ResourceAppId})...",
-                    customPerm.ResourceName, customPerm.ResourceAppId);
 
                 // Validate
                 var (isValid, errors) = customPerm.Validate();
@@ -728,24 +699,23 @@ internal static class PermissionsSubcommand
                     continue;
                 }
 
-                // Use the same unified method as standard permissions
-                // Note: Agent Blueprints don't support requiredResourceAccess via v1.0 API
-                // (same limitation as CopilotStudio and MCP permissions)
-                await SetupHelpers.EnsureResourcePermissionsAsync(
-                    graphApiService,
-                    blueprintService,
-                    setupConfig,
+                specList.Add(new ResourcePermissionSpec(
                     customPerm.ResourceAppId,
                     customPerm.ResourceName,
                     customPerm.Scopes.ToArray(),
-                    logger,
-                    addToRequiredResourceAccess: false,  // Skip requiredResourceAccess - not supported for Agent Blueprints
-                    setInheritablePermissions: true,      // Inheritable permissions work correctly
-                    setupResults,
-                    cancellationToken);
+                    SetInheritable: true));
+            }
 
-                logger.LogInformation("  - {ResourceName} configured successfully",
-                    customPerm.ResourceName);
+            if (specList.Count > 0)
+            {
+                var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                    graphApiService, blueprintService, setupConfig,
+                    setupConfig.AgentBlueprintId!, setupConfig.TenantId,
+                    specList, logger, setupResults, cancellationToken,
+                    knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+
+                if (!consentGranted)
+                    hasValidationFailures = true;
             }
 
             logger.LogInformation("");
@@ -755,7 +725,6 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Custom blueprint permissions configured successfully");
             logger.LogInformation("");
 
-            // Save dynamic state changes to the generated config (CustomBlueprintPermissions is not persisted here)
             await configService.SaveStateAsync(setupConfig);
             return !hasValidationFailures;
         }
@@ -767,8 +736,7 @@ internal static class PermissionsSubcommand
                 throw;
             }
 
-            // Only log when handling the error here (standalone command)
-            logger.LogError(ex, "Failed to configure custom blueprint permissions: {Message}", ex.Message);
+            logger.LogError("Failed to configure custom blueprint permissions: {Message}", ex.Message);
             return false;
         }
     }

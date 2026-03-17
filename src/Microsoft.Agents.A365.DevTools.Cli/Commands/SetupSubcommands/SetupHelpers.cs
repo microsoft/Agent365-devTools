@@ -23,7 +23,6 @@ internal static class SetupHelpers
     {
         try
         {
-            logger.LogInformation("Generating verification information...");
             var baseDir = setupConfigFile.DirectoryName ?? Environment.CurrentDirectory;
             var generatedConfigPath = Path.Combine(baseDir, "a365.generated.config.json");
             
@@ -37,31 +36,37 @@ internal static class SetupHelpers
             using var doc = await JsonDocument.ParseAsync(stream);
             var root = doc.RootElement;
 
+            var urls = new List<(string Label, string Url)>();
+
+            // Azure Web App URL
+            if (root.TryGetProperty("appServiceName", out var appServiceProp) && !string.IsNullOrWhiteSpace(appServiceProp.GetString()))
+            {
+                urls.Add(("Agent Web App", $"https://{appServiceProp.GetString()}.azurewebsites.net"));
+            }
+
+            // Azure Resource Group
+            if (root.TryGetProperty("resourceGroup", out var rgProp) && !string.IsNullOrWhiteSpace(rgProp.GetString()))
+            {
+                var subscriptionId = root.TryGetProperty("subscriptionId", out var subProp) ? subProp.GetString() : "{subscription}";
+                urls.Add(("Azure Resource Group", $"https://portal.azure.com/#@/resource/subscriptions/{subscriptionId}/resourceGroups/{rgProp.GetString()}"));
+            }
+
+            // Entra ID Application
+            if (root.TryGetProperty("agentBlueprintId", out var blueprintProp) && !string.IsNullOrWhiteSpace(blueprintProp.GetString()))
+            {
+                urls.Add(("Entra ID Application", $"https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{blueprintProp.GetString()}"));
+            }
+
+            if (urls.Count == 0)
+                return;
+
             logger.LogInformation("");
             logger.LogInformation("Verification URLs:");
             logger.LogInformation("==========================================");
 
-            // Azure Web App URL
-            if (root.TryGetProperty("AppServiceName", out var appServiceProp) && !string.IsNullOrWhiteSpace(appServiceProp.GetString()))
+            foreach (var (label, url) in urls)
             {
-                var webAppUrl = $"https://{appServiceProp.GetString()}.azurewebsites.net";
-                logger.LogInformation("Agent Web App: {Url}", webAppUrl);
-            }
-
-            // Azure Resource Group
-            if (root.TryGetProperty("ResourceGroup", out var rgProp) && !string.IsNullOrWhiteSpace(rgProp.GetString()))
-            {
-                var resourceGroup = rgProp.GetString();
-                logger.LogInformation("Azure Resource Group: https://portal.azure.com/#@/resource/subscriptions/{SubscriptionId}/resourceGroups/{ResourceGroup}",
-                    root.TryGetProperty("SubscriptionId", out var subProp) ? subProp.GetString() : "{subscription}", 
-                    resourceGroup);
-            }
-
-            // Entra ID Application
-            if (root.TryGetProperty("AgentBlueprintId", out var blueprintProp) && !string.IsNullOrWhiteSpace(blueprintProp.GetString()))
-            {
-                logger.LogInformation("Entra ID Application: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{AppId}",
-                    blueprintProp.GetString());
+                logger.LogInformation("{Label}: {Url}", label, url);
             }
         }
         catch (Exception ex)
@@ -141,9 +146,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-            {
                 logger.LogInformation("  [WARN] {Warning}", warning);
-            }
         }
         
         logger.LogInformation("");
@@ -154,40 +157,43 @@ internal static class SetupHelpers
             logger.LogWarning("Setup completed with errors");
             logger.LogInformation("");
             logger.LogInformation("Recovery Actions:");
-            
-            if (!results.McpPermissionsConfigured || !results.InheritablePermissionsConfigured)
+
+            // When a consent URL is present, all permission failures share the same root cause:
+            // admin consent has not been granted. Consolidate around the URL instead of listing
+            // individual permission commands that will also fail without consent.
+            if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
             {
-                logger.LogInformation("  - MCP Tools Permissions: Run 'a365 setup permissions mcp' to retry");
+                logger.LogInformation("  - Permissions: Admin consent is required to complete permission setup.");
+                logger.LogInformation("    Ask your tenant administrator to grant consent at:");
+                logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
+                logger.LogInformation("    After consent is granted, run 'a365 setup admin' to complete the consent step.");
             }
-            
-            if (!results.BotApiPermissionsConfigured || !results.BotInheritablePermissionsConfigured)
+            else
             {
-                logger.LogInformation("  - Messaging Bot API Permissions: Run 'a365 setup permissions bot' to retry");
-            }
-            
-            if (!results.GraphPermissionsConfigured || !results.GraphInheritablePermissionsConfigured)
-            {
-                if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
+                if (!results.McpPermissionsConfigured || !results.InheritablePermissionsConfigured)
                 {
-                    logger.LogInformation("  - Microsoft Graph Permissions: Admin consent is required.");
-                    logger.LogInformation("    Ask your tenant administrator to grant consent at:");
-                    logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
+                    logger.LogInformation("  - MCP Tools Permissions: Run 'a365 setup permissions mcp' to retry");
                 }
-                else
+
+                if (!results.BotApiPermissionsConfigured || !results.BotInheritablePermissionsConfigured)
+                {
+                    logger.LogInformation("  - Messaging Bot API Permissions: Run 'a365 setup permissions bot' to retry");
+                }
+
+                if (!results.GraphPermissionsConfigured || !results.GraphInheritablePermissionsConfigured)
                 {
                     logger.LogInformation("  - Microsoft Graph Permissions: Run 'a365 setup blueprint' to retry");
                 }
-            }
 
-            if (!results.CustomPermissionsConfigured && results.Errors.Any(e => e.Contains("custom", StringComparison.OrdinalIgnoreCase)))
-            {
-                logger.LogInformation("  - Custom Blueprint Permissions: Run 'a365 setup permissions custom' to retry");
+                if (!results.CustomPermissionsConfigured && results.Errors.Any(e => e.Contains("custom", StringComparison.OrdinalIgnoreCase)))
+                {
+                    logger.LogInformation("  - Custom Blueprint Permissions: Run 'a365 setup permissions custom' to retry");
+                }
             }
 
             if (!results.MessagingEndpointRegistered)
             {
                 logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
-                logger.LogInformation("    Run 'a365 setup requirements' to check for missing prerequisites (e.g. Agent 365 service role)");
                 logger.LogInformation("    If there's a conflicting endpoint, delete it first: a365 cleanup blueprint --endpoint-only");
             }
         }
@@ -302,7 +308,8 @@ internal static class SetupHelpers
                 resourceAppId,
                 scopes,
                 isDelegated: true,
-                ct);
+                ct,
+                requiredScopes: permissionGrantScopes);
 
             if (!addedResourceAccess)
             {

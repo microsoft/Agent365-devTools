@@ -49,6 +49,7 @@ public sealed class DelegatedConsentService
         try
         {
             _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app");
+            _logger.LogInformation("");
             _logger.LogInformation("    Client App ID: {AppId}", callingAppId);
             _logger.LogInformation("    Tenant ID: {TenantId}", tenantId);
             _logger.LogInformation("    Required Scope: {Scope}", TargetScope);

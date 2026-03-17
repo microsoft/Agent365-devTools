@@ -155,7 +155,7 @@ public class CleanConsoleFormatterTests : IDisposable
     }
 
     [Fact]
-    public void Write_WithEmptyMessage_DoesNotWriteAnything()
+    public void Write_WithEmptyMessage_WritesBlankLine()
     {
         // Arrange
         var logEntry = CreateLogEntry(LogLevel.Information, string.Empty);
@@ -163,8 +163,8 @@ public class CleanConsoleFormatterTests : IDisposable
         // Act
         _formatter.Write(logEntry, null, _consoleWriter);
 
-        // Assert
-        _consoleWriter.ToString().Should().BeEmpty();
+        // Assert - empty string creates intentional blank line for visual spacing
+        _consoleWriter.ToString().Should().Be(Environment.NewLine);
     }
 
     [Fact]

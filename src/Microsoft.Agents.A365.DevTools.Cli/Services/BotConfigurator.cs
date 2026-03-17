@@ -164,11 +164,11 @@ public class BotConfigurator : IBotConfigurator
                     // Use the structured JSON "error" code field rather than the localised "message" field.
                     if (TryGetErrorCode(errorContent) == "Invalid roles")
                     {
-                        _logger.LogError("Your account does not have the required role in the Agent 365 service to register messaging endpoints.");
-                        _logger.LogError("Contact your Agent 365 tenant administrator to assign the required role to: {Account}",
-                            "your account (visible in 'az ad signed-in-user show')");
-                        _logger.LogError("In Entra ID: Enterprise Applications -> Agent 365 Tools -> Users and groups -> Add user/group");
-                        _logger.LogError("After the role is assigned, re-run: a365 setup blueprint --endpoint-only");
+                        var apiMessage = TryGetErrorMessage(errorContent);
+                        if (!string.IsNullOrWhiteSpace(apiMessage))
+                            _logger.LogError("{Message}", apiMessage);
+                        else
+                            _logger.LogError("API response: {Error}", errorContent);
                         return EndpointRegistrationResult.Failed;
                     }
 
@@ -411,6 +411,22 @@ public class BotConfigurator : IBotConfigurator
                 errorElement.ValueKind == JsonValueKind.String)
             {
                 return errorElement.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
+    }
+
+    private static string? TryGetErrorMessage(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (doc.RootElement.TryGetProperty("message", out var messageElement) &&
+                messageElement.ValueKind == JsonValueKind.String)
+            {
+                return messageElement.GetString();
             }
         }
         catch { /* ignore parse errors */ }

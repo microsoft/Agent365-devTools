@@ -204,6 +204,7 @@ public static class InfrastructureSubcommand
         {
             logger.LogWarning("No deploymentProjectPath specified, defaulting to .NET runtime");
         }
+        logger.LogInformation("");
 
         logger.LogInformation("Agent 365 Setup Infrastructure - Starting...");
         logger.LogInformation("Subscription: {Sub}", subscriptionId);
@@ -229,6 +230,7 @@ public static class InfrastructureSubcommand
         else
         {
             logger.LogInformation("==> Skipping Azure management authentication (--skipInfrastructure or External hosting)");
+            logger.LogInformation("");
         }
 
         var (principalId, anyAlreadyExisted) = await CreateInfrastructureAsync(
@@ -262,6 +264,7 @@ public static class InfrastructureSubcommand
         CancellationToken cancellationToken = default)
     {
         logger.LogInformation("==> Verifying Azure CLI authentication");
+        logger.LogInformation("");
         
         // Check if logged in
         var accountCheck = await executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true, cancellationToken: cancellationToken);
@@ -368,6 +371,7 @@ public static class InfrastructureSubcommand
             var modeMessage = "External hosting (non-Azure)";
 
             logger.LogInformation("==> Skipping Azure infrastructure ({Mode})", modeMessage);
+            logger.LogInformation("");
             logger.LogInformation("Loading existing configuration...");
 
             // Load existing generated config if available
@@ -409,6 +413,7 @@ public static class InfrastructureSubcommand
         else
         {
             logger.LogInformation("==> Deploying App Service + enabling Managed Identity");
+            logger.LogInformation("");
 
             // Set subscription context
             try

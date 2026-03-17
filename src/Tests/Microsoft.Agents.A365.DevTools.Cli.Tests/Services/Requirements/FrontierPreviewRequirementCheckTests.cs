@@ -37,8 +37,8 @@ public class FrontierPreviewRequirementCheckTests
         result.Passed.Should().BeTrue("check should pass to allow user to proceed despite warning");
         result.IsWarning.Should().BeTrue("check should be flagged as a warning");
         result.Details.Should().NotBeNullOrEmpty();
-        result.Details.Should().Contain("auto-verified");
-        result.ErrorMessage.Should().Contain("Cannot automatically verify");
+        result.Details.Should().Contain("enrolled");
+        result.ErrorMessage.Should().Contain("cannot be verified automatically");
         result.ResolutionGuidance.Should().BeNullOrEmpty("warning checks don't have resolution guidance");
     }
 
@@ -92,7 +92,7 @@ public class FrontierPreviewRequirementCheckTests
 
         // Assert
         // Verify the result mentions the auto-verification limitation
-        result.Details.Should().Contain("auto-verified");
+        result.Details.Should().Contain("enrolled");
     }
 
     [Fact]

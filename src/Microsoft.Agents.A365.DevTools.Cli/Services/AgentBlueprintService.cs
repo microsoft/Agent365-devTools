@@ -416,7 +416,12 @@ public class AgentBlueprintService
                 var err = string.IsNullOrWhiteSpace(createdResp.Body)
                     ? $"HTTP {createdResp.StatusCode} {createdResp.ReasonPhrase}"
                     : createdResp.Body;
-                _logger.LogError("Failed to create inheritable permissions: {Status} {Reason} Body: {Body}", createdResp.StatusCode, createdResp.ReasonPhrase, createdResp.Body);
+                // 403 means insufficient role (Agent ID Administrator required) — expected for
+                // non-admin users; logged at debug to avoid noise. Other failures are warnings.
+                if ((int)createdResp.StatusCode == 403)
+                    _logger.LogDebug("Inheritable permissions not set (insufficient role): {Status} Body: {Body}", createdResp.StatusCode, createdResp.Body);
+                else
+                    _logger.LogWarning("Failed to create inheritable permissions: {Status} {Reason} Body: {Body}", createdResp.StatusCode, createdResp.ReasonPhrase, createdResp.Body);
                 return (ok: false, alreadyExists: false, error: err);
             }
 
@@ -680,12 +685,13 @@ public class AgentBlueprintService
         string resourceAppId,
         IEnumerable<string> scopes,
         bool isDelegated = true,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IEnumerable<string>? requiredScopes = null)
     {
         try
         {
             // Get the application object by appId
-            var appsDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{appId}'&$select=id,requiredResourceAccess", ct);
+            var appsDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{appId}'&$select=id,requiredResourceAccess", ct, scopes: requiredScopes);
             if (appsDoc == null)
             {
                 _logger.LogError("Failed to retrieve application with appId {AppId}", appId);
@@ -707,7 +713,7 @@ public class AgentBlueprintService
             var objectId = idProp.GetString()!;
 
             // Get the resource service principal to look up permission IDs
-            var resourceSp = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct);
+            var resourceSp = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct, requiredScopes);
             if (string.IsNullOrEmpty(resourceSp))
             {
                 _logger.LogError("Resource service principal not found for appId {ResourceAppId}", resourceAppId);
@@ -715,7 +721,7 @@ public class AgentBlueprintService
             }
 
             // Get the resource SP's published permissions
-            var resourceSpDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{resourceSp}?$select=oauth2PermissionScopes,appRoles", ct);
+            var resourceSpDoc = await _graphApiService.GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{resourceSp}?$select=oauth2PermissionScopes,appRoles", ct, scopes: requiredScopes);
             if (resourceSpDoc == null)
             {
                 _logger.LogError("Failed to retrieve resource service principal {ResourceSp}", resourceSp);
@@ -827,7 +833,7 @@ public class AgentBlueprintService
                 requiredResourceAccess = resourceAccessList
             };
 
-            var updated = await _graphApiService.GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}", patchPayload, ct);
+            var updated = await _graphApiService.GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}", patchPayload, ct, scopes: requiredScopes);
             if (updated)
             {
                 _logger.LogInformation("Successfully added required resource access for {ResourceAppId} to application {AppId}", resourceAppId, appId);

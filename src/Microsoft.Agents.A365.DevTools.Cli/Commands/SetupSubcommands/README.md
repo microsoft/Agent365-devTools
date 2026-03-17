@@ -12,10 +12,13 @@ This folder contains the workflow components for the `a365 setup` command. The s
 |-----------|------|-------------|
 | **AllSubcommand** | `AllSubcommand.cs` | Orchestrates the complete setup workflow (`a365 setup all`) |
 | **BlueprintSubcommand** | `BlueprintSubcommand.cs` | Creates agent blueprint application registration |
+| **BlueprintCreationOptions** | `BlueprintCreationOptions.cs` | Options record for blueprint creation (e.g. `DeferConsent`) |
 | **InfrastructureSubcommand** | `InfrastructureSubcommand.cs` | Provisions Azure infrastructure (App Service, etc.) |
 | **PermissionsSubcommand** | `PermissionsSubcommand.cs` | Configures Graph API permissions and admin consent |
+| **BatchPermissionsOrchestrator** | `BatchPermissionsOrchestrator.cs` | Three-phase batch permissions flow used by `setup all` and standalone permission commands |
+| **ResourcePermissionSpec** | `ResourcePermissionSpec.cs` | Spec record describing a single resource's required permissions |
 | **RequirementsSubcommand** | `RequirementsSubcommand.cs` | Validates prerequisites (Azure CLI, permissions) |
-| **SetupHelpers** | `SetupHelpers.cs` | Shared helper methods for setup operations |
+| **SetupHelpers** | `SetupHelpers.cs` | Shared helper methods; `EnsureResourcePermissionsAsync` used by standalone callers and `CopilotStudioSubcommand` |
 | **SetupResults** | `SetupResults.cs` | Result models for setup operations |
 
 ---
@@ -64,11 +67,21 @@ a365 setup permissions     # Configure permissions only
 
 ---
 
+## BatchPermissionsOrchestrator
+
+`BatchPermissionsOrchestrator.cs` implements a three-phase batch permissions flow used by `setup all` and the standalone `setup permissions` subcommands:
+
+- **Phase 1 — Resolve service principals** (non-admin): Pre-warms the delegated token and resolves all SP IDs once. `requiredResourceAccess` is not updated here — it is not supported for Agent Blueprints.
+- **Phase 2 — Configure inherited permissions** (Agent ID Administrator or Global Administrator): Creates OAuth2 grants and sets inheritable permissions using IDs from Phase 1. A 403 response is caught silently and treated as insufficient role — one consolidated warning is emitted without additional API calls.
+- **Phase 3 — Grant admin consent** (Global Administrator only, or URL for non-admins): Checks for existing consent before opening a browser. Returns a consolidated URL when the user lacks the Global Administrator role.
+
+`CopilotStudioSubcommand` is out of scope and continues to call `EnsureResourcePermissionsAsync` directly.
+
 ## SetupHelpers
 
 The `SetupHelpers.cs` file contains shared functionality:
 
-- **EnsureResourcePermissionsAsync** - Configures all three permission layers with retry logic
+- **EnsureResourcePermissionsAsync** - Configures permissions for a single resource with retry logic; used by standalone `CopilotStudioSubcommand` and direct callers
 - **WaitForPermissionPropagationAsync** - Waits for Entra ID permission propagation
 - **ValidateConfigurationAsync** - Validates configuration before setup operations
 

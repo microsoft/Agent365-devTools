@@ -312,7 +312,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "MSAL Graph token fallback failed: {Message}", ex.Message);
+            _logger.LogDebug(ex, "MSAL Graph token fallback failed");
+            _logger.LogWarning("MSAL Graph token fallback failed: {Message}", ex.Message);
             return null;
         }
     }

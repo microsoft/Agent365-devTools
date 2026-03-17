@@ -689,9 +689,8 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Checks whether the currently signed-in user holds one of the Entra directory roles
-    /// that can grant tenant-wide admin consent (Global Administrator, Privileged Role Administrator,
-    /// Application Administrator, Cloud Application Administrator).
+    /// Checks whether the currently signed-in user holds the Global Administrator role,
+    /// which is required to grant tenant-wide admin consent interactively.
     /// Requires the <c>RoleManagement.Read.Directory</c> delegated permission on the client app.
     /// Returns false (non-blocking) if the check cannot be completed.
     /// </summary>
@@ -699,14 +698,8 @@ public class GraphApiService
         string tenantId,
         CancellationToken ct = default)
     {
-        // Well-known role template IDs that can grant admin consent
-        var adminRoleTemplateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "62e90394-69f5-4237-9190-012177145e10", // Global Administrator
-            "e8611ab8-c189-46e8-94e1-60213ab1f814", // Privileged Role Administrator
-            "9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c1", // Application Administrator
-            "158c047a-c907-4556-b7ef-446551a6b5f7",  // Cloud Application Administrator
-        };
+        // Only Global Administrator can grant tenant-wide admin consent interactively
+        const string globalAdminTemplateId = "62e90394-69f5-4237-9190-012177145e10";
 
         try
         {
@@ -722,7 +715,7 @@ public class GraphApiService
             foreach (var role in roles.EnumerateArray())
             {
                 if (role.TryGetProperty("roleTemplateId", out var id) &&
-                    adminRoleTemplateIds.Contains(id.GetString() ?? ""))
+                    string.Equals(id.GetString(), globalAdminTemplateId, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
 
@@ -731,6 +724,46 @@ public class GraphApiService
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not determine admin role for current user: {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Checks whether the currently signed-in user holds the Agent ID Administrator role,
+    /// which is required to create or update inheritable permissions on agent blueprints.
+    /// Requires the <c>RoleManagement.Read.Directory</c> delegated permission on the client app.
+    /// Returns false (non-blocking) if the check cannot be completed.
+    /// </summary>
+    public virtual async Task<bool> IsCurrentUserAgentIdAdminAsync(
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        // Well-known template ID for the "Agent ID Administrator" built-in Entra role
+        const string agentIdAdminTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f";
+
+        try
+        {
+            var doc = await GraphGetAsync(
+                tenantId,
+                "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId",
+                ct,
+                scopes: [AuthenticationConstants.RoleManagementReadDirectoryScope]);
+
+            if (doc == null || !doc.RootElement.TryGetProperty("value", out var roles))
+                return false;
+
+            foreach (var role in roles.EnumerateArray())
+            {
+                if (role.TryGetProperty("roleTemplateId", out var id) &&
+                    string.Equals(id.GetString(), agentIdAdminTemplateId, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not determine Agent ID Administrator role for current user: {Message}", ex.Message);
             return false;
         }
     }

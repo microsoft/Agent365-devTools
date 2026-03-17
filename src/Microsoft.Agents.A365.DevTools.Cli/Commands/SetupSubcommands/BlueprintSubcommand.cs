@@ -365,7 +365,8 @@ internal static class BlueprintSubcommand
         FederatedCredentialService federatedCredentialService,
         bool skipEndpointRegistration = false,
         string? correlationId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        BlueprintCreationOptions? options = null)
     {
         // Validate location before logging the header — prevents confusing output where the heading
         // appears but setup immediately fails due to a missing config value.
@@ -384,6 +385,7 @@ internal static class BlueprintSubcommand
 
         logger.LogInformation("");
         logger.LogInformation("==> Creating Agent Blueprint");
+        logger.LogInformation("");
 
         var generatedConfigPath = Path.Combine(
             config.DirectoryName ?? Environment.CurrentDirectory,
@@ -480,7 +482,8 @@ internal static class BlueprintSubcommand
                 setupConfig,
                 configService,
                 config,
-                cancellationToken);
+                cancellationToken,
+                options);
 
         if (!blueprintResult.success)
         {
@@ -599,8 +602,7 @@ internal static class BlueprintSubcommand
                 endpointFailureReason = endpointEx.Message;
                 logger.LogWarning("");
                 logger.LogWarning("Endpoint registration failed: {Message}", endpointEx.Message);
-                logger.LogWarning("Run 'a365 setup requirements' to diagnose prerequisite issues (e.g. missing Agent 365 service role)");
-                logger.LogWarning("Setup will continue to configure Bot API permissions");
+                logger.LogWarning("Setup will continue to configure permissions");
                 logger.LogWarning("");
                 logger.LogWarning("To retry endpoint registration after resolving the issue:");
                 logger.LogWarning("  a365 setup blueprint --endpoint-only");
@@ -609,14 +611,15 @@ internal static class BlueprintSubcommand
             // NOTE: If NOT isSetupAll, exception propagates to caller (blocking behavior)
             // This is intentional: standalone 'a365 setup blueprint' should fail fast on endpoint errors
         }
-        else
+        else if (!isSetupAll)
         {
             logger.LogInformation("Skipping endpoint registration (--no-endpoint flag)");
             logger.LogInformation("Register endpoint later with: a365 setup blueprint --endpoint-only");
         }
 
-        // Display verification info and summary
-        await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
+        // Display verification info — skipped when called from 'setup all' (AllSubcommand shows it at the end)
+        if (!isSetupAll)
+            await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
 
         // Reconcile custom blueprint permissions — apply desired and remove stale entries.
         // Always run (even when config is empty) so that permissions removed from config are
@@ -743,7 +746,8 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         IConfigService configService,
         FileInfo configFile,
-        CancellationToken ct)
+        CancellationToken ct,
+        BlueprintCreationOptions? options = null)
     {
         // ========================================================================
         // Idempotency Check: DisplayName-First Discovery
@@ -834,7 +838,8 @@ internal static class BlueprintSubcommand
                 existingObjectId,
                 existingServicePrincipalId,
                 alreadyExisted: true,
-                ct);
+                ct,
+                options);
         }
 
         // ========================================================================
@@ -1114,7 +1119,8 @@ internal static class BlueprintSubcommand
                 objectId,
                 servicePrincipalId,
                 alreadyExisted: false,
-                ct);
+                ct,
+                options);
         }
         catch (Exception ex)
         {
@@ -1144,7 +1150,8 @@ internal static class BlueprintSubcommand
         string objectId,
         string? servicePrincipalId,
         bool alreadyExisted,
-        CancellationToken ct)
+        CancellationToken ct,
+        BlueprintCreationOptions? options = null)
     {
         // ========================================================================
         // Application Owner Validation
@@ -1270,7 +1277,8 @@ internal static class BlueprintSubcommand
             servicePrincipalId,
             setupConfig,
             alreadyExisted,
-            ct);
+            ct,
+            deferConsent: options?.DeferConsent ?? false);
 
         // Add Graph API consent to the resource consents collection
         var applicationScopes = GetApplicationScopes(setupConfig, logger);
@@ -1287,7 +1295,7 @@ internal static class BlueprintSubcommand
 
         generatedConfig["resourceConsents"] = resourceConsents;
 
-        if (!consentSuccess)
+        if (!consentSuccess && !string.IsNullOrEmpty(consentUrlGraph))
         {
             logger.LogWarning("");
             logger.LogWarning("Admin consent may not have been detected");
@@ -1348,8 +1356,21 @@ internal static class BlueprintSubcommand
         string? servicePrincipalId,
         Models.Agent365Config setupConfig,
         bool alreadyExisted,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool deferConsent = false)
     {
+        // When called from AllSubcommand via DeferConsent: true, skip consent and Graph
+        // inheritable permissions entirely. The batch orchestrator handles both as Phase 3
+        // (and Phase 2 via the Graph spec). Return a neutral result: consent not done yet
+        // (false), no URL from this step (empty string), inheritable permissions not failed
+        // (true so AllSubcommand does not add a spurious warning in Step 2).
+        if (deferConsent)
+        {
+            logger.LogDebug("Admin consent deferred to batch orchestrator — skipping in blueprint step.");
+            return (consentSuccess: false, consentUrl: string.Empty,
+                    graphInheritablePermissionsConfigured: true, graphInheritablePermissionsError: null);
+        }
+
         var applicationScopes = GetApplicationScopes(setupConfig, logger);
         bool consentAlreadyExists = false;
 

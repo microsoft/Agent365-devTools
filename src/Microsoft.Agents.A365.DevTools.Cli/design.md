@@ -342,27 +342,28 @@ a365 deploy --restart # Quick mode: steps 6-7 only (packaging + deploy)
 
 ## Permissions Architecture
 
-The CLI configures three layers of permissions for agent blueprints:
+The CLI configures two active layers of permissions for agent blueprints:
 
-1. **OAuth2 Grants** - Admin consent via Graph API `/oauth2PermissionGrants`
-2. **Required Resource Access** - Portal-visible permissions (Entra ID "API permissions")
-3. **Inheritable Permissions** - Blueprint-level permissions that instances inherit automatically
+1. **OAuth2 Grants** - Programmatic admin consent via Graph API `/oauth2PermissionGrants` (Global Administrator required)
+2. **Inheritable Permissions** - Blueprint-level permissions that agent instances inherit automatically (Agent ID Administrator or Global Administrator required)
 
-```mermaid
+> **Note:** `requiredResourceAccess` (portal "API permissions") is **not** configured for Agent Blueprints — it is not supported by the Agent ID API. `Application.ReadWrite.All` will no longer allow writes to Agent ID entities in a future breaking change.
+
+```mermard
 flowchart TD
     Blueprint["Agent Blueprint<br/>(Application Registration)"]
-    OAuth2["OAuth2 Permission Grants<br/>(Admin Consent)"]
-    Required["Required Resource Access<br/>(Portal Permissions)"]
-    Inheritable["Inheritable Permissions<br/>(Blueprint Config)"]
+    OAuth2["OAuth2 Permission Grants<br/>(Admin Consent, Global Admin)"]
+    Inheritable["Inheritable Permissions<br/>(Agent ID Admin or Global Admin)"]
     Instance["Agent Instance<br/>(Inherits from Blueprint)"]
 
     Blueprint --> OAuth2
-    Blueprint --> Required
     Blueprint --> Inheritable
     Inheritable --> Instance
 ```
 
-**Unified Configuration:** `SetupHelpers.EnsureResourcePermissionsAsync` handles all three layers plus verification with retry logic (exponential backoff: 2s, 4s, 8s, 16s, 32s, max 5 retries).
+**Batch flow (`setup all` and `setup permissions` subcommands):** `BatchPermissionsOrchestrator` implements a three-phase flow — SP resolution, inherited permissions, admin consent — so consent is attempted exactly once and non-admins receive a single consolidated URL.
+
+**Standalone callers:** `SetupHelpers.EnsureResourcePermissionsAsync` handles a single resource with retry logic and is used by `CopilotStudioSubcommand` and direct callers.
 
 **Per-Resource Tracking:** `ResourceConsent` model tracks inheritance state per resource (Agent 365 Tools, Messaging Bot API, Observability API).
 

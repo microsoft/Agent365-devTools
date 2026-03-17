@@ -526,6 +526,95 @@ public class GraphApiServiceTests
     }
 
     #endregion
+
+    #region IsCurrentUserAgentIdAdminAsync
+
+    private static GraphApiService CreateServiceWithTokenProvider(TestHttpMessageHandler handler)
+    {
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("fake-token");
+        return new GraphApiService(logger, executor, handler, tokenProvider);
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithNoRelevantRole_ReturnsFalse()
+    {
+        // Arrange — user is an Agent ID developer (no admin roles)
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new { value = Array.Empty<object>() };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().BeFalse("a developer with no admin roles should not pass the Agent ID Administrator check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithAgentIdAdminRole_ReturnsTrue()
+    {
+        // Arrange — user holds the Agent ID Administrator role
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new
+        {
+            value = new[]
+            {
+                new { roleTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f" }  // Agent ID Administrator
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().BeTrue("a user holding the Agent ID Administrator role should pass the check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithGlobalAdminRoleOnly_ReturnsFalse()
+    {
+        // Arrange — user is a Global Administrator but not an Agent ID Administrator
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        // User holds Global Administrator only — not Agent ID Administrator
+        var rolesResponse = new
+        {
+            value = new[]
+            {
+                new { roleTemplateId = "62e90394-69f5-4237-9190-012177145e10" }  // Global Administrator
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().BeFalse("Global Administrator alone does not satisfy the Agent ID Administrator role requirement");
+    }
+
+    #endregion
 }
 
 // Simple test handler that returns queued responses sequentially
