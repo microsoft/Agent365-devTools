@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -31,6 +32,12 @@ public class GraphApiService
     private string? _cachedAzCliTenantId;
     private DateTimeOffset _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
     internal static readonly TimeSpan AzCliTokenCacheDuration = TimeSpan.FromMinutes(5);
+
+    // Login hint resolved once per GraphApiService instance from 'az account show'.
+    // Used to direct MSAL/WAM to the correct Azure CLI identity, preventing the Windows
+    // account (WAM default) or a stale cached MSAL account from being used instead.
+    private string? _loginHint;
+    private bool _loginHintResolved;
 
     /// <summary>
     /// Expiry time for the cached Azure CLI token. Internal for testing purposes.
@@ -210,7 +217,8 @@ public class GraphApiService
         {
             // Use token provider with delegated scopes (interactive browser auth with caching)
             _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes));
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct);
+            var loginHint = await ResolveLoginHintAsync();
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct, loginHint);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -776,6 +784,40 @@ public class GraphApiService
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Resolves the Azure CLI login hint once per instance from 'az account show'.
+    /// The hint is passed to MSAL so that WAM and silent auth target the correct
+    /// Azure CLI identity instead of the Windows default account.
+    /// Returns null if az account show fails or the user field is absent.
+    /// </summary>
+    private async Task<string?> ResolveLoginHintAsync()
+    {
+        if (_loginHintResolved)
+            return _loginHint;
+
+        _loginHintResolved = true;
+        try
+        {
+            var result = await _executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true);
+            if (result?.Success == true && !string.IsNullOrWhiteSpace(result.StandardOutput))
+            {
+                var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+                var json = JsonSerializer.Deserialize<System.Text.Json.JsonElement>(cleaned);
+                if (json.TryGetProperty("user", out var user) &&
+                    user.TryGetProperty("name", out var name))
+                {
+                    _loginHint = name.GetString();
+                }
+            }
+        }
+        catch
+        {
+            // Non-fatal: MSAL will fall back to default account selection if hint is unavailable.
+        }
+
+        return _loginHint;
     }
 
     /// <summary>

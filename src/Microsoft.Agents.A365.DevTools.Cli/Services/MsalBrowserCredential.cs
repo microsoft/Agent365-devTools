@@ -40,6 +40,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     private readonly string _tenantId;
     private readonly bool _useWam;
     private readonly IntPtr _windowHandle;
+    private readonly string? _loginHint;
 
     // Shared persistent cache helper - initialized once and reused across all instances.
     // This is the key to reducing multiple WAM prompts during setup operations.
@@ -82,13 +83,16 @@ public sealed class MsalBrowserCredential : TokenCredential
     /// <param name="useWam">Whether to use WAM on Windows. Default is true.</param>
     /// <param name="authority">Optional authority URL. When provided, overrides the default AzurePublic authority.
     /// Use this for government clouds (e.g., "https://login.microsoftonline.us/{tenantId}").</param>
+    /// <param name="loginHint">Optional UPN/email to pre-select the account for silent acquisition and interactive auth.
+    /// When provided, WAM and silent auth will target this identity instead of the first cached account.</param>
     public MsalBrowserCredential(
         string clientId,
         string tenantId,
         string? redirectUri = null,
         ILogger? logger = null,
         bool useWam = true,
-        string? authority = null)
+        string? authority = null,
+        string? loginHint = null)
     {
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -102,7 +106,8 @@ public sealed class MsalBrowserCredential : TokenCredential
 
         _tenantId = tenantId;
         _logger = logger;
-        
+        _loginHint = loginHint;
+
         // Get window handle for WAM on Windows
         // Try multiple sources: console window, foreground window, or desktop window
         _windowHandle = IntPtr.Zero;
@@ -317,9 +322,22 @@ public sealed class MsalBrowserCredential : TokenCredential
 
         try
         {
-            // First, try to acquire token silently from cache
-            var accounts = await _publicClientApp.GetAccountsAsync();
-            var account = accounts.FirstOrDefault();
+            // First, try to acquire token silently from cache.
+            // When a login hint is provided, only attempt silent acquisition for the matching account.
+            // Do NOT fall back to any other cached account — that would silently return a token for
+            // the wrong user (e.g. sellak's cached token when sellakdev is the CLI identity).
+            var accounts = (await _publicClientApp.GetAccountsAsync()).ToList();
+            IAccount? account;
+            if (!string.IsNullOrWhiteSpace(_loginHint))
+            {
+                account = accounts.FirstOrDefault(a =>
+                    string.Equals(a.Username, _loginHint, StringComparison.OrdinalIgnoreCase));
+                // If the hint account is not cached, skip silent path — go to interactive with hint.
+            }
+            else
+            {
+                account = accounts.FirstOrDefault();
+            }
 
             if (account != null)
             {
@@ -339,25 +357,30 @@ public sealed class MsalBrowserCredential : TokenCredential
                 }
             }
 
-            // Acquire token interactively
+            // Acquire token interactively.
+            // When a login hint is provided, WAM and browser auth will pre-select that identity
+            // instead of defaulting to the Windows account or cached account picker.
             AuthenticationResult interactiveResult;
-            
+
             if (_useWam)
             {
                 // WAM on Windows - native authentication dialog, no browser needed
                 _logger?.LogInformation("Authenticating via Windows Account Manager...");
-                interactiveResult = await _publicClientApp
-                    .AcquireTokenInteractive(scopes)
-                    .ExecuteAsync(cancellationToken);
+                var builder = _publicClientApp.AcquireTokenInteractive(scopes);
+                if (!string.IsNullOrWhiteSpace(_loginHint))
+                    builder = builder.WithLoginHint(_loginHint);
+                interactiveResult = await builder.ExecuteAsync(cancellationToken);
             }
             else
             {
                 // System browser on Mac/Linux
                 _logger?.LogInformation("Opening browser for authentication...");
-                interactiveResult = await _publicClientApp
+                var builder = _publicClientApp
                     .AcquireTokenInteractive(scopes)
-                    .WithUseEmbeddedWebView(false)
-                    .ExecuteAsync(cancellationToken);
+                    .WithUseEmbeddedWebView(false);
+                if (!string.IsNullOrWhiteSpace(_loginHint))
+                    builder = builder.WithLoginHint(_loginHint);
+                interactiveResult = await builder.ExecuteAsync(cancellationToken);
             }
 
             _logger?.LogDebug("Successfully acquired token via interactive authentication.");

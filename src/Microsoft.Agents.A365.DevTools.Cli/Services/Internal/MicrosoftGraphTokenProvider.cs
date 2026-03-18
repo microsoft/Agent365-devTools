@@ -90,7 +90,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         IEnumerable<string> scopes,
         bool useDeviceCode = false,
         string? clientAppId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? loginHint = null)
     {
         var validatedScopes = ValidateAndPrepareScopes(scopes);
         ValidateTenantId(tenantId);
@@ -142,7 +143,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             // and WAM on Windows authenticates via the OS broker (no browser, CAP-compliant).
             var token = MsalTokenAcquirerOverride != null
                 ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
-                : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct);
+                : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint);
 
             // Fall back to PowerShell Connect-MgGraph if MSAL is unavailable (e.g. no clientAppId)
             // or fails for any reason.
@@ -297,7 +298,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         string tenantId,
         string[] scopes,
         string? clientAppId,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? loginHint = null)
     {
         if (string.IsNullOrWhiteSpace(clientAppId))
         {
@@ -314,7 +316,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
             _logger.LogDebug("Acquiring Graph token via MSAL for scopes: {Scopes}", string.Join(", ", fullScopes));
 
-            var msalCredential = new MsalBrowserCredential(clientAppId, tenantId, logger: _logger);
+            var msalCredential = new MsalBrowserCredential(clientAppId, tenantId, logger: _logger, loginHint: loginHint);
             var tokenResult = await msalCredential.GetTokenAsync(new TokenRequestContext(fullScopes), ct);
 
             if (string.IsNullOrWhiteSpace(tokenResult.Token))

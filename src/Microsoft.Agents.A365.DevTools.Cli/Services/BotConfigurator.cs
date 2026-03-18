@@ -170,6 +170,14 @@ public class BotConfigurator : IBotConfigurator
 
                     _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
 
+                    if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && attempt == 0)
+                    {
+                        _logger.LogWarning(
+                            "ATG returned 401 Unauthorized — cached token may be stale or belong to a different user. " +
+                            "Retrying with a fresh token...");
+                        continue;
+                    }
+
                     if (TryGetErrorCode(errorContent) == "Invalid roles")
                     {
                         if (attempt == 0)
@@ -184,9 +192,6 @@ public class BotConfigurator : IBotConfigurator
                         var apiMessage = TryGetErrorMessage(errorContent);
                         if (!string.IsNullOrWhiteSpace(apiMessage))
                             _logger.LogError("{Message}", apiMessage);
-                        _logger.LogError(
-                            "Please verify that your account has the Agent ID Developer, " +
-                            "Agent ID Administrator, or Global Administrator role in Entra ID.");
                         return EndpointRegistrationResult.Failed;
                     }
 
@@ -269,6 +274,7 @@ public class BotConfigurator : IBotConfigurator
             var currentUser = subscriptionInfo.TryGetProperty("user", out var userProp) &&
                               userProp.TryGetProperty("name", out var nameProp)
                 ? nameProp.GetString() : null;
+            _logger.LogDebug("ATG token request — current user from az account: {CurrentUser}", currentUser ?? "(null)");
 
             if (string.IsNullOrEmpty(tenantId))
             {
@@ -288,23 +294,10 @@ public class BotConfigurator : IBotConfigurator
                 _logger.LogInformation("Environment: {Env}", config.Environment);
                 _logger.LogInformation("Endpoint URL: {Url}", deleteEndpointUrl);
 
-                // Get authentication token interactively (unless skip-auth is specified)
-                string? authToken = null;
-                _logger.LogInformation("Getting authentication token...");
-
                 // Determine the audience (App ID) based on the environment
                 var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
 
                 _logger.LogInformation("Environment: {Environment}, Audience: {Audience}", config.Environment, audience);
-
-                authToken = await _authService.GetAccessTokenAsync(audience, tenantId, userId: currentUser);
-
-                if (string.IsNullOrWhiteSpace(authToken))
-                {
-                    _logger.LogError("Failed to acquire authentication token");
-                    return false;
-                }
-                _logger.LogInformation("Successfully acquired access token");
 
                 var normalizedLocation = NormalizeLocation(location);
                 var deleteEndpointBody = new JsonObject
@@ -316,11 +309,7 @@ public class BotConfigurator : IBotConfigurator
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
-                // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                // Call the endpoint
-                _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
                 _logger.LogInformation("Delete request payload:");
                 _logger.LogInformation("   AzureBotServiceInstanceName: {Name}", endpointName);
                 _logger.LogInformation("   AppId: {AppId}", agentBlueprintId);
@@ -328,17 +317,41 @@ public class BotConfigurator : IBotConfigurator
                 _logger.LogInformation("   Location: {Location}", normalizedLocation);
                 _logger.LogInformation("   Environment: {Environment}", EndpointHelper.GetDeploymentEnvironment(config.Environment));
 
-                using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
-                request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
-                using var response = await httpClient.SendAsync(request);
-
-
-                if (!response.IsSuccessStatusCode)
+                // Attempt the request up to twice: first with a cached token, then with a
+                // force-refreshed token if ATG rejects with 401 Unauthorized (stale/wrong-user token).
+                for (int attempt = 0; attempt < 2; attempt++)
                 {
+                    bool forceRefresh = attempt > 0;
+
+                    _logger.LogInformation("Getting authentication token...");
+                    var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+
+                    if (string.IsNullOrWhiteSpace(authToken))
+                    {
+                        _logger.LogError("Failed to acquire authentication token");
+                        return false;
+                    }
+                    _logger.LogInformation("Successfully acquired access token");
+
+                    using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+                    _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
+
+                    using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
+                    request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                    using var response = await httpClient.SendAsync(request);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Successfully received response from delete endpoint");
+                        return true;
+                    }
+
                     // Read error content ONCE for all error handling
                     var errorContent = await response.Content.ReadAsStringAsync();
+
                     // Check if resource was not found - this is success for deletion (idempotent)
-                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound || 
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound ||
                         response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                     {
                         // For BadRequest, verify it's actually "not found" scenario
@@ -368,32 +381,35 @@ public class BotConfigurator : IBotConfigurator
                             return true; // Not found is success for deletion
                         }
                     }
+
+                    // Retry on 401 Unauthorized — cached token may be stale or belong to a different user.
+                    if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && attempt == 0)
+                    {
+                        _logger.LogWarning(
+                            "ATG returned 401 Unauthorized — cached token may be stale or belong to a different user. " +
+                            "Retrying with a fresh token...");
+                        continue;
+                    }
+
                     // Real error - log and return false
+                    _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                     try
                     {
                         var errorJson = JsonSerializer.Deserialize<JsonElement>(errorContent);
                         if (errorJson.TryGetProperty("error", out var errorMessage))
-                        {
-                            var error = errorMessage.GetString();
-                            _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
-                            _logger.LogError("{Error}", error);
-                        }
+                            _logger.LogError("{Error}", errorMessage.GetString());
                         else
-                        {
-                            _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                             _logger.LogError("Error response: {Error}", errorContent);
-                        }
                     }
                     catch
                     {
-                        _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                         _logger.LogError("Error response: {Error}", errorContent);
                     }
                     return false;
                 }
 
-                _logger.LogInformation("Successfully received response from delete endpoint");
-                return true;
+                // Unreachable — the loop always returns. Satisfies the compiler.
+                return false;
             }
             catch (AzureAuthenticationException ex)
             {

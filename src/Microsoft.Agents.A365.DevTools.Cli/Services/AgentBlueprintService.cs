@@ -68,9 +68,9 @@ public class AgentBlueprintService
 
     /// <summary>
     /// Delete an Agent Blueprint application using the special agentIdentityBlueprint endpoint.
-    /// 
+    ///
     /// SPECIAL AUTHENTICATION REQUIREMENTS:
-    /// Agent Blueprint deletion requires the AgentIdentityBlueprint.DeleteRestore.All delegated permission scope.
+    /// Agent Blueprint deletion requires a delegated permission scope.
     /// This scope is not available through Azure CLI tokens, so we use interactive authentication via
     /// the token provider (same authentication method used during blueprint creation in the setup command).
     /// </summary>
@@ -86,17 +86,15 @@ public class AgentBlueprintService
         try
         {
             _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
-            
-            // AgentIdentityBlueprint.DeleteRestore.All is the scope specified in the permissions reference for delete.
-            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
+            // Scope matches main — pending validation of whether DeleteRestore.All is required.
+            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+
+            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
-            // Blueprint DELETE uses the same URL pattern as all other blueprint operations:
-            // /beta/applications/microsoft.graph.agentIdentityBlueprint/{id}
-            // NOT /beta/applications/{id}/microsoft.graph.agentIdentityBlueprint (that is the wrong pattern).
-            var deletePath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintId}";
+            // URL matches main — pending validation of which URL pattern Graph accepts.
+            var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";
 
             // Use GraphDeleteAsync with the special scopes required for blueprint operations
             var success = await _graphApiService.GraphDeleteAsync(

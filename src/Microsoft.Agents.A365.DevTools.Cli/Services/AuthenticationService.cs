@@ -78,6 +78,7 @@ public class AuthenticationService
             : $"{resourceUrl}:tenant:{tenantId}";
         if (!string.IsNullOrWhiteSpace(userId))
             cacheKey = $"{cacheKey}:user:{userId}";
+        _logger.LogDebug("ATG cache key: {CacheKey}", cacheKey);
 
         // Try to load cached token for this cache key
         if (!forceRefresh && File.Exists(_tokenCachePath))
@@ -123,7 +124,7 @@ public class AuthenticationService
 
         // Authenticate interactively with specific tenant and scopes
         _logger.LogInformation("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser);
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
 
         // Cache the token with the appropriate cache key
         await CacheTokenAsync(cacheKey, token);
@@ -140,11 +141,12 @@ public class AuthenticationService
     /// <param name="explicitScopes">Optional explicit scopes to request. If not provided, uses .default scope pattern</param>
     /// <param name="useInteractiveBrowser">If true, uses browser authentication with redirect URI; if false, uses device code flow. Default is false for backward compatibility.</param>
     private async Task<TokenInfo> AuthenticateInteractivelyAsync(
-        string resourceUrl, 
-        string? tenantId = null, 
+        string resourceUrl,
+        string? tenantId = null,
         string? clientId = null,
         IEnumerable<string>? explicitScopes = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = false,
+        string? loginHint = null)
     {
         // Declare variables outside try block so they're available in catch for logging
         string effectiveTenantId = tenantId ?? "unknown";
@@ -225,7 +227,7 @@ public class AuthenticationService
                 _logger.LogInformation("Please sign in with your Microsoft account and grant consent for the requested permissions.");
                 _logger.LogInformation("");
 
-                credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId);
+                credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint);
             }
             else
             {
@@ -518,8 +520,8 @@ public class AuthenticationService
     /// Creates a browser credential for interactive authentication.
     /// Protected virtual to allow substitution in tests.
     /// </summary>
-    protected virtual TokenCredential CreateBrowserCredential(string clientId, string tenantId)
-        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger);
+    protected virtual TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null)
+        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, loginHint: loginHint);
 
     /// <summary>
     /// Creates a DeviceCodeCredential configured for interactive device code authentication.
