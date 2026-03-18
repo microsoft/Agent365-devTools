@@ -714,6 +714,8 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Agent ID Administrator role,
     /// which is required to create or update inheritable permissions on agent blueprints.
+    /// Uses <see cref="AuthenticationConstants.DirectoryReadAllScope"/> (already consented on
+    /// the client app) to avoid triggering an additional consent prompt.
     /// Returns false (non-blocking) if the check cannot be completed.
     /// </summary>
     public virtual async Task<bool> IsCurrentUserAgentIdAdminAsync(
@@ -726,7 +728,7 @@ public class GraphApiService
         try
         {
             return await HasDirectoryRoleAsync(tenantId, agentIdAdminTemplateId, ct,
-                AuthenticationConstants.RoleManagementReadDirectoryScope);
+                AuthenticationConstants.DirectoryReadAllScope);
         }
         catch (Exception ex)
         {

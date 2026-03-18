@@ -71,6 +71,24 @@ internal static class BatchPermissionsOrchestrator
             return (true, true, true, null);
         }
 
+        // Filter out specs with no scopes — they would produce empty OAuth2 grants (HTTP 400).
+        // This can happen when the MCP manifest is missing or contains no required scopes.
+        var effectiveSpecs = specs.Where(s => s.Scopes.Length > 0).ToList();
+        if (effectiveSpecs.Count < specs.Count)
+        {
+            var skipped = specs.Count - effectiveSpecs.Count;
+            logger.LogDebug("Skipping {Count} resource spec(s) with no scopes (manifest missing or empty).", skipped);
+        }
+
+        if (effectiveSpecs.Count == 0)
+        {
+            logger.LogInformation("All permission specs have empty scope lists — skipping batch permissions configuration.");
+            return (true, true, true, null);
+        }
+
+        // Use filtered list for all downstream phases
+        specs = effectiveSpecs;
+
         var permScopes = AuthenticationConstants.RequiredPermissionGrantScopes;
 
         // --- Resolve service principals ---
@@ -523,10 +541,6 @@ internal static class BatchPermissionsOrchestrator
     }
 
     /// <summary>
-    /// Extracts the human-readable message from a Graph API JSON error response.
-    /// Returns null if the input is not a parseable Graph error body.
-    /// </summary>
-    /// <summary>
     /// Returns true when the Graph error response indicates a role-based access failure
     /// (HTTP 403 "Insufficient privileges"). Used to distinguish systemic role failures
     /// from per-resource configuration errors in Phase 2.
@@ -538,6 +552,10 @@ internal static class BatchPermissionsOrchestrator
             || err.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Extracts the human-readable message from a Graph API JSON error response.
+    /// Returns null if the input is not a parseable Graph error body.
+    /// </summary>
     private static string? TryExtractGraphErrorMessage(string? err)
     {
         if (string.IsNullOrWhiteSpace(err)) return null;

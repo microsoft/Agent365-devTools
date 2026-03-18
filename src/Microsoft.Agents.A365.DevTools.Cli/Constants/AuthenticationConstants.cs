@@ -87,10 +87,11 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
 
     /// <summary>
-    /// Delegated scope required to read the signed-in user's Entra directory role memberships.
-    /// Used by <see cref="GraphApiService.IsCurrentUserAgentIdAdminAsync"/> to determine whether
-    /// the user holds the Agent ID Administrator role, and to build the client app consent URL
-    /// for users who need to consent to this scope before role detection is possible.
+    /// Delegated scope for reading directory role assignments.
+    /// Not currently used for role detection (both <see cref="GraphApiService.IsCurrentUserAdminAsync"/>
+    /// and <see cref="GraphApiService.IsCurrentUserAgentIdAdminAsync"/> use <see cref="DirectoryReadAllScope"/>
+    /// which is already consented). Retained as a named constant for future use where a lower-privilege
+    /// role-read scope is required and can be separately consented.
     /// </summary>
     public const string RoleManagementReadDirectoryScope = "RoleManagement.Read.Directory";
 
@@ -115,9 +116,11 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Delegated scope required to add or remove federated identity credentials on an Agent Blueprint.
-    /// Per the Agent ID permissions reference, <c>Application.ReadWrite.All</c> no longer allows
-    /// write operations to Agent ID entities — use this scope for FIC create/delete operations.
-    /// Requires the signed-in user to be a Global Administrator or Agent ID Administrator.
+    /// Per the Agent ID permissions reference, this is the correct granular scope for FIC operations
+    /// once the breaking change takes effect (Application.ReadWrite.All will no longer allow writes
+    /// to Agent ID entities). Requires Global Administrator or Agent ID Administrator role.
+    /// Not yet used — FederatedCredentialService currently uses Application.ReadWrite.All for
+    /// ownership-based access until AddRemoveCreds.All is validated in TSE.
     /// </summary>
     public const string AgentIdentityBlueprintAddRemoveCredsAllScope = "AgentIdentityBlueprint.AddRemoveCreds.All";
 

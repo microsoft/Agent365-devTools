@@ -436,8 +436,8 @@ public class FederatedCredentialService
             }
 
             _logger.LogWarning("Failed to delete federated credential using both endpoints: {CredentialId}", credentialId);
-            _logger.LogWarning("Federated credential deletion requires the Global Administrator or Agent ID Administrator role.");
-            _logger.LogWarning("If you have that role, re-run 'a365 cleanup' or remove the credential manually via Entra portal.");
+            _logger.LogWarning("Federated credential deletion failed. This typically means the signed-in user is not the owner of the blueprint application.");
+            _logger.LogWarning("If you own the blueprint, re-run 'a365 cleanup'. Otherwise, remove the credential manually via Entra portal > App registrations > {CredentialId}.", credentialId);
             return false;
         }
         catch (Exception ex)

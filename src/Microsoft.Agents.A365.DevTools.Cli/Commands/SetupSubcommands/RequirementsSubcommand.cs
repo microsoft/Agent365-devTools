@@ -21,8 +21,7 @@ internal static class RequirementsSubcommand
         ILogger logger,
         IConfigService configService,
         AzureAuthValidator authValidator,
-        IClientAppValidator clientAppValidator,
-        CommandExecutor executor)
+        IClientAppValidator clientAppValidator)
     {
         var command = new Command("requirements", 
             "Validate prerequisites for Agent 365 setup\n" +

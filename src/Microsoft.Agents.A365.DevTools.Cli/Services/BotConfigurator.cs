@@ -419,33 +419,6 @@ public class BotConfigurator : IBotConfigurator
     }
 
     /// <summary>
-    /// Base64url-decodes the JWT payload segment and returns it as a parsed JsonElement.
-    /// Returns null if the input is not a valid JWT or decoding fails.
-    /// Used to inspect token claims (e.g. wids, scp) for diagnostic purposes only.
-    /// </summary>
-    private static JsonElement? TryDecodeJwtPayload(string? jwt)
-    {
-        if (string.IsNullOrWhiteSpace(jwt)) return null;
-        var parts = jwt.Split('.');
-        if (parts.Length < 2) return null;
-        try
-        {
-            // Base64url → standard base64 → bytes → UTF-8 JSON
-            var padded = parts[1].Replace('-', '+').Replace('_', '/');
-            padded = (padded.Length % 4) switch
-            {
-                2 => padded + "==",
-                3 => padded + "=",
-                _ => padded
-            };
-            var bytes = Convert.FromBase64String(padded);
-            var json = System.Text.Encoding.UTF8.GetString(bytes);
-            return JsonDocument.Parse(json).RootElement.Clone();
-        }
-        catch { return null; }
-    }
-
-    /// <summary>
     /// Parses a JSON error response and returns the value of the top-level "error" field,
     /// which is a stable machine-readable code. Returns null if parsing fails or field is absent.
     /// </summary>

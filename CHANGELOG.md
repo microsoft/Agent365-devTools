@@ -14,8 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `a365 publish` updates manifest IDs, creates `manifest.zip`, and prints concise upload instructions for Microsoft 365 Admin Center (Agents > All agents > Upload custom agent). Interactive prompts only occur in interactive terminals; redirect stdin to suppress them in scripts.
 
 ### Fixed
-- `a365 cleanup` now uses correct Graph scopes for blueprint deletion (`AgentIdentityBlueprint.DeleteRestore.All`) and federated credential deletion (`AgentIdentityBlueprint.AddRemoveCreds.All`); the previous scopes (`AgentIdentityBlueprint.ReadWrite.All` and `Application.ReadWrite.All`) no longer allow write operations to Agent ID entities per a breaking change in the permissions model
-- Token cache now isolates per-user so a cached token from one account is not reused when a different account runs a subsequent command
+- `a365 cleanup` now uses the correct Graph scope for blueprint deletion (`AgentIdentityBlueprint.DeleteRestore.All`); federated credential deletion continues to use `Application.ReadWrite.All` (ownership-based) until `AgentIdentityBlueprint.AddRemoveCreds.All` is validated
+- Microsoft Graph token acquisition now isolates per-user — MSAL/WAM replaces PowerShell `Connect-MgGraph` as the primary path, preventing cross-user token contamination on shared machines
 - macOS/Linux: device code fallback when browser authentication is unavailable (#309)
 - Linux: MSAL fallback when PowerShell `Connect-MgGraph` fails in non-TTY environments (#309)
 - Admin consent polling no longer times out after 180s — blueprint service principal now resolved with correct MSAL token (#309)
