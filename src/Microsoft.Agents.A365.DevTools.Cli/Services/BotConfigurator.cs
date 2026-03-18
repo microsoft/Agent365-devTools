@@ -78,6 +78,9 @@ public class BotConfigurator : IBotConfigurator
             var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
             var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
+            var currentUser = subscriptionInfo.TryGetProperty("user", out var userProp) &&
+                              userProp.TryGetProperty("name", out var nameProp)
+                ? nameProp.GetString() : null;
 
             if (string.IsNullOrEmpty(tenantId))
             {
@@ -94,6 +97,7 @@ public class BotConfigurator : IBotConfigurator
                 var createEndpointUrl = EndpointHelper.GetCreateEndpointUrl(config.Environment);
 
                 _logger.LogInformation("Calling create endpoint directly...");
+                _logger.LogDebug("Create endpoint URL: {Url}", createEndpointUrl);
 
                 // Determine the audience (App ID) based on the environment
                 var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
@@ -120,7 +124,7 @@ public class BotConfigurator : IBotConfigurator
                     bool forceRefresh = attempt > 0;
 
                     _logger.LogInformation("Getting authentication token...");
-                    var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh);
+                    var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
 
                     if (string.IsNullOrWhiteSpace(authToken))
                     {
@@ -166,10 +170,6 @@ public class BotConfigurator : IBotConfigurator
 
                     _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
 
-                    // "Invalid roles" means the backend rejected the token's role claims.
-                    // On the first attempt, retry with a fresh token in case a role was assigned
-                    // after the token was cached. On the second attempt, inspect the token to
-                    // distinguish between a backend configuration issue and a missing role assignment.
                     if (TryGetErrorCode(errorContent) == "Invalid roles")
                     {
                         if (attempt == 0)
@@ -181,36 +181,12 @@ public class BotConfigurator : IBotConfigurator
                             continue;
                         }
 
-                        // Decode the token to understand why the backend rejected it.
-                        // If wids is absent but the correct delegated scope is present, the issue
-                        // is that the Agent365 Tools app registration has not configured wids as
-                        // an optional claim — the backend cannot see roles even if the user has them.
-                        var payload = TryDecodeJwtPayload(authToken);
-                        var hasWids = payload.HasValue && payload.Value.TryGetProperty("wids", out _);
-                        var hasBlueprintScope = payload.HasValue
-                            && payload.Value.TryGetProperty("scp", out var scp)
-                            && scp.GetString()?.Contains("AgentTools.AgentBluePrint", StringComparison.OrdinalIgnoreCase) == true;
-
-                        _logger.LogDebug("Token wids present: {HasWids}, blueprint scope present: {HasScope}", hasWids, hasBlueprintScope);
-
-                        if (!hasWids && hasBlueprintScope)
-                        {
-                            _logger.LogError(
-                                "The access token contains the required scope (AgentTools.AgentBluePrint.Create) " +
-                                "but is missing the wids claim that the backend uses for role validation. " +
-                                "This is a service configuration issue — the Agent365 Tools app registration " +
-                                "needs 'wids' added as an optional access token claim. " +
-                                "Please report this to the Agent365 team.");
-                        }
-                        else
-                        {
-                            var apiMessage = TryGetErrorMessage(errorContent);
-                            if (!string.IsNullOrWhiteSpace(apiMessage))
-                                _logger.LogError("{Message}", apiMessage);
-                            _logger.LogError(
-                                "Please verify that your account has the Agent ID Developer, " +
-                                "Agent ID Administrator, or Global Administrator role in Entra ID.");
-                        }
+                        var apiMessage = TryGetErrorMessage(errorContent);
+                        if (!string.IsNullOrWhiteSpace(apiMessage))
+                            _logger.LogError("{Message}", apiMessage);
+                        _logger.LogError(
+                            "Please verify that your account has the Agent ID Developer, " +
+                            "Agent ID Administrator, or Global Administrator role in Entra ID.");
                         return EndpointRegistrationResult.Failed;
                     }
 
@@ -290,6 +266,9 @@ public class BotConfigurator : IBotConfigurator
             var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
             var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
             var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
+            var currentUser = subscriptionInfo.TryGetProperty("user", out var userProp) &&
+                              userProp.TryGetProperty("name", out var nameProp)
+                ? nameProp.GetString() : null;
 
             if (string.IsNullOrEmpty(tenantId))
             {
@@ -318,7 +297,7 @@ public class BotConfigurator : IBotConfigurator
 
                 _logger.LogInformation("Environment: {Environment}, Audience: {Audience}", config.Environment, audience);
 
-                authToken = await _authService.GetAccessTokenAsync(audience, tenantId);
+                authToken = await _authService.GetAccessTokenAsync(audience, tenantId, userId: currentUser);
 
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
@@ -351,7 +330,7 @@ public class BotConfigurator : IBotConfigurator
 
                 using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
                 request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
-                var response = await httpClient.SendAsync(request);
+                using var response = await httpClient.SendAsync(request);
 
 
                 if (!response.IsSuccessStatusCode)

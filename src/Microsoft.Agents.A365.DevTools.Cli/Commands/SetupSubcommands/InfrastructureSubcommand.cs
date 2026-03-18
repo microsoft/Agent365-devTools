@@ -151,7 +151,8 @@ public static class InfrastructureSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to parse config JSON: {Path}", configPath);
+            logger.LogError("Failed to parse config JSON: {Path} — {Message}", configPath, ex.Message);
+            logger.LogDebug(ex, "Config JSON parse exception details");
             return (false, false);
         }
 

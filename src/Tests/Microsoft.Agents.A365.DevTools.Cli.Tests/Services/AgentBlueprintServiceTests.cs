@@ -175,7 +175,7 @@ public class AgentBlueprintServiceTests
             // Override with specific scope assertion
             _mockTokenProvider.GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>())
@@ -191,7 +191,7 @@ public class AgentBlueprintServiceTests
 
             await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.ReadWrite.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>());

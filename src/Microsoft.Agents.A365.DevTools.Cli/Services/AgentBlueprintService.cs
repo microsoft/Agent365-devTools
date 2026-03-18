@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -69,7 +70,7 @@ public class AgentBlueprintService
     /// Delete an Agent Blueprint application using the special agentIdentityBlueprint endpoint.
     /// 
     /// SPECIAL AUTHENTICATION REQUIREMENTS:
-    /// Agent Blueprint deletion requires the AgentIdentityBlueprint.ReadWrite.All delegated permission scope.
+    /// Agent Blueprint deletion requires the AgentIdentityBlueprint.DeleteRestore.All delegated permission scope.
     /// This scope is not available through Azure CLI tokens, so we use interactive authentication via
     /// the token provider (same authentication method used during blueprint creation in the setup command).
     /// </summary>
@@ -86,15 +87,17 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
             
-            // Agent Blueprint deletion requires special delegated permission scope
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
-            
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
-            
-            // Use the special agentIdentityBlueprint endpoint for deletion
-            var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";
-            
+            // AgentIdentityBlueprint.DeleteRestore.All is the scope specified in the permissions reference for delete.
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
+
+            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
+            _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
+
+            // Blueprint DELETE uses the same URL pattern as all other blueprint operations:
+            // /beta/applications/microsoft.graph.agentIdentityBlueprint/{id}
+            // NOT /beta/applications/{id}/microsoft.graph.agentIdentityBlueprint (that is the wrong pattern).
+            var deletePath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintId}";
+
             // Use GraphDeleteAsync with the special scopes required for blueprint operations
             var success = await _graphApiService.GraphDeleteAsync(
                 tenantId,
@@ -102,7 +105,7 @@ public class AgentBlueprintService
                 cancellationToken,
                 treatNotFoundAsSuccess: true,
                 scopes: requiredScopes);
-            
+
             if (success)
             {
                 _logger.LogInformation("Agent blueprint application deleted successfully");
@@ -111,7 +114,7 @@ public class AgentBlueprintService
             {
                 _logger.LogError("Failed to delete agent blueprint application");
             }
-            
+
             return success;
         }
         catch (Exception ex)
@@ -138,11 +141,11 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent identity application: {ApplicationId}", applicationId);
 
-            // Agent Identity deletion requires special delegated permission scope
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            // Agent Identity deletion requires the same DeleteRestore scope as blueprint deletion.
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
-            _logger.LogInformation("A browser window will open for authentication.");
+            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
+            _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
             // Use the special servicePrincipals endpoint for deletion
             var deletePath = $"/beta/servicePrincipals/{applicationId}";
@@ -615,8 +618,15 @@ public class AgentBlueprintService
             scope = desiredScopeString
         };
 
-        var created = await _graphApiService.GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
-        return created != null;
+        var grantResponse = await _graphApiService.GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
+        if (!grantResponse.IsSuccess)
+        {
+            if (grantResponse.StatusCode == 403)
+                _logger.LogWarning("Creating oauth2PermissionGrant requires the Global Administrator role (status 403). An admin must grant consent for these permissions.");
+            else
+                _logger.LogError("Failed to create oauth2PermissionGrant: {Status} {Reason}", grantResponse.StatusCode, grantResponse.ReasonPhrase);
+        }
+        return grantResponse.IsSuccess;
     }
 
     public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
@@ -648,8 +658,15 @@ public class AgentBlueprintService
                 resourceId = resourceSpObjectId,
                 scope = desiredScopeString
             };
-            var created = await _graphApiService.GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
-            return created != null; // success if response parsed
+            var grantResponse = await _graphApiService.GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct);
+            if (!grantResponse.IsSuccess)
+            {
+                if (grantResponse.StatusCode == 403)
+                    _logger.LogWarning("Creating oauth2PermissionGrant requires the Global Administrator role (status 403). An admin must grant consent for these permissions.");
+                else
+                    _logger.LogError("Failed to create oauth2PermissionGrant: {Status} {Reason}", grantResponse.StatusCode, grantResponse.ReasonPhrase);
+            }
+            return grantResponse.IsSuccess;
         }
 
         // Merge scopes if needed

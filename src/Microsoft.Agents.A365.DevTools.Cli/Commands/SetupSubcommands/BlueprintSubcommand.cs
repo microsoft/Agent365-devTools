@@ -1179,13 +1179,47 @@ internal static class BlueprintSubcommand
             }
             else
             {
-                logger.LogWarning("WARNING: Current user is NOT set as blueprint owner");
-                logger.LogWarning("This may have occurred if the owners@odata.bind field was rejected during creation");
-                logger.LogWarning("You may need to manually add yourself as owner via Azure Portal:");
-                logger.LogWarning("  1. Go to Azure Portal -> Entra ID -> App registrations");
-                logger.LogWarning("  2. Find application: {DisplayName}", displayName);
-                logger.LogWarning("  3. Navigate to Owners blade and add yourself");
-                logger.LogWarning("Without owner permissions, you cannot configure callback URLs or bot IDs in Developer Portal");
+                logger.LogWarning("Current user is NOT set as blueprint owner — this may have occurred if the owners@odata.bind field was rejected during creation");
+                logger.LogInformation("Attempting to assign current user as blueprint owner...");
+
+                // Retrieve the current user's object ID, then POST to owners/$ref
+                var meDoc = await graphApiService.GraphGetAsync(tenantId, "/v1.0/me?$select=id", ct);
+                var currentUserObjectId = meDoc?.RootElement.TryGetProperty("id", out var idEl) == true
+                    ? idEl.GetString()
+                    : null;
+
+                if (string.IsNullOrWhiteSpace(currentUserObjectId))
+                {
+                    logger.LogError("Could not retrieve current user ID — cannot assign blueprint owner");
+                }
+                else
+                {
+                    var ownerPayload = new Dictionary<string, string>
+                    {
+                        ["@odata.id"] = $"https://graph.microsoft.com/v1.0/users/{currentUserObjectId}"
+                    };
+
+                    var ownerResponse = await graphApiService.GraphPostWithResponseAsync(
+                        tenantId,
+                        $"/v1.0/applications/{objectId}/owners/$ref",
+                        ownerPayload,
+                        ct);
+
+                    if (ownerResponse.IsSuccess)
+                    {
+                        logger.LogInformation("Owner assignment succeeded — current user is now a blueprint owner");
+                    }
+                    else
+                    {
+                        logger.LogError("Failed to assign current user as blueprint owner: {Status} {Reason}", ownerResponse.StatusCode, ownerResponse.ReasonPhrase);
+                        logger.LogError("Owner assignment error detail: {Body}", ownerResponse.Body);
+                        logger.LogWarning("Without owner permissions, federated credential creation will fail for this blueprint");
+                        logger.LogWarning("You may need to manually add yourself as owner via Azure Portal:");
+                        logger.LogWarning("  1. Go to Azure Portal -> Entra ID -> App registrations");
+                        logger.LogWarning("  2. Find application: {DisplayName}", displayName);
+                        logger.LogWarning("  3. Navigate to Owners blade and add yourself");
+                    }
+                }
             }
         }
         else

@@ -2,8 +2,9 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -52,7 +53,7 @@ public class FederatedCredentialService
                 tenantId,
                 $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
                 cancellationToken,
-                scopes: ["Application.ReadWrite.All"]);
+                scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
 
             // If standard endpoint returns data with credentials, use it
             if (doc != null && doc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
@@ -67,7 +68,7 @@ public class FederatedCredentialService
                     tenantId,
                     $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials",
                     cancellationToken,
-                    scopes: ["Application.ReadWrite.All"]);
+                    scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
             }
 
             if (doc == null)
@@ -262,7 +263,7 @@ public class FederatedCredentialService
                     endpoint,
                     payload,
                     cancellationToken,
-                    scopes: ["Application.ReadWrite.All"]);
+                    scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
 
                 if (response.IsSuccess)
                 {
@@ -396,6 +397,11 @@ public class FederatedCredentialService
             _logger.LogDebug("Deleting federated credential: {CredentialId} from blueprint: {ObjectId}", 
                 credentialId, blueprintObjectId);
 
+            // Application.ReadWrite.All is the currently functional scope for FIC deletion.
+            // AddRemoveCreds.All is specified in the permissions reference but is not yet validated;
+            // restoring Application.ReadWrite.All to match the previously working state.
+            var ficScope = AuthenticationConstants.ApplicationReadWriteAllScope;
+
             // Try the standard endpoint first
             var endpoint = $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";
 
@@ -404,7 +410,7 @@ public class FederatedCredentialService
                 endpoint,
                 cancellationToken,
                 treatNotFoundAsSuccess: true,
-                scopes: ["Application.ReadWrite.All"]);
+                scopes: [ficScope]);
 
             if (success)
             {
@@ -421,7 +427,7 @@ public class FederatedCredentialService
                 endpoint,
                 cancellationToken,
                 treatNotFoundAsSuccess: true,
-                scopes: ["Application.ReadWrite.All"]);
+                scopes: [ficScope]);
 
             if (success)
             {
@@ -430,6 +436,8 @@ public class FederatedCredentialService
             }
 
             _logger.LogWarning("Failed to delete federated credential using both endpoints: {CredentialId}", credentialId);
+            _logger.LogWarning("Federated credential deletion requires the Global Administrator or Agent ID Administrator role.");
+            _logger.LogWarning("If you have that role, re-run 'a365 cleanup' or remove the credential manually via Entra portal.");
             return false;
         }
         catch (Exception ex)

@@ -691,7 +691,6 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Global Administrator role,
     /// which is required to grant tenant-wide admin consent interactively.
-    /// Requires the <c>Directory.Read.All</c> delegated permission on the client app.
     /// Returns false (non-blocking) if the check cannot be completed.
     /// </summary>
     public virtual async Task<bool> IsCurrentUserAdminAsync(
@@ -703,23 +702,7 @@ public class GraphApiService
 
         try
         {
-            var doc = await GraphGetAsync(
-                tenantId,
-                "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId",
-                ct,
-                scopes: ["Directory.Read.All"]);
-
-            if (doc == null || !doc.RootElement.TryGetProperty("value", out var roles))
-                return false;
-
-            foreach (var role in roles.EnumerateArray())
-            {
-                if (role.TryGetProperty("roleTemplateId", out var id) &&
-                    string.Equals(id.GetString(), globalAdminTemplateId, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-
-            return false;
+            return await HasDirectoryRoleAsync(tenantId, globalAdminTemplateId, ct);
         }
         catch (Exception ex)
         {
@@ -731,7 +714,6 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Agent ID Administrator role,
     /// which is required to create or update inheritable permissions on agent blueprints.
-    /// Requires the <c>RoleManagement.Read.Directory</c> delegated permission on the client app.
     /// Returns false (non-blocking) if the check cannot be completed.
     /// </summary>
     public virtual async Task<bool> IsCurrentUserAgentIdAdminAsync(
@@ -743,11 +725,38 @@ public class GraphApiService
 
         try
         {
-            var doc = await GraphGetAsync(
-                tenantId,
-                "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId",
-                ct,
-                scopes: [AuthenticationConstants.RoleManagementReadDirectoryScope]);
+            return await HasDirectoryRoleAsync(tenantId, agentIdAdminTemplateId, ct,
+                AuthenticationConstants.RoleManagementReadDirectoryScope);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not determine Agent ID Administrator role for current user: {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Checks whether the current user holds the specified directory role by following
+    /// all @odata.nextLink pages from /v1.0/me/memberOf.
+    /// </summary>
+    /// <param name="delegatedScope">Delegated scope to use when a token provider is available.
+    /// Pass <see cref="AuthenticationConstants.RoleManagementReadDirectoryScope"/> for a lower-privilege
+    /// read, or <see cref="AuthenticationConstants.DirectoryReadAllScope"/> when that scope is already
+    /// consented.</param>
+    private async Task<bool> HasDirectoryRoleAsync(string tenantId, string roleTemplateId, CancellationToken ct,
+        string delegatedScope = AuthenticationConstants.DirectoryReadAllScope)
+    {
+        // When a token provider is available, use the caller-supplied scope for delegated auth.
+        // Without a token provider, fall back to the Azure CLI path (no scopes).
+        IEnumerable<string>? memberOfScopes = _tokenProvider != null
+            ? [delegatedScope]
+            : null;
+
+        string? nextUrl = "/v1.0/me/memberOf?$select=roleTemplateId";
+
+        while (nextUrl != null)
+        {
+            var doc = await GraphGetAsync(tenantId, nextUrl, ct, memberOfScopes);
 
             if (doc == null || !doc.RootElement.TryGetProperty("value", out var roles))
                 return false;
@@ -755,17 +764,16 @@ public class GraphApiService
             foreach (var role in roles.EnumerateArray())
             {
                 if (role.TryGetProperty("roleTemplateId", out var id) &&
-                    string.Equals(id.GetString(), agentIdAdminTemplateId, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(id.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
 
-            return false;
+            nextUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
+                ? nextLink.GetString()
+                : null;
         }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not determine Agent ID Administrator role for current user: {Message}", ex.Message);
-            return false;
-        }
+
+        return false;
     }
 
     /// <summary>

@@ -18,17 +18,22 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Implements Microsoft Graph token acquisition via PowerShell Microsoft.Graph module.
+/// Implements Microsoft Graph token acquisition via MSAL.NET (primary) with PowerShell fallback.
 ///
 /// AUTHENTICATION METHOD:
-/// - Uses Connect-MgGraph (PowerShell) for Graph API authentication
-/// - Default: Interactive browser authentication (useDeviceCode=false)
-/// - Device Code Flow: Available but NOT used by default (DCF discouraged in production)
+/// - Primary: MSAL.NET with WAM on Windows (native broker, no browser, CAP-compliant),
+///   system browser on macOS, device code on Linux
+/// - Fallback: PowerShell Connect-MgGraph (used when MSAL is unavailable, e.g. no clientAppId)
+///
+/// WHY MSAL PRIMARY:
+/// - WAM authenticates via the OS broker — no browser popup, works on corporate tenants
+///   with Conditional Access Policies that block browser-based auth
+/// - Token cache is keyed by user identity (HomeAccountId) — prevents cross-user token
+///   contamination on shared machines
 ///
 /// TOKEN CACHING:
 /// - In-memory cache per CLI process: Tokens cached by (tenant + clientId + scopes)
-/// - Persistent cache: PowerShell module manages its own session cache
-/// - Reduces repeated Connect-MgGraph prompts during multi-step operations
+/// - MSAL persistent cache: DPAPI on Windows, Keychain on macOS, in-memory on Linux
 ///
 /// USAGE:
 /// - Called by GraphApiService when specific scopes are required
@@ -40,9 +45,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     private readonly ILogger<MicrosoftGraphTokenProvider> _logger;
 
     // Cache tokens per (tenant + clientId + scopes) for the lifetime of this CLI process.
-    // This reduces repeated Connect-MgGraph prompts in setup flows.
+    // This reduces repeated auth prompts during multi-step setup flows.
     private readonly ConcurrentDictionary<string, CachedToken> _tokenCache = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+
+    // Test seam: override MSAL token acquisition in unit tests without requiring WAM/browser.
+    // Null in production; set by tests to return controlled token values.
+    internal Func<string, string[], string?, CancellationToken, Task<string?>>? MsalTokenAcquirerOverride { get; set; }
     
     private sealed record CachedToken(string AccessToken, DateTimeOffset ExpiresOnUtc);
 
@@ -119,27 +128,30 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 return cached.AccessToken;
             }
 
-            _logger.LogInformation("Acquiring Microsoft Graph delegated access token via PowerShell...");
+            _logger.LogInformation("Acquiring Microsoft Graph delegated access token...");
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                _logger.LogInformation("A browser window will open for authentication. Complete sign-in, then return here — the CLI will continue automatically.");
+                _logger.LogInformation("A Windows authentication dialog will appear. Complete sign-in, then return here — the CLI will continue automatically.");
             }
             else
             {
                 _logger.LogInformation("A device code prompt will appear below. Open the URL in any browser, enter the code, complete sign-in, then return here — the CLI will continue automatically.");
             }
 
-            var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
-            var result = await ExecuteWithFallbackAsync(script, ct);
-            var token = ProcessResult(result);
+            // MSAL/WAM is primary: user-identity-aware cache prevents cross-user token contamination,
+            // and WAM on Windows authenticates via the OS broker (no browser, CAP-compliant).
+            var token = MsalTokenAcquirerOverride != null
+                ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
+                : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct);
 
-            // If PS Connect-MgGraph fails for any reason (no TTY on Linux, NullRef in DeviceCodeCredential,
-            // module issues, etc.), fall back to MSAL. On Windows this uses WAM; on Linux/macOS it uses
-            // device code. The acquired token is stored in _tokenCache below so subsequent calls
-            // (inheritable permissions, custom permissions) hit the cache without re-prompting.
+            // Fall back to PowerShell Connect-MgGraph if MSAL is unavailable (e.g. no clientAppId)
+            // or fails for any reason.
             if (string.IsNullOrWhiteSpace(token))
             {
-                token = await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct);
+                _logger.LogDebug("MSAL token acquisition failed, falling back to PowerShell Connect-MgGraph...");
+                var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
+                var result = await ExecuteWithFallbackAsync(script, ct);
+                token = ProcessResult(result);
             }
 
             if (string.IsNullOrWhiteSpace(token))
@@ -275,10 +287,11 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     }
 
     /// <summary>
-    /// Acquires a Microsoft Graph access token via MSAL as a fallback when PowerShell
-    /// Connect-MgGraph fails for any reason. On Windows uses WAM; on Linux/macOS uses device code.
-    /// Uses MsalBrowserCredential which shares the static in-process token cache, so a token
-    /// acquired here is reused silently on subsequent calls within the same CLI invocation.
+    /// Acquires a Microsoft Graph access token via MSAL.NET (primary authentication path).
+    /// On Windows uses WAM (no browser, CAP-compliant); on Linux/macOS uses device code.
+    /// Uses MsalBrowserCredential whose token cache is keyed by user identity, preventing
+    /// cross-user token contamination on shared machines.
+    /// Returns null if clientAppId is unavailable; caller falls back to PowerShell Connect-MgGraph.
     /// </summary>
     private async Task<string?> AcquireGraphTokenViaMsalAsync(
         string tenantId,
@@ -288,7 +301,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     {
         if (string.IsNullOrWhiteSpace(clientAppId))
         {
-            _logger.LogWarning("MSAL Graph fallback skipped: no client app ID available. Ensure ClientAppId is set in a365.config.json.");
+            _logger.LogDebug("MSAL token acquisition skipped: no client app ID configured. Falling back to PowerShell Connect-MgGraph.");
             return null;
         }
 
@@ -307,13 +320,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             if (string.IsNullOrWhiteSpace(tokenResult.Token))
                 return null;
 
-            _logger.LogInformation("Microsoft Graph access token acquired via MSAL fallback.");
+            _logger.LogInformation("Microsoft Graph access token acquired successfully.");
             return tokenResult.Token;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "MSAL Graph token fallback failed");
-            _logger.LogWarning("MSAL Graph token fallback failed: {Message}", ex.Message);
+            _logger.LogDebug(ex, "MSAL Graph token acquisition failed");
+            _logger.LogWarning("MSAL Graph token acquisition failed: {Message}", ex.Message);
             return null;
         }
     }

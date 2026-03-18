@@ -95,6 +95,33 @@ public static class AuthenticationConstants
     public const string RoleManagementReadDirectoryScope = "RoleManagement.Read.Directory";
 
     /// <summary>
+    /// Delegated scope for broad directory read access.
+    /// Required for /me/memberOf and other directory read operations.
+    /// </summary>
+    public const string DirectoryReadAllScope = "Directory.Read.All";
+
+    /// <summary>
+    /// Delegated scope for read/write access to Entra ID applications.
+    /// Used for FIC retrieval and deletion operations that are not yet covered by
+    /// more granular AgentIdentityBlueprint.* scopes.
+    /// </summary>
+    public const string ApplicationReadWriteAllScope = "Application.ReadWrite.All";
+
+    /// <summary>
+    /// Delegated scope required to delete an Agent Blueprint.
+    /// Per the Agent ID permissions reference, this is the correct scope for Delete operations.
+    /// </summary>
+    public const string AgentIdentityBlueprintDeleteRestoreAllScope = "AgentIdentityBlueprint.DeleteRestore.All";
+
+    /// <summary>
+    /// Delegated scope required to add or remove federated identity credentials on an Agent Blueprint.
+    /// Per the Agent ID permissions reference, <c>Application.ReadWrite.All</c> no longer allows
+    /// write operations to Agent ID entities — use this scope for FIC create/delete operations.
+    /// Requires the signed-in user to be a Global Administrator or Agent ID Administrator.
+    /// </summary>
+    public const string AgentIdentityBlueprintAddRemoveCredsAllScope = "AgentIdentityBlueprint.AddRemoveCreds.All";
+
+    /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
     /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
     /// All permissions require admin consent.
@@ -109,11 +136,13 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All"
-        // Note: RoleManagementReadDirectoryScope is intentionally excluded.
-        // It enables Agent ID Administrator role detection (IsCurrentUserAgentIdAdminAsync) but
-        // is not a hard requirement — when absent, IsCurrentUserAgentIdAdminAsync returns false
-        // and the consent flow falls back safely. Requiring it would block non-admin users
+        // Note: RoleManagementReadDirectoryScope, AgentIdentityBlueprint.DeleteRestore.All, and
+        // AgentIdentityBlueprint.AddRemoveCreds.All are intentionally excluded.
+        // DeleteRestore.All and AddRemoveCreds.All are cleanup-only scopes acquired on-demand via
+        // interactive consent during 'a365 cleanup' — pre-provisioning them here would cause
+        // ClientAppValidator to require admin consent during setup, blocking non-admin users
         // who cannot patch an admin-owned app registration.
+        // RoleManagementReadDirectoryScope is excluded for the same reason.
     };
 
     /// <summary>

@@ -21,7 +21,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 ///
 /// TOKEN CACHING:
 /// - Cache Location: %LocalApplicationData%\Agent365\token-cache.json (Windows)
-/// - Cache Key Format: {resourceUrl}:tenant:{tenantId}
+/// - Cache Key Format: {resourceUrl}:tenant:{tenantId}[:user:{userId}]
 /// - Cache Expiration: Validated with 5-minute buffer before token expiry
 /// - Reuse Across Commands: All CLI commands share the same token cache
 ///
@@ -64,15 +64,20 @@ public class AuthenticationService
         bool forceRefresh = false,
         string? clientId = null,
         IEnumerable<string>? scopes = null,
-        bool useInteractiveBrowser = true)
+        bool useInteractiveBrowser = true,
+        string? userId = null)
     {
-        // Build cache key based on resource and tenant only
+        // Build cache key based on resource, tenant, and user identity.
+        // Including userId ensures that cached tokens are not shared across different users
+        // (e.g., a developer's cached token is not reused when an admin runs cleanup).
         // Azure AD returns tokens with all consented scopes regardless of which scopes are requested,
         // so we don't include scopes in the cache key to avoid duplicate cache entries for the same token.
         // The scopes parameter is still passed to Azure AD for incremental consent and validation.
         string cacheKey = string.IsNullOrWhiteSpace(tenantId)
             ? resourceUrl
             : $"{resourceUrl}:tenant:{tenantId}";
+        if (!string.IsNullOrWhiteSpace(userId))
+            cacheKey = $"{cacheKey}:user:{userId}";
 
         // Try to load cached token for this cache key
         if (!forceRefresh && File.Exists(_tokenCachePath))

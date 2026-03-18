@@ -164,7 +164,8 @@ internal static class CopilotStudioSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to configure CopilotStudio permissions: {Message}", ex.Message);
+            logger.LogError("Failed to configure CopilotStudio permissions: {Message}", ex.Message);
+            logger.LogDebug(ex, "Failed to configure CopilotStudio permissions exception details");
             return false;
         }
     }
