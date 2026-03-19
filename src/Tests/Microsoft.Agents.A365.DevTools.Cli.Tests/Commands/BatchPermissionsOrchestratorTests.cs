@@ -88,9 +88,9 @@ public class BatchPermissionsOrchestratorTests
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns((JsonDocument?)null);
 
-        // Phase 3 checks whether the current user is an admin; return false (non-admin path)
+        // Phase 3 checks whether the current user is an admin; return DoesNotHaveRole (non-admin path)
         _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(false);
+            .Returns(RoleCheckResult.DoesNotHaveRole);
 
         var config = new Agent365Config
         {

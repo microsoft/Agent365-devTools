@@ -892,7 +892,12 @@ internal static class BlueprintSubcommand
             }
 
             var blueprintLoginHint = await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
-            var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct, loginHint: blueprintLoginHint);
+            // Use Application.ReadWrite.All explicitly — NOT .default. Using .default bundles all
+            // consented scopes including AgentIdentityBlueprint.*, which Entra rejects for
+            // POST /v1.0/servicePrincipals ("backing application must be in the local tenant").
+            logger.LogDebug("Acquiring blueprint httpClient token — scope: Application.ReadWrite.All, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
+            var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct,
+                scope: AuthenticationConstants.ApplicationReadWriteAllScope, loginHint: blueprintLoginHint);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
@@ -1035,20 +1040,38 @@ internal static class BlueprintSubcommand
             }
 
             // Create service principal
+            // Retry on 400 NoBackingApplicationObject: Agent Blueprint apps may not yet be indexed
+            // by appId in all Graph API replicas even after the application object is visible by
+            // objectId. Retry with backoff until the appId index is replicated.
             logger.LogInformation("Creating service principal...");
 
             var spManifest = new JsonObject
             {
                 ["appId"] = appId
             };
-
+            var spManifestJson = spManifest.ToJsonString();
             var createSpUrl = "https://graph.microsoft.com/v1.0/servicePrincipals";
-            var spResponse = await httpClient.PostAsync(
-                createSpUrl,
-                new StringContent(spManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
 
             string? servicePrincipalId = null;
+            using var spResponse = await retryHelper.ExecuteWithRetryAsync(
+                async token => await httpClient.PostAsync(
+                    createSpUrl,
+                    new StringContent(spManifestJson, System.Text.Encoding.UTF8, "application/json"),
+                    token),
+                response =>
+                {
+                    if (response.StatusCode != System.Net.HttpStatusCode.BadRequest) return false;
+                    // 400 on POST /servicePrincipals for a newly-created Agent Blueprint app is
+                    // expected to be NoBackingApplicationObject — the appId index takes a few seconds
+                    // to replicate after creation. Log each trigger so operators can distinguish
+                    // transient replication lag from a genuine misconfiguration.
+                    logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
+                    return true;
+                },
+                maxRetries: 8,
+                baseDelaySeconds: 5,
+                cancellationToken: ct);
+
             if (spResponse.IsSuccessStatusCode)
             {
                 var spJson = await spResponse.Content.ReadAsStringAsync(ct);
@@ -1059,8 +1082,7 @@ internal static class BlueprintSubcommand
             else
             {
                 var spError = await spResponse.Content.ReadAsStringAsync(ct);
-                logger.LogInformation("Waiting for application propagation before creating service principal...");
-                logger.LogDebug("Service principal creation deferred (propagation delay): {Error}", spError);
+                logger.LogWarning("Service principal creation failed: {StatusCode} — {Error}", (int)spResponse.StatusCode, spError);
             }
 
             // Wait for service principal propagation using RetryHelper
@@ -1517,27 +1539,21 @@ internal static class BlueprintSubcommand
         }
 
         // Check if the current user has an admin role that can grant tenant-wide consent
-        var userIsAdmin = await graphApiService.IsCurrentUserAdminAsync(tenantId, ct);
-        if (!userIsAdmin)
+        var adminCheck = await graphApiService.IsCurrentUserAdminAsync(tenantId, ct);
+        if (adminCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
-            logger.LogWarning("Admin consent is required but the current user does not have an admin role.");
+            logger.LogWarning("Admin consent is required but the current user does not have the Global Administrator role.");
             logger.LogWarning("Ask a tenant administrator to complete the following:");
             logger.LogWarning("");
             logger.LogWarning("  1. Grant admin consent for the agent blueprint:");
             logger.LogWarning("     {ConsentUrl}", consentUrlGraph);
 
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                var clientAppConsentUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent" +
-                    $"?client_id={setupConfig.ClientAppId}" +
-                    $"&scope={Uri.EscapeDataString(AuthenticationConstants.RoleManagementReadDirectoryScope)}";
-                logger.LogWarning("");
-                logger.LogWarning("  2. Grant consent on the a365 CLI client app (enables admin role detection):");
-                logger.LogWarning("     {ClientAppConsentUrl}", clientAppConsentUrl);
-                logger.LogWarning("     This step is optional — setup will still work without it.");
-            }
-
             return (false, consentUrlGraph, false, null);
+        }
+
+        if (adminCheck == Models.RoleCheckResult.Unknown)
+        {
+            logger.LogDebug("Admin role check inconclusive — attempting consent anyway; API will surface any permission error.");
         }
 
         // Request consent via browser

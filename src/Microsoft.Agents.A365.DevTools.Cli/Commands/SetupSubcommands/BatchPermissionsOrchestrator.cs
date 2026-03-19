@@ -182,13 +182,9 @@ internal static class BatchPermissionsOrchestrator
     {
         // 0. Pre-warm delegated token once — prevents bouncing between auth providers
         //    for subsequent Graph calls in this phase.
-        // Include Directory.Read.All so the Phase 3 IsCurrentUserAdminAsync call reuses this
-        // cached token instead of triggering an additional browser prompt. Directory.Read.All
-        // is confirmed consented on the client app (validated by ClientAppRequirementCheck).
-        // RoleManagement.Read.Directory is intentionally excluded — it is not consented on the
-        // client app and would trigger an admin approval prompt.
-        var prewarmScopes = permScopes.Append(AuthenticationConstants.DirectoryReadAllScope).ToArray();
-        var user = await graph.GraphGetAsync(tenantId, "/v1.0/me?$select=id", ct, scopes: prewarmScopes);
+        // IsCurrentUserAdminAsync uses only User.Read (always implicit), so no extra scope needed here.
+        var prewarmScopes = permScopes.ToArray();
+        using var user = await graph.GraphGetAsync(tenantId, "/v1.0/me?$select=id", ct, scopes: prewarmScopes);
         if (user == null)
         {
             throw new SetupValidationException(
@@ -391,12 +387,28 @@ internal static class BatchPermissionsOrchestrator
         SetupResults? setupResults,
         CancellationToken ct)
     {
-        // Build a consolidated consent URL that covers all scopes across all specs.
-        // The scopes are passed directly via the scope= query parameter; requiredResourceAccess
-        // is not used (not supported for Agent Blueprints). An admin visiting this URL grants
-        // consent for all resources in one step.
-        var allScopes = specs.SelectMany(s => s.Scopes).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var allScopesEscaped = Uri.EscapeDataString(string.Join(' ', allScopes));
+        // Build a consent URL covering Microsoft Graph delegated scopes only.
+        // The /v2.0/adminconsent scope= parameter accepts only standard OAuth2 delegated scopes.
+        // Non-Graph scopes (Bot API Authorization.ReadWrite, Agent Blueprint inheritable permissions,
+        // MCP server scopes) are blueprint-specific and cannot be consented via this URL — they are
+        // configured via the Agent Blueprint API (inheritable permissions) or are not OAuth2 scopes
+        // at all. Including them causes AADSTS650053 (unknown scope on Graph) or AADSTS500011
+        // (resource SP not found via api:// identifier URI).
+        var graphScopes = specs
+            .Where(s => s.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId)
+            .SelectMany(s => s.Scopes.Select(scope => $"https://graph.microsoft.com/{scope}"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // If there are no Graph scopes to consent to (e.g. agent config has no agentApplicationScopes),
+        // skip Phase 3 entirely — there is nothing to grant via the admin consent URL.
+        if (graphScopes.Count == 0)
+        {
+            logger.LogInformation("No Microsoft Graph scopes require admin consent — skipping consent URL.");
+            return (true, null, null);
+        }
+
+        var allScopesEscaped = Uri.EscapeDataString(string.Join(' ', graphScopes));
         var consentUrl =
             $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent" +
             $"?client_id={blueprintAppId}" +
@@ -449,33 +461,23 @@ internal static class BatchPermissionsOrchestrator
         }
 
         // Consent not yet detected — check whether the current user can grant it interactively.
-        var userIsAdmin = await graph.IsCurrentUserAdminAsync(tenantId, ct);
+        var adminCheck = await graph.IsCurrentUserAdminAsync(tenantId, ct);
 
-        if (!userIsAdmin)
+        if (adminCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
             logger.LogWarning(
-                "Admin consent is required but the current user does not have an admin role.");
-
-            string? clientAppConsentUrl = null;
-            if (!string.IsNullOrWhiteSpace(config.ClientAppId))
-            {
-                clientAppConsentUrl =
-                    $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent" +
-                    $"?client_id={config.ClientAppId}" +
-                    $"&scope={Uri.EscapeDataString(AuthenticationConstants.RoleManagementReadDirectoryScope)}";
-            }
+                "Admin consent is required but the current user does not have the Global Administrator role.");
 
             logger.LogWarning("  A tenant administrator must grant consent at:");
             logger.LogWarning("  {ConsentUrl}", consentUrl);
-            if (!string.IsNullOrWhiteSpace(clientAppConsentUrl))
-            {
-                logger.LogWarning("  To enable admin role detection, also grant consent for the a365 CLI client app:");
-                logger.LogWarning("  {ClientAppConsentUrl}", clientAppConsentUrl);
-                logger.LogWarning("  This step is optional - setup will still work without it.");
-            }
             setupResults?.Warnings.Add($"Admin consent required. Grant at: {consentUrl}");
 
-            return (false, consentUrl, clientAppConsentUrl);
+            return (false, consentUrl, null);
+        }
+
+        if (adminCheck == Models.RoleCheckResult.Unknown)
+        {
+            logger.LogDebug("Admin role check inconclusive — attempting consent anyway; API will surface any permission error.");
         }
 
         // Admin path: open browser and poll for the grant.

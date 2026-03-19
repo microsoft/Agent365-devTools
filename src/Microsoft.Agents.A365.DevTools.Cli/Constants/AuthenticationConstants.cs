@@ -88,12 +88,27 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Delegated scope for reading directory role assignments.
-    /// Not currently used for role detection (both <see cref="GraphApiService.IsCurrentUserAdminAsync"/>
-    /// and <see cref="GraphApiService.IsCurrentUserAgentIdAdminAsync"/> use <see cref="DirectoryReadAllScope"/>
-    /// which is already consented). Retained as a named constant for future use where a lower-privilege
-    /// role-read scope is required and can be separately consented.
+    /// Retained as a named constant for use cases where a lower-privilege role-read scope is required.
     /// </summary>
     public const string RoleManagementReadDirectoryScope = "RoleManagement.Read.Directory";
+
+    /// <summary>
+    /// Delegated scope granted implicitly to all Microsoft Graph delegated tokens.
+    /// Used for /me and /me/transitiveMemberOf calls that require only basic user identity access.
+    /// </summary>
+    public const string UserReadScope = "User.Read";
+
+    /// <summary>
+    /// Well-known template ID for the "Global Administrator" built-in Entra role.
+    /// Required to grant tenant-wide admin consent interactively.
+    /// </summary>
+    public const string GlobalAdminRoleTemplateId = "62e90394-69f5-4237-9190-012177145e10";
+
+    /// <summary>
+    /// Well-known template ID for the "Agent ID Administrator" built-in Entra role.
+    /// Required to create or update inheritable permissions on agent blueprints.
+    /// </summary>
+    public const string AgentIdAdminRoleTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f";
 
     /// <summary>
     /// Delegated scope for broad directory read access.

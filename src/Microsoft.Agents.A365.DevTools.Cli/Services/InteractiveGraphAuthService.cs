@@ -86,18 +86,7 @@ public sealed class InteractiveGraphAuthService
             return _cachedClient;
         }
 
-        _logger.LogInformation("Attempting to authenticate to Microsoft Graph interactively...");
-        _logger.LogInformation("This requires permissions defined in AuthenticationConstants.RequiredClientAppPermissions for Agent Blueprint operations.");
-        _logger.LogInformation("");
-        _logger.LogInformation("IMPORTANT: Interactive authentication is required.");
-        _logger.LogInformation("Please sign in with an account that has Global Administrator or similar privileges.");
-        _logger.LogInformation("");
-
         _logger.LogInformation("Authenticating to Microsoft Graph...");
-        _logger.LogInformation("IMPORTANT: You must grant consent for all required permissions.");
-        _logger.LogInformation("Required permissions are defined in AuthenticationConstants.RequiredClientAppPermissions.");
-        _logger.LogInformation($"See {ConfigConstants.Agent365CliDocumentationUrl} for the complete list.");
-        _logger.LogInformation("");
 
         // Eagerly acquire a token so authentication failures are detected here rather than
         // surfacing later from inside GraphServiceClient's lazy token acquisition.

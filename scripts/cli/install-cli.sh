@@ -84,13 +84,18 @@ if dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli 2>/dev/null; then
     sleep 1
 else
     echo "Could not uninstall existing CLI (may not be installed or locked)."
-    # Try to clear the tool directory manually if locked
+    # Try to clear the tool directory and shim manually (handles ghost/orphaned installs)
     TOOL_PATH="$HOME/.dotnet/tools/.store/microsoft.agents.a365.devtools.cli"
     if [ -d "$TOOL_PATH" ]; then
         echo "Attempting to clear locked tool directory..."
         rm -rf "$TOOL_PATH" 2>/dev/null || true
         sleep 1
     fi
+    # Remove orphaned shim that blocks reinstall even when tool is not registered
+    SHIM="$HOME/.dotnet/tools/a365"
+    for ext in "" ".exe"; do
+        [ -f "${SHIM}${ext}" ] && rm -f "${SHIM}${ext}" 2>/dev/null && echo "Removed orphaned shim: ${SHIM}${ext}" || true
+    done
 fi
 
 # Install with specific version from local source

@@ -496,18 +496,25 @@ public class GraphApiService
     {
         var desiredScopeString = string.Join(' ', scopes);
 
-        // Read existing
-        var listDoc = await GraphGetAsync(
+        // Read existing — extract string values immediately so JsonDocument can be disposed
+        string? existingId = null;
+        string existingScopes = "";
+
+        using (var listDoc = await GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
             ct,
-            permissionGrantScopes);
+            permissionGrantScopes))
+        {
+            if (listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0)
+            {
+                var grant = arr[0];
+                existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
+            }
+        }
 
-        var existing = listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0
-            ? arr[0]
-            : (JsonElement?)null;
-
-        if (existing is null)
+        if (existingId == null)
         {
             // Create
             var payload = new
@@ -522,8 +529,7 @@ public class GraphApiService
         }
 
         // Merge scopes if needed
-        var current = existing.Value.TryGetProperty("scope", out var s) ? s.GetString() ?? "" : "";
-        var currentSet = new HashSet<string>(current.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
+        var currentSet = new HashSet<string>(existingScopes.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
         var desiredSet = new HashSet<string>(desiredScopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
 
         if (desiredSet.IsSubsetOf(currentSet)) return true; // already satisfied
@@ -531,10 +537,7 @@ public class GraphApiService
         currentSet.UnionWith(desiredSet);
         var merged = string.Join(' ', currentSet);
 
-        var id = existing.Value.GetProperty("id").GetString();
-        if (string.IsNullOrWhiteSpace(id)) return false;
-
-        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{id}", new { scope = merged }, ct, permissionGrantScopes);
+        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes);
     }
 
     /// <summary>
@@ -699,91 +702,80 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Global Administrator role,
     /// which is required to grant tenant-wide admin consent interactively.
-    /// Returns false (non-blocking) if the check cannot be completed.
+    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
+    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
     /// </summary>
-    public virtual async Task<bool> IsCurrentUserAdminAsync(
+    public virtual async Task<Models.RoleCheckResult> IsCurrentUserAdminAsync(
         string tenantId,
         CancellationToken ct = default)
     {
-        // Only Global Administrator can grant tenant-wide admin consent interactively
-        const string globalAdminTemplateId = "62e90394-69f5-4237-9190-012177145e10";
-
-        try
-        {
-            return await HasDirectoryRoleAsync(tenantId, globalAdminTemplateId, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not determine admin role for current user: {Message}", ex.Message);
-            return false;
-        }
+        return await CheckDirectoryRoleAsync(tenantId, AuthenticationConstants.GlobalAdminRoleTemplateId, ct);
     }
 
     /// <summary>
     /// Checks whether the currently signed-in user holds the Agent ID Administrator role,
     /// which is required to create or update inheritable permissions on agent blueprints.
-    /// Uses <see cref="AuthenticationConstants.DirectoryReadAllScope"/> (already consented on
-    /// the client app) to avoid triggering an additional consent prompt.
-    /// Returns false (non-blocking) if the check cannot be completed.
+    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
+    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
     /// </summary>
-    public virtual async Task<bool> IsCurrentUserAgentIdAdminAsync(
+    public virtual async Task<Models.RoleCheckResult> IsCurrentUserAgentIdAdminAsync(
         string tenantId,
         CancellationToken ct = default)
     {
-        // Well-known template ID for the "Agent ID Administrator" built-in Entra role
-        const string agentIdAdminTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f";
-
-        try
-        {
-            return await HasDirectoryRoleAsync(tenantId, agentIdAdminTemplateId, ct,
-                AuthenticationConstants.DirectoryReadAllScope);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Could not determine Agent ID Administrator role for current user: {Message}", ex.Message);
-            return false;
-        }
+        return await CheckDirectoryRoleAsync(tenantId, AuthenticationConstants.AgentIdAdminRoleTemplateId, ct);
     }
 
     /// <summary>
-    /// Checks whether the current user holds the specified directory role by following
-    /// all @odata.nextLink pages from /v1.0/me/memberOf.
+    /// Returns <see cref="Models.RoleCheckResult.HasRole"/> if the role is confirmed active,
+    /// <see cref="Models.RoleCheckResult.DoesNotHaveRole"/> if confirmed absent, or
+    /// <see cref="Models.RoleCheckResult.Unknown"/> if the check itself failed (e.g. network error,
+    /// throttling, auth failure) — in which case the caller should attempt the operation
+    /// anyway and let the API surface the real error.
+    /// Queries /me/transitiveMemberOf/microsoft.graph.directoryRole, which requires only
+    /// User.Read and succeeds for both admin and non-admin users.
+    /// Note: PIM-eligible-but-not-activated assignments are not considered active.
     /// </summary>
-    /// <param name="delegatedScope">Delegated scope to use when a token provider is available.
-    /// Pass <see cref="AuthenticationConstants.RoleManagementReadDirectoryScope"/> for a lower-privilege
-    /// read, or <see cref="AuthenticationConstants.DirectoryReadAllScope"/> when that scope is already
-    /// consented.</param>
-    private async Task<bool> HasDirectoryRoleAsync(string tenantId, string roleTemplateId, CancellationToken ct,
-        string delegatedScope = AuthenticationConstants.DirectoryReadAllScope)
+    private async Task<Models.RoleCheckResult> CheckDirectoryRoleAsync(string tenantId, string roleTemplateId, CancellationToken ct)
     {
-        // When a token provider is available, use the caller-supplied scope for delegated auth.
-        // Without a token provider, fall back to the Azure CLI path (no scopes).
-        IEnumerable<string>? memberOfScopes = _tokenProvider != null
-            ? [delegatedScope]
-            : null;
-
-        string? nextUrl = "/v1.0/me/memberOf?$select=roleTemplateId";
-
-        while (nextUrl != null)
+        try
         {
-            var doc = await GraphGetAsync(tenantId, nextUrl, ct, memberOfScopes);
+            IEnumerable<string>? scopes = _tokenProvider != null
+                ? [AuthenticationConstants.UserReadScope]
+                : null;
 
-            if (doc == null || !doc.RootElement.TryGetProperty("value", out var roles))
-                return false;
+            string? nextUrl = "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId";
 
-            foreach (var role in roles.EnumerateArray())
+            while (nextUrl != null)
             {
-                if (role.TryGetProperty("roleTemplateId", out var id) &&
-                    string.Equals(id.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase))
-                    return true;
+                using var doc = await GraphGetAsync(tenantId, nextUrl, ct, scopes);
+
+                if (doc == null)
+                    return Models.RoleCheckResult.Unknown;
+
+                if (!doc.RootElement.TryGetProperty("value", out var roles))
+                {
+                    _logger.LogWarning("Unexpected Graph response shape — 'value' property missing from transitiveMemberOf response.");
+                    return Models.RoleCheckResult.Unknown;
+                }
+
+                if (roles.EnumerateArray().Any(r =>
+                        r.TryGetProperty("roleTemplateId", out var id) &&
+                        string.Equals(id.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase)))
+                    return Models.RoleCheckResult.HasRole;
+
+                nextUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
+                    ? nextLink.GetString()
+                    : null;
             }
 
-            nextUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
-                ? nextLink.GetString()
-                : null;
+            return Models.RoleCheckResult.DoesNotHaveRole;
         }
-
-        return false;
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Role check for {TemplateId} failed — will attempt operation anyway: {Message}",
+                roleTemplateId, ex.Message);
+            return Models.RoleCheckResult.Unknown;
+        }
     }
 
     /// <summary>

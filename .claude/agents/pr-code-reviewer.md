@@ -131,9 +131,8 @@ For each changed file, analyze:
    - Are error messages user-friendly?
 
 4. **Resource Management**
-   - Are IDisposable objects disposed?
-   - Are connections/streams closed?
-   - Any potential memory leaks?
+   - Are IDisposable objects disposed? Are connections/streams closed? Any potential memory leaks?
+   - **IMPORTANT**: For every `var x = await SomeMethod(...)` in the diff, use `Read` to look up the method's return type in the source file. If the return type implements `IDisposable`, flag missing `using` as a `high` severity `resource_leak`. Do NOT rely on the diff alone — the return type is almost never in the diff.
 
 5. **Null Safety**
    - Potential null reference exceptions?

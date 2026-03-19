@@ -87,7 +87,7 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
 
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope };
 
             _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
@@ -176,7 +176,7 @@ public class AgentBlueprintService
         string blueprintId,
         CancellationToken cancellationToken = default)
     {
-        var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+        var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope };
         var encodedId = Uri.EscapeDataString(blueprintId);
 
         // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers
@@ -298,7 +298,7 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agentic user: {AgentUserId}", agentUserId);
 
-            var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope };
             var deletePath = $"/beta/agentUsers/{agentUserId}";
 
             var success = await _graphApiService.GraphDeleteAsync(

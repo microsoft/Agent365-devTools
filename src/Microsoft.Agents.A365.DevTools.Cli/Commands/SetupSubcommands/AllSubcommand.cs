@@ -108,7 +108,7 @@ internal static class AllSubcommand
                 logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
                 logger.LogInformation("This would execute the following operations:");
                 logger.LogInformation("");
-                
+
                 if (!skipRequirements)
                 {
                     logger.LogInformation("  0. Validate prerequisites (PowerShell modules, etc.)");

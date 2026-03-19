@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -527,6 +528,72 @@ public class GraphApiServiceTests
 
     #endregion
 
+    #region IsCurrentUserAdminAsync
+
+    [Fact]
+    public async Task IsCurrentUserAdminAsync_UserWithGlobalAdminRole_ReturnsHasRole()
+    {
+        // Arrange — user holds the Global Administrator role
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new
+        {
+            value = new[]
+            {
+                new { roleTemplateId = "62e90394-69f5-4237-9190-012177145e10" }  // Global Administrator
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.HasRole, "a user holding the Global Administrator role should pass the admin check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAdminAsync_UserWithNoAdminRole_ReturnsDoesNotHaveRole()
+    {
+        // Arrange — user has no admin roles
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new { value = Array.Empty<object>() };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.DoesNotHaveRole, "a user with no admin role should not pass the Global Administrator check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAdminAsync_GraphFails_ReturnsUnknown()
+    {
+        // Arrange — Graph call fails (500 causes GraphGetAsync to return null)
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        // Act
+        var result = await service.IsCurrentUserAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.Unknown, "a failed Graph call should return Unknown, not DoesNotHaveRole");
+    }
+
+    #endregion
+
     #region IsCurrentUserAgentIdAdminAsync
 
     private static GraphApiService CreateServiceWithTokenProvider(TestHttpMessageHandler handler)
@@ -542,7 +609,7 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task IsCurrentUserAgentIdAdminAsync_UserWithNoRelevantRole_ReturnsFalse()
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithNoRelevantRole_ReturnsDoesNotHaveRole()
     {
         // Arrange — user is an Agent ID developer (no admin roles)
         using var handler = new TestHttpMessageHandler();
@@ -558,11 +625,11 @@ public class GraphApiServiceTests
         var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
 
         // Assert
-        result.Should().BeFalse("a developer with no admin roles should not pass the Agent ID Administrator check");
+        result.Should().Be(RoleCheckResult.DoesNotHaveRole, "a developer with no admin roles should not pass the Agent ID Administrator check");
     }
 
     [Fact]
-    public async Task IsCurrentUserAgentIdAdminAsync_UserWithAgentIdAdminRole_ReturnsTrue()
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithAgentIdAdminRole_ReturnsHasRole()
     {
         // Arrange — user holds the Agent ID Administrator role
         using var handler = new TestHttpMessageHandler();
@@ -584,11 +651,11 @@ public class GraphApiServiceTests
         var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
 
         // Assert
-        result.Should().BeTrue("a user holding the Agent ID Administrator role should pass the check");
+        result.Should().Be(RoleCheckResult.HasRole, "a user holding the Agent ID Administrator role should pass the check");
     }
 
     [Fact]
-    public async Task IsCurrentUserAgentIdAdminAsync_UserWithGlobalAdminRoleOnly_ReturnsFalse()
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithGlobalAdminRoleOnly_ReturnsDoesNotHaveRole()
     {
         // Arrange — user is a Global Administrator but not an Agent ID Administrator
         using var handler = new TestHttpMessageHandler();
@@ -611,7 +678,23 @@ public class GraphApiServiceTests
         var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
 
         // Assert
-        result.Should().BeFalse("Global Administrator alone does not satisfy the Agent ID Administrator role requirement");
+        result.Should().Be(RoleCheckResult.DoesNotHaveRole, "Global Administrator alone does not satisfy the Agent ID Administrator role requirement");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_GraphReturnsNull_ReturnsUnknown()
+    {
+        // Arrange — Graph call fails (null response simulates network/auth error)
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.Unknown, "a failed Graph call should return Unknown, not DoesNotHaveRole");
     }
 
     #endregion
