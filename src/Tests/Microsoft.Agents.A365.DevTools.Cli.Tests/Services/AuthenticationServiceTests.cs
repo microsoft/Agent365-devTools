@@ -800,7 +800,7 @@ public class AuthenticationServiceTests : IDisposable
             _deviceCodeCredential = deviceCodeCredential;
         }
 
-        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId)
+        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null)
             => _browserCredential;
 
         protected override TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
