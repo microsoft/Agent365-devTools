@@ -1615,11 +1615,12 @@ internal static class BlueprintSubcommand
     /// <summary>
     /// Acquires a Microsoft Graph access token using MSAL interactive authentication
     /// (WAM on Windows, browser-based flow on other platforms).
-    /// Pass a specific scope (e.g. AgentIdentityBlueprint.AddRemoveCreds.All) to avoid bundling
+    /// Pass a specific scope (e.g. AgentIdentityBlueprint.ReadWrite.All) to avoid bundling
     /// Application.ReadWrite.All and the Directory.AccessAsUser.All scope it carries, which is
     /// rejected by the Agent Blueprint API. Defaults to .default (all consented permissions).
+    /// Pass loginHint so WAM targets the az-logged-in user rather than the OS default account.
     /// </summary>
-    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null)
+    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null, string? loginHint = null)
     {
         try
         {
@@ -1627,7 +1628,8 @@ internal static class BlueprintSubcommand
                 clientAppId,
                 tenantId,
                 redirectUri: null,  // Let MsalBrowserCredential use WAM on Windows
-                logger);
+                logger,
+                loginHint: loginHint);
 
             var resolvedScope = string.IsNullOrWhiteSpace(scope)
                 ? "https://graph.microsoft.com/.default"
@@ -1698,6 +1700,10 @@ internal static class BlueprintSubcommand
         {
             logger.LogInformation("Creating client secret for Agent Blueprint using Graph API...");
 
+            // Resolve login hint so WAM targets the az-logged-in user, not the OS default account.
+            // Without this, WAM may return a cached token for a different user who is not the owner.
+            var loginHint = await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
+
             // Use a token scoped to AgentIdentityBlueprint.ReadWrite.All (already consented on the
             // client app). Using .default bundles Application.ReadWrite.All → Directory.AccessAsUser.All,
             // which the Agent Blueprint API explicitly rejects for addPassword. ReadWrite.All includes
@@ -1706,7 +1712,8 @@ internal static class BlueprintSubcommand
                 setupConfig.TenantId ?? string.Empty,
                 setupConfig.ClientAppId ?? string.Empty,
                 logger, ct,
-                scope: AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope);
+                scope: AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope,
+                loginHint: loginHint);
 
             if (string.IsNullOrWhiteSpace(graphToken))
             {

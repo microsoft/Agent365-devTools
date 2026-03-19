@@ -20,7 +20,7 @@ public interface IMicrosoftGraphTokenProvider
     Task<string?> GetMgGraphAccessTokenAsync(
         string tenantId,
         IEnumerable<string> scopes,
-        bool useDeviceCode = true,
+        bool useDeviceCode = false,
         string? clientAppId = null,
         CancellationToken ct = default,
         string? loginHint = null);

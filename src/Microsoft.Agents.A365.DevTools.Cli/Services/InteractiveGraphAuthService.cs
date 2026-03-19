@@ -176,7 +176,7 @@ public sealed class InteractiveGraphAuthService
     /// instead of the default OS-level Windows account.
     /// Returns null if az CLI is unavailable or the user field is absent (non-fatal).
     /// </summary>
-    private static async Task<string?> ResolveAzLoginHintAsync()
+    internal static async Task<string?> ResolveAzLoginHintAsync()
     {
         try
         {

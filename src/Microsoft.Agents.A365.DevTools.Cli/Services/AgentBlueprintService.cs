@@ -87,13 +87,11 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
 
-            // Scope matches main — pending validation of whether DeleteRestore.All is required.
             var requiredScopes = new[] { "AgentIdentityBlueprint.ReadWrite.All" };
 
             _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
-            // URL matches main — pending validation of which URL pattern Graph accepts.
             var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";
 
             // Use GraphDeleteAsync with the special scopes required for blueprint operations
