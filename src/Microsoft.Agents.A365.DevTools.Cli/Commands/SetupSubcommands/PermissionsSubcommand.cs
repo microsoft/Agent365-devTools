@@ -378,7 +378,10 @@ internal static class PermissionsSubcommand
                 knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
 
             logger.LogInformation("");
-            logger.LogInformation("MCP server permissions configured successfully");
+            if (consentGranted)
+                logger.LogInformation("MCP server permissions configured successfully");
+            else
+                logger.LogInformation("MCP server permissions configured; admin consent required");
             logger.LogInformation("");
             if (!iSetupAll)
             {

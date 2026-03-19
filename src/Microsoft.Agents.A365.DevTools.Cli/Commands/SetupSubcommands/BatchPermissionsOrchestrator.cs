@@ -187,7 +187,7 @@ internal static class BatchPermissionsOrchestrator
         // is confirmed consented on the client app (validated by ClientAppRequirementCheck).
         // RoleManagement.Read.Directory is intentionally excluded — it is not consented on the
         // client app and would trigger an admin approval prompt.
-        var prewarmScopes = permScopes.Append("Directory.Read.All").ToArray();
+        var prewarmScopes = permScopes.Append(AuthenticationConstants.DirectoryReadAllScope).ToArray();
         var user = await graph.GraphGetAsync(tenantId, "/v1.0/me?$select=id", ct, scopes: prewarmScopes);
         if (user == null)
         {
@@ -404,26 +404,43 @@ internal static class BatchPermissionsOrchestrator
             $"&redirect_uri=https://entra.microsoft.com/TokenAuthorize" +
             $"&state=xyz123";
 
-        // Check if consent already exists (Phase 2 programmatic grants satisfy this check).
+        // Check if consent already exists for ALL resolved resources (Phase 2 programmatic grants satisfy this check).
+        // Only skip browser consent if every resource has its consent in place.
         if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
         {
-            var specWithResolvedSp = specs.FirstOrDefault(
-                s => phase1Result.ResourceSpObjectIds.ContainsKey(s.ResourceAppId));
+            var specsWithResolvedSp = specs
+                .Where(s => phase1Result.ResourceSpObjectIds.ContainsKey(s.ResourceAppId))
+                .ToList();
 
-            if (specWithResolvedSp != null &&
-                phase1Result.ResourceSpObjectIds.TryGetValue(specWithResolvedSp.ResourceAppId, out var resourceSpId))
+            if (specsWithResolvedSp.Count > 0)
             {
-                var consentExists = await AdminConsentHelper.CheckConsentExistsAsync(
-                    graph,
-                    tenantId,
-                    phase1Result.BlueprintSpObjectId,
-                    resourceSpId,
-                    specWithResolvedSp.Scopes,
-                    logger,
-                    ct,
-                    scopes: permScopes);
+                bool allConsented = true;
+                foreach (var spec in specsWithResolvedSp)
+                {
+                    if (!phase1Result.ResourceSpObjectIds.TryGetValue(spec.ResourceAppId, out var resourceSpId))
+                    {
+                        allConsented = false;
+                        break;
+                    }
 
-                if (consentExists)
+                    var consentExists = await AdminConsentHelper.CheckConsentExistsAsync(
+                        graph,
+                        tenantId,
+                        phase1Result.BlueprintSpObjectId,
+                        resourceSpId,
+                        spec.Scopes,
+                        logger,
+                        ct,
+                        scopes: permScopes);
+
+                    if (!consentExists)
+                    {
+                        allConsented = false;
+                        break;
+                    }
+                }
+
+                if (allConsented)
                 {
                     logger.LogInformation("Admin consent already granted — skipping browser consent.");
                     return (true, consentUrl, null);

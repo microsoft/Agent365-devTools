@@ -500,8 +500,8 @@ public class InfrastructureSubcommandTests
         var webAppName = "test-webapp";
         var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
         var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
-        var logger = Substitute.For<ILogger>();
-        
+        var logger = new TestLogger();
+
         try
         {
             // Create temporary project directory
@@ -576,10 +576,8 @@ public class InfrastructureSubcommandTests
 
             // Assert - Principal ID should still be set, warning logged
             principalId.Should().Be("test-principal-id");
-            
-            // The warning for assignment failure is emitted by the code (verified via manual inspection).
-            // NSubstitute cannot match Log<FormattedLogValues> via Log<object> generic inference,
-            // so we rely on the command executor assertions above to confirm the failure path ran.
+            logger.HasWarning("Could not assign Website Contributor role to user. Diagnostic logs may not be accessible.")
+                .Should().BeTrue("the code must warn when role assignment fails");
         }
         finally
         {
@@ -603,7 +601,7 @@ public class InfrastructureSubcommandTests
         var webAppName = "test-webapp";
         var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
         var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
-        var logger = Substitute.For<ILogger>();
+        var logger = new TestLogger();
 
         try
         {
@@ -683,9 +681,8 @@ public class InfrastructureSubcommandTests
                 captureOutput: true,
                 suppressErrorLogging: true);
 
-            // The success log ("User already has ... log access confirmed, skipping") is emitted.
-            // NSubstitute cannot match Log<FormattedLogValues> via Log<object> generic inference,
-            // so we rely on the command executor assertion above (role assignment list received) to confirm the path.
+            logger.HasInformation("log access confirmed, skipping")
+                .Should().BeTrue("the code must log when an existing role is detected and assignment is skipped");
         }
         finally
         {
@@ -695,5 +692,23 @@ public class InfrastructureSubcommandTests
             if (Directory.Exists(deploymentProjectPath))
                 Directory.Delete(deploymentProjectPath, true);
         }
+    }
+
+    private sealed class TestLogger : ILogger
+    {
+        private readonly List<(LogLevel Level, string Message)> _entries = [];
+
+        public bool HasWarning(string fragment) =>
+            _entries.Any(e => e.Level == LogLevel.Warning && e.Message.Contains(fragment));
+
+        public bool HasInformation(string fragment) =>
+            _entries.Any(e => e.Level == LogLevel.Information && e.Message.Contains(fragment));
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => _entries.Add((logLevel, formatter(state, exception)));
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     }
 }
