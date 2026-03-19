@@ -101,7 +101,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             ValidateClientAppId(clientAppId);
         }
 
-        var cacheKey = MakeCacheKey(tenantId, validatedScopes, clientAppId);
+        var cacheKey = MakeCacheKey(tenantId, validatedScopes, clientAppId, loginHint);
         var tokenExpirationMinutes = AuthenticationConstants.TokenExpirationBufferMinutes;
 
         // Fast path: cached + not expiring soon
@@ -132,11 +132,11 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             _logger.LogInformation("Acquiring Microsoft Graph delegated access token...");
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                _logger.LogInformation("A Windows authentication dialog will appear. Complete sign-in, then return here — the CLI will continue automatically.");
+                _logger.LogDebug("A Windows authentication dialog may appear. Complete sign-in, then return here — the CLI will continue automatically.");
             }
             else
             {
-                _logger.LogInformation("A device code prompt will appear below. Open the URL in any browser, enter the code, complete sign-in, then return here — the CLI will continue automatically.");
+                _logger.LogDebug("A browser window or device code prompt may appear. Complete sign-in, then return here — the CLI will continue automatically.");
             }
 
             // MSAL/WAM is primary: user-identity-aware cache prevents cross-user token contamination,
@@ -507,7 +507,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                token.Count(c => c == '.') == 2;
     }
 
-    private static string MakeCacheKey(string tenantId, IEnumerable<string> scopes, string? clientAppId)
+    private static string MakeCacheKey(string tenantId, IEnumerable<string> scopes, string? clientAppId, string? loginHint = null)
     {
         var scopeKey = string.Join(" ", scopes
             .Where(s => !string.IsNullOrWhiteSpace(s))
@@ -515,7 +515,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
 
-        return $"{tenantId}::{clientAppId ?? ""}::{scopeKey}";
+        return $"{tenantId}::{clientAppId ?? ""}::{scopeKey}::{loginHint ?? ""}";
     }
 
     private bool TryGetJwtExpiryUtc(string jwt, out DateTimeOffset expiresOnUtc)
