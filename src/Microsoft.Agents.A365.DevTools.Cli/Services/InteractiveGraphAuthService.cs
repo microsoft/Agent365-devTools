@@ -4,9 +4,13 @@
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 using Microsoft.Identity.Client;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -102,9 +106,12 @@ public sealed class InteractiveGraphAuthService
         TokenCredential? credential = null;
         try
         {
+            // Resolve the current az CLI user so MSAL/WAM targets the correct identity.
+            var loginHint = await ResolveAzLoginHintAsync();
+
             // Resolve credential: use injected factory (for tests) or default MsalBrowserCredential
             credential = _credentialFactory?.Invoke(_clientAppId, tenantId)
-                ?? new MsalBrowserCredential(_clientAppId, tenantId, redirectUri: null, _logger);
+                ?? new MsalBrowserCredential(_clientAppId, tenantId, redirectUri: null, _logger, loginHint: loginHint);
 
             await credential.GetTokenAsync(tokenContext, cancellationToken);
         }
@@ -161,5 +168,42 @@ public sealed class InteractiveGraphAuthService
             "Graph authentication",
             "Insufficient permissions - you must be a Global Administrator or have all required permissions defined in AuthenticationConstants.RequiredClientAppPermissions",
             isPermissionIssue: true);
+    }
+
+    /// <summary>
+    /// Resolves the current Azure CLI user UPN from 'az account show'.
+    /// Used as a login hint for MSAL/WAM so the correct identity is selected
+    /// instead of the default OS-level Windows account.
+    /// Returns null if az CLI is unavailable or the user field is absent (non-fatal).
+    /// </summary>
+    private static async Task<string?> ResolveAzLoginHintAsync()
+    {
+        try
+        {
+            var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = isWindows ? "cmd.exe" : "az",
+                Arguments = isWindows ? "/c az account show" : "account show",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var process = Process.Start(startInfo);
+            if (process == null) return null;
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
+            {
+                var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(output);
+                var json = JsonSerializer.Deserialize<JsonElement>(cleaned);
+                if (json.TryGetProperty("user", out var user) &&
+                    user.TryGetProperty("name", out var name))
+                    return name.GetString();
+            }
+        }
+        catch { }
+        return null;
     }
 }

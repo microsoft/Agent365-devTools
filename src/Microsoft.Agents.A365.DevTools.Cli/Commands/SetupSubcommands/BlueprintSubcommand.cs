@@ -1120,7 +1120,8 @@ internal static class BlueprintSubcommand
                 servicePrincipalId,
                 alreadyExisted: false,
                 ct,
-                options);
+                options,
+                ownerSetAtCreation: !string.IsNullOrEmpty(sponsorUserId));
         }
         catch (Exception ex)
         {
@@ -1151,7 +1152,8 @@ internal static class BlueprintSubcommand
         string? servicePrincipalId,
         bool alreadyExisted,
         CancellationToken ct,
-        BlueprintCreationOptions? options = null)
+        BlueprintCreationOptions? options = null,
+        bool ownerSetAtCreation = false)
     {
         // ========================================================================
         // Application Owner Validation
@@ -1164,7 +1166,19 @@ internal static class BlueprintSubcommand
 
         if (!alreadyExisted)
         {
-            // For new blueprints, verify that the owner was set during creation
+            if (ownerSetAtCreation)
+            {
+                // owners@odata.bind was included in the creation payload and creation returned 201.
+                // Trust the response — skip post-creation verification.
+                // Agent Blueprint owner endpoints reject tokens that include Directory.AccessAsUser.All
+                // (bundled with Application.ReadWrite.All delegated), making any GET/POST to owners/$ref
+                // unreliable. The 201 from creation is authoritative.
+                logger.LogInformation("Owner set at creation via owners@odata.bind — skipping post-creation verification");
+            }
+            else
+            {
+            // owners@odata.bind was not set at creation (current user could not be resolved).
+            // Attempt owner assignment as a fallback.
             logger.LogInformation("Validating blueprint owner assignment...");
             var isOwner = await graphApiService.IsApplicationOwnerAsync(
                 tenantId,
@@ -1221,6 +1235,7 @@ internal static class BlueprintSubcommand
                     }
                 }
             }
+            } // end else (sponsorUserId was null at creation)
         }
         else
         {
@@ -1600,10 +1615,11 @@ internal static class BlueprintSubcommand
     /// <summary>
     /// Acquires a Microsoft Graph access token using MSAL interactive authentication
     /// (WAM on Windows, browser-based flow on other platforms).
-    /// The token carries the delegated permissions of the custom client app, including
-    /// Application.ReadWrite.All, which is required for operations such as addPassword.
+    /// Pass a specific scope (e.g. AgentIdentityBlueprint.AddRemoveCreds.All) to avoid bundling
+    /// Application.ReadWrite.All and the Directory.AccessAsUser.All scope it carries, which is
+    /// rejected by the Agent Blueprint API. Defaults to .default (all consented permissions).
     /// </summary>
-    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default)
+    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null)
     {
         try
         {
@@ -1613,7 +1629,10 @@ internal static class BlueprintSubcommand
                 redirectUri: null,  // Let MsalBrowserCredential use WAM on Windows
                 logger);
 
-            var tokenRequestContext = new TokenRequestContext(new[] { "https://graph.microsoft.com/.default" });
+            var resolvedScope = string.IsNullOrWhiteSpace(scope)
+                ? "https://graph.microsoft.com/.default"
+                : $"https://graph.microsoft.com/{scope}";
+            var tokenRequestContext = new TokenRequestContext(new[] { resolvedScope });
             var token = await credential.GetTokenAsync(tokenRequestContext, ct);
 
             return token.Token;
@@ -1679,13 +1698,15 @@ internal static class BlueprintSubcommand
         {
             logger.LogInformation("Creating client secret for Agent Blueprint using Graph API...");
 
-            // Use the MSAL token (carries Application.ReadWrite.All from the custom client app).
-            // This works for any user with a properly configured custom client app, regardless of
-            // whether they are an owner of the blueprint app registration.
+            // Use a token scoped to AgentIdentityBlueprint.ReadWrite.All (already consented on the
+            // client app). Using .default bundles Application.ReadWrite.All → Directory.AccessAsUser.All,
+            // which the Agent Blueprint API explicitly rejects for addPassword. ReadWrite.All includes
+            // all granular update permissions including AddRemoveCreds (passwordCredentials).
             var graphToken = await AcquireMsalGraphTokenAsync(
                 setupConfig.TenantId ?? string.Empty,
                 setupConfig.ClientAppId ?? string.Empty,
-                logger, ct);
+                logger, ct,
+                scope: AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope);
 
             if (string.IsNullOrWhiteSpace(graphToken))
             {
@@ -1705,10 +1726,19 @@ internal static class BlueprintSubcommand
             };
 
             var addPasswordUrl = $"https://graph.microsoft.com/v1.0/applications/{blueprintObjectId}/addPassword";
-            var passwordResponse = await httpClient.PostAsync(
-                addPasswordUrl,
-                new StringContent(secretBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
+            var secretBodyJson = secretBody.ToJsonString();
+            // Retry on 404: newly created Agent Blueprints may not yet be visible to all Graph
+            // API replicas due to Entra eventual consistency. Retry with backoff until propagated.
+            var retryHelper = new RetryHelper(logger);
+            var passwordResponse = await retryHelper.ExecuteWithRetryAsync(
+                async token => await httpClient.PostAsync(
+                    addPasswordUrl,
+                    new StringContent(secretBodyJson, System.Text.Encoding.UTF8, "application/json"),
+                    token),
+                response => response.StatusCode == System.Net.HttpStatusCode.NotFound,
+                maxRetries: 5,
+                baseDelaySeconds: 5,
+                cancellationToken: ct);
 
             if (!passwordResponse.IsSuccessStatusCode)
             {

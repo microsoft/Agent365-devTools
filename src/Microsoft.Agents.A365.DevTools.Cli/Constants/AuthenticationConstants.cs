@@ -115,14 +115,21 @@ public static class AuthenticationConstants
     public const string AgentIdentityBlueprintDeleteRestoreAllScope = "AgentIdentityBlueprint.DeleteRestore.All";
 
     /// <summary>
-    /// Delegated scope required to add or remove federated identity credentials on an Agent Blueprint.
-    /// Per the Agent ID permissions reference, this is the correct granular scope for FIC operations
-    /// once the breaking change takes effect (Application.ReadWrite.All will no longer allow writes
-    /// to Agent ID entities). Requires Global Administrator or Agent ID Administrator role.
-    /// Not yet used — FederatedCredentialService currently uses Application.ReadWrite.All for
-    /// ownership-based access until AddRemoveCreds.All is validated in TSE.
+    /// Delegated scope required to add or remove federated identity credentials and password credentials
+    /// on an Agent Blueprint. Per the Agent ID permissions reference, covers keyCredentials,
+    /// passwordCredentials, and federatedIdentityCredentials. Requires Global Administrator or
+    /// Agent ID Administrator role.
     /// </summary>
     public const string AgentIdentityBlueprintAddRemoveCredsAllScope = "AgentIdentityBlueprint.AddRemoveCreds.All";
+
+    /// <summary>
+    /// Delegated scope for full read/write access to an Agent Blueprint.
+    /// Includes all granular update permissions (UpdateAuthProperties, AddRemoveCreds, UpdateBranding).
+    /// Used for client secret creation where AddRemoveCreds.All may not yet be individually consented
+    /// on the client app — ReadWrite.All is already consented and avoids bundling
+    /// Directory.AccessAsUser.All that comes with Application.ReadWrite.All/.default.
+    /// </summary>
+    public const string AgentIdentityBlueprintReadWriteAllScope = "AgentIdentityBlueprint.ReadWrite.All";
 
     /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
@@ -137,15 +144,13 @@ public static class AuthenticationConstants
         "Application.ReadWrite.All",
         "AgentIdentityBlueprint.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
+        "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All"
-        // Note: RoleManagementReadDirectoryScope, AgentIdentityBlueprint.DeleteRestore.All, and
-        // AgentIdentityBlueprint.AddRemoveCreds.All are intentionally excluded.
-        // DeleteRestore.All and AddRemoveCreds.All are cleanup-only scopes acquired on-demand via
-        // interactive consent during 'a365 cleanup' — pre-provisioning them here would cause
-        // ClientAppValidator to require admin consent during setup, blocking non-admin users
-        // who cannot patch an admin-owned app registration.
-        // RoleManagementReadDirectoryScope is excluded for the same reason.
+        // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
+        // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
+        // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded
+        // because Directory.Read.All already covers the needed read operations.
     };
 
     /// <summary>

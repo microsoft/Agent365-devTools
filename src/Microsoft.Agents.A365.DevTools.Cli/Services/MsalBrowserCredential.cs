@@ -367,8 +367,19 @@ public sealed class MsalBrowserCredential : TokenCredential
                 // WAM on Windows - native authentication dialog, no browser needed
                 _logger?.LogInformation("Authenticating via Windows Account Manager...");
                 var builder = _publicClientApp.AcquireTokenInteractive(scopes);
-                if (!string.IsNullOrWhiteSpace(_loginHint))
-                    builder = builder.WithLoginHint(_loginHint);
+                if (account != null)
+                {
+                    // Account is known to MSAL — WithAccount is more reliable than WithLoginHint
+                    // for WAM because it passes the internal WAM account reference, not just a UPN.
+                    builder = builder.WithAccount(account);
+                }
+                else if (!string.IsNullOrWhiteSpace(_loginHint))
+                {
+                    // Account not in MSAL cache (e.g. not registered as a Windows Work/School account).
+                    // Force the account picker so the user can select or add the correct account.
+                    // WithLoginHint alone is not honored by WAM in this case.
+                    builder = builder.WithPrompt(Prompt.SelectAccount);
+                }
                 interactiveResult = await builder.ExecuteAsync(cancellationToken);
             }
             else
