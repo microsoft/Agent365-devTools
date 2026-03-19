@@ -891,7 +891,8 @@ internal static class BlueprintSubcommand
                 };
             }
 
-            var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct);
+            var blueprintLoginHint = await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
+            var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct, loginHint: blueprintLoginHint);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
