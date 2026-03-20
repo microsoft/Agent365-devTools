@@ -514,9 +514,10 @@ public class GraphApiService
             }
         }
 
-        if (existingId == null)
+        if (string.IsNullOrWhiteSpace(existingId))
         {
-            // Create
+            // AllPrincipals (tenant-wide) grants require Global Administrator.
+            // Only called from admin paths (setup admin or setup all run by GA).
             var payload = new
             {
                 clientId = clientSpObjectId,
@@ -524,6 +525,8 @@ public class GraphApiService
                 resourceId = resourceSpObjectId,
                 scope = desiredScopeString
             };
+
+            _logger.LogDebug("Graph POST /v1.0/oauth2PermissionGrants body: {Body}", JsonSerializer.Serialize(payload));
             var created = await GraphPostAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
             return created != null; // success if response parsed
         }
@@ -790,25 +793,7 @@ public class GraphApiService
             return _loginHint;
 
         _loginHintResolved = true;
-        try
-        {
-            var result = await _executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true);
-            if (result?.Success == true && !string.IsNullOrWhiteSpace(result.StandardOutput))
-            {
-                var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
-                var json = JsonSerializer.Deserialize<System.Text.Json.JsonElement>(cleaned);
-                if (json.TryGetProperty("user", out var user) &&
-                    user.TryGetProperty("name", out var name))
-                {
-                    _loginHint = name.GetString();
-                }
-            }
-        }
-        catch
-        {
-            // Non-fatal: MSAL will fall back to default account selection if hint is unavailable.
-        }
-
+        _loginHint = await AzCliHelper.ResolveLoginHintAsync();
         return _loginHint;
     }
 

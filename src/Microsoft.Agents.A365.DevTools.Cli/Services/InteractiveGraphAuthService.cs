@@ -8,9 +8,6 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 using Microsoft.Identity.Client;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -165,34 +162,6 @@ public sealed class InteractiveGraphAuthService
     /// instead of the default OS-level Windows account.
     /// Returns null if az CLI is unavailable or the user field is absent (non-fatal).
     /// </summary>
-    internal static async Task<string?> ResolveAzLoginHintAsync()
-    {
-        try
-        {
-            var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = isWindows ? "cmd.exe" : "az",
-                Arguments = isWindows ? "/c az account show" : "account show",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var process = Process.Start(startInfo);
-            if (process == null) return null;
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
-            {
-                var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(output);
-                var json = JsonSerializer.Deserialize<JsonElement>(cleaned);
-                if (json.TryGetProperty("user", out var user) &&
-                    user.TryGetProperty("name", out var name))
-                    return name.GetString();
-            }
-        }
-        catch { }
-        return null;
-    }
+    internal static Task<string?> ResolveAzLoginHintAsync()
+        => AzCliHelper.ResolveLoginHintAsync();
 }

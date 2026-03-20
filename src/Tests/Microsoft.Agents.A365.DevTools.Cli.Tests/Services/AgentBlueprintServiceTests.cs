@@ -178,7 +178,8 @@ public class AgentBlueprintServiceTests
                 Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
-                Arg.Any<CancellationToken>())
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>())
                 .Returns("fake-delegated-token");
 
             handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
@@ -194,7 +195,8 @@ public class AgentBlueprintServiceTests
                 Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
-                Arg.Any<CancellationToken>());
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>());
         }
     }
 
@@ -292,7 +294,8 @@ public class AgentBlueprintServiceTests
                 Arg.Any<IEnumerable<string>>(),
                 Arg.Any<bool>(),
                 Arg.Any<string?>(),
-                Arg.Any<CancellationToken>())
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>())
                 .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
             // Act
@@ -388,7 +391,7 @@ public class AgentBlueprintServiceTests
 
         // Override token provider to throw so the Graph call fails
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
         // Act & Assert - exception must propagate so callers can abort rather than proceeding with 0 instances
@@ -423,7 +426,7 @@ public class AgentBlueprintServiceTests
         {
             // Override token provider to throw
             _mockTokenProvider.GetMgGraphAccessTokenAsync(
-                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
                 .Returns(Task.FromException<string?>(new HttpRequestException("Connection timeout")));
 
             // Act
@@ -444,7 +447,7 @@ public class AgentBlueprintServiceTests
                 { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
-            Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns("test-token");
         var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
         return (new AgentBlueprintService(_mockLogger, graphService), handler);

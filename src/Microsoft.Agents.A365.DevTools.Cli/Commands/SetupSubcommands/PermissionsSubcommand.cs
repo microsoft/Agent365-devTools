@@ -364,6 +364,7 @@ internal static class PermissionsSubcommand
         {
             var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
             var toolingScopes = await ReadMcpScopesAsync(manifestPath, logger);
+
             var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
 
             var specs = new List<ResourcePermissionSpec>
@@ -422,6 +423,12 @@ internal static class PermissionsSubcommand
         SetupResults? setupResults = null,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+        {
+            logger.LogError("AgentBlueprintId is missing from configuration. Run 'a365 setup blueprint' first.");
+            return false;
+        }
+
         logger.LogInformation("");
         logger.LogInformation("Configuring Messaging Bot API permissions...");
         logger.LogInformation("");

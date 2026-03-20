@@ -47,11 +47,12 @@ public class CleanupCommandTests
         
         // Configure token provider to return a test token
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(), 
-            Arg.Any<IEnumerable<string>>(), 
-            Arg.Any<bool>(), 
+            Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(),
+            Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("test-token");
         
         // Create a real GraphApiService instance with mocked dependencies

@@ -97,8 +97,15 @@ internal static class AllSubcommand
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
+            var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
+            var ct = context.GetCancellationToken();
+
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
@@ -159,7 +166,7 @@ internal static class AllSubcommand
                     try
                     {
                         await RequirementsSubcommand.RunChecksOrExitAsync(
-                            checks, setupConfig, logger, CancellationToken.None);
+                            checks, setupConfig, logger, ct);
                     }
                     catch (Exception reqEx) when (reqEx is not OperationCanceledException)
                     {
@@ -194,7 +201,7 @@ internal static class AllSubcommand
                         platformDetector,
                         setupConfig.NeedDeployment,
                         skipInfrastructure,
-                        CancellationToken.None);
+                        ct);
 
                     setupResults.InfrastructureCreated = skipInfrastructure ? false : setupInfra;
                     setupResults.InfrastructureAlreadyExisted = infraAlreadyExisted;
@@ -314,7 +321,7 @@ internal static class AllSubcommand
                             .Select(p => p.ResourceAppId),
                         StringComparer.OrdinalIgnoreCase);
                     await PermissionsSubcommand.RemoveStaleCustomPermissionsAsync(
-                        logger, graphApiService, blueprintService, setupConfig, desiredCustomIds, CancellationToken.None);
+                        logger, graphApiService, blueprintService, setupConfig, desiredCustomIds, ct);
 
                     // Build combined spec list.
                     var mcpManifestPath = Path.Combine(
@@ -372,7 +379,7 @@ internal static class AllSubcommand
                         await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                             graphApiService, blueprintService, setupConfig,
                             setupConfig.AgentBlueprintId!, setupConfig.TenantId,
-                            specs, logger, setupResults, CancellationToken.None,
+                            specs, logger, setupResults, ct,
                             knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
 
                     setupResults.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
@@ -431,7 +438,7 @@ internal static class AllSubcommand
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption, skipRequirementsOption);
+        });
 
         return command;
     }

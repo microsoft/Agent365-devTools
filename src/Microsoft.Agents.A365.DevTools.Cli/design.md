@@ -342,17 +342,19 @@ a365 deploy --restart # Quick mode: steps 6-7 only (packaging + deploy)
 
 ## Permissions Architecture
 
-The CLI configures two active layers of permissions for agent blueprints:
+The CLI configures two independent layers of permissions for agent blueprints:
 
-1. **OAuth2 Grants** - Programmatic admin consent via Graph API `/oauth2PermissionGrants` (Global Administrator required)
-2. **Inheritable Permissions** - Blueprint-level permissions that agent instances inherit automatically (Agent ID Administrator or Global Administrator required)
+1. **Inheritable Permissions** — Blueprint-level permissions that agent instances inherit automatically. Set via the Agent Blueprint API (`/beta/applications/microsoft.graph.agentIdentityBlueprint/{id}/inheritablePermissions`). Requires Agent ID Administrator or Global Administrator role. Read back after writing to verify presence.
+2. **OAuth2 Grants** — Tenant-wide delegated consent via Graph API `/oauth2PermissionGrants` with `consentType=AllPrincipals`. Requires Global Administrator only.
 
-> **Note:** `requiredResourceAccess` (portal "API permissions") is **not** configured for Agent Blueprints — it is not supported by the Agent ID API. `Application.ReadWrite.All` will no longer allow writes to Agent ID entities in a future breaking change.
+> **Technical limitation:** `oauth2PermissionGrant` creation via the API requires `DelegatedPermissionGrant.ReadWrite.All`, which is an admin-only scope. Additionally, Global Administrator bypasses entitlement validation and can grant any scope; non-admin users receive HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found) for all resource SPs. There is no self-service path for non-admin users.
+
+> **Note:** `requiredResourceAccess` (portal "API permissions") is **not** configured for Agent Blueprints — it is not supported by the Agent ID API.
 
 ```mermaid
 flowchart TD
     Blueprint["Agent Blueprint<br/>(Application Registration)"]
-    OAuth2["OAuth2 Permission Grants<br/>(Admin Consent, Global Admin)"]
+    OAuth2["OAuth2 Permission Grants<br/>(AllPrincipals — Global Admin only)"]
     Inheritable["Inheritable Permissions<br/>(Agent ID Admin or Global Admin)"]
     Instance["Agent Instance<br/>(Inherits from Blueprint)"]
 
@@ -361,7 +363,20 @@ flowchart TD
     Inheritable --> Instance
 ```
 
-**Batch flow (`setup all` and `setup permissions` subcommands):** `BatchPermissionsOrchestrator` implements a three-phase flow — SP resolution, inherited permissions, admin consent — so consent is attempted exactly once and non-admins receive a single consolidated URL.
+### Role-based setup workflow
+
+Because the two permission layers require different roles, the CLI supports a two-person handoff:
+
+| Step | Command | Who runs it | What it does |
+|------|---------|-------------|--------------|
+| 1 | `a365 setup all` | Agent ID Admin or Developer | All infra + blueprint + inheritable permissions. OAuth2 grants skipped (requires GA). Ends with instructions to hand off config folder to GA. |
+| 2 | `a365 setup admin --config-dir "<path>"` | Global Administrator | Reads both config files, resolves SPs, creates AllPrincipals OAuth2 grants for all resources. |
+
+**Batch flow (`BatchPermissionsOrchestrator`):**
+- **Phase 1:** Token prewarm + SP resolution (blueprint + all resource SPs).
+- **Phase 2a:** Inheritable permissions — set via Blueprint API, read back to verify. Agent ID Admin and GA.
+- **Phase 2b:** OAuth2 grants — `AllPrincipals` via Graph API. GA only; skipped for non-admin with instruction to run `setup admin`.
+- **Phase 3:** For GA: skipped (Phase 2b satisfies consent). For non-admin: shows `setup admin` command and a Graph Explorer query to verify inheritable permissions.
 
 **Standalone callers:** `SetupHelpers.EnsureResourcePermissionsAsync` handles a single resource with retry logic and is used by `CopilotStudioSubcommand` and direct callers.
 

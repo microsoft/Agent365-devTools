@@ -98,13 +98,15 @@ internal static class SetupHelpers
         {
             if (results.AdminConsentGranted)
             {
-                logger.LogInformation("  [OK] OAuth2 grants and inheritable permissions configured");
+                logger.LogInformation("  [OK] Inheritable permissions configured and verified");
+                logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
                 logger.LogInformation("  [OK] Admin consent granted");
             }
-            else if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
+            else
             {
-                // Phase 2 succeeded but Phase 3 is pending — the consent URL appears in Recovery Actions
-                logger.LogInformation("  [OK] OAuth2 grants and inheritable permissions configured (admin consent pending — see Recovery Actions)");
+                // Inheritable permissions done by Agent ID Admin; grants require GA via setup admin.
+                logger.LogInformation("  [OK] Inheritable permissions configured and verified");
+                logger.LogInformation("  [PENDING] OAuth2 grants pending — Global Administrator action required (see Next Steps)");
             }
         }
         if (results.MessagingEndpointRegistered)
@@ -136,28 +138,16 @@ internal static class SetupHelpers
         logger.LogInformation("");
         
         // Overall status
+        var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
         if (results.HasErrors)
         {
             logger.LogWarning("Setup completed with errors");
             logger.LogInformation("");
             logger.LogInformation("Recovery Actions:");
 
-            // When a consent URL is present, all permission failures share the same root cause:
-            // admin consent has not been granted. Consolidate around the URL instead of listing
-            // individual permission commands that will also fail without consent.
-            if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
+            if (!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction))
             {
-                logger.LogInformation("  - Permissions: Admin consent is required to complete permission setup.");
-                logger.LogInformation("    Ask your tenant administrator to grant consent at:");
-                logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
-                logger.LogInformation("    After consent is granted, run 'a365 setup all' to complete the remaining setup steps.");
-            }
-            else
-            {
-                if (!results.BatchPermissionsPhase2Completed || !results.AdminConsentGranted)
-                {
-                    logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
-                }
+                logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
             }
 
             if (!results.MessagingEndpointRegistered)
@@ -166,31 +156,103 @@ internal static class SetupHelpers
                 logger.LogInformation("    If there's a conflicting endpoint, delete it first: a365 cleanup blueprint --endpoint-only");
             }
         }
+
+        // Separate block for pending admin action — shown regardless of error state.
+        if (pendingAdminAction)
+        {
+            logger.LogInformation("");
+            logger.LogInformation("Next Steps — Global Administrator action required:");
+            logger.LogInformation("  OAuth2 permission grants require a Global Administrator.");
+            logger.LogInformation("  Share the config folder with your tenant administrator and ask them to run:");
+            logger.LogInformation("    a365 setup admin --config-dir \"<path-to-config-folder>\"");
+            logger.LogInformation("  The config folder contains: a365.config.json and a365.generated.config.json");
+            if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
+            {
+                logger.LogInformation("  Alternatively, a Global Administrator can grant Graph consent at:");
+                logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
+            }
+        }
+
+        if (!results.HasErrors && !pendingAdminAction)
+        {
+            if (results.HasWarnings)
+            {
+                logger.LogInformation("Setup completed successfully with warnings");
+                logger.LogInformation("");
+                logger.LogInformation("Recovery Actions:");
+
+                if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
+                {
+                    logger.LogInformation("  - Graph Inheritable Permissions: Run 'a365 setup blueprint' to retry");
+                }
+
+                if (!string.IsNullOrEmpty(results.FederatedCredentialError))
+                {
+                    logger.LogInformation("  - Federated Identity Credential: Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' consented,");
+                    logger.LogInformation("    then run 'a365 setup blueprint' to retry");
+                }
+
+                logger.LogInformation("");
+                logger.LogInformation("Review warnings above and take action if needed");
+            }
+            else
+            {
+                logger.LogInformation("Setup completed successfully");
+                logger.LogInformation("All components configured correctly");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Displays the setup summary for 'a365 setup admin' — shows grant results and
+    /// a Graph Explorer query the administrator can use to verify the grants.
+    /// </summary>
+    public static void DisplayAdminSetupSummary(
+        SetupResults results,
+        string? blueprintSpObjectId,
+        ILogger logger)
+    {
+        logger.LogInformation("");
+        logger.LogInformation("Admin Setup Summary");
+        logger.LogInformation("Completed Steps:");
+
+        if (results.AdminConsentGranted)
+        {
+            logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
+        }
+
+        if (results.Errors.Count > 0)
+        {
+            logger.LogInformation("");
+            logger.LogInformation("Failed Steps:");
+            foreach (var error in results.Errors)
+                logger.LogError("  [FAILED] {Error}", error);
+        }
+
+        if (results.Warnings.Count > 0)
+        {
+            logger.LogInformation("");
+            logger.LogInformation("Warnings:");
+            foreach (var warning in results.Warnings)
+                logger.LogInformation("  [WARN] {Warning}", warning);
+        }
+
+        logger.LogInformation("");
+
+        if (!string.IsNullOrWhiteSpace(blueprintSpObjectId))
+        {
+            logger.LogInformation("Verify OAuth2 grants in Graph Explorer:");
+            logger.LogInformation("  GET https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{BlueprintSpObjectId}'", blueprintSpObjectId);
+        }
+
+        logger.LogInformation("");
+
+        if (results.HasErrors)
+            logger.LogWarning("Admin setup completed with errors");
         else if (results.HasWarnings)
-        {
-            logger.LogInformation("Setup completed successfully with warnings");
-            logger.LogInformation("");
-            logger.LogInformation("Recovery Actions:");
-
-            if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
-            {
-                logger.LogInformation("  - Graph Inheritable Permissions: Run 'a365 setup blueprint' to retry");
-            }
-
-            if (!string.IsNullOrEmpty(results.FederatedCredentialError))
-            {
-                logger.LogInformation("  - Federated Identity Credential: Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' consented,");
-                logger.LogInformation("    then run 'a365 setup blueprint' to retry");
-            }
-
-            logger.LogInformation("");
-            logger.LogInformation("Review warnings above and take action if needed");
-        }
+            logger.LogInformation("Admin setup completed with warnings");
         else
-        {
-            logger.LogInformation("Setup completed successfully");
-            logger.LogInformation("All components configured correctly");
-        }
+            logger.LogInformation("Admin setup completed successfully");
     }
 
     /// <summary>

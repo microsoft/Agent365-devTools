@@ -75,7 +75,8 @@ public class GraphApiServiceTokenTrimTests
             Arg.Any<IEnumerable<string>>(),
             Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("fake-token\n");
 
         var service = new GraphApiService(logger, executor, handler, tokenProvider);

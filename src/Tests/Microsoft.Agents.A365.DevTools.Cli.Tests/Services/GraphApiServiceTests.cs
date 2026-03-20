@@ -284,7 +284,8 @@ public class GraphApiServiceTests
             Arg.Any<IEnumerable<string>>(),
             Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("token-from-provider\r\nwith-embedded-newlines\n");
 
         var service = new GraphApiService(logger, executor, handler, tokenProvider);
@@ -603,7 +604,7 @@ public class GraphApiServiceTests
         var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
         tokenProvider.GetMgGraphAccessTokenAsync(
                 Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
-                Arg.Any<string?>(), Arg.Any<CancellationToken>())
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns("fake-token");
         return new GraphApiService(logger, executor, handler, tokenProvider);
     }

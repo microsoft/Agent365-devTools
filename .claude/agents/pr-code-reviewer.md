@@ -409,6 +409,60 @@ Differentiate between:
   - Runs on Linux runners (cross-platform not required)
   - Tests strongly recommended but not blocking
 
+## C#-Specific Anti-Patterns (Check These in Every Review)
+
+These patterns have caused real bugs and Copilot review comments in this repo. Always scan new/changed code for them.
+
+### 1. Wrong Scope Constant for Operation
+When a method acquires a token with a specific scope, verify the scope constant matches the operation.
+- **Pattern to catch**: `DeleteXxx` method using `ReadWriteAllScope` instead of `DeleteRestoreAllScope`
+- **Severity**: `high` — causes deterministic 403s for the operation
+- **Check**: Read the constant used and compare to the method name + docs describing what permission is needed
+
+### 2. Null-Only Guard on Nullable String Variables
+`== null` is insufficient for string values returned from JSON/APIs — empty string is also invalid.
+- **Pattern to catch**: `if (existingId == null)` where `existingId` came from a JSON parse or API response
+- **Severity**: `high` — empty string generates malformed URLs (e.g., `.../oauth2PermissionGrants/`)
+- **Fix**: Always use `string.IsNullOrWhiteSpace(existingId)` for Guard checks on strings used in URLs
+
+### 3. Unused Tuple Return Elements
+Multi-element tuples where one element is always `null` at all return sites.
+- **Pattern to catch**: `Task<(bool x, string? y, string? z)>` where every `return` statement ends with `, null)`
+- **Severity**: `medium` — API noise, confusing callers, harder to understand contract
+- **Fix**: Remove the unused element from the return type and all callers
+
+### 4. Misleading Log Message Scope
+Log messages that claim to cover "all configured resources" when only a subset is handled.
+- **Pattern to catch**: `"covers all configured resources"` in a consent/grant flow that only builds URLs for one resource type (e.g., Microsoft Graph only)
+- **Severity**: `medium` — misleads operators troubleshooting why non-Graph resources aren't consented
+- **Fix**: Qualify the message: `"covers Microsoft Graph delegated scopes only"`
+
+### 5. CancellationToken.None in Long-Running Operations
+Hardcoded `CancellationToken.None` in handler body for long-running async calls (infrastructure provisioning, permission grants, etc.).
+- **Pattern to catch**: `SetHandler(async (opt1, opt2, ...) => { ... SomethingAsync(..., CancellationToken.None) ... }, opt1, opt2, ...)`
+- **Severity**: `medium` — Ctrl+C cannot cancel long-running operations; partial state may be applied
+- **Fix**: Use `InvocationContext`:
+  ```csharp
+  command.SetHandler(async (InvocationContext context) =>
+  {
+      var opt1 = context.ParseResult.GetValueForOption(opt1Option);
+      var ct = context.GetCancellationToken();
+      await SomethingAsync(..., ct);
+  });
+  ```
+
+### 6. Duplicate Logic Using Different Execution Mechanisms
+Two separate implementations of the same operation using different execution paths (e.g., `ProcessStartInfo` vs. `CommandExecutor`).
+- **Pattern to catch**: Static helper method running `az account show` via `Process.Start` when an instance method in a sibling service does the same via `CommandExecutor`
+- **Severity**: `medium` — divergence risk; one gets fixes/improvements the other doesn't; different testability
+- **Fix**: Extract to a shared static helper in `Services/Helpers/` and delegate from both callers
+
+### 7. Bearer Token Embedded in Process Command-Line Arguments
+Injecting a raw Bearer token as a CLI argument (e.g., `az rest --headers "Authorization=Bearer {token}"`).
+- **Pattern to catch**: String interpolation of a token into `az rest --headers` argument passed to `ExecuteAsync`
+- **Severity**: `high` (security) — process command-line arguments are visible to all local users via OS process listing, crash dumps, and audit logs
+- **Fix**: Use in-process HTTP (`GraphApiService` / `HttpClient`) or pass token via stdin/temp file with restricted permissions
+
 ## Example Invocation
 
 When you receive a request like "Review PR #253", you should:

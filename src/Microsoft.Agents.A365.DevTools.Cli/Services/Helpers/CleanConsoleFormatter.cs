@@ -111,7 +111,15 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 }
                 break;
             default: // Information
-                textWriter.WriteLine(message);
+                if (isConsole)
+                {
+                    Console.ResetColor();
+                    Console.WriteLine(message);
+                }
+                else
+                {
+                    textWriter.WriteLine(message);
+                }
                 break;
         }
 

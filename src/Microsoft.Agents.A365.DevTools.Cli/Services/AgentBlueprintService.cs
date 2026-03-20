@@ -87,9 +87,9 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
 
-            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope };
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
+            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
             var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";

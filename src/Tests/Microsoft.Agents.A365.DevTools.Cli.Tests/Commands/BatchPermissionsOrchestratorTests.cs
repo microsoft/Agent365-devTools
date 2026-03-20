@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -99,9 +100,16 @@ public class BatchPermissionsOrchestratorTests
             ClientAppId = "client-app-id"
         };
 
+        // Include a Microsoft Graph spec so Phase 3 builds a consent URL.
+        // GrantAdminConsentAsync only generates a URL for Graph scopes (non-Graph resources
+        // use inheritable permissions, not the /v2.0/adminconsent URL).
         var specs = new[]
         {
-            new ResourcePermissionSpec("resource-app-id", "Test Resource", new[] { "user_impersonation" }, SetInheritable: true)
+            new ResourcePermissionSpec(
+                AuthenticationConstants.MicrosoftGraphResourceAppId,
+                "Microsoft Graph",
+                new[] { "Mail.ReadWrite" },
+                SetInheritable: true)
         };
 
         // Act

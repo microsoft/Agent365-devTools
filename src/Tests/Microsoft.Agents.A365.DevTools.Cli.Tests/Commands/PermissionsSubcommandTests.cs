@@ -460,8 +460,9 @@ public class PermissionsSubcommandTests
             config,
             false);
 
-        // Assert - Should handle missing manifest gracefully
-        result.Should().BeFalse();
+        // Assert - McpServersMetadata.Read.All is always included even when the manifest is missing,
+        // so the method proceeds and returns true (pending admin consent) rather than false.
+        result.Should().BeTrue();
     }
 
     #endregion
