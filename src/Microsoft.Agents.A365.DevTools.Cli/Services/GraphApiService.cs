@@ -749,8 +749,10 @@ public class GraphApiService
     {
         try
         {
+            // /me/transitiveMemberOf is a directory query — Directory.Read.All is required.
+            // User.Read is insufficient and would return Unknown for most users.
             IEnumerable<string>? scopes = _tokenProvider != null
-                ? [AuthenticationConstants.UserReadScope]
+                ? [AuthenticationConstants.DirectoryReadAllScope]
                 : null;
 
             string? nextUrl = "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId";

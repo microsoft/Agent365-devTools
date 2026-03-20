@@ -83,6 +83,12 @@ public class SetupResults
     /// </summary>
     public List<string> ConsentResourceNames { get; } = new();
 
+    /// <summary>
+    /// A single combined /v2.0/adminconsent URL covering all five required resources.
+    /// Populated alongside <see cref="ConsentUrlsSavedToPath"/> as a simpler handover option.
+    /// </summary>
+    public string? CombinedConsentUrl { get; set; }
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
     

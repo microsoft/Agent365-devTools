@@ -277,7 +277,7 @@ internal static class AllSubcommand
                     // CRITICAL: Wait for file system to ensure config file is fully written
                     // Blueprint creation writes directly to disk and may not be immediately readable
                     logger.LogDebug("Waiting for config file write to complete...");
-                    await Task.Delay(2000);
+                    await Task.Delay(2000, ct);
 
                     // Reload config to get blueprint ID
                     // Use full path to ensure we're reading from the correct location
@@ -413,6 +413,9 @@ internal static class AllSubcommand
                     {
                         setupResults.ConsentUrlsSavedToPath = generatedConfigPath;
                         setupResults.ConsentResourceNames.AddRange(consentResourceNames);
+                        setupResults.CombinedConsentUrl = SetupHelpers.BuildCombinedConsentUrl(
+                            setupConfig.TenantId!, setupConfig.AgentBlueprintId!,
+                            setupConfig.AgentApplicationScopes, mcpScopes);
                     }
                 }
                 catch (Exception permEx)

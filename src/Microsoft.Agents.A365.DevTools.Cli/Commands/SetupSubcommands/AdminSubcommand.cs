@@ -239,7 +239,7 @@ internal static class AdminSubcommand
             {
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
             }
             catch (FileNotFoundException fnfEx)
             {

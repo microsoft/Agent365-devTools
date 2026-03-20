@@ -165,14 +165,10 @@ internal static class SetupHelpers
             logger.LogInformation("  OAuth2 permission grants require a Global Administrator.");
             logger.LogInformation("  Option 1 — Run the CLI as a Global Administrator:");
             logger.LogInformation("    a365 setup admin --config-dir \"<path-to-config-folder>\"");
-            if (!string.IsNullOrWhiteSpace(results.ConsentUrlsSavedToPath))
+            if (!string.IsNullOrWhiteSpace(results.CombinedConsentUrl))
             {
-                logger.LogInformation("  Option 2 — Share consent URLs with your Global Administrator:");
-                logger.LogInformation("    {Count} consent URLs saved to: {Path}",
-                    results.ConsentResourceNames.Count, results.ConsentUrlsSavedToPath);
-                logger.LogInformation("    Find them under \"resourceConsents[].consentUrl\" in the file.");
-                foreach (var name in results.ConsentResourceNames)
-                    logger.LogInformation("      - {ResourceName}", name);
+                logger.LogInformation("  Option 2 — Share a single consent URL with your Global Administrator:");
+                logger.LogInformation("    {ConsentUrl}", results.CombinedConsentUrl);
             }
             else if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
             {
@@ -299,6 +295,34 @@ internal static class SetupHelpers
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead }, redirectUri)));
 
         return urls;
+    }
+
+    /// <summary>
+    /// Builds a single combined /v2.0/adminconsent URL covering all five required resources.
+    /// All scope tokens from all resources are joined with %20 into one scope parameter,
+    /// allowing a Global Administrator to grant consent with a single browser visit.
+    /// </summary>
+    internal static string BuildCombinedConsentUrl(
+        string tenantId,
+        string blueprintClientId,
+        IEnumerable<string> graphScopes,
+        IEnumerable<string> mcpScopes)
+    {
+        const string loginBase = "https://login.microsoftonline.com";
+        const string redirectUri = "https://entra.microsoft.com/TokenAuthorize";
+
+        var allScopes = new List<string>();
+
+        foreach (var s in graphScopes)
+            allScopes.Add(Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}"));
+        foreach (var s in mcpScopes)
+            allScopes.Add(Uri.EscapeDataString($"{McpConstants.Agent365ToolsIdentifierUri}/{s}"));
+        allScopes.Add(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"));
+        allScopes.Add(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"));
+        allScopes.Add(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
+
+        var scopeParam = string.Join("%20", allScopes);
+        return $"{loginBase}/{tenantId}/v2.0/adminconsent?client_id={blueprintClientId}&scope={scopeParam}&redirect_uri={Uri.EscapeDataString(redirectUri)}";
     }
 
     /// <summary>

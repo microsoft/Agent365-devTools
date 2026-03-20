@@ -1702,7 +1702,7 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Authenticating to Microsoft Graph using interactive browser authentication...");
         logger.LogInformation("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
         logger.LogInformation("This will open a browser window for interactive authentication.");
-        logger.LogInformation("Please sign in with a Global Administrator account.");
+        logger.LogInformation("Please sign in with your Microsoft account.");
         logger.LogInformation("");
 
         // Use InteractiveGraphAuthService to get proper authentication

@@ -34,8 +34,13 @@ internal static class AzCliHelper
             };
             using var process = Process.Start(startInfo);
             if (process == null) return null;
-            var output = await process.StandardOutput.ReadToEndAsync();
+            // Read stdout and stderr concurrently to prevent the process from blocking
+            // when either pipe's buffer fills up before WaitForExitAsync is called.
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            await Task.WhenAll(outputTask, errorTask);
             await process.WaitForExitAsync();
+            var output = outputTask.Result;
             if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
             {
                 var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(output);

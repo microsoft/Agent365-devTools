@@ -457,7 +457,32 @@ Two separate implementations of the same operation using different execution pat
 - **Severity**: `medium` — divergence risk; one gets fixes/improvements the other doesn't; different testability
 - **Fix**: Extract to a shared static helper in `Services/Helpers/` and delegate from both callers
 
-### 7. Bearer Token Embedded in Process Command-Line Arguments
+### 7. `Task.Delay` Without CancellationToken
+`Task.Delay` called without a CancellationToken inside a handler that receives one — makes the wait non-cancellable, blocking Ctrl+C and accumulating if the step is retried.
+- **Pattern to catch**: `await Task.Delay(N)` inside a method/handler that has a `ct` or `cancellationToken` parameter in scope
+- **Severity**: `medium` — Ctrl+C stalls during the delay; can compound if the delay is in a loop
+- **Fix**: `await Task.Delay(N, ct);`
+
+### 8. `Process.WaitForExitAsync` With Unread Redirected Stderr
+`RedirectStandardError = true` combined with reading only stdout — if the process writes enough to stderr the pipe buffer fills and it deadlocks waiting for the reader.
+- **Pattern to catch**: `ProcessStartInfo` with `RedirectStandardError = true` where only `StandardOutput.ReadToEndAsync()` is awaited before `WaitForExitAsync()`
+- **Severity**: `high` — deterministic deadlock when the subprocess writes >4 KB to stderr
+- **Fix**: Read both streams concurrently before waiting:
+  ```csharp
+  var outputTask = process.StandardOutput.ReadToEndAsync();
+  var errorTask  = process.StandardError.ReadToEndAsync();
+  await Task.WhenAll(outputTask, errorTask);
+  await process.WaitForExitAsync();
+  var output = outputTask.Result;
+  ```
+
+### 9. `Environment.Exit` Instead of `ExceptionHandler.ExitWithCleanup`
+Direct `Environment.Exit(N)` calls skip the repo's output-flush / console-state-reset logic in `ExceptionHandler.ExitWithCleanup`.
+- **Pattern to catch**: `Environment.Exit(1)` (or any exit code) in CLI command handlers or exception catch blocks
+- **Severity**: `medium` — console may be left in a dirty state (partial progress output not flushed, ANSI reset not sent)
+- **Fix**: Replace with `ExceptionHandler.ExitWithCleanup(1);`
+
+### 10. Bearer Token Embedded in Process Command-Line Arguments
 Injecting a raw Bearer token as a CLI argument (e.g., `az rest --headers "Authorization=Bearer {token}"`).
 - **Pattern to catch**: String interpolation of a token into `az rest --headers` argument passed to `ExecuteAsync`
 - **Severity**: `high` (security) — process command-line arguments are visible to all local users via OS process listing, crash dumps, and audit logs
