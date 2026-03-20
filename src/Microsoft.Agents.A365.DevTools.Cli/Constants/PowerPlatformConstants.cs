@@ -27,5 +27,10 @@ public static class PowerPlatformConstants
         /// Power Platform API - CopilotStudio.Copilots.Invoke permission scope name
         /// </summary>
         public const string PowerPlatformCopilotStudioInvoke = "CopilotStudio.Copilots.Invoke";
+
+        /// <summary>
+        /// Power Platform API scope used for admin consent URL construction.
+        /// </summary>
+        public const string ConnectivityConnectionsRead = "Connectivity.Connections.Read";
     }
 }

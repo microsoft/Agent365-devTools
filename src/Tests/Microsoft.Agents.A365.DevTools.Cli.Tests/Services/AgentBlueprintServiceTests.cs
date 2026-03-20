@@ -25,7 +25,9 @@ public class AgentBlueprintServiceTests
         _mockLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         _mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        // Use Substitute.For<> (full mock) so unmatched ExecuteAsync calls return a safe default
+        // instead of falling through to the real implementation and spawning actual az processes.
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
     }
 
@@ -59,7 +61,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler);
+        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // ResolveBlueprintObjectIdAsync: First GET to check if blueprintAppId is objectId (returns 404 NotFound)
@@ -119,7 +121,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler);
+        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // Existing entry with one scope
@@ -449,7 +451,11 @@ public class AgentBlueprintServiceTests
             Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
             Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns("test-token");
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider);
+        // Pass a no-op login hint resolver to skip the real 'az account show' process spawned by
+        // AzCliHelper.ResolveLoginHintAsync — that static call bypasses the mocked CommandExecutor
+        // and causes each test to wait several seconds for the real az CLI.
+        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null));
         return (new AgentBlueprintService(_mockLogger, graphService), handler);
     }
 }

@@ -29,9 +29,10 @@ public class ClientAppValidatorTests
     {
         _logger = Substitute.For<ILogger<ClientAppValidator>>();
         
-        // CommandExecutor requires a logger in its constructor for NSubstitute to create a proxy
+        // Use Substitute.For<> (full mock) so unmatched ExecuteAsync calls return a safe default
+        // instead of falling through to the real implementation and spawning actual az processes.
         var executorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _executor = Substitute.ForPartsOf<CommandExecutor>(executorLogger);
+        _executor = Substitute.For<CommandExecutor>(executorLogger);
         
         _validator = new ClientAppValidator(_logger, _executor);
     }

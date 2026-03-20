@@ -205,8 +205,10 @@ public class ConfigService : IConfigService
         PropertyNameCaseInsensitive = true,
         WriteIndented = true,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-        // Use relaxed encoder so URLs stored in the config (e.g. consentUrl) keep literal '&'
-        // instead of being escaped to '\u0026', which breaks copy-paste into a browser.
+        // Use relaxed encoder so URL-valued fields (e.g. consentUrl) keep literal '&' instead
+        // of being escaped to '\u0026', which would break copy-paste into a browser.
+        // This applies globally to all config serialization; only URL-typed string values
+        // meaningfully benefit from or require the setting — all other scalar values are unaffected.
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 

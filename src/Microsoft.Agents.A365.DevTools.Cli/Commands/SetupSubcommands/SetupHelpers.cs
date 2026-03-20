@@ -278,6 +278,10 @@ internal static class SetupHelpers
 
         static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes, string redirect)
         {
+            // /v2.0/adminconsent requires scope values in the form "<resourceUri>/<scopeName>".
+            // Each token is individually percent-encoded and joined with %20 (RFC 3986 query encoding,
+            // not application/x-www-form-urlencoded '+' encoding). The '&' characters separating
+            // query parameters are literal string separators and must not be encoded here.
             var scopeParam = string.Join("%20", scopes.Select(s => Uri.EscapeDataString($"{resourceUri}/{s}")));
             return $"{loginBase}/{tenant}/v2.0/adminconsent?client_id={client}&scope={scopeParam}&redirect_uri={Uri.EscapeDataString(redirect)}";
         }
@@ -290,9 +294,9 @@ internal static class SetupHelpers
         if (mcpScopeList.Count > 0)
             urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList, redirectUri)));
 
-        urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { "AgentData.ReadWrite" }, redirectUri)));
-        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { "Maven.ReadWrite.All" }, redirectUri)));
-        urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { "Connectivity.Connections.Read" }, redirectUri)));
+        urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope }, redirectUri)));
+        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope }, redirectUri)));
+        urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead }, redirectUri)));
 
         return urls;
     }

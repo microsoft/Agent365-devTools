@@ -124,6 +124,87 @@ public class RetryHelper
             cancellationToken);
     }
 
+    /// <summary>
+    /// Execute an async operation with retry logic and exponential backoff.
+    /// Use this overload when the retry decision requires an async operation (e.g. reading an
+    /// HTTP response body) that cannot be performed inside a synchronous predicate.
+    /// </summary>
+    /// <typeparam name="T">Return type of the operation</typeparam>
+    /// <param name="operation">The async operation to execute. Receives a cancellation token and returns a result.</param>
+    /// <param name="shouldRetryAsync">Async predicate that determines if retry is needed. Returns TRUE when the operation should be retried, FALSE when done.</param>
+    /// <param name="maxRetries">Maximum number of retry attempts before giving up (default: 5)</param>
+    /// <param name="baseDelaySeconds">Base delay in seconds for exponential backoff calculation (default: 2).</param>
+    /// <param name="cancellationToken">Cancellation token to cancel the operation</param>
+    /// <returns>Result of the operation when shouldRetryAsync returns false (success), or the last result after all retries are exhausted.</returns>
+    public async Task<T> ExecuteWithRetryAsync<T>(
+        Func<CancellationToken, Task<T>> operation,
+        Func<T, CancellationToken, Task<bool>> shouldRetryAsync,
+        int maxRetries = 5,
+        int baseDelaySeconds = 2,
+        CancellationToken cancellationToken = default)
+    {
+        int attempt = 0;
+        Exception? lastException = null;
+        T? lastResult = default;
+
+        while (attempt < maxRetries)
+        {
+            try
+            {
+                lastResult = await operation(cancellationToken);
+
+                if (!await shouldRetryAsync(lastResult, cancellationToken))
+                {
+                    return lastResult;
+                }
+
+                if (attempt < maxRetries - 1)
+                {
+                    var delay = CalculateDelay(attempt, baseDelaySeconds);
+                    _logger.LogInformation(
+                        "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
+                        attempt + 1, maxRetries, (int)delay.TotalSeconds);
+
+                    await Task.Delay(delay, cancellationToken);
+                }
+
+                attempt++;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                lastException = ex;
+                _logger.LogWarning("Exception: {Message}", ex.Message);
+
+                if (attempt < maxRetries - 1)
+                {
+                    var delay = CalculateDelay(attempt, baseDelaySeconds);
+                    _logger.LogInformation(
+                        "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
+                        attempt + 1, maxRetries, (int)delay.TotalSeconds);
+
+                    await Task.Delay(delay, cancellationToken);
+                }
+
+                attempt++;
+            }
+        }
+
+        if (lastException != null)
+        {
+            throw lastException;
+        }
+
+        if (lastResult is null)
+        {
+            throw new RetryExhaustedException(
+                "Async operation with retry",
+                maxRetries,
+                "Operation did not return a value and no exception was thrown");
+        }
+
+        return lastResult;
+    }
+
     private static TimeSpan CalculateDelay(int attemptNumber, int baseDelaySeconds)
     {
         var exponentialDelay = baseDelaySeconds * Math.Pow(2, attemptNumber);

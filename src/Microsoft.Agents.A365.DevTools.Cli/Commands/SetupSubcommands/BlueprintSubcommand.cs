@@ -1052,28 +1052,50 @@ internal static class BlueprintSubcommand
             var spManifestJson = spManifest.ToJsonString();
             var createSpUrl = "https://graph.microsoft.com/v1.0/servicePrincipals";
 
+            // Retry on 400 NoBackingApplicationObject (appId index replication lag) up to 10 times.
+            // Retry on 403 Authorization_RequestDenied + "backing application" (blueprint replication
+            // lag) capped at 3 times — any other 403 is a real permission error and must not retry
+            // (each wasted attempt costs ~8+ minutes of exponential backoff).
+            // The async predicate overload is used so the response body can be awaited-read to
+            // distinguish transient replication-lag 403s from genuine permission denials.
             string? servicePrincipalId = null;
+            const int maxForbiddenRetries = 3;
+            int forbiddenRetries = 0;
             using var spResponse = await retryHelper.ExecuteWithRetryAsync(
                 async token => await httpClient.PostAsync(
                     createSpUrl,
                     new StringContent(spManifestJson, System.Text.Encoding.UTF8, "application/json"),
                     token),
-                response =>
+                async (response, token) =>
                 {
+                    if (response.IsSuccessStatusCode)
+                        return false;
+
                     if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                     {
                         // 400 NoBackingApplicationObject: appId index not yet replicated after creation.
                         logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
                         return true;
                     }
+
                     if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                     {
-                        // 403 Authorization_RequestDenied / backing application replication lag:
-                        // The Agent Blueprint app object may not yet be visible to the SP creation
-                        // service even though the application endpoint returned it successfully.
-                        logger.LogDebug("SP creation returned 403 Forbidden — possible Agent Blueprint replication lag, retrying...");
-                        return true;
+                        // Buffer the body so it can be read again by the caller after retry exhaustion.
+                        await response.Content.LoadIntoBufferAsync();
+                        var body = await response.Content.ReadAsStringAsync(token);
+
+                        if (body.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase)
+                            && body.Contains("backing application", StringComparison.OrdinalIgnoreCase)
+                            && forbiddenRetries < maxForbiddenRetries)
+                        {
+                            // 403 Authorization_RequestDenied / backing application replication lag.
+                            forbiddenRetries++;
+                            logger.LogDebug("SP creation returned 403 Forbidden (replication lag, attempt {Attempt}/{Max}) — retrying...", forbiddenRetries, maxForbiddenRetries);
+                            return true;
+                        }
                     }
+
+                    // Non-retryable error — return the response to the caller for error logging.
                     return false;
                 },
                 maxRetries: 10,

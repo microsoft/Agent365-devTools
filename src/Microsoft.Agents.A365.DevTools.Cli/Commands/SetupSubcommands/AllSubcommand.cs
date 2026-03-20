@@ -399,14 +399,21 @@ internal static class AllSubcommand
                     setupResults.AdminConsentGranted = consentGranted;
                     setupResults.AdminConsentUrl = adminConsentUrl;
 
+                    List<string>? consentResourceNames = null;
                     if (!consentGranted && !string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
                     {
-                        var consentResourceNames = SetupHelpers.PopulateAdminConsentUrls(setupConfig, mcpResourceAppId, mcpScopes);
-                        setupResults.ConsentUrlsSavedToPath = generatedConfigPath;
-                        setupResults.ConsentResourceNames.AddRange(consentResourceNames);
+                        consentResourceNames = SetupHelpers.PopulateAdminConsentUrls(setupConfig, mcpResourceAppId, mcpScopes);
                     }
 
                     await configService.SaveStateAsync(setupConfig);
+
+                    // Only advertise the path after the save has succeeded — the file must exist
+                    // before we tell the caller where to find the consent URLs.
+                    if (consentResourceNames is not null)
+                    {
+                        setupResults.ConsentUrlsSavedToPath = generatedConfigPath;
+                        setupResults.ConsentResourceNames.AddRange(consentResourceNames);
+                    }
                 }
                 catch (Exception permEx)
                 {

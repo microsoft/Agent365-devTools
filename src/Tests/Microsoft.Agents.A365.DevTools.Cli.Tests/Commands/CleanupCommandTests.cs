@@ -35,7 +35,8 @@ public class CleanupCommandTests
         _mockConfigService = Substitute.For<IConfigService>();
         
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        // Full mock — ForPartsOf would fall through to real CommandExecutor.ExecuteAsync and spawn real processes
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
 
         // Default executor behavior for tests: return success for any external command to avoid launching real CLI tools
         _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -55,9 +56,12 @@ public class CleanupCommandTests
             Arg.Any<string?>())
             .Returns("test-token");
         
-        // Create a real GraphApiService instance with mocked dependencies
+        // Create a real GraphApiService instance with mocked dependencies.
+        // Pass a no-op loginHintResolver to prevent AzCliHelper.ResolveLoginHintAsync from spawning
+        // a real "az account show" process during test setup.
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
-        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider);
+        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null));
         
         // Create AgentBlueprintService wrapping GraphApiService
         var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
@@ -78,7 +82,9 @@ public class CleanupCommandTests
                 Arg.Any<ILogger>(),
                 Arg.Any<CancellationToken>())
             .Returns(true);
-        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        // Full mock — both virtual methods (ValidateAuthenticationAsync, GetAppServiceTokenAsync) are
+        // always stubbed by callers, so ForPartsOf would only add risk of real auth code running.
+        _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
     }
 
     [Fact(Skip = "Test requires interactive confirmation - cleanup commands now enforce user confirmation instead of --force")]

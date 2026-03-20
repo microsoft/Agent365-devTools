@@ -39,6 +39,10 @@ public class GraphApiService
     private string? _loginHint;
     private bool _loginHintResolved;
 
+    // Resolver delegate for the login hint. Defaults to AzCliHelper.ResolveLoginHintAsync;
+    // injectable via constructor so unit tests can bypass the real 'az account show' process.
+    private readonly Func<Task<string?>> _loginHintResolver;
+
     /// <summary>
     /// Expiry time for the cached Azure CLI token. Internal for testing purposes.
     /// </summary>
@@ -64,26 +68,29 @@ public class GraphApiService
         public JsonDocument? Json { get; init; }
     }
 
-    // Allow injecting a custom HttpMessageHandler for unit testing
-    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null)
+    // Allow injecting a custom HttpMessageHandler for unit testing.
+    // loginHintResolver: optional override for 'az account show' login-hint resolution.
+    // Pass () => Task.FromResult<string?>(null) in unit tests to skip the real az process.
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null, Func<Task<string?>>? loginHintResolver = null)
     {
         _logger = logger;
         _executor = executor;
         _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
         _tokenProvider = tokenProvider;
+        _loginHintResolver = loginHintResolver ?? AzCliHelper.ResolveLoginHintAsync;
     }
 
     // Parameterless constructor to ease test mocking/substitution frameworks which may
     // require creating proxy instances without providing constructor arguments.
     public GraphApiService()
-        : this(NullLogger<GraphApiService>.Instance, new CommandExecutor(NullLogger<CommandExecutor>.Instance), null)
+        : this(NullLogger<GraphApiService>.Instance, new CommandExecutor(NullLogger<CommandExecutor>.Instance), null, null, null)
     {
     }
 
     // Two-argument convenience constructor used by tests and callers that supply
     // a logger and an existing CommandExecutor (no custom handler).
     public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor)
-        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null, null)
+        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null, null, null)
     {
     }
 
@@ -793,7 +800,7 @@ public class GraphApiService
             return _loginHint;
 
         _loginHintResolved = true;
-        _loginHint = await AzCliHelper.ResolveLoginHintAsync();
+        _loginHint = await _loginHintResolver();
         return _loginHint;
     }
 

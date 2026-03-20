@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using System.Net.Http;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -41,12 +42,21 @@ public class BlueprintSubcommandTests
         _mockLogger = Substitute.For<ILogger>();
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
-        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        // Full mock — ForPartsOf would fall through to real CommandExecutor.ExecuteAsync and spawn real processes
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
+        _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
+        // Full mock — both virtual methods are always stubbed by callers
+        _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
-        _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
+        // Pass a no-op loginHintResolver to prevent AzCliHelper.ResolveLoginHintAsync from spawning
+        // a real "az account show" process on every test that touches GraphApiService.
+        Func<Task<string?>> noOpLoginHint = () => Task.FromResult<string?>(null);
+        _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
+            Substitute.For<ILogger<GraphApiService>>(), _mockExecutor,
+            (HttpMessageHandler?)null, (IMicrosoftGraphTokenProvider?)null, noOpLoginHint);
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
         _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);
