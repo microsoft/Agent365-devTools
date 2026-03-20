@@ -292,6 +292,18 @@ internal static class AllSubcommand
                             "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
                             "This is required for the next steps (MCP permissions and Bot permissions).");
                     }
+
+                    // Warn when service principal creation failed (SP object ID missing after blueprint creation).
+                    // Setup continues because inheritable permissions use the blueprint objectId, not the SP.
+                    // However, agent token exchange will not work until the SP exists.
+                    if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintServicePrincipalObjectId))
+                    {
+                        var spWarning = "Agent blueprint service principal was not created. " +
+                            "Inheritable permissions and FIC may not function correctly. " +
+                            "Run 'a365 setup blueprint' to retry SP creation.";
+                        setupResults.Warnings.Add(spWarning);
+                        logger.LogWarning(spWarning);
+                    }
                 }
                 catch (Agent365Exception blueprintEx)
                 {
@@ -386,6 +398,13 @@ internal static class AllSubcommand
                     setupResults.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
                     setupResults.AdminConsentGranted = consentGranted;
                     setupResults.AdminConsentUrl = adminConsentUrl;
+
+                    if (!consentGranted && !string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+                    {
+                        var consentResourceNames = SetupHelpers.PopulateAdminConsentUrls(setupConfig, mcpResourceAppId, mcpScopes);
+                        setupResults.ConsentUrlsSavedToPath = generatedConfigPath;
+                        setupResults.ConsentResourceNames.AddRange(consentResourceNames);
+                    }
 
                     await configService.SaveStateAsync(setupConfig);
                 }

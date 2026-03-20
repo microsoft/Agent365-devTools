@@ -528,7 +528,6 @@ internal static class BatchPermissionsOrchestrator
             logger.LogWarning("  a365 setup admin --config-dir \"<path-to-config-folder>\"");
             logger.LogWarning("To verify inheritable permissions were set, run this query in Graph Explorer:");
             logger.LogWarning("  GET https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{BlueprintId}/inheritablePermissions", blueprintAppId);
-            setupResults?.Warnings.Add($"Admin consent required. Ask your Global Administrator to run: a365 setup admin --config-dir \"<config-folder>\"");
 
             return (false, consentUrl);
         }

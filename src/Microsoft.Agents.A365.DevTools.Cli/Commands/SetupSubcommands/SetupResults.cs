@@ -70,6 +70,19 @@ public class SetupResults
     /// </summary>
     public string? AdminConsentUrl { get; set; }
 
+    /// <summary>
+    /// Path to the generated config file where admin consent URLs were saved.
+    /// Non-null when the current user lacks the GA role and consent URLs have been written to
+    /// the <c>resourceConsents[*].consentUrl</c> fields in <c>a365.generated.config.json</c>.
+    /// </summary>
+    public string? ConsentUrlsSavedToPath { get; set; }
+
+    /// <summary>
+    /// Display names of the resources for which consent URLs were saved.
+    /// Populated alongside <see cref="ConsentUrlsSavedToPath"/>.
+    /// </summary>
+    public List<string> ConsentResourceNames { get; } = new();
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
     

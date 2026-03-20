@@ -87,6 +87,11 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
 
     /// <summary>
+    /// Microsoft Graph identifier URI (used for admin consent URL construction).
+    /// </summary>
+    public const string MicrosoftGraphResourceUri = "https://graph.microsoft.com";
+
+    /// <summary>
     /// Delegated scope for reading directory role assignments.
     /// Retained as a named constant for use cases where a lower-privilege role-read scope is required.
     /// </summary>

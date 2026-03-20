@@ -204,7 +204,10 @@ public class ConfigService : IConfigService
     {
         PropertyNameCaseInsensitive = true,
         WriteIndented = true,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        // Use relaxed encoder so URLs stored in the config (e.g. consentUrl) keep literal '&'
+        // instead of being escaped to '\u0026', which breaks copy-paste into a browser.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public ConfigService(ILogger<ConfigService>? logger = null)

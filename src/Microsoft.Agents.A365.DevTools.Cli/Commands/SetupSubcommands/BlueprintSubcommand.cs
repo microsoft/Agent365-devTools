@@ -1060,16 +1060,24 @@ internal static class BlueprintSubcommand
                     token),
                 response =>
                 {
-                    if (response.StatusCode != System.Net.HttpStatusCode.BadRequest) return false;
-                    // 400 on POST /servicePrincipals for a newly-created Agent Blueprint app is
-                    // expected to be NoBackingApplicationObject — the appId index takes a few seconds
-                    // to replicate after creation. Log each trigger so operators can distinguish
-                    // transient replication lag from a genuine misconfiguration.
-                    logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
-                    return true;
+                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                    {
+                        // 400 NoBackingApplicationObject: appId index not yet replicated after creation.
+                        logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
+                        return true;
+                    }
+                    if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        // 403 Authorization_RequestDenied / backing application replication lag:
+                        // The Agent Blueprint app object may not yet be visible to the SP creation
+                        // service even though the application endpoint returned it successfully.
+                        logger.LogDebug("SP creation returned 403 Forbidden — possible Agent Blueprint replication lag, retrying...");
+                        return true;
+                    }
+                    return false;
                 },
-                maxRetries: 8,
-                baseDelaySeconds: 5,
+                maxRetries: 10,
+                baseDelaySeconds: 8,
                 cancellationToken: ct);
 
             if (spResponse.IsSuccessStatusCode)
@@ -1082,7 +1090,7 @@ internal static class BlueprintSubcommand
             else
             {
                 var spError = await spResponse.Content.ReadAsStringAsync(ct);
-                logger.LogWarning("Service principal creation failed: {StatusCode} — {Error}", (int)spResponse.StatusCode, spError);
+                logger.LogError("Service principal creation failed after retries: {StatusCode} — {Error}", (int)spResponse.StatusCode, spError);
             }
 
             // Wait for service principal propagation using RetryHelper

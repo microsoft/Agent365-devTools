@@ -24,8 +24,8 @@ public class ResourceConsent
 
     /// <summary>
     /// Admin consent URL for granting permissions via browser.
-    /// Only populated for resources requiring interactive consent (e.g., Microsoft Graph).
-    /// API-based grants (Bot API, Observability API) do not require consent URLs.
+    /// Populated for all five required resources when the current user lacks the Global Administrator
+    /// role. A tenant administrator can open each URL to grant AllPrincipals consent interactively.
     /// </summary>
     [JsonPropertyName("consentUrl")]
     public string? ConsentUrl { get; set; }

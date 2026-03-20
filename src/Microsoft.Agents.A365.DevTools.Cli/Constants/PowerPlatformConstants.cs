@@ -14,6 +14,11 @@ public static class PowerPlatformConstants
     public const string PowerPlatformApiResourceAppId = "8578e004-a5c6-46e7-913e-12f58912df43";
 
     /// <summary>
+    /// Power Platform API identifier URI (used for admin consent URL construction).
+    /// </summary>
+    public const string PowerPlatformApiIdentifierUri = "https://api.powerplatform.com";
+
+    /// <summary>
     /// Delegated permission scope names for resource applications.
     /// </summary>
     public static class PermissionNames

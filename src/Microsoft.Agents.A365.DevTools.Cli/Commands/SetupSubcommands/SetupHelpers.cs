@@ -163,10 +163,18 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Next Steps — Global Administrator action required:");
             logger.LogInformation("  OAuth2 permission grants require a Global Administrator.");
-            logger.LogInformation("  Share the config folder with your tenant administrator and ask them to run:");
+            logger.LogInformation("  Option 1 — Run the CLI as a Global Administrator:");
             logger.LogInformation("    a365 setup admin --config-dir \"<path-to-config-folder>\"");
-            logger.LogInformation("  The config folder contains: a365.config.json and a365.generated.config.json");
-            if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
+            if (!string.IsNullOrWhiteSpace(results.ConsentUrlsSavedToPath))
+            {
+                logger.LogInformation("  Option 2 — Share consent URLs with your Global Administrator:");
+                logger.LogInformation("    {Count} consent URLs saved to: {Path}",
+                    results.ConsentResourceNames.Count, results.ConsentUrlsSavedToPath);
+                logger.LogInformation("    Find them under \"resourceConsents[].consentUrl\" in the file.");
+                foreach (var name in results.ConsentResourceNames)
+                    logger.LogInformation("      - {ResourceName}", name);
+            }
+            else if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
             {
                 logger.LogInformation("  Alternatively, a Global Administrator can grant Graph consent at:");
                 logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
@@ -201,6 +209,92 @@ internal static class SetupHelpers
                 logger.LogInformation("All components configured correctly");
             }
         }
+    }
+
+    /// <summary>
+    /// Populates <c>resourceConsents[*].consentUrl</c> in the generated config for all five required
+    /// resources. Called when the current user lacks the Global Administrator role so that the URLs
+    /// can be saved to <c>a365.generated.config.json</c> and shared with a tenant administrator.
+    /// </summary>
+    /// <returns>Display names of the resources for which URLs were saved.</returns>
+    internal static List<string> PopulateAdminConsentUrls(
+        Agent365Config config,
+        string mcpResourceAppId,
+        IEnumerable<string> mcpScopes)
+    {
+        var graphScopes = config.AgentApplicationScopes;
+        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, graphScopes, mcpScopes);
+
+        // Map resource names to App IDs for upsert into ResourceConsents
+        var appIdByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Microsoft Graph"]   = AuthenticationConstants.MicrosoftGraphResourceAppId,
+            ["Agent 365 Tools"]   = mcpResourceAppId,
+            ["Messaging Bot API"] = ConfigConstants.MessagingBotApiAppId,
+            ["Observability API"] = ConfigConstants.ObservabilityApiAppId,
+            ["Power Platform API"] = PowerPlatformConstants.PowerPlatformApiResourceAppId,
+        };
+
+        var populated = new List<string>();
+        foreach (var (resourceName, consentUrl) in urls)
+        {
+            if (!appIdByName.TryGetValue(resourceName, out var appId)) continue;
+
+            var existing = config.ResourceConsents.FirstOrDefault(
+                rc => rc.ResourceAppId.Equals(appId, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                existing.ConsentUrl = consentUrl;
+            }
+            else
+            {
+                config.ResourceConsents.Add(new Models.ResourceConsent
+                {
+                    ResourceName = resourceName,
+                    ResourceAppId = appId,
+                    ConsentUrl = consentUrl,
+                    ConsentGranted = false,
+                });
+            }
+            populated.Add(resourceName);
+        }
+        return populated;
+    }
+
+    /// <summary>
+    /// Builds per-resource admin consent URLs for all five required resources.
+    /// Graph and MCP scopes are taken from config; Bot API, Observability, and Power Platform
+    /// use corrected scope names derived from querying the tenant service principals.
+    /// </summary>
+    internal static List<(string ResourceName, string ConsentUrl)> BuildAdminConsentUrls(
+        string tenantId,
+        string blueprintClientId,
+        IEnumerable<string> graphScopes,
+        IEnumerable<string> mcpScopes)
+    {
+        var urls = new List<(string, string)>();
+        const string loginBase = "https://login.microsoftonline.com";
+        const string redirectUri = "https://entra.microsoft.com/TokenAuthorize";
+
+        static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes, string redirect)
+        {
+            var scopeParam = string.Join("%20", scopes.Select(s => Uri.EscapeDataString($"{resourceUri}/{s}")));
+            return $"{loginBase}/{tenant}/v2.0/adminconsent?client_id={client}&scope={scopeParam}&redirect_uri={Uri.EscapeDataString(redirect)}";
+        }
+
+        var graphScopeList = graphScopes.ToList();
+        if (graphScopeList.Count > 0)
+            urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList, redirectUri)));
+
+        var mcpScopeList = mcpScopes.ToList();
+        if (mcpScopeList.Count > 0)
+            urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList, redirectUri)));
+
+        urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { "AgentData.ReadWrite" }, redirectUri)));
+        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { "Maven.ReadWrite.All" }, redirectUri)));
+        urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { "Connectivity.Connections.Read" }, redirectUri)));
+
+        return urls;
     }
 
     /// <summary>

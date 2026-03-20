@@ -54,9 +54,19 @@ public static class ConfigConstants
     public const string MessagingBotApiAppId = "5a807f24-c9de-44ee-a3a7-329e88a00ffc";
 
     /// <summary>
+    /// Messaging Bot API identifier URI (used for admin consent URL construction).
+    /// </summary>
+    public const string MessagingBotApiIdentifierUri = "https://botapi.skype.com";
+
+    /// <summary>
     /// Observability API App ID
     /// </summary>
     public const string ObservabilityApiAppId = "9b975845-388f-4429-889e-eab1ef63949c";
+
+    /// <summary>
+    /// Observability API identifier URI (uses api:// scheme — no public https URI registered).
+    /// </summary>
+    public const string ObservabilityApiIdentifierUri = "api://9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
     /// Production deployment environment
