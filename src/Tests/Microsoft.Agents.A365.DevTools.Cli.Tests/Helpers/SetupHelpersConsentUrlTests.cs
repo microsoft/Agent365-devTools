@@ -58,8 +58,8 @@ public class SetupHelpersConsentUrlTests
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
         var botUrl = urls.First(u => u.ResourceName == "Messaging Bot API").ConsentUrl;
 
-        // Scope should contain the constant value, URL-encoded under the identifier URI
-        botUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"));
+        botUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
     }
 
     [Fact]
@@ -68,7 +68,8 @@ public class SetupHelpersConsentUrlTests
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
         var obsUrl = urls.First(u => u.ResourceName == "Observability API").ConsentUrl;
 
-        obsUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"));
+        obsUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
     }
 
     [Fact]
@@ -77,7 +78,8 @@ public class SetupHelpersConsentUrlTests
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
         var ppUrl = urls.First(u => u.ResourceName == "Power Platform API").ConsentUrl;
 
-        ppUrl.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
+        ppUrl.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
     }
 
     [Fact]
@@ -179,7 +181,8 @@ public class SetupHelpersConsentUrlTests
 
         url.Should().StartWith($"https://login.microsoftonline.com/{TenantId}/v2.0/adminconsent");
         url.Should().Contain($"client_id={BlueprintClientId}");
-        url.Should().Contain("redirect_uri=");
+        url.Should().Contain($"redirect_uri={Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri)}",
+            because: "redirect_uri must be registered on the blueprint app — AADSTS500113 is returned if absent or unregistered");
     }
 
     [Fact]
@@ -189,7 +192,8 @@ public class SetupHelpersConsentUrlTests
             TenantId, BlueprintClientId,
             new[] { "Mail.ReadWrite", "Mail.Send", "Chat.ReadWrite" }, Array.Empty<string>());
 
-        url.Should().Contain(Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/Mail.ReadWrite"));
+        url.Should().Contain(Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/Mail.ReadWrite"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/Mail.Send"));
         url.Should().Contain(Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/Chat.ReadWrite"));
     }
@@ -201,7 +205,8 @@ public class SetupHelpersConsentUrlTests
             TenantId, BlueprintClientId,
             Array.Empty<string>(), new[] { "McpServers.Mail.All", "McpServersMetadata.Read.All" });
 
-        url.Should().Contain(Uri.EscapeDataString($"{McpConstants.Agent365ToolsIdentifierUri}/McpServers.Mail.All"));
+        url.Should().Contain(Uri.EscapeDataString($"{McpConstants.Agent365ToolsIdentifierUri}/McpServers.Mail.All"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{McpConstants.Agent365ToolsIdentifierUri}/McpServersMetadata.Read.All"));
     }
 
@@ -213,7 +218,8 @@ public class SetupHelpersConsentUrlTests
             TenantId, BlueprintClientId,
             Array.Empty<string>(), Array.Empty<string>());
 
-        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"));
+        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"));
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
     }

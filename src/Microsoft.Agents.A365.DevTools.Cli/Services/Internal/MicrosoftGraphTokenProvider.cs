@@ -129,7 +129,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 return cached.AccessToken;
             }
 
-            _logger.LogInformation("Acquiring Microsoft Graph delegated access token...");
+            _logger.LogDebug("Acquiring Microsoft Graph delegated access token...");
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 _logger.LogDebug("A Windows authentication dialog may appear. Complete sign-in, then return here — the CLI will continue automatically.");
@@ -322,7 +322,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             if (string.IsNullOrWhiteSpace(tokenResult.Token))
                 return null;
 
-            _logger.LogInformation("Microsoft Graph access token acquired successfully.");
+            _logger.LogDebug("Microsoft Graph access token acquired successfully.");
             return tokenResult.Token;
         }
         catch (Exception ex)
@@ -472,7 +472,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             _logger.LogWarning("Returned token does not appear to be a valid JWT");
         }
 
-        _logger.LogInformation("Microsoft Graph access token acquired successfully");
+        _logger.LogDebug("Microsoft Graph access token acquired successfully");
         return token;
     }
 

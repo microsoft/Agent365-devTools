@@ -101,7 +101,7 @@ public static class InfrastructureSubcommand
             }
             else
             {
-                logger.LogInformation("NeedDeployment=false - skipping Azure subscription validation.");
+                logger.LogDebug("NeedDeployment=false - skipping Azure subscription validation.");
             }
 
             var generatedConfigPath = Path.Combine(

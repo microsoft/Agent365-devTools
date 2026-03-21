@@ -82,51 +82,50 @@ internal static class SetupHelpers
         logger.LogInformation("");
         logger.LogInformation("Setup Summary");
 
-        // Show what succeeded
+        var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
+
+        // Completed steps — [OK] only
         logger.LogInformation("Completed Steps:");
         if (results.InfrastructureCreated)
         {
-            var status = results.InfrastructureAlreadyExisted ? "configured (already exists)" : "created";
+            var status = results.InfrastructureAlreadyExisted ? "(already exists)" : "created";
             logger.LogInformation("  [OK] Infrastructure {Status}", status);
         }
         if (results.BlueprintCreated)
         {
-            var status = results.BlueprintAlreadyExisted ? "configured (already exists)" : "created";
-            logger.LogInformation("  [OK] Agent blueprint {Status} (Blueprint ID: {BlueprintId})", status, results.BlueprintId ?? "unknown");
+            var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
+            logger.LogInformation("  [OK] Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
         }
         if (results.BatchPermissionsPhase2Completed)
         {
+            logger.LogInformation("  [OK] Inheritable permissions configured and verified");
             if (results.AdminConsentGranted)
-            {
-                logger.LogInformation("  [OK] Inheritable permissions configured and verified");
-                logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
-                logger.LogInformation("  [OK] Admin consent granted");
-            }
-            else
-            {
-                // Inheritable permissions done by Agent ID Admin; grants require GA via setup admin.
-                logger.LogInformation("  [OK] Inheritable permissions configured and verified");
-                logger.LogInformation("  [PENDING] OAuth2 grants pending — Global Administrator action required (see Next Steps)");
-            }
+                logger.LogInformation("  [OK] OAuth2 grants and admin consent configured");
         }
         if (results.MessagingEndpointRegistered)
         {
-            var status = results.EndpointAlreadyExisted ? "configured (already exists)" : "created";
+            var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";
             logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
         }
-        
-        // Show what failed
+
+        // Action required — shown as its own section so it isn't conflated with completed work
+        if (pendingAdminAction)
+        {
+            logger.LogInformation("");
+            logger.LogInformation("Action Required:");
+            logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
+        }
+
+        // Failed steps
         if (results.Errors.Count > 0)
         {
             logger.LogInformation("");
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
-            {
                 logger.LogError("  [FAILED] {Error}", error);
-            }
         }
-        
-        // Show warnings
+
+        // Warnings
         if (results.Warnings.Count > 0)
         {
             logger.LogInformation("");
@@ -134,11 +133,11 @@ internal static class SetupHelpers
             foreach (var warning in results.Warnings)
                 logger.LogInformation("  [WARN] {Warning}", warning);
         }
-        
+
         logger.LogInformation("");
-        
+
         // Overall status
-        var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
+
         if (results.HasErrors)
         {
             logger.LogWarning("Setup completed with errors");
@@ -149,15 +148,8 @@ internal static class SetupHelpers
             {
                 logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
             }
-
-            if (!results.MessagingEndpointRegistered)
-            {
-                logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
-                logger.LogInformation("    If there's a conflicting endpoint, delete it first: a365 cleanup blueprint --endpoint-only");
-            }
         }
 
-        // Separate block for pending admin action — shown regardless of error state.
         if (pendingAdminAction)
         {
             logger.LogInformation("");
@@ -270,29 +262,30 @@ internal static class SetupHelpers
     {
         var urls = new List<(string, string)>();
         const string loginBase = "https://login.microsoftonline.com";
-        const string redirectUri = "https://entra.microsoft.com/TokenAuthorize";
 
-        static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes, string redirect)
+        static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes)
         {
             // /v2.0/adminconsent requires scope values in the form "<resourceUri>/<scopeName>".
-            // Each token is individually percent-encoded and joined with %20 (RFC 3986 query encoding,
-            // not application/x-www-form-urlencoded '+' encoding). The '&' characters separating
-            // query parameters are literal string separators and must not be encoded here.
+            // Each full scope token is Uri.EscapeDataString-encoded and joined with %20 (space).
+            // redirect_uri must be present and match a URI accepted by AAD for this endpoint.
+            // Omitting redirect_uri causes AADSTS500113. BlueprintConsentRedirectUri is the
+            // standard Entra Portal consent redirect URI accepted by AAD for admin consent flows.
             var scopeParam = string.Join("%20", scopes.Select(s => Uri.EscapeDataString($"{resourceUri}/{s}")));
-            return $"{loginBase}/{tenant}/v2.0/adminconsent?client_id={client}&scope={scopeParam}&redirect_uri={Uri.EscapeDataString(redirect)}";
+            var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
+            return $"{loginBase}/{tenant}/v2.0/adminconsent?client_id={client}&scope={scopeParam}&redirect_uri={redirectEncoded}";
         }
 
         var graphScopeList = graphScopes.ToList();
         if (graphScopeList.Count > 0)
-            urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList, redirectUri)));
+            urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
 
         var mcpScopeList = mcpScopes.ToList();
         if (mcpScopeList.Count > 0)
-            urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList, redirectUri)));
+            urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
 
-        urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope }, redirectUri)));
-        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope }, redirectUri)));
-        urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead }, redirectUri)));
+        urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
+        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
+        urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
     }
@@ -309,7 +302,6 @@ internal static class SetupHelpers
         IEnumerable<string> mcpScopes)
     {
         const string loginBase = "https://login.microsoftonline.com";
-        const string redirectUri = "https://entra.microsoft.com/TokenAuthorize";
 
         var allScopes = new List<string>();
 
@@ -321,8 +313,11 @@ internal static class SetupHelpers
         allScopes.Add(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"));
         allScopes.Add(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
 
+        // Each scope token is Uri.EscapeDataString-encoded and joined with %20 (space).
+        // redirect_uri must be present — omitting it causes AADSTS500113.
         var scopeParam = string.Join("%20", allScopes);
-        return $"{loginBase}/{tenantId}/v2.0/adminconsent?client_id={blueprintClientId}&scope={scopeParam}&redirect_uri={Uri.EscapeDataString(redirectUri)}";
+        var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
+        return $"{loginBase}/{tenantId}/v2.0/adminconsent?client_id={blueprintClientId}&scope={scopeParam}&redirect_uri={redirectEncoded}";
     }
 
     /// <summary>

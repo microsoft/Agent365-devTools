@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -351,6 +352,8 @@ public class AuthenticationService
     /// <param name="tenantId">Optional tenant ID for single-tenant authentication</param>
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
+    /// <param name="userId">Optional UPN/email to pre-select the account for WAM and silent acquisition.
+    /// When provided, WAM will target this identity instead of the first cached account.</param>
     /// <returns>Access token with the requested scopes</returns>
     public async Task<string> GetAccessTokenWithScopesAsync(
         string resourceAppId,
@@ -358,19 +361,20 @@ public class AuthenticationService
         string? tenantId = null,
         bool forceRefresh = false,
         string? clientId = null,
-        bool useInteractiveBrowser = true)
+        bool useInteractiveBrowser = true,
+        string? userId = null)
     {
         if (string.IsNullOrWhiteSpace(resourceAppId))
             throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));
-        
+
         if (scopes == null || !scopes.Any())
             throw new ArgumentException("At least one scope must be specified", nameof(scopes));
 
-        _logger.LogInformation("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}", 
+        _logger.LogInformation("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}",
             resourceAppId, string.Join(", ", scopes));
 
         // Delegate to the consolidated GetAccessTokenAsync method
-        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser);
+        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser, userId);
     }
 
     /// <summary>
@@ -391,7 +395,8 @@ public class AuthenticationService
 
         // Use the existing method for backward compatibility
         // For explicit scope control, callers should use GetAccessTokenWithScopesAsync
-        return await GetAccessTokenAsync(resourceUrl, tenantId, forceRefresh);
+        var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+        return await GetAccessTokenAsync(resourceUrl, tenantId, forceRefresh, userId: loginHint);
     }
 
     /// <summary>

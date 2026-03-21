@@ -243,7 +243,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
-            var authToken = await _authService.GetAccessTokenAsync(audience);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -321,7 +322,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
-            var authToken = await _authService.GetAccessTokenAsync(audience);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -394,7 +396,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
-            var authToken = await _authService.GetAccessTokenAsync(audience);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -480,7 +483,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
-            var authToken = await _authService.GetAccessTokenAsync(audience);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -540,7 +544,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
-            var authToken = await _authService.GetAccessTokenAsync(audience);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -601,7 +606,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
             
-            var authToken = await _authService.GetAccessTokenAsync(audience);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -651,7 +657,8 @@ public class Agent365ToolingService : IAgent365ToolingService
         var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
         _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
 
-        var authToken = await _authService.GetAccessTokenAsync(audience);
+        var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+        var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
         if (string.IsNullOrWhiteSpace(authToken))
         {
             _logger.LogError("Failed to acquire authentication token");

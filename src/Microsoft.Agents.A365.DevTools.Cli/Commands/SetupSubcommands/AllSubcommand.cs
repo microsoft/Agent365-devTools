@@ -426,25 +426,9 @@ internal static class AllSubcommand
                     logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
                 }
 
-                // Step 4: Register messaging endpoint — runs after blueprint is fully configured with permissions.
-                logger.LogInformation("");
-                logger.LogInformation("Registering blueprint messaging endpoint...");
-                try
-                {
-                    var (endpointSuccess, endpointAlreadyExisted) =
-                        await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-                            setupConfig, logger, botConfigurator, correlationId: correlationId);
-
-                    setupResults.MessagingEndpointRegistered = endpointSuccess;
-                    setupResults.EndpointAlreadyExisted = endpointAlreadyExisted;
-                }
-                catch (Exception endpointEx)
-                {
-                    setupResults.MessagingEndpointRegistered = false;
-                    setupResults.Errors.Add($"Messaging endpoint registration failed: {endpointEx.Message}");
-                    logger.LogWarning("Endpoint registration failed: {Message}", endpointEx.Message);
-                    logger.LogWarning("To retry after resolving the issue: a365 setup blueprint --endpoint-only");
-                }
+                // Step 4: Messaging endpoint registration is temporarily disabled pending a backend fix.
+                // Run 'a365 setup blueprint --endpoint-only' to register the endpoint manually
+                // once the backend supports it. Documentation will be updated accordingly.
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);

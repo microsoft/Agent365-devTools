@@ -311,13 +311,15 @@ internal static class GetTokenSubcommand
             logger.LogInformation("");
 
             // Use GetAccessTokenWithScopesAsync for explicit scope control
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var token = await authService.GetAccessTokenWithScopesAsync(
                 resourceAppId,
                 requestedScopes,
                 tenantId,
                 forceRefresh,
                 clientAppId,
-                useInteractiveBrowser: true);
+                useInteractiveBrowser: true,
+                userId: loginHint);
 
             if (string.IsNullOrWhiteSpace(token))
             {

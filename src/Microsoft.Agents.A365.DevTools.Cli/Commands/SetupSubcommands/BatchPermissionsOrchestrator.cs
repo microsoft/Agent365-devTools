@@ -171,11 +171,6 @@ internal static class BatchPermissionsOrchestrator
                 await ConfigureOauth2GrantsAsync(
                     graph, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, ct);
             }
-            else
-            {
-                logger.LogInformation("OAuth2 grants require Global Administrator — skipping for current user.");
-                logger.LogInformation("Run 'a365 setup admin' after setup completes to grant tenant-wide permissions.");
-            }
         }
 
         // Global Admin: grants done in Phase 2b — skip Phase 3 consent flow entirely.
@@ -188,9 +183,6 @@ internal static class BatchPermissionsOrchestrator
         }
 
         // --- Admin consent ---
-        logger.LogInformation("");
-        logger.LogInformation("Checking admin consent...");
-
         var (consentGranted, consentUrl) = await GrantAdminConsentAsync(
             graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, adminCheck);
 
@@ -321,7 +313,7 @@ internal static class BatchPermissionsOrchestrator
                 continue;
             }
 
-            logger.LogInformation(
+            logger.LogDebug(
                 "   - Configuring inheritable permissions: {ResourceName} [{Scopes}]",
                 spec.ResourceName, string.Join(' ', spec.Scopes));
 
@@ -339,8 +331,8 @@ internal static class BatchPermissionsOrchestrator
                 if (verified)
                 {
                     inheritedResults[spec.ResourceAppId] = (configured: true, alreadyExisted: alreadyExists);
-                    var verb = alreadyExists ? "already configured" : "configured and verified";
-                    logger.LogInformation("   - Inheritable permissions {Verb} for {ResourceName}", verb, spec.ResourceName);
+                    var verb = alreadyExists ? "already configured" : "configured";
+                    logger.LogInformation("   - {ResourceName}: inheritable permissions {Verb}", spec.ResourceName, verb);
                 }
                 else
                 {
@@ -528,20 +520,6 @@ internal static class BatchPermissionsOrchestrator
         // we performed a role check and found the user lacks the GA role.
         if (adminCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
-            if (phase1Result == null)
-            {
-                logger.LogWarning("Admin consent cannot be granted: authentication to Microsoft Graph failed.");
-                logger.LogWarning("Sign in with an account that has the Global Administrator role, then ask your tenant administrator to run:");
-            }
-            else
-            {
-                logger.LogWarning("Admin consent is required but the current user does not have the Global Administrator role.");
-                logger.LogWarning("Ask your tenant administrator to run:");
-            }
-            logger.LogWarning("  a365 setup admin --config-dir \"<path-to-config-folder>\"");
-            logger.LogWarning("To verify inheritable permissions were set, run this query in Graph Explorer:");
-            logger.LogWarning("  GET https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{BlueprintId}/inheritablePermissions", blueprintAppId);
-
             return (false, consentUrl);
         }
 

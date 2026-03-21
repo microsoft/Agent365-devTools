@@ -367,17 +367,28 @@ public sealed class MsalBrowserCredential : TokenCredential
                 // WAM on Windows - native authentication dialog, no browser needed
                 _logger?.LogInformation("Authenticating via Windows Account Manager...");
                 var builder = _publicClientApp.AcquireTokenInteractive(scopes);
-                if (account != null)
+                if (account != null && !string.IsNullOrWhiteSpace(_loginHint))
                 {
-                    // Account is known to MSAL — WithAccount is more reliable than WithLoginHint
-                    // for WAM because it passes the internal WAM account reference, not just a UPN.
+                    // Caller explicitly identified this account via loginHint and MSAL found it in
+                    // cache — WithAccount is more reliable than WithLoginHint for WAM because it
+                    // passes the internal WAM account reference, not just a UPN.
                     builder = builder.WithAccount(account);
                 }
                 else if (!string.IsNullOrWhiteSpace(_loginHint))
                 {
-                    // Account not in MSAL cache (e.g. not registered as a Windows Work/School account).
-                    // Force the account picker so the user can select or add the correct account.
-                    // WithLoginHint alone is not honored by WAM in this case.
+                    // Hint provided (e.g. resolved from az account show) but this account is not
+                    // yet in the MSAL cache (e.g. first sign-in or cache cleared).
+                    // WithLoginHint asks WAM to pre-select this identity in the dialog; WAM honors
+                    // it for registered Work/School accounts so the user only needs to confirm,
+                    // rather than searching for the right account in a blank picker.
+                    builder = builder.WithLoginHint(_loginHint);
+                }
+                else
+                {
+                    // No hint at all — show the account picker so the user can select or add the
+                    // correct account. Using WithAccount for a first-cached "best guess" would lock
+                    // WAM to a stale identity (e.g. an old account from a previous session) with no
+                    // way to switch.
                     builder = builder.WithPrompt(Prompt.SelectAccount);
                 }
                 interactiveResult = await builder.ExecuteAsync(cancellationToken);

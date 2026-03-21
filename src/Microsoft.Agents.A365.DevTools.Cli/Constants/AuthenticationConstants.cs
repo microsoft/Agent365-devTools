@@ -92,6 +92,14 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceUri = "https://graph.microsoft.com";
 
     /// <summary>
+    /// Redirect URI registered on the blueprint application to support the /v2.0/adminconsent flow.
+    /// AAD requires at least one redirect URI on the application — AADSTS500113 is returned otherwise.
+    /// This is the standard Entra Portal redirect URI used for admin consent; it shows a generic
+    /// "consent granted" page and requires no real endpoint on our side.
+    /// </summary>
+    public const string BlueprintConsentRedirectUri = "https://entra.microsoft.com/TokenAuthorize";
+
+    /// <summary>
     /// Delegated scope for reading directory role assignments.
     /// Retained as a named constant for use cases where a lower-privilege role-read scope is required.
     /// </summary>

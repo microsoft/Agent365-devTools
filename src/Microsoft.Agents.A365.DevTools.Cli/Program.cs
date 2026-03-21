@@ -194,6 +194,21 @@ class Program
             var parser = builder.Build();
             return await parser.InvokeAsync(args);
         }
+        catch (Exception ex)
+        {
+            // Catch anything that escapes before or after the System.CommandLine pipeline
+            // (e.g. DI setup failures, exceptions in InvokeAsync itself).
+            // Log the full details to the file; show only a clean one-liner to the user.
+            startupLogger.LogCritical(ex, "Unhandled exception in CLI startup");
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Error.WriteLine($"ERROR: {ex.Message}");
+            Console.ResetColor();
+            Console.Error.WriteLine();
+            if (!string.IsNullOrEmpty(logFilePath))
+                Console.Error.WriteLine($"For details, see the log file at: {logFilePath}");
+            Console.Error.WriteLine("If this error persists, please report it at: https://github.com/microsoft/Agent365-devTools/issues");
+            return 1;
+        }
         finally
         {
             Console.ResetColor();

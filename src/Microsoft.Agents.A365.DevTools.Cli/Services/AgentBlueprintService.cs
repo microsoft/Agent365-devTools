@@ -371,7 +371,7 @@ public class AgentBlueprintService
                 
                 if (desiredSet.IsSubsetOf(currentSet))
                 {
-                    _logger.LogInformation("Inheritable permissions already exist for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                    _logger.LogDebug("Inheritable permissions already exist for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
                     return (ok: true, alreadyExists: true, error: null);
                 }
 
@@ -394,7 +394,7 @@ public class AgentBlueprintService
                     return (ok: false, alreadyExists: false, error: "PATCH failed");
                 }
 
-                _logger.LogInformation("Patched inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                _logger.LogDebug("Patched inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
                 return (ok: true, alreadyExists: false, error: null);
             }
 
@@ -424,7 +424,7 @@ public class AgentBlueprintService
                 return (ok: false, alreadyExists: false, error: err);
             }
 
-            _logger.LogInformation("Created inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+            _logger.LogDebug("Created inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
             return (ok: true, alreadyExists: false, error: null);
         }
         catch (Exception ex)

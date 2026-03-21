@@ -104,8 +104,10 @@ public class CleanConsoleFormatterTests : IDisposable
     }
 
     [Fact]
-    public void Write_WithException_IncludesExceptionDetails()
+    public void Write_WithException_SuppressesExceptionDetailsFromConsole()
     {
+        // Exception details (stack traces) are intentionally suppressed from console output.
+        // The file logger captures the full exception for diagnostics.
         // Arrange
         var message = "Error occurred";
         var exception = new InvalidOperationException("Test exception");
@@ -118,13 +120,17 @@ public class CleanConsoleFormatterTests : IDisposable
         var output = _consoleWriter.ToString();
         output.Should().Contain("ERROR:");
         output.Should().Contain(message);
-        output.Should().Contain("Test exception");
-        output.Should().Contain("InvalidOperationException");
+        output.Should().NotContain("Test exception",
+            because: "exception details are suppressed from console to prevent leaking stack traces to users — file logger captures full exception for diagnostics");
+        output.Should().NotContain("InvalidOperationException",
+            because: "exception type names are suppressed from console output for the same reason");
     }
 
     [Fact]
-    public void Write_WithExceptionAndWarning_IncludesExceptionDetails()
+    public void Write_WithExceptionAndWarning_SuppressesExceptionDetailsFromConsole()
     {
+        // Exception details (stack traces) are intentionally suppressed from console output.
+        // The file logger captures the full exception for diagnostics.
         // Arrange
         var message = "Warning with exception";
         var exception = new ArgumentException("Test warning exception");
@@ -137,8 +143,10 @@ public class CleanConsoleFormatterTests : IDisposable
         var output = _consoleWriter.ToString();
         output.Should().NotContain("WARNING:");
         output.Should().Contain(message);
-        output.Should().Contain("Test warning exception");
-        output.Should().Contain("ArgumentException");
+        output.Should().NotContain("Test warning exception",
+            because: "exception details are suppressed from console to prevent leaking stack traces to users — file logger captures full exception for diagnostics");
+        output.Should().NotContain("ArgumentException",
+            because: "exception type names are suppressed from console output for the same reason");
     }
 
     [Fact]
