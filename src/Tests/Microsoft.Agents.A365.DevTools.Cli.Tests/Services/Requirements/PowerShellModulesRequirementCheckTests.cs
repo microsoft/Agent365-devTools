@@ -66,21 +66,17 @@ public class PowerShellModulesRequirementCheckTests
     [Fact]
     public async Task CheckAsync_WhenPwshMissingAndWslDistroNameSet_ResolutionGuidanceContainsLinuxUrl()
     {
-        // Only meaningful when pwsh is absent; exits early on machines with PowerShell installed
-        // so the test never gives a misleading green result.
+        // Use injected runner that reports pwsh unavailable — no real process spawned.
+        var noRunner = NoPwshRunner();
+        var check = new PowerShellModulesRequirementCheck(noRunner);
         var config = new Agent365Config();
-        var probe = await _check.CheckAsync(config, _mockLogger);
-        if (probe.Passed)
-        {
-            return; // pwsh is available — WSL guidance path is not exercised on this machine.
-        }
 
         var original = Environment.GetEnvironmentVariable("WSL_DISTRO_NAME");
         try
         {
             Environment.SetEnvironmentVariable("WSL_DISTRO_NAME", "Ubuntu-22.04");
 
-            var result = await _check.CheckAsync(config, _mockLogger);
+            var result = await check.CheckAsync(config, _mockLogger);
 
             result.Passed.Should().BeFalse();
             result.ResolutionGuidance.Should().Contain(
@@ -96,13 +92,10 @@ public class PowerShellModulesRequirementCheckTests
     [Fact]
     public async Task CheckAsync_WhenPwshMissingAndNotWsl_ResolutionGuidanceContainsGeneralUrl()
     {
-        // Only meaningful when pwsh is absent; exits early on machines with PowerShell installed.
+        // Use injected runner that reports pwsh unavailable — no real process spawned.
+        var noRunner = NoPwshRunner();
+        var check = new PowerShellModulesRequirementCheck(noRunner);
         var config = new Agent365Config();
-        var probe = await _check.CheckAsync(config, _mockLogger);
-        if (probe.Passed)
-        {
-            return; // pwsh is available — non-WSL guidance path is not exercised on this machine.
-        }
 
         // Ensure WSL_DISTRO_NAME is not set so the non-WSL branch is taken.
         var original = Environment.GetEnvironmentVariable("WSL_DISTRO_NAME");
@@ -110,7 +103,7 @@ public class PowerShellModulesRequirementCheckTests
         {
             Environment.SetEnvironmentVariable("WSL_DISTRO_NAME", null);
 
-            var result = await _check.CheckAsync(config, _mockLogger);
+            var result = await check.CheckAsync(config, _mockLogger);
 
             result.Passed.Should().BeFalse();
             result.ResolutionGuidance.Should().Contain(
@@ -131,13 +124,35 @@ public class PowerShellModulesRequirementCheckTests
     [Fact]
     public async Task CheckAsync_ShouldReturnResult_WithoutThrowing()
     {
-        // Validates the check runs end-to-end without exceptions.
-        // The pass/fail result depends on whether pwsh is installed in the test environment.
+        // Use injected runner that reports pwsh available with modules installed — no real process spawned.
         var config = new Agent365Config();
+        var check = new PowerShellModulesRequirementCheck(AllModulesInstalledRunner());
 
-        var result = await _check.CheckAsync(config, _mockLogger);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // The key assertion: CheckAsync completes without throwing regardless of environment.
         result.Should().NotBeNull();
+        result.Passed.Should().BeTrue();
     }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    /// <summary>Returns a command runner that reports pwsh as unavailable (exit 1).</summary>
+    private static Func<string, string, CancellationToken, Task<(bool success, string? output)>> NoPwshRunner()
+        => (_, _, _) => Task.FromResult((false, (string?)null));
+
+    /// <summary>Returns a command runner that reports pwsh 7 available and all required modules installed.</summary>
+    private static Func<string, string, CancellationToken, Task<(bool success, string? output)>> AllModulesInstalledRunner()
+        => (_, command, _) =>
+        {
+            // Availability check: "$PSVersionTable.PSVersion.Major"
+            if (command.Contains("PSVersionTable"))
+                return Task.FromResult((true, (string?)"7"));
+            // Module check: returns the module name
+            if (command.Contains("Microsoft.Graph.Authentication"))
+                return Task.FromResult((true, (string?)"Microsoft.Graph.Authentication"));
+            if (command.Contains("Microsoft.Graph.Applications"))
+                return Task.FromResult((true, (string?)"Microsoft.Graph.Applications"));
+            return Task.FromResult((true, (string?)string.Empty));
+        };
 }

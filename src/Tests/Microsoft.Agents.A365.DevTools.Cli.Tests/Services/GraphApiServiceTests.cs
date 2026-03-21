@@ -48,7 +48,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful POST with JSON body
         var bodyObj = new { result = "ok" };
@@ -89,7 +89,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue failing POST with JSON error body
         var errorBody = new { error = new { code = "Authorization_RequestDenied", message = "Insufficient privileges" } };
@@ -157,7 +157,7 @@ public class GraphApiServiceTests
             });
 
         // Create GraphApiService with our capturing handler
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response for service principal lookup
         var spResponse = new { value = new[] { new { id = "sp-object-id-123", appId = "blueprint-456" } } };
@@ -239,7 +239,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -288,7 +288,7 @@ public class GraphApiServiceTests
             Arg.Any<string?>())
             .Returns("token-from-provider\r\nwith-embedded-newlines\n");
 
-        var service = new GraphApiService(logger, executor, handler, tokenProvider);
+        var service = new GraphApiService(logger, executor, handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -354,7 +354,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response for the directory roles query
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -404,7 +404,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful response with Microsoft Graph service principal
         var spResponse = new { value = new[] { new { displayName = "Microsoft Graph" } } };
@@ -440,7 +440,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response with empty array (service principal not found)
         var spResponse = new { value = Array.Empty<object>() };
@@ -476,7 +476,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue error response (simulating network error or Graph API error)
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError)
@@ -511,7 +511,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response with malformed object (missing displayName)
         var spResponse = new { value = new[] { new { id = "sp-id-123", appId = "00000003-0000-0000-c000-000000000000" } } };
@@ -606,7 +606,7 @@ public class GraphApiServiceTests
                 Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
                 Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns("fake-token");
-        return new GraphApiService(logger, executor, handler, tokenProvider);
+        return new GraphApiService(logger, executor, handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
     }
 
     [Fact]

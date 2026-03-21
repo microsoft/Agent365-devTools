@@ -27,6 +27,7 @@ public sealed class InteractiveGraphAuthService
     private readonly ILogger<InteractiveGraphAuthService> _logger;
     private readonly string _clientAppId;
     private readonly Func<string, string, TokenCredential>? _credentialFactory;
+    private readonly Func<Task<string?>> _loginHintResolver;
     private GraphServiceClient? _cachedClient;
     private string? _cachedTenantId;
 
@@ -42,7 +43,8 @@ public sealed class InteractiveGraphAuthService
     public InteractiveGraphAuthService(
         ILogger<InteractiveGraphAuthService> logger,
         string clientAppId,
-        Func<string, string, TokenCredential>? credentialFactory = null)
+        Func<string, string, TokenCredential>? credentialFactory = null,
+        Func<Task<string?>>? loginHintResolver = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -62,6 +64,7 @@ public sealed class InteractiveGraphAuthService
 
         _clientAppId = clientAppId;
         _credentialFactory = credentialFactory;
+        _loginHintResolver = loginHintResolver ?? ResolveAzLoginHintAsync;
     }
 
     /// <summary>
@@ -93,7 +96,7 @@ public sealed class InteractiveGraphAuthService
         try
         {
             // Resolve the current az CLI user so MSAL/WAM targets the correct identity.
-            var loginHint = await ResolveAzLoginHintAsync();
+            var loginHint = await _loginHintResolver();
 
             // Resolve credential: use injected factory (for tests) or default MsalBrowserCredential
             credential = _credentialFactory?.Invoke(_clientAppId, tenantId)

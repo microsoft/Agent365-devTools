@@ -1719,7 +1719,8 @@ public class BlueprintSubcommandTests
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — all required permission guidance must be logged
         _mockLogger.Received().Log(
@@ -1757,7 +1758,8 @@ public class BlueprintSubcommandTests
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — agentBlueprintClientSecretProtected: false must be mentioned
         _mockLogger.Received().Log(
@@ -1788,7 +1790,8 @@ public class BlueprintSubcommandTests
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — re-run instruction must be logged
         _mockLogger.Received().Log(
@@ -1821,7 +1824,8 @@ public class BlueprintSubcommandTests
             graphService: _mockGraphApiService,
             setupConfig: setupConfig,
             configService: _mockConfigService,
-            logger: _mockLogger);
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — Azure CLI token path must NOT be taken
         await _mockGraphApiService.DidNotReceiveWithAnyArgs().GetGraphAccessTokenAsync(default!, default);

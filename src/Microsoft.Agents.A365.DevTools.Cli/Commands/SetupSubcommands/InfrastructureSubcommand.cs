@@ -440,7 +440,7 @@ public static class InfrastructureSubcommand
             }
 
             // App Service plan
-            bool planAlreadyExisted = await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId);
+            bool planAlreadyExisted = await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId, cancellationToken: cancellationToken);
             if (planAlreadyExisted)
             {
                 anyAlreadyExisted = true;
@@ -726,15 +726,16 @@ public static class InfrastructureSubcommand
     /// Returns true if plan already existed, false if newly created.
     /// </summary>
     internal static async Task<bool> EnsureAppServicePlanExistsAsync(
-        CommandExecutor executor, 
-        ILogger logger, 
-        string resourceGroup, 
-        string planName, 
-        string? planSku, 
+        CommandExecutor executor,
+        ILogger logger,
+        string resourceGroup,
+        string planName,
+        string? planSku,
         string location,
         string subscriptionId,
         int maxRetries = 5,
-        int baseDelaySeconds = 3)
+        int baseDelaySeconds = 3,
+        CancellationToken cancellationToken = default)
     {
         var planShow = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
         if (planShow.Success)
@@ -812,12 +813,17 @@ public static class InfrastructureSubcommand
             }
 
             logger.LogInformation("App Service plan creation command completed successfully");
-            
-            // Add small delay to allow Azure resource propagation
-            logger.LogInformation("Waiting for Azure resource propagation...");
-            await Task.Delay(TimeSpan.FromSeconds(3));
 
-            // Use RetryHelper to verify the plan was created successfully with exponential backoff
+            // Add small delay to allow Azure resource propagation
+            if (baseDelaySeconds > 0)
+            {
+                logger.LogInformation("Waiting for Azure resource propagation...");
+                await Task.Delay(TimeSpan.FromSeconds(baseDelaySeconds), cancellationToken);
+            }
+
+            // Use RetryHelper to verify the plan was created successfully with exponential backoff.
+            // baseDelaySeconds controls both the propagation wait above and the inter-retry interval
+            // here — tests pass 0 to eliminate all waits; production uses the default of 3.
             var retryHelper = new RetryHelper(logger);
             logger.LogInformation("Verifying App Service plan creation...");
             var planCreated = await retryHelper.ExecuteWithRetryAsync(
@@ -829,7 +835,7 @@ public static class InfrastructureSubcommand
                 result => !result,
                 maxRetries,
                 baseDelaySeconds,
-                CancellationToken.None);
+                cancellationToken);
 
             if (!planCreated)
             {
@@ -879,7 +885,8 @@ public static class InfrastructureSubcommand
         string? deploymentProjectPath,
         CommandExecutor executor,
         ILogger logger,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? retryDelayMsOverride = null)
     {
         if (platform != Models.ProjectPlatform.DotNet ||
             string.IsNullOrWhiteSpace(deploymentProjectPath))
@@ -921,9 +928,10 @@ public static class InfrastructureSubcommand
                 if (attempt < MaxSdkValidationAttempts)
                 {
                     // Exponential backoff with cap: 500ms, 1000ms, 2000ms (capped at MaxRetryDelayMs)
-                    var delayMs = Math.Min(InitialRetryDelayMs * (1 << (attempt - 1)), MaxRetryDelayMs);
+                    var delayMs = retryDelayMsOverride
+                        ?? Math.Min(InitialRetryDelayMs * (1 << (attempt - 1)), MaxRetryDelayMs);
                     logger.LogWarning(
-                        "dotnet --version check failed (attempt {Attempt}/{MaxAttempts}). Retrying in {DelayMs}ms...", 
+                        "dotnet --version check failed (attempt {Attempt}/{MaxAttempts}). Retrying in {DelayMs}ms...",
                         attempt, MaxSdkValidationAttempts, delayMs);
                     await Task.Delay(delayMs, cancellationToken);
                 }

@@ -212,6 +212,7 @@ public class InteractiveGraphAuthServiceTests
 
     private const string ValidGuid = "12345678-1234-1234-1234-123456789abc";
     private const string ValidTenantId = "87654321-4321-4321-4321-cba987654321";
+    private static readonly Func<Task<string?>> NoOpLoginHint = () => Task.FromResult<string?>(null);
 
     /// <summary>
     /// Verifies that a credential failure surfaced during eager token acquisition
@@ -232,7 +233,8 @@ public class InteractiveGraphAuthServiceTests
 
         var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
         var sut = new InteractiveGraphAuthService(logger, ValidGuid,
-            credentialFactory: (_, _) => failingCredential);
+            credentialFactory: (_, _) => failingCredential,
+            loginHintResolver: NoOpLoginHint);
 
         // Act
         var act = async () => await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
@@ -252,7 +254,8 @@ public class InteractiveGraphAuthServiceTests
         var workingCredential = new StubTokenCredential("token-value", DateTimeOffset.UtcNow.AddHours(1));
         var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
         var sut = new InteractiveGraphAuthService(logger, ValidGuid,
-            credentialFactory: (_, _) => workingCredential);
+            credentialFactory: (_, _) => workingCredential,
+            loginHintResolver: NoOpLoginHint);
 
         // Act
         var client = await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
@@ -273,7 +276,8 @@ public class InteractiveGraphAuthServiceTests
         var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
         int callCount = 0;
         var sut = new InteractiveGraphAuthService(logger, ValidGuid,
-            credentialFactory: (_, _) => { callCount++; return workingCredential; });
+            credentialFactory: (_, _) => { callCount++; return workingCredential; },
+            loginHintResolver: NoOpLoginHint);
 
         // Act — call twice for the same tenant
         var client1 = await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
@@ -296,7 +300,8 @@ public class InteractiveGraphAuthServiceTests
         var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
         int callCount = 0;
         var sut = new InteractiveGraphAuthService(logger, ValidGuid,
-            credentialFactory: (_, _) => { callCount++; return workingCredential; });
+            credentialFactory: (_, _) => { callCount++; return workingCredential; },
+            loginHintResolver: NoOpLoginHint);
 
         const string otherTenant = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
@@ -322,7 +327,8 @@ public class InteractiveGraphAuthServiceTests
 
         var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
         var sut = new InteractiveGraphAuthService(logger, ValidGuid,
-            credentialFactory: (_, _) => failingCredential);
+            credentialFactory: (_, _) => failingCredential,
+            loginHintResolver: NoOpLoginHint);
 
         // Act
         var act = async () => await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);

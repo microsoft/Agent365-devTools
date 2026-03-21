@@ -366,7 +366,8 @@ internal static class BlueprintSubcommand
         bool skipEndpointRegistration = false,
         string? correlationId = null,
         CancellationToken cancellationToken = default,
-        BlueprintCreationOptions? options = null)
+        BlueprintCreationOptions? options = null,
+        Func<Task<string?>>? loginHintResolver = null)
     {
         // Validate location before logging the header — prevents confusing output where the heading
         // appears but setup immediately fails due to a missing config value.
@@ -483,7 +484,8 @@ internal static class BlueprintSubcommand
                 configService,
                 config,
                 cancellationToken,
-                options);
+                options,
+                loginHintResolver: loginHintResolver);
 
         if (!blueprintResult.success)
         {
@@ -543,7 +545,8 @@ internal static class BlueprintSubcommand
                     graphService,
                     setupConfig,
                     configService,
-                    logger);
+                    logger,
+                    loginHintResolver: loginHintResolver);
             }
         }
         else
@@ -554,7 +557,8 @@ internal static class BlueprintSubcommand
                 graphService,
                 setupConfig,
                 configService,
-                logger);
+                logger,
+                loginHintResolver: loginHintResolver);
         }
 
         logger.LogInformation("");
@@ -684,6 +688,18 @@ internal static class BlueprintSubcommand
         CancellationToken cancellationToken = default,
         string? correlationId = null)
     {
+        // Fast fail on invalid config — avoids multiple retry attempts with exponential backoff
+        if (!Guid.TryParse(clientAppId, out _))
+        {
+            logger.LogError("Invalid Client App ID format: {AppId} — skipping consent", clientAppId ?? "(null)");
+            return false;
+        }
+        if (!Guid.TryParse(tenantId, out _))
+        {
+            logger.LogError("Invalid Tenant ID format: {TenantId} — skipping consent", tenantId ?? "(null)");
+            return false;
+        }
+
         var retryHelper = new RetryHelper(logger);
 
         try
@@ -747,7 +763,8 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         FileInfo configFile,
         CancellationToken ct,
-        BlueprintCreationOptions? options = null)
+        BlueprintCreationOptions? options = null,
+        Func<Task<string?>>? loginHintResolver = null)
     {
         // ========================================================================
         // Idempotency Check: DisplayName-First Discovery
@@ -891,7 +908,9 @@ internal static class BlueprintSubcommand
                 };
             }
 
-            var blueprintLoginHint = await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
+            var blueprintLoginHint = loginHintResolver != null
+                ? await loginHintResolver()
+                : await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
             // Use Application.ReadWrite.All explicitly — NOT .default. Using .default bundles all
             // consented scopes including AgentIdentityBlueprint.*, which Entra rejects for
             // POST /v1.0/servicePrincipals ("backing application must be in the local tenant").
@@ -1741,7 +1760,8 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         IConfigService configService,
         ILogger logger,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<Task<string?>>? loginHintResolver = null)
     {
         try
         {
@@ -1749,7 +1769,9 @@ internal static class BlueprintSubcommand
 
             // Resolve login hint so WAM targets the az-logged-in user, not the OS default account.
             // Without this, WAM may return a cached token for a different user who is not the owner.
-            var loginHint = await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
+            var loginHint = loginHintResolver != null
+                ? await loginHintResolver()
+                : await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
 
             // Use a token scoped to AgentIdentityBlueprint.ReadWrite.All (already consented on the
             // client app). Using .default bundles Application.ReadWrite.All → Directory.AccessAsUser.All,

@@ -14,6 +14,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 /// </summary>
 public class PowerShellModulesRequirementCheck : RequirementCheck
 {
+    private readonly Func<string, string, CancellationToken, Task<(bool success, string? output)>>? _commandRunner;
+    public PowerShellModulesRequirementCheck(
+        Func<string, string, CancellationToken, Task<(bool success, string? output)>>? commandRunner = null)
+    {
+        _commandRunner = commandRunner;
+    }
+
     /// <inheritdoc />
     public override string Name => "PowerShell Modules";
 
@@ -177,7 +184,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         try
         {
             // Check for PowerShell 7+ (pwsh)
-            var result = await ExecutePowerShellCommandAsync("pwsh", "$PSVersionTable.PSVersion.Major", logger, cancellationToken);
+            var result = await RunCommandAsync("pwsh", "$PSVersionTable.PSVersion.Major", logger, cancellationToken);
             if (result.success && int.TryParse(result.output?.Trim(), out var major) && major >= 7)
             {
                 logger.LogDebug("PowerShell availability check succeeded.");
@@ -202,7 +209,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         {
             var command = $"(Get-Module -ListAvailable -Name '{moduleName}' | Select-Object -First 1).Name";
             
-            var result = await ExecutePowerShellCommandAsync("pwsh", command, logger, cancellationToken);
+            var result = await RunCommandAsync("pwsh", command, logger, cancellationToken);
             if (!result.success || string.IsNullOrWhiteSpace(result.output))
             {
                 return false;
@@ -230,7 +237,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         try
         {
             var command = $"Install-Module -Name '{moduleName}' -Repository 'PSGallery' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
-            var result = await ExecutePowerShellCommandAsync("pwsh", command, logger, cancellationToken);
+            var result = await RunCommandAsync("pwsh", command, logger, cancellationToken);
             if (!result.success)
             {
                 logger.LogDebug("Auto-install failed for {ModuleName}: {Output}", moduleName, result.output);
@@ -242,6 +249,17 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             logger.LogDebug("Auto-install threw exception for {ModuleName}: {Error}", moduleName, ex.Message);
             return false;
         }
+    }
+
+    private Task<(bool success, string? output)> RunCommandAsync(
+        string executable,
+        string command,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (_commandRunner != null)
+            return _commandRunner(executable, command, cancellationToken);
+        return ExecutePowerShellCommandAsync(executable, command, logger, cancellationToken);
     }
 
     /// <summary>

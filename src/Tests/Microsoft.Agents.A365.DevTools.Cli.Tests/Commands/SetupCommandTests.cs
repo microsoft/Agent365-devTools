@@ -39,7 +39,10 @@ public class SetupCommandTests
         _mockLogger = Substitute.For<ILogger<SetupCommand>>();
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        // Full mock — ForPartsOf would fall through to real CommandExecutor.ExecuteAsync and spawn real processes
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
+        _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
         var mockDeployLogger = Substitute.For<ILogger<DeploymentService>>();
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
@@ -54,7 +57,10 @@ public class SetupCommandTests
             mockNodeLogger,
             mockPythonLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
-        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        // Full mock — both virtual methods are always stubbed so the real az CLI is never spawned
+        _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>()).Returns(Task.FromResult(true));
+        _mockAuthValidator.GetAppServiceTokenAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         _mockGraphApiService = Substitute.For<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();

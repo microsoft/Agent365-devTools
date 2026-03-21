@@ -119,9 +119,12 @@ internal static class BatchPermissionsOrchestrator
 
         // Check admin role once — reused by both Phase 2b (grants) and Phase 3 (consent check).
         // Avoids a duplicate Graph call later.
+        // If Phase 1 failed (phase1Result == null), default to DoesNotHaveRole: we cannot
+        // authenticate, so interactive consent is impossible — return the URL instead of
+        // opening a browser.
         var adminCheck = phase1Result != null
             ? await graph.IsCurrentUserAdminAsync(tenantId, ct)
-            : Models.RoleCheckResult.Unknown;
+            : Models.RoleCheckResult.DoesNotHaveRole;
         var isGlobalAdmin = adminCheck == Models.RoleCheckResult.HasRole;
 
         // --- Phase 2a: Inheritable permissions (Agent ID Admin or GA) ---
@@ -521,10 +524,20 @@ internal static class BatchPermissionsOrchestrator
 
         // Consent not yet detected — check whether the current user can grant it interactively.
         // adminCheck was resolved before Phase 2 and passed in to avoid a duplicate Graph call.
+        // When phase1Result is null, auth failed entirely — the message must reflect that, not imply
+        // we performed a role check and found the user lacks the GA role.
         if (adminCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
-            logger.LogWarning("Admin consent is required but the current user does not have the Global Administrator role.");
-            logger.LogWarning("Ask your tenant administrator to run:");
+            if (phase1Result == null)
+            {
+                logger.LogWarning("Admin consent cannot be granted: authentication to Microsoft Graph failed.");
+                logger.LogWarning("Sign in with an account that has the Global Administrator role, then ask your tenant administrator to run:");
+            }
+            else
+            {
+                logger.LogWarning("Admin consent is required but the current user does not have the Global Administrator role.");
+                logger.LogWarning("Ask your tenant administrator to run:");
+            }
             logger.LogWarning("  a365 setup admin --config-dir \"<path-to-config-folder>\"");
             logger.LogWarning("To verify inheritable permissions were set, run this query in Graph Explorer:");
             logger.LogWarning("  GET https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{BlueprintId}/inheritablePermissions", blueprintAppId);

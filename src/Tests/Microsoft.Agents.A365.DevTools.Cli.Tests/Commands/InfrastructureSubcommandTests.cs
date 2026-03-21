@@ -54,7 +54,7 @@ public class InfrastructureSubcommandTests
         var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
                 _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-                maxRetries: 2, baseDelaySeconds: 1));
+                maxRetries: 2, baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.QuotaExceeded);
         exception.PlanName.Should().Be(planName);
@@ -83,7 +83,7 @@ public class InfrastructureSubcommandTests
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
             _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-            maxRetries: 2, baseDelaySeconds: 1);
+            maxRetries: 2, baseDelaySeconds: 0);
 
         // Assert - Verify creation command was never called
         await _commandExecutor.DidNotReceive().ExecuteAsync("az",
@@ -126,7 +126,7 @@ public class InfrastructureSubcommandTests
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
             _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-            maxRetries: 2, baseDelaySeconds: 1);
+            maxRetries: 2, baseDelaySeconds: 0);
 
         // Assert - Verify the plan creation was called
         await _commandExecutor.Received(1).ExecuteAsync("az",
@@ -168,7 +168,7 @@ public class InfrastructureSubcommandTests
         var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
                 _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-                maxRetries: 2, baseDelaySeconds: 1));
+                maxRetries: 2, baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.VerificationTimeout);
         exception.PlanName.Should().Be(planName);
@@ -205,7 +205,7 @@ public class InfrastructureSubcommandTests
         var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
                 _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-                maxRetries: 2, baseDelaySeconds: 1));
+                maxRetries: 2, baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.AuthorizationFailed);
         exception.PlanName.Should().Be(planName);
@@ -240,7 +240,7 @@ public class InfrastructureSubcommandTests
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
             _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-            maxRetries: 2, baseDelaySeconds: 1);
+            maxRetries: 2, baseDelaySeconds: 0);
 
         // Assert - Verify show was called multiple times (initial check + retries)
         await _commandExecutor.Received(3).ExecuteAsync("az",
@@ -283,7 +283,7 @@ public class InfrastructureSubcommandTests
                 "eastus",
                 subscriptionId,
                 maxRetries: 2,
-                baseDelaySeconds: 1));
+                baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.VerificationTimeout);
         exception.PlanName.Should().Be(planName);
