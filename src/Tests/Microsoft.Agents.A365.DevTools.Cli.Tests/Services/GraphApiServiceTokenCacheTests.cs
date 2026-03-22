@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -12,208 +13,207 @@ using Xunit;
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
 /// <summary>
-/// Tests to validate that Azure CLI Graph tokens are cached across consecutive
-/// Graph API calls, avoiding redundant 'az' subprocess spawns.
+/// Tests to validate that Azure CLI Graph tokens are cached at the process level
+/// (via AzCliHelper) so a single CLI invocation only spawns one 'az' subprocess
+/// per (resource, tenantId) pair, regardless of how many GraphApiService instances
+/// or callers request the same token.
 /// </summary>
-public class GraphApiServiceTokenCacheTests
+[Collection("GraphApiServiceTokenCacheTests")]
+public class GraphApiServiceTokenCacheTests : IDisposable
 {
+    public GraphApiServiceTokenCacheTests()
+    {
+        AzCliHelper.AzCliTokenAcquirerOverride = null;
+        AzCliHelper.ResetAzCliTokenCacheForTesting();
+    }
+
+    public void Dispose()
+    {
+        AzCliHelper.AzCliTokenAcquirerOverride = null;
+        AzCliHelper.ResetAzCliTokenCacheForTesting();
+    }
+
     /// <summary>
-    /// Helper: create a GraphApiService with a mock executor that counts calls
-    /// and returns a predictable token.
+    /// Sets the process-level token acquirer override and returns a counter reference.
+    /// The override is invoked inside GetOrAdd, so the cache still applies — only one
+    /// invocation per (resource, tenantId) key within a test.
     /// </summary>
-    private static (GraphApiService service, TestHttpMessageHandler handler, CommandExecutor executor) CreateService(string token = "cached-token")
+    private static int[] SetupTokenAcquirerWithCounter(string token = "cached-token")
+    {
+        var callCount = new int[1];
+        AzCliHelper.AzCliTokenAcquirerOverride = (resource, tenantId) =>
+        {
+            callCount[0]++;
+            return Task.FromResult<string?>(token);
+        };
+        return callCount;
+    }
+
+    private static (GraphApiService service, TestHttpMessageHandler handler) CreateService()
     {
         var handler = new TestHttpMessageHandler();
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
+        // 'az account show' is still used in GetGraphAccessTokenAsync for the auth-check
+        // fallback path; stub it to succeed so tests that hit the fallback don't hang.
         executor.ExecuteAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
                 Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
-                var cmd = callInfo.ArgAt<string>(0);
                 var args = callInfo.ArgAt<string>(1);
-                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                if (args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
-                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = token, StandardError = string.Empty });
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
         var service = new GraphApiService(logger, executor, handler);
-        return (service, handler, executor);
+        return (service, handler);
     }
 
     [Fact]
     public async Task MultipleGraphGetAsync_SameTenant_AcquiresTokenOnlyOnce()
     {
-        // Arrange
-        var (service, handler, executor) = CreateService();
+        var callCount = SetupTokenAcquirerWithCounter();
+        var (service, handler) = CreateService();
 
         try
         {
-            // Queue 3 successful GET responses
             for (int i = 0; i < 3; i++)
-            {
                 handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"value\":[]}")
-                });
-            }
+                    { Content = new StringContent("{\"value\":[]}") });
 
-            // Act - make 3 consecutive Graph GET calls to the same tenant
-            var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
-            var r2 = await service.GraphGetAsync("tenant-1", "/v1.0/path2");
-            var r3 = await service.GraphGetAsync("tenant-1", "/v1.0/path3");
+            await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+            await service.GraphGetAsync("tenant-1", "/v1.0/path2");
+            await service.GraphGetAsync("tenant-1", "/v1.0/path3");
 
-            // Assert - all calls should succeed
-            r1.Should().NotBeNull();
-            r2.Should().NotBeNull();
-            r3.Should().NotBeNull();
-
-            // The token should be acquired only ONCE (1 account show + 1 get-access-token = 2 az calls)
-            await executor.Received(1).ExecuteAsync(
-                "az",
-                Arg.Is<string>(s => s.Contains("get-access-token")),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-
-            await executor.Received(1).ExecuteAsync(
-                "az",
-                Arg.Is<string>(s => s.Contains("account show")),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            callCount[0].Should().Be(1,
+                because: "the process-level cache must serve the same (resource, tenant) token " +
+                         "from the first acquisition — re-running az account get-access-token on every " +
+                         "Graph call within a single command costs 20-40s per call");
         }
-        finally
-        {
-            handler.Dispose();
-        }
+        finally { handler.Dispose(); }
     }
 
     [Fact]
     public async Task GraphGetAsync_DifferentTenants_AcquiresTokenForEach()
     {
-        // Arrange
-        var (service, handler, executor) = CreateService();
+        var callCount = SetupTokenAcquirerWithCounter();
+        var (service, handler) = CreateService();
 
         try
         {
-            // Queue 2 responses
             for (int i = 0; i < 2; i++)
-            {
                 handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"value\":[]}")
-                });
-            }
+                    { Content = new StringContent("{\"value\":[]}") });
 
-            // Act - make calls to different tenants
-            var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
-            var r2 = await service.GraphGetAsync("tenant-2", "/v1.0/path2");
+            await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+            await service.GraphGetAsync("tenant-2", "/v1.0/path2");
 
-            // Assert
-            r1.Should().NotBeNull();
-            r2.Should().NotBeNull();
-
-            // Token should be acquired twice (once per tenant)
-            await executor.Received(2).ExecuteAsync(
-                "az",
-                Arg.Is<string>(s => s.Contains("get-access-token")),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            callCount[0].Should().Be(2,
+                because: "different tenant IDs are different cache keys — each tenant requires " +
+                         "its own 'az account get-access-token --tenant' call");
         }
-        finally
-        {
-            handler.Dispose();
-        }
+        finally { handler.Dispose(); }
     }
 
     [Fact]
     public async Task MixedGraphOperations_SameTenant_AcquiresTokenOnlyOnce()
     {
-        // Arrange
-        var (service, handler, executor) = CreateService();
+        var callCount = SetupTokenAcquirerWithCounter();
+        var (service, handler) = CreateService();
 
         try
         {
-            // Queue responses for GET, POST, GET sequence
             handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"value\":[]}")
-            });
+                { Content = new StringContent("{\"value\":[]}") });
             handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"id\":\"123\"}")
-            });
+                { Content = new StringContent("{\"id\":\"123\"}") });
             handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"value\":[]}")
-            });
+                { Content = new StringContent("{\"value\":[]}") });
 
-            // Act - interleave GET and POST calls
-            var r1 = await service.GraphGetAsync("tenant-1", "/v1.0/path1");
-            var r2 = await service.GraphPostAsync("tenant-1", "/v1.0/path2", new { name = "test" });
-            var r3 = await service.GraphGetAsync("tenant-1", "/v1.0/path3");
+            await service.GraphGetAsync("tenant-1", "/v1.0/path1");
+            await service.GraphPostAsync("tenant-1", "/v1.0/path2", new { name = "test" });
+            await service.GraphGetAsync("tenant-1", "/v1.0/path3");
 
-            // Assert
-            r1.Should().NotBeNull();
-            r2.Should().NotBeNull();
-            r3.Should().NotBeNull();
+            callCount[0].Should().Be(1,
+                because: "GET and POST operations share the same process-level token cache — " +
+                         "mixed Graph operations within a command must not each re-acquire a token");
+        }
+        finally { handler.Dispose(); }
+    }
 
-            // Only one token acquisition across all operations
-            await executor.Received(1).ExecuteAsync(
-                "az",
-                Arg.Is<string>(s => s.Contains("get-access-token")),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    [Fact]
+    public async Task MultipleGraphApiServiceInstances_SameTenant_AcquireTokenOnlyOnce()
+    {
+        // This is the key regression scenario: previously, each GraphApiService instance had
+        // its own instance-level cache, so a new instance in each setup phase would re-run
+        // 'az account get-access-token'. With a process-level cache, all instances share one token.
+        var callCount = SetupTokenAcquirerWithCounter();
+
+        var handler1 = new TestHttpMessageHandler();
+        var handler2 = new TestHttpMessageHandler();
+
+        try
+        {
+            handler1.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent("{\"value\":[]}") });
+            handler2.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent("{\"value\":[]}") });
+
+            var logger = Substitute.For<ILogger<GraphApiService>>();
+            var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+            executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+                    Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty }));
+
+            var service1 = new GraphApiService(logger, executor, handler1);
+            var service2 = new GraphApiService(logger, executor, handler2);
+
+            await service1.GraphGetAsync("tenant-1", "/v1.0/path1");
+            await service2.GraphGetAsync("tenant-1", "/v1.0/path1");
+
+            callCount[0].Should().Be(1,
+                because: "the process-level cache is shared across all GraphApiService instances — " +
+                         "a second instance must not re-run 'az account get-access-token' for the same tenant");
         }
         finally
         {
-            handler.Dispose();
+            handler1.Dispose();
+            handler2.Dispose();
         }
     }
 
     [Fact]
-    public void AzCliTokenCacheDuration_IsFiveMinutes()
+    public async Task GraphGetAsync_AfterCacheInvalidation_AcquiresNewToken()
     {
-        // The cache duration should be a reasonable window to avoid stale tokens
-        // while eliminating redundant subprocess spawns within a single command.
-        GraphApiService.AzCliTokenCacheDuration.Should().Be(TimeSpan.FromMinutes(5));
-    }
-
-    [Fact]
-    public async Task GraphGetAsync_ExpiredCache_AcquiresNewToken()
-    {
-        // Arrange
-        var (service, handler, executor) = CreateService();
+        // Validates that InvalidateAzCliTokenCache() forces fresh token acquisition —
+        // used by ClientAppValidator and DelegatedConsentService after az login/CAE events.
+        var callCount = SetupTokenAcquirerWithCounter();
+        var (service, handler) = CreateService();
 
         try
         {
-            // Queue 2 successful GET responses
             handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"value\":[]}")
-            });
+                { Content = new StringContent("{\"value\":[]}") });
             handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"value\":[]}")
-            });
+                { Content = new StringContent("{\"value\":[]}") });
 
-            // Act - First call should acquire token and cache it
             await service.GraphGetAsync("tenant-1", "/v1.0/path1");
 
-            // Simulate cache expiry by setting expiry to past
-            service.CachedAzCliTokenExpiry = DateTimeOffset.UtcNow.AddMinutes(-1);
+            // Simulate a CAE event or forced re-auth that invalidates all cached tokens
+            AzCliHelper.InvalidateAzCliTokenCache();
 
-            // Second call should acquire new token because cache expired
             await service.GraphGetAsync("tenant-1", "/v1.0/path2");
 
-            // Assert - Token should be acquired twice (once for each call since cache expired)
-            await executor.Received(2).ExecuteAsync(
-                "az",
-                Arg.Is<string>(s => s.Contains("get-access-token")),
-                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            callCount[0].Should().Be(2,
+                because: "InvalidateAzCliTokenCache clears the process-level cache — " +
+                         "the next call must re-acquire a fresh token (e.g., after CAE revocation or az login)");
         }
-        finally
-        {
-            handler.Dispose();
-        }
+        finally { handler.Dispose(); }
     }
 }
+
+[CollectionDefinition("GraphApiServiceTokenCacheTests", DisableParallelization = true)]
+public class GraphApiServiceTokenCacheTestCollection { }

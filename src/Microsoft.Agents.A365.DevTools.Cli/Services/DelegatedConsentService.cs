@@ -274,24 +274,22 @@ public sealed class DelegatedConsentService
                 _logger.LogError("Fresh login failed");
                 return null;
             }
-            
+
+            // The new az login session invalidates any previously cached tokens.
+            AzCliHelper.InvalidateAzCliTokenCache();
+
             _logger.LogInformation("    Acquiring fresh Graph API token...");
-            
-            // Get fresh token
-            var tokenResult = await executor.ExecuteAsync(
-                "az",
-                $"account get-access-token --resource https://graph.microsoft.com/ --tenant {tenantId} --query accessToken -o tsv",
-                captureOutput: true,
-                cancellationToken: cancellationToken);
-            
-            if (tokenResult.Success && !string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
+
+            // Re-populate the process-level cache with the new session's token.
+            var token = await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", tenantId);
+
+            if (!string.IsNullOrWhiteSpace(token))
             {
-                var token = tokenResult.StandardOutput.Trim();
                 _logger.LogInformation("    Fresh token acquired successfully");
                 return token;
             }
-            
-            _logger.LogError("Failed to acquire fresh token: {Error}", tokenResult.StandardError);
+
+            _logger.LogError("Failed to acquire fresh token after re-authentication");
             return null;
         }
         catch (Exception ex)

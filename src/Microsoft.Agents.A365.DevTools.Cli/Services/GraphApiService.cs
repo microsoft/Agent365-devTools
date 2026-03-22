@@ -25,13 +25,9 @@ public class GraphApiService
     private readonly HttpClient _httpClient;
     private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
 
-    // Azure CLI token cache to avoid spawning az subprocess for every Graph API call.
-    // Tokens acquired via 'az account get-access-token' are typically valid for 60+ minutes;
-    // we cache them for a shorter window so the CLI still picks up token refreshes promptly.
-    private string? _cachedAzCliToken;
-    private string? _cachedAzCliTenantId;
-    private DateTimeOffset _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
-    internal static readonly TimeSpan AzCliTokenCacheDuration = TimeSpan.FromMinutes(5);
+    // Token caching is handled at the process level by AzCliHelper.AcquireAzCliTokenAsync.
+    // All GraphApiService instances (and other services) share a single token per
+    // (resource, tenantId) pair — no per-instance cache needed.
 
     // Login hint resolved once per GraphApiService instance from 'az account show'.
     // Used to direct MSAL/WAM to the correct Azure CLI identity, preventing the Windows
@@ -43,15 +39,6 @@ public class GraphApiService
     // injectable via constructor so unit tests can bypass the real 'az account show' process.
     private readonly Func<Task<string?>> _loginHintResolver;
 
-    /// <summary>
-    /// Expiry time for the cached Azure CLI token. Internal for testing purposes.
-    /// </summary>
-    internal DateTimeOffset CachedAzCliTokenExpiry
-    {
-        get => _cachedAzCliTokenExpiry;
-        set => _cachedAzCliTokenExpiry = value;
-    }
-    
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
     /// When set, this will be passed to Connect-MgGraph -ClientId parameter.
@@ -243,37 +230,25 @@ public class GraphApiService
         }
         else
         {
-            // Use Azure CLI token (default fallback for operations that don't need special scopes)
-            // Check if we have a cached token for this tenant that hasn't expired
-            if (_cachedAzCliToken != null
-                && string.Equals(_cachedAzCliTenantId, tenantId, StringComparison.OrdinalIgnoreCase)
-                && DateTimeOffset.UtcNow < _cachedAzCliTokenExpiry)
+            // Use the process-level token cache in AzCliHelper — shared across all service
+            // instances so a token acquired in any phase is reused by subsequent phases.
+            token = await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", tenantId);
+
+            if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogDebug("Using cached Azure CLI Graph token (expires in {Minutes:F1} minutes)",
-                    (_cachedAzCliTokenExpiry - DateTimeOffset.UtcNow).TotalMinutes);
-                token = _cachedAzCliToken;
-            }
-            else
-            {
-                _logger.LogDebug("Acquiring Graph token via Azure CLI (no specific scopes required)");
+                // Cache miss or az CLI not authenticated — run full auth + recovery flow.
+                _logger.LogDebug("Process-level token cache miss; running full auth flow for tenant {TenantId}", tenantId);
                 token = await GetGraphAccessTokenAsync(tenantId, ct);
 
                 if (string.IsNullOrWhiteSpace(token))
                 {
-                    // Clear cache on failure to ensure clean state
-                    _cachedAzCliToken = null;
-                    _cachedAzCliTenantId = null;
-                    _cachedAzCliTokenExpiry = DateTimeOffset.MinValue;
-
                     _logger.LogError("Failed to acquire Graph token via Azure CLI. Ensure 'az login' is completed.");
                     return false;
                 }
 
-                // Cache the token for subsequent calls within the same command execution
-                _cachedAzCliToken = token;
-                _cachedAzCliTenantId = tenantId;
-                _cachedAzCliTokenExpiry = DateTimeOffset.UtcNow.Add(AzCliTokenCacheDuration);
-                _logger.LogDebug("Cached Azure CLI Graph token for {Duration} minutes", AzCliTokenCacheDuration.TotalMinutes);
+                // Warm the process-level cache so subsequent callers (including other
+                // GraphApiService instances and services) skip the auth flow entirely.
+                AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", tenantId, token);
             }
         }
 

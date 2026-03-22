@@ -589,23 +589,12 @@ public sealed class ClientAppValidator : IClientAppValidator
 
     #region Private Helper Methods
 
-    private async Task<string?> AcquireGraphTokenAsync(CancellationToken ct)
+    private Task<string?> AcquireGraphTokenAsync(CancellationToken ct)
     {
         _logger.LogDebug("Acquiring Microsoft Graph token for validation...");
-        
-        var tokenResult = await _executor.ExecuteAsync(
-            "az",
-            $"account get-access-token --resource {GraphTokenResource} --query accessToken -o tsv",
-            suppressErrorLogging: true,
-            cancellationToken: ct);
-
-        if (!tokenResult.Success || string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
-        {
-            _logger.LogDebug("Token acquisition failed: {Error}", tokenResult.StandardError);
-            return null;
-        }
-
-        return tokenResult.StandardOutput.Trim();
+        // Process-level cache: subsequent calls within the same CLI invocation return
+        // the cached Task immediately — no subprocess is spawned a second time.
+        return AzCliHelper.AcquireAzCliTokenAsync(GraphTokenResource);
     }
 
     private async Task<ClientAppInfo?> GetClientAppInfoAsync(string clientAppId, string graphToken, CancellationToken ct)
@@ -626,16 +615,13 @@ public sealed class ClientAppValidator : IClientAppValidator
             {
                 _logger.LogDebug("Azure CLI token is stale due to Continuous Access Evaluation. Attempting token refresh...");
 
-                // Force token refresh
-                var refreshResult = await _executor.ExecuteAsync(
-                    "az",
-                    $"account get-access-token --resource {GraphTokenResource} --query accessToken -o tsv",
-                    suppressErrorLogging: true,
-                    cancellationToken: ct);
-                
-                if (refreshResult.Success && !string.IsNullOrWhiteSpace(refreshResult.StandardOutput))
+                // Bust the process-level cache before re-acquiring — the cached token is
+                // now known-invalid (CAE revocation is server-side and affects all callers).
+                AzCliHelper.InvalidateAzCliTokenCache();
+                var freshToken = await AzCliHelper.AcquireAzCliTokenAsync(GraphTokenResource);
+
+                if (!string.IsNullOrWhiteSpace(freshToken))
                 {
-                    var freshToken = refreshResult.StandardOutput.Trim();
                     _logger.LogDebug("Token refreshed successfully, retrying...");
                     
                     // Retry with fresh token
