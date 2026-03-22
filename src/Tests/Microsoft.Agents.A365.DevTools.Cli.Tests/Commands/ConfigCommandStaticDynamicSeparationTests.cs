@@ -129,8 +129,8 @@ public class ConfigCommandStaticDynamicSeparationTests
                 "REGRESSION: dynamic property botId should NOT be in a365.config.json");
             rootElement.TryGetProperty("botMsaAppId", out _).Should().BeFalse(
                 "REGRESSION: dynamic property botMsaAppId should NOT be in a365.config.json");
-            rootElement.TryGetProperty("botMessagingEndpoint", out _).Should().BeFalse(
-                "REGRESSION: dynamic property botMessagingEndpoint should NOT be in a365.config.json");
+            rootElement.TryGetProperty("messagingEndpoint", out _).Should().BeFalse(
+                "REGRESSION: dynamic property messagingEndpoint should NOT be in a365.config.json");
             rootElement.TryGetProperty("resourceConsents", out _).Should().BeFalse(
                 "REGRESSION: dynamic property resourceConsents should NOT be in a365.config.json");
             rootElement.TryGetProperty("inheritanceConfigured", out _).Should().BeFalse(
@@ -438,6 +438,124 @@ public class ConfigCommandStaticDynamicSeparationTests
                 await CleanupTestDirectoryAsync(configDir);
             }
         }
+    }
+
+    /// <summary>
+    /// TryGetConfigField returns the string value when the field exists in the generated config.
+    /// </summary>
+    [Fact]
+    public void TryGetConfigField_FieldInGeneratedConfig_ReturnsValue()
+    {
+        var logger = NullLogger.Instance;
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-123",
+            SubscriptionId = "sub-456"
+        };
+        config.BotMessagingEndpoint = "https://myapp.azurewebsites.net/api/messages";
+
+        var result = ConfigCommand.TryGetConfigField(config, "messagingEndpoint", checkGenerated: true, checkStatic: false, logger);
+
+        result.Should().Be("https://myapp.azurewebsites.net/api/messages",
+            because: "TryGetConfigField must return BotMessagingEndpoint when searching generated config");
+    }
+
+    /// <summary>
+    /// TryGetConfigField returns the string value when the field exists only in the static config.
+    /// </summary>
+    [Fact]
+    public void TryGetConfigField_FieldInStaticConfig_ReturnsValue()
+    {
+        var logger = NullLogger.Instance;
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-abc",
+            SubscriptionId = "sub-def"
+        };
+
+        var result = ConfigCommand.TryGetConfigField(config, "tenantId", checkGenerated: false, checkStatic: true, logger);
+
+        result.Should().Be("tenant-abc",
+            because: "TryGetConfigField must return static config value when checkStatic is true");
+    }
+
+    /// <summary>
+    /// TryGetConfigField returns null when the field is not found in either config.
+    /// </summary>
+    [Fact]
+    public void TryGetConfigField_FieldNotFound_ReturnsNull()
+    {
+        var logger = NullLogger.Instance;
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-123"
+        };
+
+        var result = ConfigCommand.TryGetConfigField(config, "nonExistentField", checkGenerated: true, checkStatic: true, logger);
+
+        result.Should().BeNull(
+            because: "TryGetConfigField must return null when the field does not exist in any config");
+    }
+
+    /// <summary>
+    /// TryGetConfigField returns raw JSON text for non-string fields (e.g. booleans).
+    /// </summary>
+    [Fact]
+    public void TryGetConfigField_NonStringField_ReturnsRawJson()
+    {
+        var logger = NullLogger.Instance;
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-123"
+        };
+        config.AgentBlueprintClientSecretProtected = true;
+
+        var result = ConfigCommand.TryGetConfigField(config, "agentBlueprintClientSecretProtected", checkGenerated: true, checkStatic: false, logger);
+
+        result.Should().Be("true",
+            because: "TryGetConfigField must return the raw JSON representation for boolean fields");
+    }
+
+    /// <summary>
+    /// TryGetConfigField searches generated config before static config (generated wins when field exists in both).
+    /// </summary>
+    [Fact]
+    public void TryGetConfigField_FieldInBothConfigs_ReturnsGeneratedValue()
+    {
+        var logger = NullLogger.Instance;
+        // MessagingEndpoint (init-only, static) and BotMessagingEndpoint (settable, generated)
+        // both serialize as "messagingEndpoint" in their respective config dictionaries.
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-123",
+            MessagingEndpoint = "https://static-endpoint.contoso.com/api/messages"
+        };
+        config.BotMessagingEndpoint = "https://derived-endpoint.azurewebsites.net/api/messages";
+
+        var result = ConfigCommand.TryGetConfigField(config, "messagingEndpoint", checkGenerated: true, checkStatic: true, logger);
+
+        result.Should().Be("https://derived-endpoint.azurewebsites.net/api/messages",
+            because: "generated config must take precedence over static config when both contain the same field");
+    }
+
+    /// <summary>
+    /// TryGetConfigField falls back to static config when the field is absent from generated config.
+    /// </summary>
+    [Fact]
+    public void TryGetConfigField_FieldAbsentFromGenerated_FallsBackToStatic()
+    {
+        var logger = NullLogger.Instance;
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-fallback",
+            MessagingEndpoint = "https://static-endpoint.contoso.com/api/messages"
+        };
+        // BotMessagingEndpoint is null — not present in generated config
+
+        var result = ConfigCommand.TryGetConfigField(config, "messagingEndpoint", checkGenerated: true, checkStatic: true, logger);
+
+        result.Should().Be("https://static-endpoint.contoso.com/api/messages",
+            because: "TryGetConfigField must fall back to static config when the field is missing from generated config");
     }
 
     /// <summary>

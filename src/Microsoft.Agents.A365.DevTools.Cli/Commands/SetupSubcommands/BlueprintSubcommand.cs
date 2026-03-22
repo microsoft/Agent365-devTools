@@ -455,6 +455,18 @@ internal static class BlueprintSubcommand
             generatedConfig["resourceConsents"] = new JsonArray();
         }
 
+        // Always write messagingEndpoint to the generated config so it's available
+        // for Developer Portal configuration regardless of whether endpoint registration ran.
+        // NeedDeployment=true: derive from WebAppName; NeedDeployment=false: copy from static config.
+        var derivedMessagingEndpoint = setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.WebAppName)
+            ? $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages"
+            : setupConfig.MessagingEndpoint;
+        if (!string.IsNullOrWhiteSpace(derivedMessagingEndpoint))
+        {
+            generatedConfig["messagingEndpoint"] = derivedMessagingEndpoint;
+            setupConfig.BotMessagingEndpoint = derivedMessagingEndpoint;
+        }
+
         await File.WriteAllTextAsync(generatedConfigPath, generatedConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
         // ========================================================================

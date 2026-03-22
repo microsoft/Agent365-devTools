@@ -1914,7 +1914,7 @@ public class BlueprintSubcommandTests
                 ["agentBlueprintClientSecretProtected"] = true,
                 ["botId"] = "bot-id-456",
                 ["botMsaAppId"] = "bot-msa-app-id-789",
-                ["botMessagingEndpoint"] = "https://myapp.azurewebsites.net/api/messages",
+                ["messagingEndpoint"] = "https://myapp.azurewebsites.net/api/messages",
                 ["completed"] = true,
                 ["completedAt"] = "2026-01-01T00:00:00Z",
                 ["resourceConsents"] = new JsonArray
@@ -1959,7 +1959,7 @@ public class BlueprintSubcommandTests
             savedConfig["agentBlueprintClientSecretProtected"]!.GetValue<bool>().Should().BeTrue();
             savedConfig["botId"]!.GetValue<string>().Should().Be("bot-id-456");
             savedConfig["botMsaAppId"]!.GetValue<string>().Should().Be("bot-msa-app-id-789");
-            savedConfig["botMessagingEndpoint"]!.GetValue<string>().Should().Be("https://myapp.azurewebsites.net/api/messages");
+            savedConfig["messagingEndpoint"]!.GetValue<string>().Should().Be("https://myapp.azurewebsites.net/api/messages");
             savedConfig["managedIdentityPrincipalId"]!.GetValue<string>().Should().Be("msi-principal-id-123");
             savedConfig["completed"]!.GetValue<bool>().Should().BeTrue();
             savedConfig["completedAt"]!.GetValue<string>().Should().Be("2026-01-01T00:00:00Z");

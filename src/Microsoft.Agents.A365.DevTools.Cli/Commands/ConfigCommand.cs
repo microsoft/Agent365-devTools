@@ -223,10 +223,15 @@ public static class ConfigCommand
             new[] { "--all", "-a" },
             description: "Display both static and generated configuration");
 
+        var fieldOption = new Option<string?>(
+            new[] { "--field", "-f" },
+            description: "Output the value of a single field (for example: --field messagingEndpoint)");
+
         cmd.AddOption(generatedOption);
         cmd.AddOption(allOption);
+        cmd.AddOption(fieldOption);
 
-        cmd.SetHandler(async (bool showGenerated, bool showAll) =>
+        cmd.SetHandler(async (bool showGenerated, bool showAll, string? field) =>
         {
             try
             {
@@ -245,6 +250,22 @@ public static class ConfigCommand
                 // Determine what to show based on options
                 bool displayStatic = !showGenerated || showAll;
                 bool displayGenerated = showGenerated || showAll;
+
+                // --field: output a single value from the selected config and exit
+                if (!string.IsNullOrWhiteSpace(field))
+                {
+                    var value = TryGetConfigField(config, field, displayGenerated, displayStatic, logger, displayOptions);
+                    if (value != null)
+                    {
+                        Console.WriteLine(value);
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Field '{field}' not found in configuration.");
+                        Environment.Exit(1);
+                    }
+                    return;
+                }
 
                 if (displayStatic)
                 {
@@ -323,8 +344,58 @@ public static class ConfigCommand
             {
                 logger.LogError(ex, "Failed to display configuration: {Message}", ex.Message);
             }
-        }, generatedOption, allOption);
+        }, generatedOption, allOption, fieldOption);
 
         return cmd;
+    }
+
+    /// <summary>
+    /// Looks up a single field by JSON key from config, searching generated config first
+    /// (when checkGenerated is true) then static config (when checkStatic is true).
+    /// Returns the string value, or raw JSON text for non-string values, or null if not found.
+    /// </summary>
+    internal static string? TryGetConfigField(
+        Models.Agent365Config config,
+        string field,
+        bool checkGenerated,
+        bool checkStatic,
+        Microsoft.Extensions.Logging.ILogger logger,
+        JsonSerializerOptions? serializerOptions = null)
+    {
+        var options = serializerOptions ?? new JsonSerializerOptions
+        {
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
+        if (checkGenerated)
+        {
+            var generatedConfig = config.GetGeneratedConfigForDisplay(logger);
+            var generatedJson = JsonSerializer.Serialize(generatedConfig, options);
+            using var generatedDoc = JsonDocument.Parse(generatedJson);
+            if (generatedDoc.RootElement.TryGetProperty(field, out var generatedProp) &&
+                generatedProp.ValueKind != JsonValueKind.Null)
+            {
+                return generatedProp.ValueKind == JsonValueKind.String
+                    ? generatedProp.GetString()
+                    : generatedProp.GetRawText();
+            }
+        }
+
+        if (checkStatic)
+        {
+            var staticConfig = config.GetStaticConfig();
+            var staticJson = JsonSerializer.Serialize(staticConfig, options);
+            using var staticDoc = JsonDocument.Parse(staticJson);
+            if (staticDoc.RootElement.TryGetProperty(field, out var staticProp) &&
+                staticProp.ValueKind != JsonValueKind.Null)
+            {
+                return staticProp.ValueKind == JsonValueKind.String
+                    ? staticProp.GetString()
+                    : staticProp.GetRawText();
+            }
+        }
+
+        return null;
     }
 }

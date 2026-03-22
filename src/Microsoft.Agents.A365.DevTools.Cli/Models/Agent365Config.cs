@@ -420,9 +420,11 @@ public class Agent365Config
     public string? BotMsaAppId { get; set; }
 
     /// <summary>
-    /// Messaging endpoint URL for the bot.
+    /// Messaging endpoint URL for the agent (stored in generated config as "messagingEndpoint").
+    /// [JsonIgnore] prevents a duplicate-key collision with the static MessagingEndpoint property.
     /// </summary>
-    [JsonPropertyName("botMessagingEndpoint")]
+    [JsonIgnore]
+    [JsonPropertyName("messagingEndpoint")]
     public string? BotMessagingEndpoint { get; set; }
 
     #endregion

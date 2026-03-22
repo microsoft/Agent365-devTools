@@ -620,6 +620,16 @@ public class ConfigService : IConfigService
                 }
             }
         }
+
+        // Migrate legacy key: generated configs written by older CLI versions use "botMessagingEndpoint".
+        // If the new key "messagingEndpoint" was not found (BotMessagingEndpoint is still null),
+        // fall back to the legacy key so existing setups continue to work without re-running setup.
+        if (config.BotMessagingEndpoint == null &&
+            stateData.TryGetProperty("botMessagingEndpoint", out var legacyEndpoint) &&
+            legacyEndpoint.ValueKind == JsonValueKind.String)
+        {
+            config.BotMessagingEndpoint = legacyEndpoint.GetString();
+        }
     }
 
     /// <summary>
