@@ -49,20 +49,21 @@ public class FederatedCredentialService
             _logger.LogDebug("Retrieving federated credentials for blueprint: {ObjectId}", blueprintObjectId);
 
             // Try standard endpoint first
-            var doc = await _graphApiService.GraphGetAsync(
+            var primaryDoc = await _graphApiService.GraphGetAsync(
                 tenantId,
                 $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
                 cancellationToken,
                 scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
 
-            // If standard endpoint returns data with credentials, use it
-            if (doc != null && doc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
+            JsonDocument? doc;
+            if (primaryDoc != null && primaryDoc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
             {
                 _logger.LogDebug("Standard endpoint returned {Count} credential(s)", valueCheck.GetArrayLength());
+                doc = primaryDoc;
             }
-            // If standard endpoint returns empty or null, try Agent Blueprint-specific endpoint
             else
             {
+                primaryDoc?.Dispose();
                 _logger.LogDebug("Standard endpoint returned no credentials or failed, trying Agent Blueprint fallback endpoint");
                 doc = await _graphApiService.GraphGetAsync(
                     tenantId,

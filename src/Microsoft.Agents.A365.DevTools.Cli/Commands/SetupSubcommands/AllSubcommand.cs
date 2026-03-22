@@ -101,7 +101,6 @@ internal static class AllSubcommand
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             var config = context.ParseResult.GetValueForOption(configOption)!;
-            var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);

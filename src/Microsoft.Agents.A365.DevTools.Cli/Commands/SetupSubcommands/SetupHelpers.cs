@@ -250,6 +250,19 @@ internal static class SetupHelpers
     }
 
     /// <summary>
+    /// Builds a single /v2.0/adminconsent URL from fully-qualified scope URIs.
+    /// All callers must pass fully-qualified scopes (e.g. "https://graph.microsoft.com/User.Read").
+    /// Each scope is individually Uri.EscapeDataString-encoded and joined with %20.
+    /// A random GUID state parameter is generated for CSRF protection.
+    /// </summary>
+    internal static string BuildAdminConsentUrl(string tenantId, string clientId, IEnumerable<string> fullyQualifiedScopes)
+    {
+        var scopeParam = string.Join("%20", fullyQualifiedScopes.Select(Uri.EscapeDataString));
+        var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
+        return $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={clientId}&scope={scopeParam}&redirect_uri={redirectEncoded}&state={Guid.NewGuid():N}";
+    }
+
+    /// <summary>
     /// Builds per-resource admin consent URLs for all five required resources.
     /// Graph and MCP scopes are taken from config; Bot API, Observability, and Power Platform
     /// use corrected scope names derived from querying the tenant service principals.
@@ -261,19 +274,9 @@ internal static class SetupHelpers
         IEnumerable<string> mcpScopes)
     {
         var urls = new List<(string, string)>();
-        const string loginBase = "https://login.microsoftonline.com";
 
         static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes)
-        {
-            // /v2.0/adminconsent requires scope values in the form "<resourceUri>/<scopeName>".
-            // Each full scope token is Uri.EscapeDataString-encoded and joined with %20 (space).
-            // redirect_uri must be present and match a URI accepted by AAD for this endpoint.
-            // Omitting redirect_uri causes AADSTS500113. BlueprintConsentRedirectUri is the
-            // standard Entra Portal consent redirect URI accepted by AAD for admin consent flows.
-            var scopeParam = string.Join("%20", scopes.Select(s => Uri.EscapeDataString($"{resourceUri}/{s}")));
-            var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
-            return $"{loginBase}/{tenant}/v2.0/adminconsent?client_id={client}&scope={scopeParam}&redirect_uri={redirectEncoded}";
-        }
+            => BuildAdminConsentUrl(tenant, client, scopes.Select(s => $"{resourceUri}/{s}"));
 
         var graphScopeList = graphScopes.ToList();
         if (graphScopeList.Count > 0)
@@ -301,23 +304,15 @@ internal static class SetupHelpers
         IEnumerable<string> graphScopes,
         IEnumerable<string> mcpScopes)
     {
-        const string loginBase = "https://login.microsoftonline.com";
-
         var allScopes = new List<string>();
-
         foreach (var s in graphScopes)
-            allScopes.Add(Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}"));
+            allScopes.Add($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
         foreach (var s in mcpScopes)
-            allScopes.Add(Uri.EscapeDataString($"{McpConstants.Agent365ToolsIdentifierUri}/{s}"));
-        allScopes.Add(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"));
-        allScopes.Add(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"));
-        allScopes.Add(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
-
-        // Each scope token is Uri.EscapeDataString-encoded and joined with %20 (space).
-        // redirect_uri must be present — omitting it causes AADSTS500113.
-        var scopeParam = string.Join("%20", allScopes);
-        var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
-        return $"{loginBase}/{tenantId}/v2.0/adminconsent?client_id={blueprintClientId}&scope={scopeParam}&redirect_uri={redirectEncoded}";
+            allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
+        allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
+        allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
+        allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
+        return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
     }
 
     /// <summary>

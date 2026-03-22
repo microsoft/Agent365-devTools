@@ -132,5 +132,11 @@ public class BatchPermissionsOrchestratorTests
         consentUrl.Should().NotBeNullOrWhiteSpace("non-admin must always receive a consent URL for the tenant admin");
         consentUrl.Should().Contain("tenant-123", "consent URL must be scoped to the correct tenant");
         consentUrl.Should().Contain("blueprint-app-id", "consent URL must reference the blueprint application");
+
+        // state parameter must be a random GUID (not the old hardcoded "xyz123")
+        var stateMatch = System.Text.RegularExpressions.Regex.Match(consentUrl!, @"[?&]state=([^&]+)");
+        stateMatch.Success.Should().BeTrue(because: "consent URL must include a state parameter for CSRF protection");
+        Guid.TryParse(stateMatch.Groups[1].Value, out _).Should().BeTrue(
+            because: "state parameter must be a random GUID, not a hardcoded value like 'xyz123'");
     }
 }

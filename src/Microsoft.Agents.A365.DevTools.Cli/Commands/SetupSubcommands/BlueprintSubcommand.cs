@@ -1459,8 +1459,9 @@ internal static class BlueprintSubcommand
             }
         }
 
-        var applicationScopesJoined = string.Join(' ', applicationScopes);
-        var consentUrlGraph = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={appId}&scope={Uri.EscapeDataString(applicationScopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
+        var consentUrlGraph = SetupHelpers.BuildAdminConsentUrl(
+            tenantId, appId,
+            applicationScopes.Select(s => $"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}"));
 
         if (consentAlreadyExists)
         {

@@ -462,13 +462,7 @@ internal static class BatchPermissionsOrchestrator
             return (true, null);
         }
 
-        var allScopesEscaped = Uri.EscapeDataString(string.Join(' ', graphScopes));
-        var consentUrl =
-            $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent" +
-            $"?client_id={blueprintAppId}" +
-            $"&scope={allScopesEscaped}" +
-            $"&redirect_uri=https://entra.microsoft.com/TokenAuthorize" +
-            $"&state=xyz123";
+        var consentUrl = SetupHelpers.BuildAdminConsentUrl(tenantId, blueprintAppId, graphScopes);
 
         // Check if consent already exists for ALL resolved resources (Phase 2 programmatic grants satisfy this check).
         // Only skip browser consent if every resource has its consent in place.

@@ -133,6 +133,7 @@ For each changed file, analyze:
 4. **Resource Management**
    - Are IDisposable objects disposed? Are connections/streams closed? Any potential memory leaks?
    - **IMPORTANT**: For every `var x = await SomeMethod(...)` in the diff, use `Read` to look up the method's return type in the source file. If the return type implements `IDisposable`, flag missing `using` as a `high` severity `resource_leak`. Do NOT rely on the diff alone — the return type is almost never in the diff.
+   - **IMPORTANT**: Also scan for `var x = await A(...); if (...) { ... } else { x = await B(...); }` — the first `IDisposable` value is silently leaked when the else-branch overwrites `x`. See Anti-Pattern #13.
 
 5. **Null Safety**
    - Potential null reference exceptions?
@@ -514,6 +515,65 @@ A related dead-code smell: mocking `CommandExecutor.ExecuteAsync` to return `"fa
   }
   ```
 - **Note**: `GraphApiServiceTokenCacheTests` is the intentional exception — it owns the cache and manages `AzCliTokenAcquirerOverride` explicitly via setUp/tearDown.
+
+### 12. Retry Loop Catches `TaskCanceledException` Without Early Exit
+A catch block that handles `TaskCanceledException` (or `OperationCanceledException`) alongside transient errors and retries all of them equally — so a user pressing Ctrl+C burns through all retry attempts before propagating.
+- **Pattern to catch**: `catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)` (or `OperationCanceledException`) inside a retry loop, with no check of `cancellationToken.IsCancellationRequested` before the retry delay
+- **Severity**: `high` — Ctrl+C appears to hang for the full retry window; partial state may continue to be applied
+- **Fix**:
+  ```csharp
+  catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+  {
+      if (ex is TaskCanceledException && cancellationToken.IsCancellationRequested)
+          throw; // propagate immediately — do not retry
+      // ... retry logic ...
+  }
+  ```
+
+### 13. `IDisposable` Variable Overwritten in Else-Branch Without Prior Disposal
+A variable holding an `IDisposable` is overwritten in an else/fallback branch without first disposing the value assigned in the if-branch.
+- **Pattern to catch**: `var doc = await Primary(...); if (doc != null && ...) { use doc } else { doc = await Fallback(...); }` where the first `doc` is not disposed before reassignment
+- **Severity**: `high` — the primary result leaks on every code path that falls into the else-branch; in high-frequency callers this accumulates
+- **Fix**: Dispose explicitly before overwriting, or restructure with separate `using` scopes:
+  ```csharp
+  var primaryDoc = await Primary(...);
+  JsonDocument? doc;
+  if (primaryDoc != null && ...)
+  {
+      doc = primaryDoc;
+  }
+  else
+  {
+      primaryDoc?.Dispose();
+      doc = await Fallback(...);
+  }
+  ```
+- **Check**: In the diff, for every pattern `var x = ...; if (...) { ... } else { x = ...; }` where the type is `IDisposable`, verify the original value is disposed in the else-branch.
+
+### 14. CLI Option Value Read from `ParseResult` But Never Used in Handler
+An option is wired up and parsed but the variable holding its value is never referenced in the handler body — the flag appears in `--help` output but silently has no effect.
+- **Pattern to catch**: `var verbose = context.ParseResult.GetValueForOption(verboseOption);` (or any option) with no subsequent reference to `verbose` in the handler lambda
+- **Severity**: `medium` — misleads users who pass `--verbose` expecting more output
+- **Fix**: Either wire the variable into logging configuration (e.g., adjust log level) or remove the `GetValueForOption` call. Keeping the option declaration is acceptable so it appears in help — just don't claim to read a value you discard.
+
+### 15. Hardcoded OAuth2 `state` Parameter
+A fixed string (e.g., `"xyz123"`, `"state"`, `"abc"`) used as the OAuth2 `state` parameter in a consent/authorization URL.
+- **Pattern to catch**: `$"&state=xyz123"` or any literal string in an OAuth2 URL `state=` segment
+- **Severity**: `medium` — the `state` parameter is designed to be a random nonce for CSRF protection; a hardcoded value eliminates that protection. Even when the URL is only displayed (not automatically followed), it sets a bad precedent and will fail audits.
+- **Fix**: Generate a random nonce per URL construction:
+  ```csharp
+  $"&state={Guid.NewGuid():N}"
+  ```
+
+### 16. Test Assertion Flipped Without `because:` Documenting the Requirement Change
+An assertion is changed from one expected value to another (e.g., `BeFalse()` → `BeTrue()`, `Be("old")` → `Be("new")`) without a `because:` string explaining what requirement changed.
+- **Pattern to catch**: `result.Should().BeTrue()` / `result.Should().BeFalse()` / `result.Should().Be(...)` in the diff (added lines) with no `because:` argument, especially when the surrounding context shows the original assertion had a different expected value
+- **Severity**: `medium` — a flipped assertion with no `because:` is indistinguishable from an implementation-tracking change (test updated to match code, not to match the requirement); the next reader cannot know if the behavior change was intentional
+- **Fix**: Add `because:` to document the invariant:
+  ```csharp
+  result.Should().BeTrue(
+      because: "McpServersMetadata.Read.All is always included even when the manifest is missing, so the method proceeds and returns true");
+  ```
 
 **MANDATORY REPORTING RULE**: Whenever the diff contains any test file (`.Tests.cs`), you MUST emit a named finding for this check — even if no violation is found. The finding must appear in the review output with one of three statuses:
   - **`high` severity** if a violation is found (missing warmup, dead executor mock, etc.)

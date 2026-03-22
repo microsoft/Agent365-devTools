@@ -66,6 +66,9 @@ public class RetryHelper
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
+                if (ex is TaskCanceledException && cancellationToken.IsCancellationRequested)
+                    throw;
+
                 lastException = ex;
                 _logger.LogWarning("Exception: {Message}", ex.Message);
 
@@ -172,6 +175,9 @@ public class RetryHelper
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
+                if (ex is TaskCanceledException && cancellationToken.IsCancellationRequested)
+                    throw;
+
                 lastException = ex;
                 _logger.LogWarning("Exception: {Message}", ex.Message);
 
