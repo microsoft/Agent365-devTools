@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "Microsoft.Agents.A365.DevTools.Cli": {
+      "commandName": "Project",
+      "commandLineArgs": "setup all",
+      "workingDirectory": "C:\\Users\\sellak\\source\\repos\\Agent365-Samples\\dotnet\\agent-framework\\sample-agent"
+    }
+  }
+}

@@ -196,6 +196,13 @@ public static class AuthenticationConstants
     };
 
     /// <summary>
+    /// Delegated scope for creating and managing agent instances in the Microsoft Agent Registry.
+    /// Required for POST /beta/agentRegistry/agentInstances.
+    /// Requires the "Agent Registry Administrator" Entra role.
+    /// </summary>
+    public const string AgentInstanceReadWriteAllScope = "AgentInstance.ReadWrite.All";
+
+    /// <summary>
     /// Environment variable name for bearer token used in local development.
     /// This token is stored in .env files (Python/Node.js) or launchSettings.json (.NET)
     /// for testing purposes only. It should NOT be deployed to production Azure environments.

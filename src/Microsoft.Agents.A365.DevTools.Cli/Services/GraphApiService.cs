@@ -849,6 +849,57 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Registers an agent instance in the Microsoft Agent Registry via
+    /// POST /beta/agentRegistry/agentInstances.
+    /// Requires the caller to hold the "Agent Registry Administrator" Entra role
+    /// and have consented to the AgentInstance.ReadWrite.All delegated scope.
+    /// Returns the new agent instance ID, or null on failure.
+    /// </summary>
+    public virtual async Task<string?> RegisterAgentInstanceAsync(
+        string tenantId,
+        string displayName,
+        string? agentBlueprintId,
+        CancellationToken ct = default)
+    {
+        // Resolve the current user's object ID so we can populate ownerIds (required field).
+        using var meDoc = await GraphGetAsync(tenantId, "/v1.0/me?$select=id", ct);
+        if (meDoc == null)
+        {
+            _logger.LogError("Failed to retrieve current user ID from Microsoft Graph.");
+            return null;
+        }
+
+        if (!meDoc.RootElement.TryGetProperty("id", out var userIdProp))
+        {
+            _logger.LogError("Current user ID not found in Graph /me response.");
+            return null;
+        }
+
+        var currentUserId = userIdProp.GetString();
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["ownerIds"] = new[] { currentUserId },
+            ["displayName"] = displayName
+        };
+
+        if (!string.IsNullOrWhiteSpace(agentBlueprintId))
+            payload["agentIdentityBlueprintId"] = agentBlueprintId;
+
+        using var doc = await GraphPostAsync(tenantId, "/beta/agentRegistry/agentInstances", payload, ct);
+        if (doc == null)
+            return null;
+
+        if (!doc.RootElement.TryGetProperty("id", out var instanceIdProp))
+        {
+            _logger.LogError("Agent instance registered but response does not contain an 'id' field.");
+            return null;
+        }
+
+        return instanceIdProp.GetString();
+    }
+
+    /// <summary>
     /// Attempts to extract a human-readable error message from a Graph API JSON error response body.
     /// Returns null if the body cannot be parsed or does not contain an error message.
     /// </summary>

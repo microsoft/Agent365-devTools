@@ -163,7 +163,7 @@ class Program
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling

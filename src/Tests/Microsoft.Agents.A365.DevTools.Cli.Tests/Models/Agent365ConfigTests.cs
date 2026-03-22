@@ -1023,4 +1023,128 @@ public class Agent365ConfigTests
     }
 
     #endregion
+
+    #region AiTeammate and IsNonAiTeammate Tests
+
+    [Theory]
+    [InlineData(false, true)]   // aiTeammate=false → non-AI Teammate agent
+    [InlineData(true, false)]   // aiTeammate=true  → AI Teammate (digital worker)
+    [InlineData(null, false)]   // not set → AI Teammate (default)
+    public void IsNonAiTeammate_ReturnsCorrectValue(bool? aiTeammate, bool expected)
+    {
+        var config = new Agent365Config { AiTeammate = aiTeammate };
+
+        config.IsNonAiTeammate.Should().Be(expected);
+    }
+
+    [Fact]
+    public void AiTeammate_IsSerializedToJson_WithCorrectPropertyName()
+    {
+        var config = new Agent365Config { AiTeammate = false };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"aiTeammate\"");
+        json.Should().Contain("false");
+    }
+
+    [Fact]
+    public void AiTeammate_IsDeserializedFromJson()
+    {
+        const string json = "{\"aiTeammate\": false}";
+
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        config.Should().NotBeNull();
+        config!.AiTeammate.Should().BeFalse();
+        config.IsNonAiTeammate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AiTeammate_IsNullByDefault_WhenNotSpecified()
+    {
+        var config = new Agent365Config();
+
+        config.AiTeammate.Should().BeNull();
+        config.IsNonAiTeammate.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AzureOpenAIProperties_AreSerializedCorrectly()
+    {
+        var config = new Agent365Config
+        {
+            AzureOpenAIName = "aoai-test",
+            AzureOpenAILocation = "swedencentral",
+            AzureOpenAIModelDeploymentName = "gpt-4.1",
+            NeedAzureOpenAI = true
+        };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"azureOpenAIName\"");
+        json.Should().Contain("aoai-test");
+        json.Should().Contain("\"azureOpenAILocation\"");
+        json.Should().Contain("swedencentral");
+        json.Should().Contain("\"azureOpenAIModelDeploymentName\"");
+        json.Should().Contain("gpt-4.1");
+        json.Should().Contain("\"needAzureOpenAI\"");
+    }
+
+    [Theory]
+    [InlineData(false, true, true)]    // aiTeammate=false + useBlueprint=true → blueprint non-DW
+    [InlineData(false, false, false)]  // aiTeammate=false + useBlueprint=false → app-based non-DW
+    [InlineData(false, null, false)]   // aiTeammate=false + useBlueprint not set → app-based non-DW
+    [InlineData(true, true, false)]    // aiTeammate=true (DW) → never blueprint non-DW
+    [InlineData(null, true, false)]    // not set (DW default) → never blueprint non-DW
+    public void IsNonDwBlueprint_ReturnsCorrectValue(bool? aiTeammate, bool? useBlueprint, bool expected)
+    {
+        var config = new Agent365Config { AiTeammate = aiTeammate, UseBlueprint = useBlueprint };
+
+        config.IsNonDwBlueprint.Should().Be(expected);
+    }
+
+    [Fact]
+    public void UseBlueprint_IsSerializedToJson_WithCorrectPropertyName()
+    {
+        var config = new Agent365Config { UseBlueprint = true };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"useBlueprint\"");
+        json.Should().Contain("true");
+    }
+
+    [Fact]
+    public void UseBlueprint_IsDeserializedFromJson()
+    {
+        const string json = "{\"aiTeammate\": false, \"useBlueprint\": true}";
+
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        config.Should().NotBeNull();
+        config!.UseBlueprint.Should().BeTrue();
+        config.IsNonDwBlueprint.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WithCustomBlueprintPermissions_PreservesAiTeammate()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            UseBlueprint = true,
+            AzureOpenAIName = "aoai-test",
+            NeedAzureOpenAI = true
+        };
+
+        var cloned = config.WithCustomBlueprintPermissions(null);
+
+        cloned.AiTeammate.Should().BeFalse();
+        cloned.UseBlueprint.Should().BeTrue();
+        cloned.AzureOpenAIName.Should().Be("aoai-test");
+        cloned.NeedAzureOpenAI.Should().BeTrue();
+    }
+
+    #endregion
 }

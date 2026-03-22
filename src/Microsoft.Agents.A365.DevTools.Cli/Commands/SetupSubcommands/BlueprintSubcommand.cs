@@ -600,15 +600,17 @@ internal static class BlueprintSubcommand
         CancellationToken cancellationToken = default,
         string? correlationId = null)
     {
-        // Fast fail on invalid config — avoids multiple retry attempts with exponential backoff
+        // Fast fail on invalid config — these are configuration errors, not transient failures.
+        // Retrying would waste 35+ seconds with no chance of success.
         if (!Guid.TryParse(clientAppId, out _))
         {
-            logger.LogError("Invalid Client App ID format: {AppId} — skipping consent", clientAppId ?? "(null)");
+            logger.LogError("Invalid Client App ID format: {AppId}. Configure a valid GUID in a365.config.json.", clientAppId ?? "(null)");
             return false;
         }
+
         if (!Guid.TryParse(tenantId, out _))
         {
-            logger.LogError("Invalid Tenant ID format: {TenantId} — skipping consent", tenantId ?? "(null)");
+            logger.LogError("Invalid Tenant ID format: {TenantId}. Configure a valid GUID in a365.config.json.", tenantId ?? "(null)");
             return false;
         }
 

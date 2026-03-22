@@ -89,9 +89,21 @@ public class SetupResults
     /// </summary>
     public string? CombinedConsentUrl { get; set; }
 
+    /// <summary>
+    /// Whether the Agent Instance was successfully registered via the Agent Instance Graph API.
+    /// Populated by the non-DW blueprint setup flow only.
+    /// </summary>
+    public bool AgentInstanceRegistered { get; set; }
+
+    /// <summary>
+    /// The Agent Instance ID returned by the Agent Instance Graph API after registration.
+    /// Non-null when <see cref="AgentInstanceRegistered"/> is true.
+    /// </summary>
+    public string? AgentInstanceId { get; set; }
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
-    
+
     public bool HasErrors => Errors.Count > 0;
     public bool HasWarnings => Warnings.Count > 0;
 }
