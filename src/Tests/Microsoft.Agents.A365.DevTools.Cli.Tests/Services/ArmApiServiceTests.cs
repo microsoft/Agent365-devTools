@@ -71,6 +71,18 @@ public class ArmApiServiceTests
         result.Should().BeNull(because: "a network exception should cause the caller to fall back to az CLI");
     }
 
+    [Fact]
+    public async Task ResourceGroupExistsAsync_When401_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent(string.Empty) });
+        var svc = CreateService(handler);
+
+        var result = await svc.ResourceGroupExistsAsync(SubscriptionId, ResourceGroup, TenantId);
+
+        result.Should().BeNull(because: "a 401 means the ARM token lacks permission — caller must fall back to az CLI, not treat the resource as absent");
+    }
+
     // ──────────────────────────── AppServicePlanExistsAsync ───────────────────────────
 
     [Fact]
@@ -108,6 +120,18 @@ public class ArmApiServiceTests
         result.Should().BeNull(because: "a network exception should cause the caller to fall back to az CLI");
     }
 
+    [Fact]
+    public async Task AppServicePlanExistsAsync_When401_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent(string.Empty) });
+        var svc = CreateService(handler);
+
+        var result = await svc.AppServicePlanExistsAsync(SubscriptionId, ResourceGroup, PlanName, TenantId);
+
+        result.Should().BeNull(because: "a 401 means the ARM token lacks permission — caller must fall back to az CLI, not treat the plan as absent");
+    }
+
     // ──────────────────────────── WebAppExistsAsync ───────────────────────────────────
 
     [Fact]
@@ -132,6 +156,18 @@ public class ArmApiServiceTests
         var result = await svc.WebAppExistsAsync(SubscriptionId, ResourceGroup, WebAppName, TenantId);
 
         result.Should().BeFalse(because: "HTTP 404 means the web app does not exist");
+    }
+
+    [Fact]
+    public async Task WebAppExistsAsync_When401_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent(string.Empty) });
+        var svc = CreateService(handler);
+
+        var result = await svc.WebAppExistsAsync(SubscriptionId, ResourceGroup, WebAppName, TenantId);
+
+        result.Should().BeNull(because: "a 401 means the ARM token lacks permission — caller must fall back to az CLI, not treat the web app as absent");
     }
 
     [Fact]

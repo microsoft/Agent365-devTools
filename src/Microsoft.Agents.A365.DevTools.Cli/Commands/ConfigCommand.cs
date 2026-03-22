@@ -262,7 +262,7 @@ public static class ConfigCommand
                     else
                     {
                         Console.Error.WriteLine($"Field '{field}' not found in configuration.");
-                        Environment.Exit(1);
+                        ExceptionHandler.ExitWithCleanup(1);
                     }
                     return;
                 }

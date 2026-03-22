@@ -76,7 +76,9 @@ public class ArmApiService : IDisposable
         {
             using var response = await _httpClient.GetAsync(url, ct);
             _logger.LogDebug("ARM resource group check: {StatusCode}", response.StatusCode);
-            return response.StatusCode == HttpStatusCode.OK;
+            if (response.StatusCode == HttpStatusCode.OK) return true;
+            if (response.StatusCode == HttpStatusCode.NotFound) return false;
+            return null; // 401/403/5xx — caller falls back to az CLI
         }
         catch (Exception ex)
         {
@@ -106,7 +108,9 @@ public class ArmApiService : IDisposable
         {
             using var response = await _httpClient.GetAsync(url, ct);
             _logger.LogDebug("ARM app service plan check: {StatusCode}", response.StatusCode);
-            return response.StatusCode == HttpStatusCode.OK;
+            if (response.StatusCode == HttpStatusCode.OK) return true;
+            if (response.StatusCode == HttpStatusCode.NotFound) return false;
+            return null; // 401/403/5xx — caller falls back to az CLI
         }
         catch (Exception ex)
         {
@@ -136,7 +140,9 @@ public class ArmApiService : IDisposable
         {
             using var response = await _httpClient.GetAsync(url, ct);
             _logger.LogDebug("ARM web app check: {StatusCode}", response.StatusCode);
-            return response.StatusCode == HttpStatusCode.OK;
+            if (response.StatusCode == HttpStatusCode.OK) return true;
+            if (response.StatusCode == HttpStatusCode.NotFound) return false;
+            return null; // 401/403/5xx — caller falls back to az CLI
         }
         catch (Exception ex)
         {

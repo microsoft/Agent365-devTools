@@ -12,7 +12,13 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
-public class AgentBlueprintServiceAddRequiredResourceAccessTests
+/// <summary>
+/// Isolated from other tests because AzCliHelper token cache is static state.
+/// Without isolation, parallel tests calling ResetAzCliTokenCacheForTesting() clear
+/// the warmup and cause real az subprocess spawns (~20s per test).
+/// </summary>
+[Collection("AgentBlueprintServiceAddRequiredResourceAccessTests")]
+public class AgentBlueprintServiceAddRequiredResourceAccessTests : IDisposable
 {
     private const string TenantId = "test-tenant-id";
     private const string AppId = "test-app-id";
@@ -22,10 +28,11 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
 
     public AgentBlueprintServiceAddRequiredResourceAccessTests()
     {
-        // Pre-warm the process-level AzCliHelper token cache so tests don't spawn
-        // a real 'az account get-access-token' subprocess (~20s per test).
+        AzCliHelper.ResetAzCliTokenCacheForTesting();
         AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", TenantId, "fake-graph-token");
     }
+
+    public void Dispose() => AzCliHelper.ResetAzCliTokenCacheForTesting();
 
     [Fact]
     public async Task AddRequiredResourceAccessAsync_Success_WithValidPermissionIds()
@@ -320,3 +327,6 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
     }
 }
+
+[CollectionDefinition("AgentBlueprintServiceAddRequiredResourceAccessTests", DisableParallelization = true)]
+public class AgentBlueprintServiceAddRequiredResourceAccessTestCollection { }

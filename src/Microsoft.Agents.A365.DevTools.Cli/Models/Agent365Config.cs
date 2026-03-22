@@ -421,7 +421,10 @@ public class Agent365Config
 
     /// <summary>
     /// Messaging endpoint URL for the agent (stored in generated config as "messagingEndpoint").
-    /// [JsonIgnore] prevents a duplicate-key collision with the static MessagingEndpoint property.
+    /// [JsonIgnore] prevents a duplicate-key collision with the static <see cref="MessagingEndpoint"/>
+    /// property when Agent365Config is serialized directly via System.Text.Json (both would emit
+    /// the same "messagingEndpoint" key). GetGeneratedConfig() uses reflection to read
+    /// [JsonPropertyName] independently, so persistence to the generated config file is unaffected.
     /// </summary>
     [JsonIgnore]
     [JsonPropertyName("messagingEndpoint")]

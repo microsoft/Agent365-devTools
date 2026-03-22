@@ -575,6 +575,23 @@ An assertion is changed from one expected value to another (e.g., `BeFalse()` �
       because: "McpServersMetadata.Read.All is always included even when the manifest is missing, so the method proceeds and returns true");
   ```
 
+### 17. `Environment.Exit` Used Instead of `ExceptionHandler.ExitWithCleanup`
+A command handler calls `Environment.Exit(n)` directly instead of the codebase's standardized `ExceptionHandler.ExitWithCleanup(n)`.
+- **Pattern to catch**: `Environment.Exit(` in any file under `Commands/` or `Services/`
+- **Severity**: `medium` — `Environment.Exit` bypasses the `ExceptionHandler` cleanup that flushes console colors, writes final log entries, and ensures a clean terminal state. The codebase has `ExceptionHandler.ExitWithCleanup` specifically for this purpose (see `DeployCommand.cs`, `AdminSubcommand.cs`).
+- **Fix**: Replace `Environment.Exit(1)` with `ExceptionHandler.ExitWithCleanup(1)`
+
+### 18. ARM `bool?` Existence Methods Return `false` for Non-404 Errors
+A method with return type `bool?` (where `null` signals "fall back to az CLI") returns `false` for non-404 HTTP responses such as 401/403/5xx.
+- **Pattern to catch**: `return response.StatusCode == HttpStatusCode.OK;` inside a `bool?`-returning method, where no explicit handling exists for non-200/non-404 responses
+- **Severity**: `high` — callers use `HasValue` to decide whether to skip the az CLI fallback. Returning `false` for a 401/403 causes the caller to treat an auth failure as "resource does not exist" and attempt to create a resource that may already exist.
+- **Fix**: Distinguish 200/404/other explicitly:
+  ```csharp
+  if (response.StatusCode == HttpStatusCode.OK) return true;
+  if (response.StatusCode == HttpStatusCode.NotFound) return false;
+  return null; // 401/403/5xx — caller falls back to az CLI
+  ```
+
 **MANDATORY REPORTING RULE**: Whenever the diff contains any test file (`.Tests.cs`), you MUST emit a named finding for this check — even if no violation is found. The finding must appear in the review output with one of three statuses:
   - **`high` severity** if a violation is found (missing warmup, dead executor mock, etc.)
   - **`info` — FIXED** if the PR is fixing a prior violation (warmup added to previously-cold classes) — list each class fixed and its measured or estimated speedup
