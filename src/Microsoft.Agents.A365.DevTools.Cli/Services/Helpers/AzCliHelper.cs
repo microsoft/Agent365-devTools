@@ -32,6 +32,12 @@ internal static class AzCliHelper
     internal static Task<string?> ResolveLoginHintAsync()
         => _cachedLoginHintTask ??= (LoginHintResolverOverride ?? ResolveLoginHintCoreAsync)();
 
+    /// <summary>
+    /// Clears the login-hint process-level cache after a fresh 'az login'.
+    /// Forces the next call to ResolveLoginHintAsync to re-run 'az account show'.
+    /// </summary>
+    internal static void InvalidateLoginHintCache() => _cachedLoginHintTask = null;
+
     /// <summary>Clears the login-hint process-level cache. For use in tests only.</summary>
     internal static void ResetLoginHintCacheForTesting() => _cachedLoginHintTask = null;
 

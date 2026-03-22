@@ -3,7 +3,6 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
-using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -13,19 +12,18 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
 /// Validates that a client app exists and has the required permissions for a365 CLI operations.
+/// Uses GraphApiService for direct HTTP calls to Microsoft Graph, eliminating az-subprocess overhead
+/// (~20-30s per call) from the requirements check phase.
 /// </summary>
 public sealed class ClientAppValidator : IClientAppValidator
 {
     private readonly ILogger<ClientAppValidator> _logger;
-    private readonly CommandExecutor _executor;
+    private readonly GraphApiService _graphApiService;
 
-    private const string GraphApiBaseUrl = "https://graph.microsoft.com/v1.0";
-    private const string GraphTokenResource = "https://graph.microsoft.com";
-
-    public ClientAppValidator(ILogger<ClientAppValidator> logger, CommandExecutor executor)
+    public ClientAppValidator(ILogger<ClientAppValidator> logger, GraphApiService graphApiService)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+        _graphApiService = graphApiService ?? throw new ArgumentNullException(nameof(graphApiService));
     }
 
     /// <summary>
@@ -64,18 +62,8 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         try
         {
-            // Step 2: Acquire Graph token
-            var graphToken = await AcquireGraphTokenAsync(ct);
-            if (string.IsNullOrWhiteSpace(graphToken))
-            {
-                throw ClientAppValidationException.ValidationFailed(
-                    "Failed to acquire Microsoft Graph access token",
-                    new List<string> { "Ensure you are logged in with 'az login'" },
-                    clientAppId);
-            }
-
-            // Step 3: Verify app exists
-            var appInfo = await GetClientAppInfoAsync(clientAppId, graphToken, ct);
+            // Step 2: Verify app exists (token acquisition is handled inside GraphApiService)
+            var appInfo = await GetClientAppInfoAsync(clientAppId, tenantId, ct);
             if (appInfo == null)
             {
                 throw ClientAppValidationException.AppNotFound(clientAppId, tenantId);
@@ -83,13 +71,13 @@ public sealed class ClientAppValidator : IClientAppValidator
 
             _logger.LogDebug("Found client app: {DisplayName} ({AppId})", appInfo.DisplayName, clientAppId);
 
-            // Step 4: Validate permissions in manifest
-            var missingPermissions = await ValidatePermissionsConfiguredAsync(appInfo, graphToken, ct);
-            
-            // Step 4.5: For any unresolvable permissions (beta APIs), check oauth2PermissionGrants as fallback
+            // Step 3: Validate permissions in manifest
+            var missingPermissions = await ValidatePermissionsConfiguredAsync(appInfo, tenantId, ct);
+
+            // Step 3.5: For any unresolvable permissions (beta APIs), check oauth2PermissionGrants as fallback
             if (missingPermissions.Count > 0)
             {
-                var consentedPermissions = await GetConsentedPermissionsAsync(clientAppId, graphToken, ct);
+                var consentedPermissions = await GetConsentedPermissionsAsync(clientAppId, tenantId, ct);
                 // Remove permissions that have been consented even if not in app registration
                 missingPermissions.RemoveAll(p => consentedPermissions.Contains(p, StringComparer.OrdinalIgnoreCase));
 
@@ -99,26 +87,26 @@ public sealed class ClientAppValidator : IClientAppValidator
                 }
             }
 
-            // Step 4.6: Auto-provision any remaining missing permissions (self-healing)
+            // Step 3.6: Auto-provision any remaining missing permissions (self-healing)
             if (missingPermissions.Count > 0)
             {
                 _logger.LogInformation("Auto-provisioning {Count} missing permission(s): {Permissions}",
                     missingPermissions.Count, string.Join(", ", missingPermissions));
 
-                var provisioned = await EnsurePermissionsConfiguredAsync(appInfo, missingPermissions, clientAppId, graphToken, ct);
+                var provisioned = await EnsurePermissionsConfiguredAsync(appInfo, missingPermissions, clientAppId, tenantId, ct);
 
                 if (provisioned)
                 {
                     // Re-fetch fresh app info and re-validate to confirm provisioning succeeded
-                    var freshAppInfo = await GetClientAppInfoAsync(clientAppId, graphToken, ct);
+                    var freshAppInfo = await GetClientAppInfoAsync(clientAppId, tenantId, ct);
                     if (freshAppInfo != null)
                     {
-                        missingPermissions = await ValidatePermissionsConfiguredAsync(freshAppInfo, graphToken, ct);
+                        missingPermissions = await ValidatePermissionsConfiguredAsync(freshAppInfo, tenantId, ct);
 
                         // Re-run the consent fallback check on the remaining missing list
                         if (missingPermissions.Count > 0)
                         {
-                            var consentedAfterProvision = await GetConsentedPermissionsAsync(clientAppId, graphToken, ct);
+                            var consentedAfterProvision = await GetConsentedPermissionsAsync(clientAppId, tenantId, ct);
                             missingPermissions.RemoveAll(p => consentedAfterProvision.Contains(p, StringComparer.OrdinalIgnoreCase));
                         }
                     }
@@ -130,17 +118,17 @@ public sealed class ClientAppValidator : IClientAppValidator
                 throw ClientAppValidationException.MissingPermissions(clientAppId, missingPermissions);
             }
 
-            // Step 5: Verify admin consent
-            if (!await ValidateAdminConsentAsync(clientAppId, graphToken, ct))
+            // Step 4: Verify admin consent
+            if (!await ValidateAdminConsentAsync(clientAppId, tenantId, ct))
             {
                 throw ClientAppValidationException.MissingAdminConsent(clientAppId);
             }
 
-            // Step 6: Verify and fix redirect URIs
-            await EnsureRedirectUrisAsync(clientAppId, graphToken, ct);
+            // Step 5: Verify and fix redirect URIs
+            await EnsureRedirectUrisAsync(clientAppId, tenantId, ct);
 
-            // Step 7: Verify and fix public client flows (required for device code fallback on non-Windows)
-            await EnsurePublicClientFlowsEnabledAsync(clientAppId, graphToken, ct);
+            // Step 6: Verify and fix public client flows (required for device code fallback on non-Windows)
+            await EnsurePublicClientFlowsEnabledAsync(clientAppId, tenantId, ct);
 
             _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
         }
@@ -172,34 +160,30 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// Automatically adds missing redirect URIs if needed (self-healing).
     /// </summary>
     /// <param name="clientAppId">The client app ID</param>
-    /// <param name="graphToken">Microsoft Graph access token</param>
+    /// <param name="tenantId">The tenant ID</param>
     /// <param name="ct">Cancellation token</param>
     public async Task EnsureRedirectUrisAsync(
         string clientAppId,
-        string graphToken,
+        string tenantId,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(graphToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
         try
         {
             _logger.LogDebug("Checking redirect URIs for client app {ClientAppId}", clientAppId);
 
-            // Get current redirect URIs
-            var appCheckResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,publicClient\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
+            using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient", ct);
 
-            if (!appCheckResult.Success)
+            if (appDoc == null)
             {
-                _logger.LogWarning("Could not verify redirect URIs: {Error}", appCheckResult.StandardError);
+                _logger.LogWarning("Could not verify redirect URIs: Graph request failed");
                 return;
             }
 
-            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(appCheckResult.StandardOutput);
-            var response = JsonNode.Parse(sanitizedOutput);
+            var response = JsonNode.Parse(appDoc.RootElement.GetRawText());
             var apps = response?["value"]?.AsArray();
 
             if (apps == null || apps.Count == 0)
@@ -210,13 +194,13 @@ public sealed class ClientAppValidator : IClientAppValidator
 
             var app = apps[0]!.AsObject();
             var objectId = app["id"]?.GetValue<string>();
-            
+
             if (string.IsNullOrWhiteSpace(objectId))
             {
                 _logger.LogWarning("Could not get application object ID for redirect URI update");
                 return;
             }
-            
+
             var publicClient = app["publicClient"]?.AsObject();
             var currentRedirectUris = publicClient?["redirectUris"]?.AsArray()
                 ?.Select(uri => uri?.GetValue<string>())
@@ -241,19 +225,18 @@ public sealed class ClientAppValidator : IClientAppValidator
                 string.Join(", ", missingUris));
 
             var allUris = currentRedirectUris.Union(missingUris).ToList();
-            var urisJson = string.Join(",", allUris.Select(uri => $"\"{uri}\""));
+            var urisArray = new JsonArray();
+            foreach (var uri in allUris)
+                urisArray.Add(JsonValue.Create(uri));
 
-            var patchBody = $"{{\"publicClient\":{{\"redirectUris\":[{urisJson}]}}}}";
-            // Escape the JSON body for PowerShell: replace " with ""
-            var escapedBody = patchBody.Replace("\"", "\"\"");
-            var patchResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method PATCH --url \"{GraphApiBaseUrl}/applications/{CommandStringHelper.EscapePowerShellString(objectId)}\" --headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" --body \"{escapedBody}\"",
-                cancellationToken: ct);
+            var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
+                $"/v1.0/applications/{objectId}",
+                new JsonObject { ["publicClient"] = new JsonObject { ["redirectUris"] = urisArray } },
+                ct);
 
-            if (!patchResult.Success)
+            if (!patchSuccess)
             {
-                _logger.LogWarning("Failed to update redirect URIs: {Error}", patchResult.StandardError);
+                _logger.LogWarning("Failed to update redirect URIs");
                 return;
             }
 
@@ -274,26 +257,23 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// </summary>
     private async Task EnsurePublicClientFlowsEnabledAsync(
         string clientAppId,
-        string graphToken,
+        string tenantId,
         CancellationToken ct = default)
     {
         try
         {
             _logger.LogDebug("Checking 'Allow public client flows' for client app {ClientAppId}", clientAppId);
 
-            var appCheckResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,isFallbackPublicClient\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
+            using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,isFallbackPublicClient", ct);
 
-            if (!appCheckResult.Success)
+            if (appDoc == null)
             {
-                _logger.LogWarning("Could not check 'Allow public client flows': {Error}", appCheckResult.StandardError);
+                _logger.LogWarning("Could not check 'Allow public client flows': Graph request failed");
                 return;
             }
 
-            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(appCheckResult.StandardOutput);
-            var response = JsonNode.Parse(sanitizedOutput);
+            var response = JsonNode.Parse(appDoc.RootElement.GetRawText());
             var apps = response?["value"]?.AsArray();
 
             if (apps == null || apps.Count == 0)
@@ -321,16 +301,14 @@ public sealed class ClientAppValidator : IClientAppValidator
             _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback).");
             _logger.LogInformation("Run 'a365 setup requirements' at any time to re-verify and auto-fix this setting.");
 
-            var patchBody = "{\"isFallbackPublicClient\":true}";
-            var escapedBody = patchBody.Replace("\"", "\"\"");
-            var patchResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method PATCH --url \"{GraphApiBaseUrl}/applications/{CommandStringHelper.EscapePowerShellString(objectId)}\" --headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" --body \"{escapedBody}\"",
-                cancellationToken: ct);
+            var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
+                $"/v1.0/applications/{objectId}",
+                new { isFallbackPublicClient = true },
+                ct);
 
-            if (!patchResult.Success)
+            if (!patchSuccess)
             {
-                _logger.LogWarning("Failed to enable 'Allow public client flows': {Error}", patchResult.StandardError);
+                _logger.LogWarning("Failed to enable 'Allow public client flows'");
                 return;
             }
 
@@ -352,17 +330,17 @@ public sealed class ClientAppValidator : IClientAppValidator
         ClientAppInfo appInfo,
         List<string> missingPermissions,
         string clientAppId,
-        string graphToken,
+        string tenantId,
         CancellationToken ct)
     {
         try
         {
             // Resolve permission GUIDs for the missing permission names
-            var permissionNameToIdMap = await ResolvePermissionIdsAsync(graphToken, ct);
+            var permissionNameToIdMap = await ResolvePermissionIdsAsync(tenantId, ct);
 
             // Build an updated requiredResourceAccess array, inserting the missing GUIDs
             // into (or alongside) the Microsoft Graph resource entry.
-            var updatedResourceAccess = new System.Text.Json.Nodes.JsonArray();
+            var updatedResourceAccess = new JsonArray();
             bool graphEntryFound = false;
 
             if (appInfo.RequiredResourceAccess != null)
@@ -387,7 +365,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                             ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                         // Clone existing entries
-                        var newAccess = new System.Text.Json.Nodes.JsonArray();
+                        var newAccess = new JsonArray();
                         if (existingAccess != null)
                         {
                             foreach (var item in existingAccess)
@@ -400,7 +378,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                             if (permissionNameToIdMap.TryGetValue(permName, out var permId)
                                 && !existingIds.Contains(permId))
                             {
-                                newAccess.Add(new System.Text.Json.Nodes.JsonObject
+                                newAccess.Add(new JsonObject
                                 {
                                     ["id"] = permId,
                                     ["type"] = "Scope"
@@ -409,7 +387,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                             }
                         }
 
-                        updatedResourceAccess.Add(new System.Text.Json.Nodes.JsonObject
+                        updatedResourceAccess.Add(new JsonObject
                         {
                             ["resourceAppId"] = AuthenticationConstants.MicrosoftGraphResourceAppId,
                             ["resourceAccess"] = newAccess
@@ -425,42 +403,33 @@ public sealed class ClientAppValidator : IClientAppValidator
             if (!graphEntryFound)
             {
                 // No existing Microsoft Graph entry — create one from scratch
-                var newAccess = new System.Text.Json.Nodes.JsonArray();
+                var newAccess = new JsonArray();
                 foreach (var permName in missingPermissions)
                 {
                     if (permissionNameToIdMap.TryGetValue(permName, out var permId))
                     {
-                        newAccess.Add(new System.Text.Json.Nodes.JsonObject
+                        newAccess.Add(new JsonObject
                         {
                             ["id"] = permId,
                             ["type"] = "Scope"
                         });
                     }
                 }
-                updatedResourceAccess.Add(new System.Text.Json.Nodes.JsonObject
+                updatedResourceAccess.Add(new JsonObject
                 {
                     ["resourceAppId"] = AuthenticationConstants.MicrosoftGraphResourceAppId,
                     ["resourceAccess"] = newAccess
                 });
             }
 
-            // PATCH the application's requiredResourceAccess
-            var patchBody = new System.Text.Json.Nodes.JsonObject
-            {
-                ["requiredResourceAccess"] = updatedResourceAccess
-            }.ToJsonString();
+            var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
+                $"/v1.0/applications/{appInfo.ObjectId}",
+                new JsonObject { ["requiredResourceAccess"] = updatedResourceAccess },
+                ct);
 
-            var escapedBody = patchBody.Replace("\"", "\"\"");
-            var patchResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method PATCH --url \"{GraphApiBaseUrl}/applications/{CommandStringHelper.EscapePowerShellString(appInfo.ObjectId)}\" " +
-                $"--headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" " +
-                $"--body \"{escapedBody}\"",
-                cancellationToken: ct);
-
-            if (!patchResult.Success)
+            if (!patchSuccess)
             {
-                _logger.LogWarning("Failed to update app registration with missing permissions: {Error}", patchResult.StandardError);
+                _logger.LogWarning("Failed to update app registration with missing permissions");
                 return false;
             }
 
@@ -468,7 +437,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                 missingPermissions.Count, string.Join(", ", missingPermissions));
 
             // Best-effort: also extend the existing oauth2PermissionGrant so consent takes effect immediately
-            await TryExtendConsentGrantScopesAsync(clientAppId, missingPermissions, graphToken, ct);
+            await TryExtendConsentGrantScopesAsync(clientAppId, missingPermissions, tenantId, ct);
 
             return true;
         }
@@ -487,51 +456,39 @@ public sealed class ClientAppValidator : IClientAppValidator
     private async Task TryExtendConsentGrantScopesAsync(
         string clientAppId,
         List<string> newScopes,
-        string graphToken,
+        string tenantId,
         CancellationToken ct)
     {
         try
         {
             // Look up the service principal for the client app
-            var spResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id\" " +
-                $"--headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
+            using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
 
-            if (!spResult.Success) return;
+            if (spDoc == null) return;
 
-            var sanitizedSp = JsonDeserializationHelper.CleanAzureCliJsonOutput(spResult.StandardOutput);
-            var spJson = System.Text.Json.Nodes.JsonNode.Parse(sanitizedSp);
+            var spJson = JsonNode.Parse(spDoc.RootElement.GetRawText());
             var spObjectId = spJson?["value"]?.AsArray().FirstOrDefault()?.AsObject()["id"]?.GetValue<string>();
             if (string.IsNullOrWhiteSpace(spObjectId)) return;
 
             // Find the oauth2PermissionGrant that targets Microsoft Graph
-            var grantsResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{CommandStringHelper.EscapePowerShellString(spObjectId)}'\" " +
-                $"--headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
+            using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
 
-            if (!grantsResult.Success) return;
+            if (grantsDoc == null) return;
 
-            var sanitizedGrants = JsonDeserializationHelper.CleanAzureCliJsonOutput(grantsResult.StandardOutput);
-            var grantsJson = System.Text.Json.Nodes.JsonNode.Parse(sanitizedGrants);
+            var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
             var grants = grantsJson?["value"]?.AsArray();
             if (grants == null) return;
 
             // Look up the Microsoft Graph service principal ID to match against resourceId
-            var graphSpResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id\" " +
-                $"--headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
-
             string? graphSpObjectId = null;
-            if (graphSpResult.Success)
+            using var graphSpDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id", ct);
+
+            if (graphSpDoc != null)
             {
-                var sanitizedGraphSp = JsonDeserializationHelper.CleanAzureCliJsonOutput(graphSpResult.StandardOutput);
-                var graphSpJson = System.Text.Json.Nodes.JsonNode.Parse(sanitizedGraphSp);
+                var graphSpJson = JsonNode.Parse(graphSpDoc.RootElement.GetRawText());
                 graphSpObjectId = graphSpJson?["value"]?.AsArray().FirstOrDefault()?.AsObject()["id"]?.GetValue<string>();
             }
 
@@ -559,23 +516,19 @@ public sealed class ClientAppValidator : IClientAppValidator
                 if (scopesToAdd.Count == 0) continue;
 
                 var updatedScope = string.Join(' ', existingScopes.Concat(scopesToAdd));
-                var patchBody = $"{{\"scope\":\"{updatedScope}\"}}";
-                var escapedBody = patchBody.Replace("\"", "\"\"");
 
-                var patchResult = await _executor.ExecuteAsync(
-                    "az",
-                    $"rest --method PATCH --url \"{GraphApiBaseUrl}/oauth2PermissionGrants/{CommandStringHelper.EscapePowerShellString(grantId)}\" " +
-                    $"--headers \"Content-Type=application/json\" \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\" " +
-                    $"--body \"{escapedBody}\"",
-                    cancellationToken: ct);
+                var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
+                    $"/v1.0/oauth2PermissionGrants/{grantId}",
+                    new { scope = updatedScope },
+                    ct);
 
-                if (patchResult.Success)
+                if (patchSuccess)
                 {
                     _logger.LogInformation("Extended consent grant with scope(s): {Scopes}", string.Join(", ", scopesToAdd));
                 }
                 else
                 {
-                    _logger.LogDebug("Could not extend consent grant (may require admin role): {Error}", patchResult.StandardError);
+                    _logger.LogDebug("Could not extend consent grant (may require admin role)");
                 }
 
                 break; // Only one grant per resource
@@ -589,81 +542,40 @@ public sealed class ClientAppValidator : IClientAppValidator
 
     #region Private Helper Methods
 
-    private Task<string?> AcquireGraphTokenAsync(CancellationToken ct)
-    {
-        _logger.LogDebug("Acquiring Microsoft Graph token for validation...");
-        // Process-level cache: subsequent calls within the same CLI invocation return
-        // the cached Task immediately — no subprocess is spawned a second time.
-        return AzCliHelper.AcquireAzCliTokenAsync(GraphTokenResource);
-    }
-
-    private async Task<ClientAppInfo?> GetClientAppInfoAsync(string clientAppId, string graphToken, CancellationToken ct)
+    private async Task<ClientAppInfo?> GetClientAppInfoAsync(string clientAppId, string tenantId, CancellationToken ct)
     {
         _logger.LogDebug("Checking if client app exists in tenant...");
-        
-        var appCheckResult = await _executor.ExecuteAsync(
-            "az",
-            $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-            suppressErrorLogging: true,
-            cancellationToken: ct);
 
-        if (!appCheckResult.Success)
+        const string path = "/v1.0/applications?$filter=appId eq '{0}'&$select=id,appId,displayName,requiredResourceAccess";
+        var graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+            string.Format(path, clientAppId), ct);
+
+        if (graphResponse == null || !graphResponse.IsSuccess)
         {
-            // Check for Continuous Access Evaluation (CAE) token issues
-            if (appCheckResult.StandardError.Contains("TokenCreatedWithOutdatedPolicies", StringComparison.OrdinalIgnoreCase) ||
-                appCheckResult.StandardError.Contains("InvalidAuthenticationToken", StringComparison.OrdinalIgnoreCase))
+            // Only retry on 401 — a stale token due to CAE revocation. Transient errors (503,
+            // network failure) surface the real error to the caller rather than masking it as
+            // "token revoked". StatusCode 0 means token acquisition itself failed.
+            if (graphResponse?.StatusCode != 401)
             {
-                _logger.LogDebug("Azure CLI token is stale due to Continuous Access Evaluation. Attempting token refresh...");
-
-                // Bust the process-level cache before re-acquiring — the cached token is
-                // now known-invalid (CAE revocation is server-side and affects all callers).
-                AzCliHelper.InvalidateAzCliTokenCache();
-                var freshToken = await AzCliHelper.AcquireAzCliTokenAsync(GraphTokenResource);
-
-                if (!string.IsNullOrWhiteSpace(freshToken))
-                {
-                    _logger.LogDebug("Token refreshed successfully, retrying...");
-                    
-                    // Retry with fresh token
-                    var retryResult = await _executor.ExecuteAsync(
-                        "az",
-                        $"rest --method GET --url \"{GraphApiBaseUrl}/applications?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId,displayName,requiredResourceAccess\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(freshToken)}\"",
-                        suppressErrorLogging: true,
-                        cancellationToken: ct);
-                    
-                    if (retryResult.Success)
-                    {
-                        appCheckResult = retryResult;
-                    }
-                    else
-                    {
-                        // Token refresh succeeded but the Graph call still rejected it — the revocation
-                        // is server-side and cannot be silently recovered. Throw explicitly so the
-                        // caller shows "token revoked" rather than "app not found".
-                        _logger.LogDebug("App query failed after token refresh: {Error}", retryResult.StandardError);
-                        throw ClientAppValidationException.TokenRevoked(clientAppId);
-                    }
-                }
-            }
-            
-            if (!appCheckResult.Success)
-            {
-                if (IsCaeError(appCheckResult.StandardError))
-                    throw ClientAppValidationException.TokenRevoked(clientAppId);
-
-                _logger.LogDebug("App query failed: {Error}", appCheckResult.StandardError);
+                _logger.LogDebug("Graph app query failed with {StatusCode} — not retrying", graphResponse?.StatusCode);
                 return null;
             }
+
+            _logger.LogDebug("Graph app query returned 401 — invalidating token cache and retrying (possible CAE revocation)");
+            AzCliHelper.InvalidateAzCliTokenCache();
+            graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+                string.Format(path, clientAppId), ct);
+
+            if (!graphResponse.IsSuccess)
+                throw ClientAppValidationException.TokenRevoked(clientAppId);
         }
 
-        var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(appCheckResult.StandardOutput);
-        var appResponse = JsonNode.Parse(sanitizedOutput);
-        var apps = appResponse?["value"]?.AsArray();
+        using var doc = graphResponse.Json;
+        if (doc == null) return null;
 
-        if (apps == null || apps.Count == 0)
-        {
-            return null;
-        }
+        var response = JsonNode.Parse(doc.RootElement.GetRawText());
+        var apps = response?["value"]?.AsArray();
+        if (apps == null || apps.Count == 0) return null;
 
         var app = apps[0]!.AsObject();
         return new ClientAppInfo(
@@ -674,7 +586,7 @@ public sealed class ClientAppValidator : IClientAppValidator
 
     private async Task<List<string>> ValidatePermissionsConfiguredAsync(
         ClientAppInfo appInfo,
-        string graphToken,
+        string tenantId,
         CancellationToken ct)
     {
         var missingPermissions = new List<string>();
@@ -714,7 +626,7 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         // Resolve ALL permission IDs dynamically from Microsoft Graph
         // This ensures compatibility across different tenants and API versions
-        var permissionNameToIdMap = await ResolvePermissionIdsAsync(graphToken, ct);
+        var permissionNameToIdMap = await ResolvePermissionIdsAsync(tenantId, ct);
 
         // Check each required permission
         foreach (var permissionName in AuthenticationConstants.RequiredClientAppPermissions)
@@ -742,26 +654,24 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// Resolves permission names to their GUIDs by querying Microsoft Graph's published permission definitions.
     /// This approach is tenant-agnostic and works across different API versions.
     /// </summary>
-    private async Task<Dictionary<string, string>> ResolvePermissionIdsAsync(string graphToken, CancellationToken ct)
+    private async Task<Dictionary<string, string>> ResolvePermissionIdsAsync(string tenantId, CancellationToken ct)
     {
         var permissionNameToIdMap = new Dictionary<string, string>();
 
         try
         {
-            var graphSpResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(AuthenticationConstants.MicrosoftGraphResourceAppId)}'&$select=id,oauth2PermissionScopes\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
+            using var doc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id,oauth2PermissionScopes",
+                ct);
 
-            if (!graphSpResult.Success)
+            if (doc == null)
             {
                 _logger.LogWarning("Failed to query Microsoft Graph for permission definitions");
                 return permissionNameToIdMap;
             }
 
-            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(graphSpResult.StandardOutput);
-            var graphSpResponse = JsonNode.Parse(sanitizedOutput);
-            var graphSps = graphSpResponse?["value"]?.AsArray();
+            var response = JsonNode.Parse(doc.RootElement.GetRawText());
+            var graphSps = response?["value"]?.AsArray();
 
             if (graphSps == null || graphSps.Count == 0)
             {
@@ -803,27 +713,24 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// Gets the list of permissions that have been consented for the app via oauth2PermissionGrants.
     /// This is used as a fallback for beta permissions that may not be visible in the app registration's requiredResourceAccess.
     /// </summary>
-    private async Task<HashSet<string>> GetConsentedPermissionsAsync(string clientAppId, string graphToken, CancellationToken ct)
+    private async Task<HashSet<string>> GetConsentedPermissionsAsync(string clientAppId, string tenantId, CancellationToken ct)
     {
         var consentedPermissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
             // Get service principal for the app
-            var spCheckResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
+            using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
 
-            if (!spCheckResult.Success)
+            if (spDoc == null)
             {
                 _logger.LogDebug("Could not query service principal for consent check");
                 return consentedPermissions;
             }
 
-            var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(spCheckResult.StandardOutput);
-            var spResponse = JsonNode.Parse(sanitizedOutput);
-            var servicePrincipals = spResponse?["value"]?.AsArray();
+            var spJson = JsonNode.Parse(spDoc.RootElement.GetRawText());
+            var servicePrincipals = spJson?["value"]?.AsArray();
 
             if (servicePrincipals == null || servicePrincipals.Count == 0)
             {
@@ -840,20 +747,17 @@ public sealed class ClientAppValidator : IClientAppValidator
             }
 
             // Get oauth2PermissionGrants
-            var grantsResult = await _executor.ExecuteAsync(
-                "az",
-                $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{CommandStringHelper.EscapePowerShellString(spObjectId)}'\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-                cancellationToken: ct);
+            using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
 
-            if (!grantsResult.Success)
+            if (grantsDoc == null)
             {
                 _logger.LogDebug("Could not query oauth2PermissionGrants");
                 return consentedPermissions;
             }
 
-            var sanitizedGrantsOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(grantsResult.StandardOutput);
-            var grantsResponse = JsonNode.Parse(sanitizedGrantsOutput);
-            var grants = grantsResponse?["value"]?.AsArray();
+            var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
+            var grants = grantsJson?["value"]?.AsArray();
 
             if (grants == null || grants.Count == 0)
             {
@@ -865,7 +769,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             {
                 var grantObj = grant?.AsObject();
                 var scope = grantObj?["scope"]?.GetValue<string>();
-                
+
                 if (!string.IsNullOrWhiteSpace(scope))
                 {
                     var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -886,25 +790,22 @@ public sealed class ClientAppValidator : IClientAppValidator
         return consentedPermissions;
     }
 
-    private async Task<bool> ValidateAdminConsentAsync(string clientAppId, string graphToken, CancellationToken ct)
+    private async Task<bool> ValidateAdminConsentAsync(string clientAppId, string tenantId, CancellationToken ct)
     {
         _logger.LogDebug("Checking admin consent status for {ClientAppId}", clientAppId);
 
         // Get service principal for the app
-        var spCheckResult = await _executor.ExecuteAsync(
-            "az",
-            $"rest --method GET --url \"{GraphApiBaseUrl}/servicePrincipals?$filter=appId eq '{CommandStringHelper.EscapePowerShellString(clientAppId)}'&$select=id,appId\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-            cancellationToken: ct);
+        using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
+            $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id,appId", ct);
 
-        if (!spCheckResult.Success)
+        if (spDoc == null)
         {
-            _logger.LogDebug("Could not verify service principal (may not exist yet): {Error}", spCheckResult.StandardError);
+            _logger.LogDebug("Could not verify service principal (may not exist yet)");
             return true; // Best-effort check - will be verified during first interactive authentication
         }
 
-        var sanitizedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(spCheckResult.StandardOutput);
-        var spResponse = JsonNode.Parse(sanitizedOutput);
-        var servicePrincipals = spResponse?["value"]?.AsArray();
+        var spJson = JsonNode.Parse(spDoc.RootElement.GetRawText());
+        var servicePrincipals = spJson?["value"]?.AsArray();
 
         if (servicePrincipals == null || servicePrincipals.Count == 0)
         {
@@ -922,20 +823,17 @@ public sealed class ClientAppValidator : IClientAppValidator
         }
 
         // Check OAuth2 permission grants
-        var grantsCheckResult = await _executor.ExecuteAsync(
-            "az",
-            $"rest --method GET --url \"{GraphApiBaseUrl}/oauth2PermissionGrants?$filter=clientId eq '{CommandStringHelper.EscapePowerShellString(spObjectId)}'\" --headers \"Authorization=Bearer {CommandStringHelper.EscapePowerShellString(graphToken)}\"",
-            cancellationToken: ct);
+        using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
+            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
 
-        if (!grantsCheckResult.Success)
+        if (grantsDoc == null)
         {
-            _logger.LogDebug("Could not verify admin consent status: {Error}", grantsCheckResult.StandardError);
+            _logger.LogDebug("Could not verify admin consent status");
             return true; // Best-effort check
         }
 
-        var sanitizedGrantsOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(grantsCheckResult.StandardOutput);
-        var grantsResponse = JsonNode.Parse(sanitizedGrantsOutput);
-        var grants = grantsResponse?["value"]?.AsArray();
+        var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
+        var grants = grantsJson?["value"]?.AsArray();
 
         if (grants == null || grants.Count == 0)
         {
@@ -968,11 +866,6 @@ public sealed class ClientAppValidator : IClientAppValidator
     #endregion
 
     #region Helper Types
-
-    private static bool IsCaeError(string errorOutput) =>
-        errorOutput.Contains("TokenIssuedBeforeRevocationTimestamp", StringComparison.OrdinalIgnoreCase) ||
-        errorOutput.Contains("TokenCreatedWithOutdatedPolicies", StringComparison.OrdinalIgnoreCase) ||
-        errorOutput.Contains("InvalidAuthenticationToken", StringComparison.OrdinalIgnoreCase);
 
     private record ClientAppInfo(string ObjectId, string DisplayName, JsonArray? RequiredResourceAccess);
 

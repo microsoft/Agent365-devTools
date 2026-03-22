@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -17,6 +18,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// </summary>
 public class GraphApiServiceTokenTrimTests
 {
+    public GraphApiServiceTokenTrimTests()
+    {
+        // Pre-warm the process-level token cache with a token that includes a newline so
+        // EnsureGraphHeadersAsync reads from cache and the trimming at line 256 is exercised.
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tid", "fake-graph-token\n");
+    }
+
     [Theory]
     [InlineData("fake-token\n")]
     [InlineData("fake-token\r\n")]

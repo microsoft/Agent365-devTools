@@ -58,7 +58,8 @@ internal static class AllSubcommand
         AgentBlueprintService blueprintService,
         IClientAppValidator clientAppValidator,
         BlueprintLookupService blueprintLookupService,
-        FederatedCredentialService federatedCredentialService)
+        FederatedCredentialService federatedCredentialService,
+        ArmApiService? armApiService = null)
     {
         var command = new Command("all", 
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -201,7 +202,9 @@ internal static class AllSubcommand
                         platformDetector,
                         setupConfig.NeedDeployment,
                         skipInfrastructure,
-                        ct);
+                        ct,
+                        armApiService,
+                        graphApiService);
 
                     setupResults.InfrastructureCreated = skipInfrastructure ? false : setupInfra;
                     setupResults.InfrastructureAlreadyExisted = infraAlreadyExisted;

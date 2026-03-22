@@ -65,8 +65,12 @@ public static class InfrastructureSubcommand
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
             if (dryRun)
             {
                 var dryRunConfig = await configService.LoadAsync(config.FullName);
@@ -97,7 +101,7 @@ public static class InfrastructureSubcommand
             if (setupConfig.NeedDeployment)
             {
                 await RequirementsSubcommand.RunChecksOrExitAsync(
-                    GetChecks(authValidator), setupConfig, logger, CancellationToken.None);
+                    GetChecks(authValidator), setupConfig, logger, ct);
             }
             else
             {
@@ -116,12 +120,12 @@ public static class InfrastructureSubcommand
                 platformDetector,
                 setupConfig.NeedDeployment,
                 false,
-                CancellationToken.None);
+                ct);
 
             logger.LogInformation("");
             logger.LogInformation("Next steps: Run 'a365 setup blueprint' to create the agent blueprint");
 
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -136,7 +140,9 @@ public static class InfrastructureSubcommand
         PlatformDetector platformDetector,
         bool needDeployment,
         bool skipInfrastructure,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ArmApiService? armApiService = null,
+        GraphApiService? graphApiService = null)
     {
         if (!File.Exists(configPath))
         {
@@ -250,7 +256,9 @@ public static class InfrastructureSubcommand
             needDeployment,
             skipInfra,
             externalHosting,
-            cancellationToken);
+            cancellationToken,
+            armApiService,
+            graphApiService);
 
         return (true, anyAlreadyExisted);
     }
@@ -266,63 +274,55 @@ public static class InfrastructureSubcommand
     {
         logger.LogInformation("==> Verifying Azure CLI authentication");
         logger.LogInformation("");
-        
-        // Check if logged in
-        var accountCheck = await executor.ExecuteAsync("az", "account show", captureOutput: true, suppressErrorLogging: true, cancellationToken: cancellationToken);
-        if (!accountCheck.Success)
+
+        // Use cached login hint from AzCliHelper (populated by requirements check).
+        // Falls back to spawning 'az account show' only on first call in this process.
+        var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+        if (loginHint == null)
         {
             logger.LogInformation("Azure CLI not authenticated. Initiating login with management scope...");
             logger.LogInformation("A browser window will open for authentication. Please check your taskbar or browser if you don't see it.");
 
             var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
+
             if (!loginResult.Success)
             {
                 logger.LogError("Azure CLI login failed. Please run manually: az login --scope https://management.core.windows.net//.default");
                 return false;
             }
-            
+
             logger.LogInformation("Azure CLI login successful!");
+            AzCliHelper.InvalidateLoginHintCache();
             await Task.Delay(2000, cancellationToken);
         }
         else
         {
-            logger.LogDebug("Azure CLI already authenticated");
+            logger.LogDebug("Azure CLI already authenticated as {LoginHint}", loginHint);
         }
         
-        // Verify we have the management scope
+        // Verify we have the management scope (token is cached at process level by AzCliHelper).
         logger.LogDebug("Verifying access to Azure management resources...");
-        var tokenCheck = await executor.ExecuteAsync(
-            "az", 
-            "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
-            captureOutput: true, 
-            suppressErrorLogging: true,
-            cancellationToken: cancellationToken);
-            
-        if (!tokenCheck.Success)
+        var managementToken = await AzCliHelper.AcquireAzCliTokenAsync(ArmApiService.ArmResource, tenantId);
+
+        if (string.IsNullOrWhiteSpace(managementToken))
         {
             logger.LogWarning("Unable to acquire management scope token. Attempting re-authentication...");
             logger.LogInformation("A browser window will open for authentication.");
-            
+
             var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-            
+
             if (!loginResult.Success)
             {
                 logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
                 return false;
             }
-            
+
             logger.LogInformation("Azure CLI re-authentication successful!");
+            AzCliHelper.InvalidateAzCliTokenCache();
             await Task.Delay(2000, cancellationToken);
-            
-            var retryTokenCheck = await executor.ExecuteAsync(
-                "az", 
-                "account get-access-token --resource https://management.core.windows.net/ --query accessToken -o tsv", 
-                captureOutput: true, 
-                suppressErrorLogging: true,
-                cancellationToken: cancellationToken);
-                
-            if (!retryTokenCheck.Success)
+
+            var retryToken = await AzCliHelper.AcquireAzCliTokenAsync(ArmApiService.ArmResource, tenantId);
+            if (string.IsNullOrWhiteSpace(retryToken))
             {
                 logger.LogWarning("Still unable to acquire management scope token after re-authentication.");
                 logger.LogWarning("Continuing anyway - you may encounter permission errors later.");
@@ -361,7 +361,9 @@ public static class InfrastructureSubcommand
         bool needDeployment,
         bool skipInfra,
         bool externalHosting,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ArmApiService? armApiService = null,
+        GraphApiService? graphApiService = null)
     {
         bool anyAlreadyExisted = false;
         string? principalId = null;
@@ -416,19 +418,24 @@ public static class InfrastructureSubcommand
             logger.LogInformation("==> Deploying App Service + enabling Managed Identity");
             logger.LogInformation("");
 
-            // Set subscription context
-            try
+            // Resource group
+            // Use ArmApiService for a direct HTTP check (~0.5s) instead of az subprocess (~15-20s).
+            // Falls back to az CLI if ARM token is unavailable.
+            bool rgExistsResult;
+            var rgExistsArm = armApiService != null
+                ? await armApiService.ResourceGroupExistsAsync(subscriptionId, resourceGroup, tenantId, cancellationToken)
+                : null;
+            if (rgExistsArm.HasValue)
             {
-                await executor.ExecuteAsync("az", $"account set --subscription {subscriptionId}");
+                rgExistsResult = rgExistsArm.Value;
             }
-            catch (Exception)
+            else
             {
-                logger.LogWarning("Failed to set az subscription context explicitly");
+                var rgExists = await executor.ExecuteAsync("az", $"group exists -n {resourceGroup} --subscription {subscriptionId}", captureOutput: true);
+                rgExistsResult = rgExists.Success && rgExists.StandardOutput.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
             }
 
-            // Resource group
-            var rgExists = await executor.ExecuteAsync("az", $"group exists -n {resourceGroup} --subscription {subscriptionId}", captureOutput: true);
-            if (rgExists.Success && rgExists.StandardOutput.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
+            if (rgExistsResult)
             {
                 logger.LogInformation("Resource group already exists: {RG} (skipping creation)", resourceGroup);
                 anyAlreadyExisted = true;
@@ -440,15 +447,29 @@ public static class InfrastructureSubcommand
             }
 
             // App Service plan
-            bool planAlreadyExisted = await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId, cancellationToken: cancellationToken);
+            bool planAlreadyExisted = await EnsureAppServicePlanExistsAsync(executor, logger, resourceGroup, planName, planSku, location, subscriptionId, cancellationToken: cancellationToken, armApiService: armApiService, tenantId: tenantId);
             if (planAlreadyExisted)
             {
                 anyAlreadyExisted = true;
             }
 
             // Web App
-            var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-            if (!webShow.Success)
+            // Use ArmApiService for a direct HTTP check (~0.5s) instead of az subprocess (~15-20s).
+            bool webAppExists;
+            var webAppExistsArm = armApiService != null
+                ? await armApiService.WebAppExistsAsync(subscriptionId, resourceGroup, webAppName, tenantId, cancellationToken)
+                : null;
+            if (webAppExistsArm.HasValue)
+            {
+                webAppExists = webAppExistsArm.Value;
+            }
+            else
+            {
+                var webShow = await executor.ExecuteAsync("az", $"webapp show -g {resourceGroup} -n {webAppName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+                webAppExists = webShow.Success;
+            }
+
+            if (!webAppExists)
             {
                 var runtime = await GetLinuxFxVersionForPlatformAsync(platform, deploymentProjectPath, executor, logger, cancellationToken);
                 logger.LogInformation("Creating web app {App} with runtime {Runtime}", webAppName, runtime);
@@ -526,12 +547,15 @@ public static class InfrastructureSubcommand
                     {
                         logger.LogInformation("Managed Identity principalId: {Id}", principalId);
 
-                        // Use RetryHelper to verify MSI propagation to Azure AD with exponential backoff
+                        // Use RetryHelper to verify MSI propagation to Azure AD with exponential backoff.
+                        // Graph SP lookup (~200ms) replaces 'az ad sp show' (~30s) per retry attempt.
                         var retryHelper = new RetryHelper(logger);
                         logger.LogInformation("Verifying managed identity propagation in Azure AD...");
                         var msiPropagated = await retryHelper.ExecuteWithRetryAsync(
                             async ct =>
                             {
+                                if (graphApiService != null)
+                                    return await graphApiService.ServicePrincipalExistsAsync(tenantId, principalId, ct);
                                 var verifyMsi = await executor.ExecuteAsync("az", $"ad sp show --id {principalId}", captureOutput: true, suppressErrorLogging: true);
                                 return verifyMsi.Success;
                             },
@@ -570,11 +594,20 @@ public static class InfrastructureSubcommand
             logger.LogInformation("Assigning current user as Website Contributor for the web app...");
             try
             {
-                // Get the current signed-in user's object ID
-                var userResult = await executor.ExecuteAsync("az", "ad signed-in-user show --query id -o tsv", captureOutput: true, suppressErrorLogging: true);
-                if (userResult.Success && !string.IsNullOrWhiteSpace(userResult.StandardOutput))
+                // Get the current signed-in user's object ID.
+                // Graph /v1.0/me (~200ms) replaces 'az ad signed-in-user show' (~30s).
+                string? userObjectId = null;
+                if (graphApiService != null)
+                    userObjectId = await graphApiService.GetCurrentUserObjectIdAsync(tenantId, cancellationToken);
+                if (string.IsNullOrWhiteSpace(userObjectId))
                 {
-                    var userObjectId = userResult.StandardOutput.Trim();
+                    var userResult = await executor.ExecuteAsync("az", "ad signed-in-user show --query id -o tsv", captureOutput: true, suppressErrorLogging: true);
+                    if (userResult.Success && !string.IsNullOrWhiteSpace(userResult.StandardOutput))
+                        userObjectId = userResult.StandardOutput.Trim();
+                }
+
+                if (!string.IsNullOrWhiteSpace(userObjectId))
+                {
 
                     // Validate that userObjectId is a valid GUID to prevent command injection
                     if (!Guid.TryParse(userObjectId, out _))
@@ -590,19 +623,27 @@ public static class InfrastructureSubcommand
                     // Before attempting assignment, check whether the user already has sufficient
                     // access via inheritance (Owner or Contributor at subscription/RG level both
                     // supersede Website Contributor and include log access).
-                    // --include-inherited follows the scope chain up to the subscription.
-                    // --query filters to the first matching role name; empty output means no match.
-                    var existingRoleResult = await executor.ExecuteAsync("az",
-                        $"role assignment list --assignee {userObjectId} --scope {webAppScope} --include-inherited" +
-                        " --query \"[?roleDefinitionName=='Owner' || roleDefinitionName=='Contributor' || roleDefinitionName=='Website Contributor'].roleDefinitionName | [0]\"" +
-                        " -o tsv",
-                        captureOutput: true,
-                        suppressErrorLogging: true);
+                    // ARM role assignments API (~300ms) replaces 'az role assignment list --include-inherited' (~35s).
+                    string? existingRole = null;
+                    if (armApiService != null)
+                        existingRole = await armApiService.GetSufficientWebAppRoleAsync(subscriptionId, resourceGroup, webAppName, userObjectId, tenantId, cancellationToken);
 
-                    if (existingRoleResult.Success && !string.IsNullOrWhiteSpace(existingRoleResult.StandardOutput))
+                    if (existingRole == null)
+                    {
+                        // ARM call failed — fall back to az CLI
+                        var existingRoleResult = await executor.ExecuteAsync("az",
+                            $"role assignment list --assignee {userObjectId} --scope {webAppScope} --include-inherited" +
+                            " --query \"[?roleDefinitionName=='Owner' || roleDefinitionName=='Contributor' || roleDefinitionName=='Website Contributor'].roleDefinitionName | [0]\"" +
+                            " -o tsv",
+                            captureOutput: true,
+                            suppressErrorLogging: true);
+                        existingRole = existingRoleResult.Success ? existingRoleResult.StandardOutput.Trim() : string.Empty;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(existingRole))
                     {
                         logger.LogInformation("User already has '{Role}' access on the web app — log access confirmed, skipping Website Contributor assignment",
-                            existingRoleResult.StandardOutput.Trim());
+                            existingRole);
                     }
                     else
                     {
@@ -735,10 +776,26 @@ public static class InfrastructureSubcommand
         string subscriptionId,
         int maxRetries = 5,
         int baseDelaySeconds = 3,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ArmApiService? armApiService = null,
+        string tenantId = "")
     {
-        var planShow = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
-        if (planShow.Success)
+        // Use ArmApiService for a direct HTTP check (~0.5s) instead of az subprocess (~15-20s).
+        bool planExists;
+        var planExistsArm = armApiService != null
+            ? await armApiService.AppServicePlanExistsAsync(subscriptionId, resourceGroup, planName, tenantId, cancellationToken)
+            : null;
+        if (planExistsArm.HasValue)
+        {
+            planExists = planExistsArm.Value;
+        }
+        else
+        {
+            var planShow = await executor.ExecuteAsync("az", $"appservice plan show -g {resourceGroup} -n {planName} --subscription {subscriptionId}", captureOutput: true, suppressErrorLogging: true);
+            planExists = planShow.Success;
+        }
+
+        if (planExists)
         {
             logger.LogInformation("App Service plan already exists: {Plan} (skipping creation)", planName);
             return true; // Already existed

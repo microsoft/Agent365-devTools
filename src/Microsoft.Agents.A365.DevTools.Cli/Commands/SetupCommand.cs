@@ -40,7 +40,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             BlueprintLookupService blueprintLookupService,
             FederatedCredentialService federatedCredentialService,
             IClientAppValidator clientAppValidator,
-            IConfirmationProvider confirmationProvider)
+            IConfirmationProvider confirmationProvider,
+            ArmApiService? armApiService = null)
         {
             var command = new Command("setup",
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
@@ -70,7 +71,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, authValidator, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService));
 
             command.AddCommand(AdminSubcommand.CreateCommand(
                 logger, configService, authValidator, graphApiService, confirmationProvider));

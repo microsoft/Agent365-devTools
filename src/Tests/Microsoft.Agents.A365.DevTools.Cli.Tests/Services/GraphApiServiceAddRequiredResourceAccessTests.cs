@@ -5,6 +5,7 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -18,6 +19,13 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
     private const string ResourceAppId = "resource-app-id";
     private const string ObjectId = "object-id-123";
     private const string SpObjectId = "sp-object-id-456";
+
+    public AgentBlueprintServiceAddRequiredResourceAccessTests()
+    {
+        // Pre-warm the process-level AzCliHelper token cache so tests don't spawn
+        // a real 'az account get-access-token' subprocess (~20s per test).
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", TenantId, "fake-graph-token");
+    }
 
     [Fact]
     public async Task AddRequiredResourceAccessAsync_Success_WithValidPermissionIds()

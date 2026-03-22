@@ -7,6 +7,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -25,6 +26,7 @@ public class GraphApiServiceTests
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "fake-graph-token");
     }
 
 
@@ -696,6 +698,77 @@ public class GraphApiServiceTests
 
         // Assert
         result.Should().Be(RoleCheckResult.Unknown, "a failed Graph call should return Unknown, not DoesNotHaveRole");
+    }
+
+    #endregion
+
+    #region GetCurrentUserObjectIdAsync
+
+    [Fact]
+    public async Task GetCurrentUserObjectIdAsync_WhenGraphReturnsId_ReturnsObjectId()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"user-obj-id-123\"}")
+        });
+
+        var result = await service.GetCurrentUserObjectIdAsync("tenant-123");
+
+        result.Should().Be("user-obj-id-123",
+            because: "the object ID is read from the 'id' property of the /me response");
+    }
+
+    [Fact]
+    public async Task GetCurrentUserObjectIdAsync_WhenGraphFails_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent(string.Empty)
+        });
+
+        var result = await service.GetCurrentUserObjectIdAsync("tenant-123");
+
+        result.Should().BeNull(because: "a failed Graph call should return null so the caller can fall back to az CLI");
+    }
+
+    #endregion
+
+    #region ServicePrincipalExistsAsync
+
+    [Fact]
+    public async Task ServicePrincipalExistsAsync_WhenSpFound_ReturnsTrue()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"sp-obj-id\"}")
+        });
+
+        var result = await service.ServicePrincipalExistsAsync("tenant-123", "sp-obj-id");
+
+        result.Should().BeTrue(because: "a 200 response means the service principal is visible in the tenant");
+    }
+
+    [Fact]
+    public async Task ServicePrincipalExistsAsync_WhenSpNotFound_ReturnsFalse()
+    {
+        // MSI propagation polling: SP is not yet visible immediately after creation.
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            Content = new StringContent(string.Empty)
+        });
+
+        var result = await service.ServicePrincipalExistsAsync("tenant-123", "sp-obj-id");
+
+        result.Should().BeFalse(
+            because: "a 404 means the service principal has not yet propagated — the retry loop should keep polling");
     }
 
     #endregion

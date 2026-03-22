@@ -983,7 +983,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
 
             using var validationLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
             var executor = new CommandExecutor(validationLoggerFactory.CreateLogger<CommandExecutor>());
-            var validator = new ClientAppValidator(validationLoggerFactory.CreateLogger<ClientAppValidator>(), executor);
+            var graphApiService = new GraphApiService(validationLoggerFactory.CreateLogger<GraphApiService>(), executor);
+            var validator = new ClientAppValidator(validationLoggerFactory.CreateLogger<ClientAppValidator>(), graphApiService);
 
             try
             {

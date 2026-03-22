@@ -5,6 +5,7 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -13,6 +14,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
 public class AgentBlueprintServiceVerifyInheritablePermissionsTests
 {
+    public AgentBlueprintServiceVerifyInheritablePermissionsTests()
+    {
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tid", "fake-graph-token");
+    }
+
     [Fact]
     public async Task VerifyInheritablePermissionsAsync_PermissionsExist_ReturnsScopes()
     {

@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using System.Text.Json;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
@@ -14,27 +15,43 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// <summary>
 /// Unit tests for ClientAppValidator service.
 /// Tests validation logic for client app existence, permissions, and admin consent.
+/// Uses GraphApiService mocks (via NSubstitute virtual method substitution) for direct HTTP calls
+/// — no az-subprocess spawning.
 /// </summary>
 public class ClientAppValidatorTests
 {
     private readonly ILogger<ClientAppValidator> _logger;
-    private readonly CommandExecutor _executor;
+    private readonly GraphApiService _graphApiService;
     private readonly ClientAppValidator _validator;
 
     private const string ValidClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6";
     private const string ValidTenantId = "12345678-1234-1234-1234-123456789012";
     private const string InvalidGuid = "not-a-guid";
+    private const string AppObjId = "object-id-123";
+    private const string SpObjId = "sp-object-id-123";
+
+    // Stable test GUIDs for required permissions — must match between SetupPermissionResolution
+    // and SetupAppInfoWithAllPermissions so the validation resolves all permissions as present.
+    private const string ApplicationReadWriteAllId = "aaaa0001-0000-0000-0000-000000000000";
+    private const string AgentBlueprintReadWriteAllId = "aaaa0002-0000-0000-0000-000000000000";
+    private const string AgentBlueprintUpdateAuthId = "aaaa0003-0000-0000-0000-000000000000";
+    private const string AgentBlueprintAddRemoveCredsId = "aaaa0004-0000-0000-0000-000000000000";
+    private const string DelegatedPermissionGrantReadWriteAllId = "aaaa0005-0000-0000-0000-000000000000";
+    private const string DirectoryReadAllId = "aaaa0006-0000-0000-0000-000000000000";
 
     public ClientAppValidatorTests()
     {
         _logger = Substitute.For<ILogger<ClientAppValidator>>();
-        
-        // Use Substitute.For<> (full mock) so unmatched ExecuteAsync calls return a safe default
-        // instead of falling through to the real implementation and spawning actual az processes.
+
+        // Use Substitute.For<> (full mock) so unmatched GraphGetAsync calls return
+        // Task.FromResult<JsonDocument?>(null) — the null path in ClientAppValidator is
+        // always a graceful "best-effort check" or early return, never an exception.
         var executorLogger = Substitute.For<ILogger<CommandExecutor>>();
-        _executor = Substitute.For<CommandExecutor>(executorLogger);
-        
-        _validator = new ClientAppValidator(_logger, _executor);
+        var executor = Substitute.For<CommandExecutor>(executorLogger);
+        var graphServiceLogger = Substitute.For<ILogger<GraphApiService>>();
+        _graphApiService = Substitute.For<GraphApiService>(graphServiceLogger, executor);
+
+        _validator = new ClientAppValidator(_logger, _graphApiService);
     }
 
     #region Constructor Tests
@@ -42,21 +59,19 @@ public class ClientAppValidatorTests
     [Fact]
     public void Constructor_WithNullLogger_ThrowsArgumentNullException()
     {
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() => 
-            new ClientAppValidator(null!, _executor));
-        
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            new ClientAppValidator(null!, _graphApiService));
+
         exception.ParamName.Should().Be("logger");
     }
 
     [Fact]
-    public void Constructor_WithNullExecutor_ThrowsArgumentNullException()
+    public void Constructor_WithNullGraphApiService_ThrowsArgumentNullException()
     {
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() => 
+        var exception = Assert.Throws<ArgumentNullException>(() =>
             new ClientAppValidator(_logger, null!));
-        
-        exception.ParamName.Should().Be("executor");
+
+        exception.ParamName.Should().Be("graphApiService");
     }
 
     #endregion
@@ -64,66 +79,31 @@ public class ClientAppValidatorTests
     #region EnsureValidClientAppAsync - Input Validation Tests
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WithNullClientAppId_ThrowsArgumentException()
+    public async Task EnsureValidClientAppAsync_WithNullClientAppId_ThrowsArgumentNullException()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => 
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
             _validator.EnsureValidClientAppAsync(null!, ValidTenantId));
     }
 
     [Fact]
     public async Task EnsureValidClientAppAsync_WithEmptyClientAppId_ThrowsArgumentException()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => 
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             _validator.EnsureValidClientAppAsync(string.Empty, ValidTenantId));
     }
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WithInvalidClientAppIdFormat_ReturnsInvalidFormatFailure()
+    public async Task EnsureValidClientAppAsync_WithInvalidClientAppIdFormat_ThrowsClientAppValidationException()
     {
-        // Act
-        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(InvalidGuid, ValidTenantId));
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () =>
+            await _validator.EnsureValidClientAppAsync(InvalidGuid, ValidTenantId));
     }
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WithInvalidTenantIdFormat_ReturnsInvalidFormatFailure()
+    public async Task EnsureValidClientAppAsync_WithInvalidTenantIdFormat_ThrowsClientAppValidationException()
     {
-        // Act
-        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, InvalidGuid));
-    }
-
-    #endregion
-
-    #region EnsureValidClientAppAsync - Token Acquisition Tests
-
-    [Fact]
-    public async Task EnsureValidClientAppAsync_WhenTokenAcquisitionFails_ReturnsAuthenticationFailed()
-    {
-        // Arrange
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("account get-access-token")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Not logged in" });
-
-        // Act
-        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
-    }
-
-    [Fact]
-    public async Task EnsureValidClientAppAsync_WhenTokenIsEmpty_ThrowsClientAppValidationException()
-    {
-        // Arrange
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("account get-access-token")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "   ", StandardError = string.Empty });
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ClientAppValidationException>(
-            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () =>
+            await _validator.EnsureValidClientAppAsync(ValidClientAppId, InvalidGuid));
     }
 
     #endregion
@@ -131,46 +111,38 @@ public class ClientAppValidatorTests
     #region EnsureValidClientAppAsync - App Existence Tests
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WhenAppDoesNotExist_ReturnsAppNotFound()
+    public async Task EnsureValidClientAppAsync_WhenAppDoesNotExist_ThrowsClientAppValidationException()
     {
-        // Arrange
-        var token = "fake-token-123";
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("account get-access-token")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = token, StandardError = string.Empty });
+        SetupAppInfoGetEmpty();
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/applications")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\": []}", StandardError = string.Empty });
-
-        // Act
-        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () =>
+            await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenGraphQueryFails_ThrowsClientAppValidationException()
     {
-        // Arrange
-        var token = "fake-token-123";
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("account get-access-token")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = token, StandardError = string.Empty });
+        // Simulate a 401 on both the first attempt and the retry after cache invalidation.
+        // TokenRevoked is only thrown when the failure is specifically a 401 (auth error),
+        // not for transient failures like 503 — which would produce AppNotFound instead.
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = false,
+                StatusCode = 401,
+                ReasonPhrase = "Unauthorized"
+            }));
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/applications")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Graph API error" });
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ClientAppValidationException>(
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.ErrorCode.Should().Be(ErrorCodes.ClientAppValidationFailed);
+        exception.IssueDescription.Should().Contain("revoked",
+            because: "a persistent 401 from Graph indicates a CAE token revocation, not a transient error");
     }
 
     #endregion
@@ -178,25 +150,20 @@ public class ClientAppValidatorTests
     #region EnsureValidClientAppAsync - Permission Validation Tests
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WhenAppHasNoRequiredResourceAccess_ReturnsMissingPermissions()
+    public async Task EnsureValidClientAppAsync_WhenAppHasNoRequiredResourceAccess_ThrowsMissingPermissions()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExists(ValidClientAppId, "Test App", requiredResourceAccess: null);
+        // requiredResourceAccess: null → all permissions reported as missing
+        SetupAppInfoGet(ValidClientAppId, requiredResourceAccess: "null");
+        SetupPermissionResolution();
 
-        // Act
-        await Assert.ThrowsAsync<ClientAppValidationException>(async () => await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+        await Assert.ThrowsAsync<ClientAppValidationException>(async () =>
+            await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
 
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenAppMissingGraphPermissions_ThrowsClientAppValidationException()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        
-        var requiredResourceAccess = $$"""
+        var requiredResourceAccess = """
         [
             {
                 "resourceAppId": "some-other-app-id",
@@ -204,10 +171,10 @@ public class ClientAppValidatorTests
             }
         ]
         """;
-        
-        SetupAppExists(ValidClientAppId, "Test App", requiredResourceAccess);
 
-        // Act & Assert
+        SetupAppInfoGet(ValidClientAppId, requiredResourceAccess: requiredResourceAccess);
+        SetupPermissionResolution();
+
         await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
@@ -215,29 +182,21 @@ public class ClientAppValidatorTests
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenAppMissingSomePermissions_ThrowsClientAppValidationException()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupGraphPermissionResolution(token);
-        
-        // Only include Application.ReadWrite.All, missing others
+        // Only Application.ReadWrite.All present — missing the other 5
         var requiredResourceAccess = $$"""
         [
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {
-                        "id": "1bfefb4e-e0b5-418b-a88f-73c46d2cc8e9",
-                        "type": "Scope"
-                    }
+                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"}
                 ]
             }
         ]
         """;
-        
-        SetupAppExists(ValidClientAppId, "Test App", requiredResourceAccess);
 
-        // Act & Assert
+        SetupAppInfoGet(ValidClientAppId, requiredResourceAccess: requiredResourceAccess);
+        SetupPermissionResolution();
+
         await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
     }
@@ -249,34 +208,23 @@ public class ClientAppValidatorTests
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenAllValidationsPass_DoesNotThrow()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
-        SetupAdminConsentGranted(ValidClientAppId);
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+        // Admin consent: SP query returns null (unmatched) → best-effort returns true
+        // Redirect URIs / public client flows: null → silent skip — no exception
 
-        // Act & Assert - should not throw
         await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
     }
 
     #endregion
 
-    #region EnsureValidClientAppAsync Exception Tests
+    #region EnsureValidClientAppAsync - Exception Detail Tests
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WhenAppNotFound_ThrowsClientAppValidationException()
+    public async Task EnsureValidClientAppAsync_WhenAppNotFound_ThrowsWithCorrectErrorCode()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/applications")),
-            suppressErrorLogging: Arg.Any<bool>(),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\": []}", StandardError = string.Empty });
+        SetupAppInfoGetEmpty();
 
-        // Act & Assert
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
 
@@ -285,14 +233,11 @@ public class ClientAppValidatorTests
     }
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WhenMissingPermissions_ThrowsClientAppValidationException()
+    public async Task EnsureValidClientAppAsync_WhenMissingPermissions_ThrowsWithCorrectMessage()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExists(ValidClientAppId, "Test App", requiredResourceAccess: "[]");
+        SetupAppInfoGet(ValidClientAppId, requiredResourceAccess: "[]");
+        SetupPermissionResolution();
 
-        // Act & Assert
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
 
@@ -301,15 +246,13 @@ public class ClientAppValidatorTests
     }
 
     [Fact]
-    public async Task EnsureValidClientAppAsync_WhenMissingAdminConsent_ThrowsClientAppValidationException()
+    public async Task EnsureValidClientAppAsync_WhenMissingAdminConsent_ThrowsWithCorrectMessage()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
-        SetupAdminConsentNotGranted(ValidClientAppId);
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+        SetupAdminConsentSp(ValidClientAppId, SpObjId);
+        SetupAdminConsentGrantsEmpty(SpObjId);
 
-        // Act & Assert
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
 
@@ -319,283 +262,59 @@ public class ClientAppValidatorTests
 
     #endregion
 
-    #region Helper Methods
-
-    private void SetupTokenAcquisition(string token)
-    {
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("account get-access-token")),
-            suppressErrorLogging: Arg.Any<bool>(),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = token, StandardError = string.Empty });
-    }
-
-    private void SetupAppExists(string appId, string displayName, string? requiredResourceAccess)
-    {
-        var resourceAccessJson = requiredResourceAccess ?? "[]";
-        var appJson = $$"""
-        {
-            "value": [
-                {
-                    "id": "object-id-123",
-                    "appId": "{{appId}}",
-                    "displayName": "{{displayName}}",
-                    "requiredResourceAccess": {{resourceAccessJson}}
-                }
-            ]
-        }
-        """;
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/applications")),
-            suppressErrorLogging: Arg.Any<bool>(),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appJson, StandardError = string.Empty });
-    }
-
-    private void SetupAppExistsWithAllPermissions(string appId, string displayName)
-    {
-        var requiredResourceAccess = $$"""
-        [
-            {
-                "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
-                "resourceAccess": [
-                    {
-                        "id": "1bfefb4e-e0b5-418b-a88f-73c46d2cc8e9",
-                        "type": "Scope",
-                        "comment": "Application.ReadWrite.All"
-                    },
-                    {
-                        "id": "8e8e4742-1d95-4f68-9d56-6ee75648c72a",
-                        "type": "Scope",
-                        "comment": "Directory.Read.All"
-                    },
-                    {
-                        "id": "06da0dbc-49e2-44d2-8312-53f166ab848a",
-                        "type": "Scope",
-                        "comment": "DelegatedPermissionGrant.ReadWrite.All"
-                    },
-                    {
-                        "id": "00000000-0000-0000-0000-000000000001",
-                        "type": "Scope",
-                        "comment": "AgentIdentityBlueprint.ReadWrite.All (placeholder GUID for test)"
-                    },
-                    {
-                        "id": "00000000-0000-0000-0000-000000000002",
-                        "type": "Scope",
-                        "comment": "AgentIdentityBlueprint.UpdateAuthProperties.All (placeholder GUID for test)"
-                    }
-                ]
-            }
-        ]
-        """;
-
-        SetupAppExists(appId, displayName, requiredResourceAccess);
-    }
-
-    private void SetupAdminConsentGranted(string clientAppId)
-    {
-        // Setup service principal query
-        var spJson = $$"""
-        {
-            "value": [
-                {
-                    "id": "sp-object-id-123",
-                    "appId": "{{clientAppId}}"
-                }
-            ]
-        }
-        """;
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/servicePrincipals")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = spJson, StandardError = string.Empty });
-
-        // Setup OAuth2 grants with required scopes (all 5 permissions)
-        var grantsJson = """
-        {
-            "value": [
-                {
-                    "id": "grant-id-123",
-                    "scope": "Application.ReadWrite.All AgentIdentityBlueprint.ReadWrite.All AgentIdentityBlueprint.UpdateAuthProperties.All DelegatedPermissionGrant.ReadWrite.All Directory.Read.All"
-                }
-            ]
-        }
-        """;
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/oauth2PermissionGrants")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = grantsJson, StandardError = string.Empty });
-    }
-
-    private void SetupAdminConsentNotGranted(string clientAppId)
-    {
-        // Setup service principal query
-        var spJson = $$"""
-        {
-            "value": [
-                {
-                    "id": "sp-object-id-123",
-                    "appId": "{{clientAppId}}"
-                }
-            ]
-        }
-        """;
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/servicePrincipals")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = spJson, StandardError = string.Empty });
-
-        // Setup empty grants (no consent)
-        var grantsJson = """
-        {
-            "value": []
-        }
-        """;
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("/oauth2PermissionGrants")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = grantsJson, StandardError = string.Empty });
-    }
-
-    private void SetupGraphPermissionResolution(string token)
-    {
-        // Mock the Graph API call to retrieve Microsoft Graph's published permission definitions
-        var graphPermissionsJson = """
-        {
-            "value": [
-                {
-                    "id": "graph-sp-id-123",
-                    "oauth2PermissionScopes": [
-                        {
-                            "id": "1bfefb4e-e0b5-418b-a88f-73c46d2cc8e9",
-                            "value": "Application.ReadWrite.All"
-                        },
-                        {
-                            "id": "8e8e4742-1d95-4f68-9d56-6ee75648c72a",
-                            "value": "Directory.Read.All"
-                        },
-                        {
-                            "id": "06da0dbc-49e2-44d2-8312-53f166ab848a",
-                            "value": "DelegatedPermissionGrant.ReadWrite.All"
-                        },
-                        {
-                            "id": "00000000-0000-0000-0000-000000000001",
-                            "value": "AgentIdentityBlueprint.ReadWrite.All"
-                        },
-                        {
-                            "id": "00000000-0000-0000-0000-000000000002",
-                            "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"
-                        }
-                    ]
-                }
-            ]
-        }
-        """;
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains($"/servicePrincipals") && s.Contains($"appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = graphPermissionsJson, StandardError = string.Empty });
-    }
-
-    #endregion
-
     #region EnsurePublicClientFlowsEnabledAsync Tests
 
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenPublicClientFlowsAlreadyEnabled_DoesNotPatchPublicClientFlows()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
-        SetupAdminConsentGranted(ValidClientAppId);
-        SetupPublicClientFlowsCheck(enabled: true);
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+        SetupPublicClientFlowsGet(enabled: true);
+        // Redirect URIs GET returns null (unmatched) → no PATCH for redirect URIs
 
-        // Act
         await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
 
-        // Assert - PATCH for isFallbackPublicClient should NOT be called
-        await _executor.DidNotReceive().ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        // Neither redirect URIs nor public client flows should issue a PATCH
+        await _graphApiService.DidNotReceive().GraphPatchAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<object>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>());
     }
 
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenPublicClientFlowsDisabled_PatchesPublicClientFlows()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
-        SetupAdminConsentGranted(ValidClientAppId);
-        SetupPublicClientFlowsCheck(enabled: false);
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+        SetupPublicClientFlowsGet(enabled: false);
+        _graphApiService.GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
+        // Redirect URIs GET returns null (unmatched) → no separate PATCH
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
-
-        // Act - should not throw (non-fatal)
         await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
 
-        // Assert - PATCH for isFallbackPublicClient should be called once
-        await _executor.Received(1).ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        // Exactly one PATCH — the public client flows enable
+        await _graphApiService.Received(1).GraphPatchAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains(AppObjId)),
+            Arg.Any<object>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>());
     }
 
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenPublicClientFlowsPatchFails_DoesNotThrow()
     {
-        // Arrange
-        var token = "fake-token-123";
-        SetupTokenAcquisition(token);
-        SetupAppExistsWithAllPermissions(ValidClientAppId, "Test App");
-        SetupAdminConsentGranted(ValidClientAppId);
-        SetupPublicClientFlowsCheck(enabled: false);
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+        SetupPublicClientFlowsGet(enabled: false);
+        // GraphPatchAsync returns false (default) — operation is non-fatal
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH") && s.Contains("isFallbackPublicClient")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Forbidden" });
-
-        // Act - should not throw (non-fatal operation)
         await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
-    }
-
-    private void SetupPublicClientFlowsCheck(bool enabled)
-    {
-        var appJson = $$"""
-        {
-            "value": [{
-                "id": "object-id-123",
-                "isFallbackPublicClient": {{(enabled ? "true" : "false")}}
-            }]
-        }
-        """;
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("isFallbackPublicClient")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appJson, StandardError = string.Empty });
     }
 
     #endregion
@@ -605,221 +324,300 @@ public class ClientAppValidatorTests
     [Fact]
     public async Task EnsureRedirectUrisAsync_WhenAllUrisPresent_DoesNotUpdate()
     {
-        // Arrange
-        var token = "test-token";
-        // Include all required URIs: localhost, localhost:8400, and WAM broker URI
         var wamBrokerUri = $"ms-appx-web://microsoft.aad.brokerplugin/{ValidClientAppId}";
         var appResponseJson = $$"""
         {
             "value": [{
-                "id": "object-id-123",
+                "id": "{{AppObjId}}",
                 "publicClient": {
                     "redirectUris": ["http://localhost", "http://localhost:8400/", "{{wamBrokerUri}}"]
                 }
             }]
         }
         """;
+        SetupRedirectUrisGet(appResponseJson);
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("publicClient")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, ValidTenantId);
 
-        // Act
-        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
-
-        // Assert - Should not call PATCH
-        await _executor.DidNotReceive().ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        await _graphApiService.DidNotReceive().GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
     }
 
     [Fact]
     public async Task EnsureRedirectUrisAsync_WhenUrisMissing_AddsThemSuccessfully()
     {
-        // Arrange
-        var token = "test-token";
         var appResponseJson = $$"""
         {
             "value": [{
-                "id": "object-id-123",
+                "id": "{{AppObjId}}",
                 "publicClient": {
                     "redirectUris": ["http://localhost:8400/"]
                 }
             }]
         }
         """;
+        SetupRedirectUrisGet(appResponseJson);
+        _graphApiService.GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("publicClient")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, ValidTenantId);
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
-
-        // Act
-        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
-
-        // Assert - Should call PATCH with both URIs
-        await _executor.Received(1).ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH") && 
-                                s.Contains("http://localhost") && 
-                                s.Contains("http://localhost:8400/")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        await _graphApiService.Received(1).GraphPatchAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains(AppObjId)),
+            Arg.Any<object>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>());
     }
 
     [Fact]
     public async Task EnsureRedirectUrisAsync_WhenNoRedirectUris_AddsAllRequired()
     {
-        // Arrange
-        var token = "test-token";
         var appResponseJson = $$"""
         {
             "value": [{
-                "id": "object-id-123",
+                "id": "{{AppObjId}}",
                 "publicClient": {
                     "redirectUris": []
                 }
             }]
         }
         """;
+        SetupRedirectUrisGet(appResponseJson);
+        _graphApiService.GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET") && s.Contains("publicClient")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, ValidTenantId);
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
-
-        // Act
-        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
-
-        // Assert
-        await _executor.Received(1).ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        await _graphApiService.Received(1).GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
     }
 
     [Fact]
     public async Task EnsureRedirectUrisAsync_WhenGetFails_LogsWarningAndContinues()
     {
-        // Arrange
-        var token = "test-token";
+        // GraphGetAsync returns null (unmatched default) — simulates Graph API failure
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Error getting app" });
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, ValidTenantId);
 
-        // Act - Should not throw
-        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
-
-        // Assert - Should not call PATCH
-        await _executor.DidNotReceive().ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        await _graphApiService.DidNotReceive().GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
     }
 
     [Fact]
     public async Task EnsureRedirectUrisAsync_WhenPatchFails_LogsWarningButDoesNotThrow()
     {
-        // Arrange
-        var token = "test-token";
         var appResponseJson = $$"""
         {
             "value": [{
-                "id": "object-id-123",
+                "id": "{{AppObjId}}",
                 "publicClient": {
                     "redirectUris": []
                 }
             }]
         }
         """;
+        SetupRedirectUrisGet(appResponseJson);
+        // GraphPatchAsync returns false (default) — non-fatal
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
+        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, ValidTenantId);
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "Patch failed" });
-
-        // Act - Should not throw
-        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
-
-        // Assert - Method completes without exception
-        await _executor.Received(1).ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        await _graphApiService.Received(1).GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
     }
 
-    [Fact]
-    public async Task EnsureRedirectUrisAsync_EscapesJsonBodyForPowerShell()
+    #endregion
+
+    #region Helper Methods
+
+    /// <summary>
+    /// Sets up the app info GET (select includes displayName) to return an app with the given requiredResourceAccess JSON.
+    /// Pass "null" to simulate a null requiredResourceAccess; pass "[]" for an empty array.
+    /// </summary>
+    private void SetupAppInfoGet(string appId, string requiredResourceAccess = "[]")
     {
-        // Arrange
-        var token = "test-token";
-        var appResponseJson = $$"""
+        var json = $$"""
+        {
+            "value": [
+                {
+                    "id": "{{AppObjId}}",
+                    "appId": "{{appId}}",
+                    "displayName": "Test App",
+                    "requiredResourceAccess": {{requiredResourceAccess}}
+                }
+            ]
+        }
+        """;
+
+        // GetClientAppInfoAsync now calls GraphGetWithResponseAsync; GraphGetAsync is used by
+        // subsequent steps (permission resolution, consent checks, redirect URIs, etc.).
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse(json)
+            }));
+    }
+
+    /// <summary>
+    /// Sets up the app info GET to return an empty value array (app not found).
+    /// </summary>
+    private void SetupAppInfoGetEmpty()
+    {
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse("""{"value": []}""")
+            }));
+    }
+
+    /// <summary>
+    /// Sets up the app info GET with all 6 required permissions.
+    /// The permission GUIDs match those returned by SetupPermissionResolution so validation passes.
+    /// </summary>
+    private void SetupAppInfoWithAllPermissions(string appId)
+    {
+        var requiredResourceAccess = $$"""
+        [
+            {
+                "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
+                "resourceAccess": [
+                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
+                    {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"}
+                ]
+            }
+        ]
+        """;
+
+        SetupAppInfoGet(appId, requiredResourceAccess: requiredResourceAccess);
+    }
+
+    /// <summary>
+    /// Sets up the Microsoft Graph SP permission resolution GET (select includes oauth2PermissionScopes).
+    /// Returns the 6 required permissions with GUIDs matching the test constants.
+    /// </summary>
+    private void SetupPermissionResolution()
+    {
+        var json = $$"""
+        {
+            "value": [
+                {
+                    "id": "graph-sp-id-123",
+                    "oauth2PermissionScopes": [
+                        {"id": "{{ApplicationReadWriteAllId}}", "value": "Application.ReadWrite.All"},
+                        {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"},
+                        {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
+                        {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
+                        {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
+                        {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"}
+                    ]
+                }
+            ]
+        }
+        """;
+
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionScopes")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
+    }
+
+    /// <summary>
+    /// Sets up the admin consent SP GET (select includes id,appId — used by ValidateAdminConsentAsync).
+    /// </summary>
+    private void SetupAdminConsentSp(string clientAppId, string spObjectId)
+    {
+        var json = $$"""
+        {
+            "value": [
+                {
+                    "id": "{{spObjectId}}",
+                    "appId": "{{clientAppId}}"
+                }
+            ]
+        }
+        """;
+
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("servicePrincipals") && p.Contains("id,appId")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
+    }
+
+    /// <summary>
+    /// Sets up the oauth2PermissionGrants GET for a given SP object ID to return no grants.
+    /// </summary>
+    private void SetupAdminConsentGrantsEmpty(string spObjectId)
+    {
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(spObjectId)),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse("""{"value": []}""")));
+    }
+
+    /// <summary>
+    /// Sets up the redirect URIs GET (select includes publicClient).
+    /// </summary>
+    private void SetupRedirectUrisGet(string appResponseJson)
+    {
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("publicClient") && !p.Contains("displayName")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(appResponseJson)));
+    }
+
+    /// <summary>
+    /// Sets up the public client flows GET (select includes isFallbackPublicClient).
+    /// </summary>
+    private void SetupPublicClientFlowsGet(bool enabled)
+    {
+        var json = $$"""
         {
             "value": [{
-                "id": "object-id-123",
-                "publicClient": {
-                    "redirectUris": ["http://localhost:8400/"]
-                }
+                "id": "{{AppObjId}}",
+                "isFallbackPublicClient": {{(enabled ? "true" : "false")}}
             }]
         }
         """;
 
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method GET")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = appResponseJson, StandardError = string.Empty });
-
-        _executor.ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => s.Contains("rest --method PATCH")),
-            cancellationToken: Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
-
-        // Act
-        await _validator.EnsureRedirectUrisAsync(ValidClientAppId, token);
-
-        // Assert - Verify JSON body is properly escaped with double quotes for PowerShell
-        await _executor.Received(1).ExecuteAsync(
-            Arg.Is<string>(s => s == "az"),
-            Arg.Is<string>(s => 
-                s.Contains("rest --method PATCH") && 
-                // Should use --body "..." with escaped quotes (not --body '...')
-                s.Contains("--body \"") &&
-                // JSON should have doubled quotes: ""publicClient""
-                s.Contains("\"\"publicClient\"\"") &&
-                s.Contains("\"\"redirectUris\"\"") &&
-                // Should NOT use single quotes around body
-                !s.Contains("--body '")),
-            cancellationToken: Arg.Any<CancellationToken>());
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("isFallbackPublicClient")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
     }
 
     #endregion
 }
-

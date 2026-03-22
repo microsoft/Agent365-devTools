@@ -488,6 +488,40 @@ Injecting a raw Bearer token as a CLI argument (e.g., `az rest --headers "Author
 - **Severity**: `high` (security) — process command-line arguments are visible to all local users via OS process listing, crash dumps, and audit logs
 - **Fix**: Use in-process HTTP (`GraphApiService` / `HttpClient`) or pass token via stdin/temp file with restricted permissions
 
+### 11. Test Classes Creating Real `GraphApiService` Without Cache Warmup
+Test classes that construct real (non-substitute) `GraphApiService` or `AgentBlueprintService` instances without pre-warming the `AzCliHelper` process-level token cache. `EnsureGraphHeadersAsync` calls `AzCliHelper.AcquireAzCliTokenAsync` as its FIRST step — if the cache is cold, it spawns a real `az account get-access-token` subprocess (~20s per test class instance). This makes the test suite take minutes instead of seconds.
+
+A related dead-code smell: mocking `CommandExecutor.ExecuteAsync` to return `"fake-token"` for `get-access-token` calls looks correct but is never reached — the subprocess fires before the executor fallback is attempted.
+
+- **Pattern to catch** (any of the following in test code):
+  1. `new GraphApiService(logger, executor, handler)` or `new AgentBlueprintService(...)` without `AzCliHelper.WarmAzCliTokenCache(...)` in the test class constructor
+  2. `executor.ExecuteAsync(...).Returns(...)` matching `"get-access-token"` in a class that also constructs real `GraphApiService` instances — confirms the executor mock is dead code
+  3. Missing `loginHintResolver: () => Task.FromResult<string?>(null)` parameter when constructing `GraphApiService` in tests (bypasses the `az account show` subprocess)
+- **Severity**: `high` — causes ~20s per test *instance* (xUnit creates one instance per test method); a 10-test class goes from <1s to 200s
+- **Check**: For every `new GraphApiService(` or `new AgentBlueprintService(` in a test file, verify the test class constructor contains:
+  ```csharp
+  AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "<tenantId>", "fake-graph-token");
+  ```
+  where `<tenantId>` matches all tenant ID strings used in that class's test methods.
+- **Fix**:
+  ```csharp
+  // In test class constructor — warm for every tenantId string used in this class:
+  public MyServiceTests()
+  {
+      AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "fake-graph-token");
+      // Also pass loginHintResolver to bypass az account show:
+      // new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null))
+  }
+  ```
+- **Note**: `GraphApiServiceTokenCacheTests` is the intentional exception — it owns the cache and manages `AzCliTokenAcquirerOverride` explicitly via setUp/tearDown.
+
+**MANDATORY REPORTING RULE**: Whenever the diff contains any test file (`.Tests.cs`), you MUST emit a named finding for this check — even if no violation is found. The finding must appear in the review output with one of three statuses:
+  - **`high` severity** if a violation is found (missing warmup, dead executor mock, etc.)
+  - **`info` — FIXED** if the PR is fixing a prior violation (warmup added to previously-cold classes) — list each class fixed and its measured or estimated speedup
+  - **`info` — PASS** if all test classes with real service instances already have warmup in their constructors
+
+Do NOT silently omit this check. The rule exists because silent omission is how the regression in `da6f750` went undetected.
+
 ## Example Invocation
 
 When you receive a request like "Review PR #253", you should:

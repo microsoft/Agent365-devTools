@@ -265,6 +265,29 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Returns the object ID of the currently signed-in user via GET /v1.0/me.
+    /// Replaces 'az ad signed-in-user show --query id -o tsv' (~30s) with a Graph HTTP call (~200ms).
+    /// Returns null if the call fails (caller should fall back to az CLI).
+    /// </summary>
+    public virtual async Task<string?> GetCurrentUserObjectIdAsync(string tenantId, CancellationToken ct = default)
+    {
+        using var doc = await GraphGetAsync(tenantId, "/v1.0/me?$select=id", ct);
+        if (doc == null) return null;
+        return doc.RootElement.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+    }
+
+    /// <summary>
+    /// Checks whether a service principal with the given object ID exists in the tenant.
+    /// Replaces 'az ad sp show --id {principalId}' (~30s) with a Graph HTTP call (~200ms).
+    /// Used for MSI propagation polling — returns true when the SP is visible in the tenant.
+    /// </summary>
+    public virtual async Task<bool> ServicePrincipalExistsAsync(string tenantId, string principalId, CancellationToken ct = default)
+    {
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{principalId}?$select=id", ct);
+        return doc != null;
+    }
+
+    /// <summary>
     /// Executes a GET request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
@@ -284,6 +307,50 @@ public class GraphApiService
         var json = await resp.Content.ReadAsStringAsync(ct);
 
         return JsonDocument.Parse(json);
+    }
+
+    /// <summary>
+    /// GET from Graph and always return HTTP response details (status, body, parsed JSON).
+    /// Use this instead of GraphGetAsync when the caller needs to distinguish auth failures
+    /// (401) from transient server errors (503, 429, network exceptions).
+    /// </summary>
+    public virtual async Task<GraphResponse> GraphGetWithResponseAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+            return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
+
+        var url = relativePath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? relativePath
+            : $"https://graph.microsoft.com{relativePath}";
+
+        try
+        {
+            using var resp = await _httpClient.GetAsync(url, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            JsonDocument? json = null;
+            if (resp.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body))
+            {
+                try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
+            }
+
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+
+            return new GraphResponse
+            {
+                IsSuccess = resp.IsSuccessStatusCode,
+                StatusCode = (int)resp.StatusCode,
+                ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
+                Body = body ?? string.Empty,
+                Json = json
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Graph GET {Url} threw an exception", url);
+            return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = ex.Message, Body = string.Empty };
+        }
     }
 
     public virtual async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)

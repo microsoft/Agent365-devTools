@@ -1,7 +1,7 @@
 ---
 name: review-staged
 description: Generate structured code review for staged files (git staged changes) using Claude Code agents. Provides feedback before committing to catch issues early.
-allowed-tools: Bash(git:*), Read, Write
+allowed-tools: Bash(git:*), Bash(dotnet:*), Bash(cd:*), Read, Write
 ---
 
 # Review Staged Files Skill
@@ -27,8 +27,9 @@ Examples:
 4. **Analyzes changes** for security, testing, design patterns, and code quality issues
 5. **Differentiates contexts**: CLI code vs GitHub Actions code (different standards)
 6. **Creates actionable feedback**: Specific refactoring suggestions based on file names and patterns
-7. **Generates structured review document** saved to a markdown file
-8. **Shows summary** of all issues found organized by severity
+7. **Runs the test suite and measures per-test timing** — flags any test taking > 1 second as a performance regression
+8. **Generates structured review document** saved to a markdown file
+9. **Shows summary** of all issues found organized by severity
 
 ## Engineering Review Principles
 
@@ -66,6 +67,15 @@ This skill enforces the same principles as the PR review skill:
 - **CLI reliability**: CLI code without tests is BLOCKING
 - **GitHub Actions tests**: Strongly recommended (HIGH severity) but not blocking
 - **Mock external dependencies**: Proper mocking patterns
+- **Test performance — measured by running, not just static analysis**: The review ALWAYS runs the full test suite and reports per-test timing. Any test method taking **> 1 second** is flagged as a performance regression (HIGH severity). The finding must include:
+  - The slow test class and method name(s) with their measured time
+  - The root cause (cold `AzCliHelper` token cache, missing `WarmAzCliTokenCache` call, real subprocess not mocked, etc.)
+  - The fix (warmup call pattern, `loginHintResolver` injection, etc.)
+  - Expected time after fix
+
+  If all tests complete in < 1 second each: emit an **INFO — PASS** finding with the total suite time.
+
+  **Do not skip the test run.** Static code analysis alone missed the regression in `da6f750`; only measurement catches it reliably.
 
 ### Security
 - **No hardcoded secrets**: Use environment variables or Azure Key Vault
@@ -101,7 +111,19 @@ The skill uses **Claude Code directly** for semantic code analysis (same as revi
 4. Claude Code gets staged changes: `git diff --staged`
 5. Claude Code performs semantic analysis using its own capabilities
 6. Claude Code identifies specific issues with line numbers and code references
-7. Claude Code writes markdown file to `.codereviews/claude-staged-<timestamp>.md`
+7. **Claude Code runs the full test suite with per-test timing:**
+   ```bash
+   cd src && dotnet test tests.proj --configuration Release --logger "console;verbosity=normal" 2>&1
+   ```
+   Parse the output for lines matching `[X s]` or `[X,XXX ms]` patterns. Extract test class name, method name, and duration. Flag any test method taking **> 1 second**. Group findings by test class and include the measured times in the review.
+8. Claude Code writes markdown file to `.codereviews/claude-staged-<timestamp>.md`
+
+**Test timing output format** (from `dotnet test --logger "console;verbosity=normal"`):
+```
+  Passed SomeTests.Method_Scenario_ExpectedResult [< 1 ms]
+  Passed OtherTests.Method_Slow [22 s]
+```
+Any line showing `[X s]` where X ≥ 1 is a slow test. Report all such tests in a dedicated finding.
 
 **Key Advantages**:
 - ✅ No API key required - uses Claude Code's existing authentication
