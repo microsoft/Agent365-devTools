@@ -90,6 +90,55 @@ internal static class AzCliHelper
     /// <summary>Clears the token cache. For use in tests only.</summary>
     internal static void ResetAzCliTokenCacheForTesting() => _azCliTokenCache.Clear();
 
+    /// <summary>
+    /// Acquires a Graph token using <c>--scope</c> (OAuth2 v2 endpoint) rather than
+    /// <c>--resource</c>. Because MSAL keys its cache by the exact scope string, this
+    /// bypasses any cached resource-based token and forces az CLI to obtain a fresh access
+    /// token from AAD — picking up role assignments or consent grants that were added after
+    /// the cached token was originally issued.
+    ///
+    /// Use this as a retry path after a 403 that may be caused by a stale cached token.
+    /// The result is stored under a "scope::" prefix key so it does not collide with
+    /// resource-based cache entries and is also cleared by <see cref="InvalidateAzCliTokenCache"/>.
+    /// </summary>
+    internal static Task<string?> AcquireAzCliScopeTokenAsync(string scope, string tenantId)
+    {
+        var key = $"scope::{scope}::{tenantId}";
+        return _azCliTokenCache.GetOrAdd(key, _ =>
+            AzCliTokenAcquirerOverride != null
+                ? AzCliTokenAcquirerOverride(scope, tenantId)
+                : AcquireAzCliScopeTokenCoreAsync(scope, tenantId));
+    }
+
+    private static async Task<string?> AcquireAzCliScopeTokenCoreAsync(string scope, string tenantId)
+    {
+        try
+        {
+            var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+            var tenantArg = string.IsNullOrEmpty(tenantId) ? "" : $" --tenant {tenantId}";
+            var azArgs = $"account get-access-token --scope {scope}{tenantArg} --query accessToken -o tsv";
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = isWindows ? "cmd.exe" : "az",
+                Arguments = isWindows ? $"/c az {azArgs}" : azArgs,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var process = Process.Start(startInfo);
+            if (process == null) return null;
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            await Task.WhenAll(outputTask, errorTask);
+            await process.WaitForExitAsync();
+            var output = outputTask.Result.Trim();
+            return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output) ? output : null;
+        }
+        catch { }
+        return null;
+    }
+
     private static async Task<string?> AcquireAzCliTokenCoreAsync(string resource, string tenantId)
     {
         try

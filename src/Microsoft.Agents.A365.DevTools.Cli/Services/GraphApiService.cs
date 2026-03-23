@@ -886,17 +886,116 @@ public class GraphApiService
         if (!string.IsNullOrWhiteSpace(agentBlueprintId))
             payload["agentIdentityBlueprintId"] = agentBlueprintId;
 
-        using var doc = await GraphPostAsync(tenantId, "/beta/agentRegistry/agentInstances", payload, ct);
-        if (doc == null)
-            return null;
+        _logger.LogInformation("POST https://graph.microsoft.com/beta/agentRegistry/agentInstances");
+        _logger.LogInformation("Body: {{\"ownerIds\":[\"{UserId}\"],\"displayName\":\"{DisplayName}\",\"agentIdentityBlueprintId\":\"{BlueprintId}\"}}",
+            currentUserId, displayName, agentBlueprintId ?? "(none)");
 
-        if (!doc.RootElement.TryGetProperty("id", out var instanceIdProp))
+        // AgentInstance.ReadWrite.All is a user-delegated scope (no admin consent required).
+        // We must request it explicitly so EnsureGraphHeadersAsync uses the MSAL path with the
+        // custom client app — that app already has AgentInstance.ReadWrite.All consented via
+        // RequiredClientAppPermissions. Using the az CLI token (no scope) would require the
+        // scope to be consented on the Azure CLI app instead, which is not the expected setup.
+        IEnumerable<string>? registrationScopes = _tokenProvider != null
+            ? [Constants.AuthenticationConstants.AgentInstanceReadWriteAllScope]
+            : null;
+
+        var firstResponse = await GraphPostWithResponseAsync(tenantId, "/beta/agentRegistry/agentInstances", payload, ct, registrationScopes);
+
+        if (firstResponse.IsSuccess)
         {
-            _logger.LogError("Agent instance registered but response does not contain an 'id' field.");
+            var instanceId = ExtractAgentInstanceId(firstResponse);
+            firstResponse.Json?.Dispose();
+            if (instanceId == null)
+                _logger.LogError("Agent instance created but response did not contain an 'id' field.");
+            return instanceId;
+        }
+
+        var firstStatusCode = firstResponse.StatusCode;
+        var firstBody = firstResponse.Body;
+        firstResponse.Json?.Dispose();
+
+        // On auth failure (0 = token acquisition failed): no point retrying.
+        if (firstStatusCode == 0)
+        {
+            _logger.LogError("Failed to acquire an access token for the agent registry request. Ensure 'az login' is completed.");
             return null;
         }
 
-        return instanceIdProp.GetString();
+        // On non-403: log the status and body so the caller has something to act on.
+        if (firstStatusCode != 403)
+        {
+            _logger.LogError("Agent registry POST failed with HTTP {StatusCode}. Body: {Body}", firstStatusCode, firstBody);
+            return null;
+        }
+
+        // On 403: the 'Agent Registry Administrator' role may not have propagated yet. Retry once.
+        _logger.LogInformation("403 from agent registry — 'Agent Registry Administrator' role may not have propagated yet. Retrying once...");
+
+        var retryResponse = await GraphPostWithResponseAsync(tenantId, "/beta/agentRegistry/agentInstances", payload, ct, registrationScopes);
+
+        if (retryResponse.IsSuccess)
+        {
+            _logger.LogInformation("Agent instance registration succeeded on retry.");
+            var instanceId = ExtractAgentInstanceId(retryResponse);
+            retryResponse.Json?.Dispose();
+            if (instanceId == null)
+                _logger.LogError("Agent instance created but retry response did not contain an 'id' field.");
+            return instanceId;
+        }
+
+        var retryStatusCode = retryResponse.StatusCode;
+        retryResponse.Json?.Dispose();
+
+        if (retryStatusCode == 403)
+        {
+            _logger.LogError(
+                "Still 403 after retry. Ensure the 'Agent Registry Administrator' role is " +
+                "assigned in Entra ID for the account running the CLI. " +
+                "If the role was recently assigned, wait 5-15 minutes for propagation and retry.");
+        }
+        else if (retryStatusCode == 0)
+        {
+            _logger.LogError("Token re-acquisition failed on retry. Ensure 'az login' is still valid.");
+        }
+        else
+        {
+            _logger.LogError("Agent registry POST failed on retry with HTTP {StatusCode}.", retryStatusCode);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Deletes an agent instance from the Microsoft Agent Registry via
+    /// DELETE /beta/agentRegistry/agentInstances/{instanceId}.
+    /// Requires AgentInstance.ReadWrite.All delegated scope.
+    /// Returns true on success or if the instance was already deleted (404).
+    /// </summary>
+    public virtual async Task<bool> DeleteAgentInstanceAsync(
+        string tenantId,
+        string instanceId,
+        CancellationToken ct = default)
+    {
+        IEnumerable<string>? scopes = _tokenProvider != null
+            ? [Constants.AuthenticationConstants.AgentInstanceReadWriteAllScope]
+            : null;
+
+        _logger.LogInformation("DELETE https://graph.microsoft.com/beta/agentRegistry/agentInstances/{InstanceId}", instanceId);
+
+        return await GraphDeleteAsync(
+            tenantId,
+            $"/beta/agentRegistry/agentInstances/{instanceId}",
+            ct,
+            treatNotFoundAsSuccess: true,
+            scopes: scopes);
+    }
+
+    private static string? ExtractAgentInstanceId(GraphResponse response)
+    {
+        if (response.Json == null) return null;
+        if (!response.Json.RootElement.TryGetProperty("id", out var idProp))
+            return null;
+        return idProp.GetString();
     }
 
     /// <summary>

@@ -525,6 +525,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                 if (patchSuccess)
                 {
                     _logger.LogInformation("Extended consent grant with scope(s): {Scopes}", string.Join(", ", scopesToAdd));
+                    // Invalidate the process-level az CLI token cache so the next Graph call
+                    // re-acquires a token that includes the newly consented scope(s).
+                    Services.Helpers.AzCliHelper.InvalidateAzCliTokenCache();
                 }
                 else
                 {
@@ -539,6 +542,32 @@ public sealed class ClientAppValidator : IClientAppValidator
             _logger.LogDebug("TryExtendConsentGrantScopesAsync failed (non-fatal): {Message}", ex.Message);
         }
     }
+
+    /// <summary>
+    /// Returns the subset of <see cref="AuthenticationConstants.RequiredClientAppPermissions"/>
+    /// that are not yet present in the client app's oauth2PermissionGrant (i.e. not consented).
+    /// </summary>
+    public async Task<List<string>> GetUnconsentedRequiredPermissionsAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        var consented = await GetConsentedPermissionsAsync(clientAppId, tenantId, ct);
+        return AuthenticationConstants.RequiredClientAppPermissions
+            .Where(p => !consented.Contains(p, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Extends the client app's oauth2PermissionGrant to include the specified permissions.
+    /// Call after the user has confirmed they want to grant admin consent.
+    /// </summary>
+    public Task GrantConsentForPermissionsAsync(
+        string clientAppId,
+        List<string> permissions,
+        string tenantId,
+        CancellationToken ct = default)
+        => TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
 
     #region Private Helper Methods
 

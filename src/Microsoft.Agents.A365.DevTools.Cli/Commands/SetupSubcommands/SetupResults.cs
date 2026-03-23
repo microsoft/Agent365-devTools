@@ -90,6 +90,12 @@ public class SetupResults
     public string? CombinedConsentUrl { get; set; }
 
     /// <summary>
+    /// Whether this is a non-DW blueprint setup flow (--aiteammate false).
+    /// Used in the summary display to show the correct recovery actions.
+    /// </summary>
+    public bool IsNonDwBlueprintFlow { get; set; }
+
+    /// <summary>
     /// Whether the Agent Instance was successfully registered via the Agent Instance Graph API.
     /// Populated by the non-DW blueprint setup flow only.
     /// </summary>

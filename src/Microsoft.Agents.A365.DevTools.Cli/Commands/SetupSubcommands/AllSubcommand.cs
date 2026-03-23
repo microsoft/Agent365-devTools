@@ -112,12 +112,17 @@ internal static class AllSubcommand
             description: "true = AI Teammate / Digital Worker (default), false = non-AI Teammate agent (blueprint)\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
+        var agentInstanceOnlyOption = new Option<bool>(
+            "--agent-instance-only",
+            description: "Skip all setup steps and only run agent instance registration (--aiteammate false only)");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
         command.AddOption(aiTeammateOption);
+        command.AddOption(agentInstanceOnlyOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -126,6 +131,7 @@ internal static class AllSubcommand
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
+            var agentInstanceOnly = context.ParseResult.GetValueForOption(agentInstanceOnlyOption);
             var ct = context.GetCancellationToken();
 
             // Generate correlation ID at workflow entry point
@@ -185,7 +191,8 @@ internal static class AllSubcommand
                     blueprintService: blueprintService,
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
-                    clientAppValidator: clientAppValidator);
+                    clientAppValidator: clientAppValidator,
+                    agentInstanceOnly: agentInstanceOnly);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;

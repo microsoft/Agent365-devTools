@@ -153,15 +153,15 @@ internal static class SetupHelpers
                 logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
             }
 
-            if (!results.MessagingEndpointRegistered && !results.AgentInstanceRegistered)
+            if (results.IsNonDwBlueprintFlow && !results.AgentInstanceRegistered)
+            {
+                logger.LogInformation("  - Agent Instance: Run 'a365 setup all --aiteammate false' to retry registration");
+                logger.LogInformation("    Ensure you have the 'Agent Registry Administrator' role in Entra ID");
+            }
+            else if (!results.IsNonDwBlueprintFlow && !results.MessagingEndpointRegistered)
             {
                 logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
                 logger.LogInformation("    If there's a conflicting endpoint, delete it first: a365 cleanup blueprint --endpoint-only");
-            }
-            else if (!results.AgentInstanceRegistered && results.BlueprintCreated)
-            {
-                logger.LogInformation("  - Agent Instance: Run 'a365 setup all --aiteammate false' to retry registration");
-                logger.LogInformation("    Ensure you have the Agent Registry Administrator role");
             }
         }
 

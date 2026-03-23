@@ -35,7 +35,8 @@ public class CleanupCommand
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
-        AzureAuthValidator authValidator)
+        AzureAuthValidator authValidator,
+        GraphApiService? graphApiService = null)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
@@ -60,12 +61,12 @@ public class CleanupCommand
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogInformation("Starting cleanup (CorrelationId: {CorrelationId})", correlationId);
-            
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, correlationId: correlationId);
+
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId);
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, graphApiService: graphApiService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -80,7 +81,8 @@ public class CleanupCommand
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
-        string? correlationId = null)
+        string? correlationId = null,
+        GraphApiService? graphApiService = null)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -158,7 +160,12 @@ public class CleanupCommand
                 logger.LogInformation("Will delete Entra ID application: {BlueprintId}", config.AgentBlueprintId);
                 logger.LogInformation("  Name: {DisplayName}", config.AgentBlueprintDisplayName);
 
-                if (instances.Count > 0)
+                if (config.IsNonDwBlueprint && !string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("Will also delete Agent Registry instance: {InstanceId}", config.AgentInstanceId);
+                }
+                else if (instances.Count > 0)
                 {
                     logger.LogInformation("");
                     logger.LogInformation("Will also delete {Count} agent instance(s) linked to this blueprint:", instances.Count);
@@ -176,6 +183,34 @@ public class CleanupCommand
                 {
                     logger.LogInformation("Cleanup cancelled by user");
                     return;
+                }
+
+                // For non-DW blueprint flow: delete Agent Registry instance before blueprint
+                if (config.IsNonDwBlueprint && !string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                {
+                    if (graphApiService is null)
+                    {
+                        logger.LogWarning("Agent instance deletion skipped (GraphApiService not available). Delete instance {InstanceId} manually via the M365 Admin Center.", config.AgentInstanceId);
+                    }
+                    else
+                    {
+                        logger.LogInformation("Deleting agent instance {InstanceId} from Agent Registry...", config.AgentInstanceId);
+                        var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
+                            config.TenantId,
+                            config.AgentInstanceId,
+                            CancellationToken.None);
+
+                        if (instanceDeleted)
+                        {
+                            logger.LogInformation("Agent instance deleted from registry");
+                            config.AgentInstanceId = string.Empty;
+                            await configService.SaveStateAsync(config);
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete agent instance {InstanceId} -- will continue with blueprint deletion", config.AgentInstanceId);
+                        }
+                    }
                 }
 
                 // Delete instances first (warn and continue on failure)
@@ -564,6 +599,7 @@ public class CleanupCommand
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
         FileInfo? configFile,
+        GraphApiService? graphApiService = null,
         string? correlationId = null)
     {
         var cleanupSucceeded = false;
@@ -587,6 +623,8 @@ public class CleanupCommand
             logger.LogInformation("WARNING: ALL RESOURCES WILL BE DELETED:");
             if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
                 logger.LogInformation("    Blueprint Application: {BlueprintId}", config.AgentBlueprintId);
+            if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                logger.LogInformation("    Agent Registry Instance: {InstanceId}", config.AgentInstanceId);
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                 logger.LogInformation("    Agent Identity Application: {IdentityId}", config.AgenticAppId);
             if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
@@ -615,6 +653,35 @@ public class CleanupCommand
             }
 
             logger.LogInformation("Starting complete cleanup...");
+
+            // 1a. For non-DW blueprint flow: delete Agent Registry instance before blueprint
+            if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
+            {
+                if (graphApiService is null)
+                {
+                    logger.LogWarning("Agent instance deletion skipped (GraphApiService not available). Delete instance {InstanceId} manually via the M365 Admin Center.", config.AgentInstanceId);
+                    hasFailures = true;
+                }
+                else
+                {
+                    logger.LogInformation("Deleting agent instance {InstanceId} from Agent Registry...", config.AgentInstanceId);
+                    var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
+                        config.TenantId,
+                        config.AgentInstanceId,
+                        CancellationToken.None);
+
+                    if (instanceDeleted)
+                    {
+                        logger.LogInformation("Agent instance deleted from registry");
+                        config.AgentInstanceId = string.Empty;
+                    }
+                    else
+                    {
+                        logger.LogWarning("Failed to delete agent instance {InstanceId} -- will continue with blueprint deletion", config.AgentInstanceId);
+                        hasFailures = true;
+                    }
+                }
+            }
 
             // 1. Delete federated credentials from agent blueprint (if exists)
             if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))

@@ -75,6 +75,62 @@ internal static class NonDwBlueprintSetupOrchestrator
     }
 
     /// <summary>
+    /// Checks whether any required CLI app permissions are missing from the tenant's consent grant.
+    /// If so, lists them, asks the user for confirmation, and grants consent if confirmed.
+    /// Skipped when ClientAppId is not configured (consent is not applicable).
+    /// </summary>
+    private static async Task EnsureConsentWithPromptAsync(SetupContext ctx)
+    {
+        var clientAppId = ctx.Config.ClientAppId;
+        var tenantId = ctx.Config.TenantId;
+
+        if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
+            return;
+
+        List<string> unconsented;
+        try
+        {
+            unconsented = await ctx.ClientAppValidator.GetUnconsentedRequiredPermissionsAsync(
+                clientAppId, tenantId, ctx.CancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ctx.Logger.LogDebug(ex, "Could not check consent status (non-fatal): {Message}", ex.Message);
+            return;
+        }
+
+        if (unconsented.Count == 0)
+            return;
+
+        ctx.Logger.LogInformation("");
+        ctx.Logger.LogInformation("The following required permissions are not yet consented for your client app ({ClientAppId}):", clientAppId);
+        foreach (var p in unconsented)
+            ctx.Logger.LogInformation("  - {Permission}", p);
+
+        ctx.Logger.LogInformation("");
+        Console.Write("Grant admin consent for these permissions now? [y/N]: ");
+        var answer = Console.ReadLine();
+
+        if (!string.Equals(answer?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Logger.LogWarning("Admin consent not granted. Setup may fail if these permissions are required.");
+            return;
+        }
+
+        ctx.Logger.LogInformation("Granting admin consent...");
+        try
+        {
+            await ctx.ClientAppValidator.GrantConsentForPermissionsAsync(
+                clientAppId, unconsented, tenantId, ctx.CancellationToken);
+            ctx.Logger.LogInformation("Admin consent granted for: {Permissions}", string.Join(", ", unconsented));
+        }
+        catch (Exception ex)
+        {
+            ctx.Logger.LogWarning(ex, "Could not grant admin consent (non-fatal): {Message}", ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Executes the full non-DW blueprint setup:
     ///   1. Requirements validation
     ///   2. Blueprint creation (shared with DW)
@@ -84,11 +140,28 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// <returns>Exit code: 0 on success, 1 on fatal failure.</returns>
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
+        ctx.Results.IsNonDwBlueprintFlow = true;
         ctx.Logger.LogInformation("Running non-DW blueprint setup... (TraceId: {TraceId})", ctx.CorrelationId);
         ctx.Logger.LogInformation("");
 
         try
         {
+            if (ctx.AgentInstanceOnly)
+            {
+                ctx.Logger.LogInformation("NOTE: --agent-instance-only flag set. Skipping requirements, blueprint, and permissions steps.");
+                ctx.Logger.LogInformation("");
+                // Populate results so the summary shows previous steps as already completed
+                ctx.Results.BlueprintCreated = true;
+                ctx.Results.BlueprintAlreadyExisted = true;
+                ctx.Results.BlueprintId = ctx.Config.AgentBlueprintId;
+                ctx.Results.BatchPermissionsPhase2Completed = true;
+                ctx.Results.AdminConsentGranted = true;
+                // Still check and prompt for consent even when skipping other steps — consent
+                // is required for the registration call and may have been missed in a prior run.
+                await EnsureConsentWithPromptAsync(ctx);
+                goto registerAgentInstance;
+            }
+
             // Step 1: Requirements validation
             if (!ctx.SkipRequirements)
             {
@@ -108,6 +181,12 @@ internal static class NonDwBlueprintSetupOrchestrator
             {
                 ctx.Logger.LogInformation("NOTE: Requirements validation skipped (--skip-requirements flag used)");
             }
+
+            // Step 1.5: Consent check — detect missing consent for required permissions and prompt.
+            // Requirements check passes even when individual scopes are missing from the grant
+            // (ValidateAdminConsentAsync only verifies that ANY required permission is consented).
+            // We surface any gap here so the user can confirm before we proceed.
+            await EnsureConsentWithPromptAsync(ctx);
 
             // Step 2: Blueprint creation (shared with DW)
             await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
@@ -140,37 +219,46 @@ internal static class NonDwBlueprintSetupOrchestrator
             await ctx.ConfigService.SaveStateAsync(ctx.Config);
 
             // Step 4: Register Agent Instance via Agent Instance Graph API.
+            registerAgentInstance:
             ctx.Logger.LogInformation("");
-            ctx.Logger.LogInformation("Registering agent instance...");
 
-            var agentDisplayName = ctx.Config.AgentIdentityDisplayName
-                ?? ctx.Config.WebAppName
-                ?? "Agent";
-
-            var instanceId = await ctx.GraphApiService.RegisterAgentInstanceAsync(
-                ctx.Config.TenantId!,
-                agentDisplayName,
-                ctx.Config.AgentBlueprintId,
-                ctx.CancellationToken);
-
-            if (instanceId is not null)
+            if (!string.IsNullOrWhiteSpace(ctx.Config.AgentInstanceId))
             {
-                ctx.Config.AgentInstanceId = instanceId;
-                await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                ctx.Logger.LogInformation("Agent instance already registered (ID: {InstanceId}). Skipping.", ctx.Config.AgentInstanceId);
                 ctx.Results.AgentInstanceRegistered = true;
-                ctx.Results.AgentInstanceId = instanceId;
-                ctx.Logger.LogInformation("Agent instance registered (ID: {InstanceId})", instanceId);
+                ctx.Results.AgentInstanceId = ctx.Config.AgentInstanceId;
             }
             else
             {
-                ctx.Results.Errors.Add(
-                    "Agent instance registration failed. " +
-                    "Ensure you have the Agent Registry Administrator role and " +
-                    "AgentInstance.ReadWrite.All is consented.");
-                ctx.Logger.LogError(
-                    "Agent instance registration failed. " +
-                    "Ensure you have the Agent Registry Administrator role and " +
-                    "AgentInstance.ReadWrite.All is consented.");
+                ctx.Logger.LogInformation("Registering agent instance...");
+
+                var agentDisplayName = ctx.Config.AgentIdentityDisplayName
+                    ?? ctx.Config.WebAppName
+                    ?? "Agent";
+
+                var instanceId = await ctx.GraphApiService.RegisterAgentInstanceAsync(
+                    ctx.Config.TenantId!,
+                    agentDisplayName,
+                    ctx.Config.AgentBlueprintId,
+                    ctx.CancellationToken);
+
+                if (instanceId is not null)
+                {
+                    ctx.Config.AgentInstanceId = instanceId;
+                    await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                    ctx.Results.AgentInstanceRegistered = true;
+                    ctx.Results.AgentInstanceId = instanceId;
+                    ctx.Logger.LogInformation("Agent instance registered (ID: {InstanceId})", instanceId);
+                }
+                else
+                {
+                    ctx.Results.Errors.Add(
+                        "Agent instance registration failed. " +
+                        "Ensure you have the 'Agent Registry Administrator' role in Entra ID.");
+                    ctx.Logger.LogError(
+                        "Agent instance registration failed. " +
+                        "Ensure you have the 'Agent Registry Administrator' role in Entra ID.");
+                }
             }
         }
         catch (Agent365Exception ex)

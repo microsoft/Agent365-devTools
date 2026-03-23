@@ -27,4 +27,15 @@ public interface IClientAppValidator
     /// <param name="tenantId">The tenant ID</param>
     /// <param name="ct">Cancellation token</param>
     Task EnsureRedirectUrisAsync(string clientAppId, string tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the subset of required permissions that are not yet present in the client app's
+    /// oauth2PermissionGrant (i.e. not consented). Used to prompt the user before granting.
+    /// </summary>
+    Task<List<string>> GetUnconsentedRequiredPermissionsAsync(string clientAppId, string tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Extends the client app's oauth2PermissionGrant to include the given permissions.
+    /// </summary>
+    Task GrantConsentForPermissionsAsync(string clientAppId, List<string> permissions, string tenantId, CancellationToken ct = default);
 }

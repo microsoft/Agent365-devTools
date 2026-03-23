@@ -41,6 +41,9 @@ internal sealed class SetupContext
     /// <summary>When true, requirements validation is skipped.</summary>
     public bool SkipRequirements { get; }
 
+    /// <summary>When true, only the agent instance registration step is run (non-DW blueprint only).</summary>
+    public bool AgentInstanceOnly { get; }
+
     /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
     /// Null in production — injected as a no-op in tests to avoid spawning 'az account show'.
@@ -81,6 +84,7 @@ internal sealed class SetupContext
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         IClientAppValidator clientAppValidator,
+        bool agentInstanceOnly = false,
         Func<Task<string?>>? loginHintResolver = null)
     {
         Config = config;
@@ -92,6 +96,7 @@ internal sealed class SetupContext
         SkipInfrastructure = skipInfrastructure;
         SkipRequirements = skipRequirements;
         CancellationToken = cancellationToken;
+        AgentInstanceOnly = agentInstanceOnly;
         ConfigService = configService;
         Executor = executor;
         BotConfigurator = botConfigurator;

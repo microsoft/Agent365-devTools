@@ -92,6 +92,22 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceUri = "https://graph.microsoft.com";
 
     /// <summary>
+    /// OAuth2 v2 scope used to acquire a fresh Graph token via az CLI's scope-based
+    /// acquisition path. Requesting .default forces az CLI to bypass its resource-keyed
+    /// token cache and obtain a new access token from AAD that reflects the user's
+    /// current role assignments and consented permissions.
+    /// </summary>
+    public const string MicrosoftGraphDefaultScope = "https://graph.microsoft.com/.default";
+
+    /// <summary>
+    /// Well-known application ID for the Microsoft Azure CLI.
+    /// All GraphApiService calls use az CLI's delegated token; scopes that need to appear
+    /// in that token's <c>scp</c> claim must be consented on this application, not only on
+    /// the custom client app registered by the user.
+    /// </summary>
+    public const string AzureCliAppId = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
+
+    /// <summary>
     /// Redirect URI registered on the blueprint application to support the /v2.0/adminconsent flow.
     /// AAD requires at least one redirect URI on the application — AADSTS500113 is returned otherwise.
     /// This is the standard Entra Portal redirect URI used for admin consent; it shows a generic
@@ -174,7 +190,8 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
-        "Directory.Read.All"
+        "Directory.Read.All",
+        "AgentInstance.ReadWrite.All"  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
         // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
         // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
         // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded
