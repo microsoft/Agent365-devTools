@@ -205,7 +205,7 @@ public static class AuthenticationConstants
     /// <summary>
     /// AADSTS53003: Access blocked by Conditional Access Policy.
     /// MSAL throws MsalServiceException with ErrorCode "access_denied" and this code in the Message.
-    /// Device code flow bypasses CAP — the CLI falls back automatically when this is detected.
+    /// Device code flow may succeed depending on your tenant's Conditional Access Policy configuration.
     /// Reference: https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes
     /// </summary>
     public const string ConditionalAccessPolicyBlockedError = "AADSTS53003";
@@ -213,6 +213,7 @@ public static class AuthenticationConstants
     /// <summary>
     /// AADSTS53000: Device does not comply with device compliance policy (a subset of CAP).
     /// Treated identically to AADSTS53003 for fallback purposes.
+    /// Device code flow may succeed depending on your tenant's Conditional Access Policy configuration.
     /// </summary>
     public const string DeviceCompliancePolicyBlockedError = "AADSTS53000";
 }

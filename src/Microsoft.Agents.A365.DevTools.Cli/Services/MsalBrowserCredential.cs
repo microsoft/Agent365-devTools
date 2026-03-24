@@ -425,12 +425,15 @@ public sealed class MsalBrowserCredential : TokenCredential
             ex.Message.Contains(AuthenticationConstants.DeviceCompliancePolicyBlockedError, StringComparison.Ordinal))
         {
             // Conditional Access Policy (AADSTS53003) or device compliance policy (AADSTS53000)
-            // blocks interactive browser/WAM authentication. Device code flow is not subject to
-            // these policies — fall back automatically so the user is not blocked.
+            // blocks interactive browser/WAM authentication. Device code flow may still be affected
+            // by these policies depending on your tenant configuration — attempting fallback.
+            var aadErrorCode = ex.Message.Contains(AuthenticationConstants.ConditionalAccessPolicyBlockedError, StringComparison.Ordinal)
+                ? AuthenticationConstants.ConditionalAccessPolicyBlockedError
+                : AuthenticationConstants.DeviceCompliancePolicyBlockedError;
             _logger?.LogWarning(
                 "Interactive authentication blocked by Conditional Access Policy ({ErrorCode}). " +
                 "Falling back to device code authentication.",
-                ex.ErrorCode);
+                aadErrorCode);
             return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
         }
         catch (MsalException ex)

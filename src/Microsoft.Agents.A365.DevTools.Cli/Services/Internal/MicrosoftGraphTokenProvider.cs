@@ -160,7 +160,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 if (string.IsNullOrWhiteSpace(token) && !useDeviceCode && IsConditionalAccessError(result))
                 {
                     _logger.LogWarning(
-                        "PowerShell browser authentication blocked by Conditional Access Policy. " +
+                        "PowerShell browser authentication blocked by a Conditional Access or device compliance policy (AADSTS53003/AADSTS53000). " +
                         "Retrying with device code authentication...");
                     var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
                     var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
