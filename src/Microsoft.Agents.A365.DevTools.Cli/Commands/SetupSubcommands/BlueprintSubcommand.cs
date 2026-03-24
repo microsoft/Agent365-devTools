@@ -1283,7 +1283,7 @@ internal static class BlueprintSubcommand
             {
                 ficError = ficCreateResult?.ErrorMessage
                     ?? "Federated Identity Credential creation failed";
-                logger.LogWarning("[WARN] Federated Identity Credential creation failed - you may need to create it manually in Entra ID");
+                logger.LogWarning("Federated Identity Credential creation failed - you may need to create it manually in Entra ID");
                 logger.LogWarning("  Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' permission consented.");
             }
         }
@@ -1718,15 +1718,17 @@ internal static class BlueprintSubcommand
 
             var addPasswordUrl = $"https://graph.microsoft.com/v1.0/applications/{blueprintObjectId}/addPassword";
             var secretBodyJson = secretBody.ToJsonString();
-            // Retry on 404: newly created Agent Blueprints may not yet be visible to all Graph
-            // API replicas due to Entra eventual consistency. Retry with backoff until propagated.
+            // Retry on 404 (blueprint not yet visible on all replicas) and 403 (owner propagation
+            // lag — the blueprint was just created with owners@odata.bind, and Entra may not yet
+            // recognize the caller as owner when addPassword is called immediately after creation).
             var retryHelper = new RetryHelper(logger);
             var passwordResponse = await retryHelper.ExecuteWithRetryAsync(
                 async token => await httpClient.PostAsync(
                     addPasswordUrl,
                     new StringContent(secretBodyJson, System.Text.Encoding.UTF8, "application/json"),
                     token),
-                response => response.StatusCode == System.Net.HttpStatusCode.NotFound,
+                response => response.StatusCode == System.Net.HttpStatusCode.NotFound
+                         || response.StatusCode == System.Net.HttpStatusCode.Forbidden,
                 maxRetries: 5,
                 baseDelaySeconds: 5,
                 cancellationToken: ct);

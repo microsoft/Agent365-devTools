@@ -194,16 +194,16 @@ internal static class AddPermissionsSubcommand
 
                     if (success)
                     {
-                        logger.LogInformation("  [SUCCESS] Successfully added permissions for {ResourceAppId}", resourceAppId);
+                        logger.LogInformation("  Added permissions for {ResourceAppId}", resourceAppId);
                     }
                     else
                     {
-                        logger.LogError("  [FAILED] Failed to add permissions for {ResourceAppId}", resourceAppId);
+                        logger.LogError("  Failed to add permissions for {ResourceAppId}", resourceAppId);
                     }
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError("  [ERROR] Exception adding permissions for {ResourceAppId}: {Message}", resourceAppId, ex.Message);
+                    logger.LogError("  Exception adding permissions for {ResourceAppId}: {Message}", resourceAppId, ex.Message);
                     logger.LogDebug("    {StackTrace}", ex.StackTrace);
                     success = false;
                 }
@@ -215,7 +215,7 @@ internal static class AddPermissionsSubcommand
 
                 if (success)
                 {
-                    logger.LogInformation("[SUCCESS] All permissions added successfully!");
+                    logger.LogInformation("All permissions added successfully");
                     logger.LogInformation("");
                     logger.LogInformation("  Review permissions in Azure Portal: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{AppId}", targetAppId);
                 }

@@ -160,12 +160,17 @@ public class CleanupCommand
                 logger.LogInformation("Will delete Entra ID application: {BlueprintId}", config.AgentBlueprintId);
                 logger.LogInformation("  Name: {DisplayName}", config.AgentBlueprintDisplayName);
 
-                if (config.IsNonDwBlueprint && !string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                 {
                     logger.LogInformation("");
-                    logger.LogInformation("Will also delete Agent Registry instance: {InstanceId}", config.AgentInstanceId);
+                    logger.LogInformation("Will also delete Agent Identity: {AgentId}", config.AgenticAppId);
                 }
-                else if (instances.Count > 0)
+                if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("Will also deregister Agent Instance: {InstanceId}", config.AgentInstanceId);
+                }
+                if (instances.Count > 0)
                 {
                     logger.LogInformation("");
                     logger.LogInformation("Will also delete {Count} agent instance(s) linked to this blueprint:", instances.Count);
@@ -185,8 +190,26 @@ public class CleanupCommand
                     return;
                 }
 
-                // For non-DW blueprint flow: delete Agent Registry instance before blueprint
-                if (config.IsNonDwBlueprint && !string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
+                {
+                    logger.LogInformation("Deleting agent identity {AgentId}...", config.AgenticAppId);
+                    var identityDeleted = await agentBlueprintService.DeleteAgentIdentityAsync(
+                        config.TenantId,
+                        config.AgenticAppId);
+
+                    if (identityDeleted)
+                    {
+                        logger.LogInformation("Agent identity deleted");
+                        config.AgenticAppId = string.Empty;
+                        await configService.SaveStateAsync(config);
+                    }
+                    else
+                    {
+                        logger.LogWarning("Failed to delete agent identity {AgentId} -- will continue with cleanup", config.AgenticAppId);
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
                 {
                     if (graphApiService is null)
                     {
@@ -327,6 +350,8 @@ public class CleanupCommand
 
                 config.AgentBlueprintId = string.Empty;
                 config.AgentBlueprintClientSecret = string.Empty;
+                config.AgenticAppId = string.Empty;
+                config.AgentInstanceId = string.Empty;
                 config.ResourceConsents.Clear();
 
                 await configService.SaveStateAsync(config);

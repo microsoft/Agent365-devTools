@@ -211,7 +211,7 @@ internal static class AllSubcommand
                 }
                 else
                 {
-                    logger.LogInformation("  0. [SKIPPED] Requirements validation (--skip-requirements flag used)");
+                    logger.LogInformation("  0. Skip: Requirements validation (--skip-requirements flag used)");
                 }
 
                 if (!skipInfrastructure)
@@ -220,7 +220,7 @@ internal static class AllSubcommand
                 }
                 else
                 {
-                    logger.LogInformation("  1. [SKIPPED] Azure infrastructure (--skip-infrastructure flag used)");
+                    logger.LogInformation("  1. Skip: Azure infrastructure (--skip-infrastructure flag used)");
                 }
 
                 logger.LogInformation("  2. Create agent blueprint (Entra ID application)");

@@ -28,7 +28,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckSuccess(ILogger logger, string? details = null)
     {
-        logger.LogInformation("[PASS] {Name}{Details}", Name,
+        logger.LogInformation("Pass: {Name}{Details}", Name,
             string.IsNullOrWhiteSpace(details) ? "" : $" ({details})");
     }
 
@@ -37,7 +37,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckWarning(ILogger logger, string? message = null)
     {
-        logger.LogWarning("[WARN] {Name}{Details}", Name,
+        logger.LogWarning("Warn: {Name}{Details}", Name,
             string.IsNullOrWhiteSpace(message) ? "" : $" - {message}");
     }
 
@@ -46,7 +46,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
     {
-        logger.LogError("[FAIL] {Name}", Name);
+        logger.LogError("Fail: {Name}", Name);
         logger.LogError("  Issue: {ErrorMessage}", errorMessage);
         logger.LogError("  Resolution: {ResolutionGuidance}", resolutionGuidance);
     }

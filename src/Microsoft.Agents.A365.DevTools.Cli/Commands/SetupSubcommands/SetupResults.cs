@@ -96,6 +96,18 @@ public class SetupResults
     public bool IsNonDwBlueprintFlow { get; set; }
 
     /// <summary>
+    /// Whether the Agent Identity was successfully created via the Agent Identity Graph API.
+    /// Populated by the non-DW blueprint setup flow only.
+    /// </summary>
+    public bool AgentIdentityCreated { get; set; }
+
+    /// <summary>
+    /// The Agent Identity ID returned after agent identity creation.
+    /// Non-null when <see cref="AgentIdentityCreated"/> is true.
+    /// </summary>
+    public string? AgentIdentityId { get; set; }
+
+    /// <summary>
     /// Whether the Agent Instance was successfully registered via the Agent Instance Graph API.
     /// Populated by the non-DW blueprint setup flow only.
     /// </summary>

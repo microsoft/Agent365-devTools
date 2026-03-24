@@ -84,32 +84,35 @@ internal static class SetupHelpers
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
 
-        // Completed steps — [OK] only
         logger.LogInformation("Completed Steps:");
         if (results.InfrastructureCreated)
         {
             var status = results.InfrastructureAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Infrastructure {Status}", status);
+            logger.LogInformation("  Infrastructure: {Status}", status);
         }
         if (results.BlueprintCreated)
         {
             var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
+            logger.LogInformation("  Blueprint: {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
         }
         if (results.BatchPermissionsPhase2Completed)
         {
-            logger.LogInformation("  [OK] Inheritable permissions configured and verified");
+            logger.LogInformation("  Permissions: inheritable configured and verified");
             if (results.AdminConsentGranted)
-                logger.LogInformation("  [OK] OAuth2 grants and admin consent configured");
+                logger.LogInformation("  Consent: OAuth2 grants configured");
         }
         if (results.MessagingEndpointRegistered)
         {
             var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
+            logger.LogInformation("  Messaging endpoint: {Status}", status);
+        }
+        if (results.AgentIdentityCreated)
+        {
+            logger.LogInformation("  Agent identity: created (ID: {AgentId})", results.AgentIdentityId ?? "unknown");
         }
         if (results.AgentInstanceRegistered)
         {
-            logger.LogInformation("  [OK] Agent instance registered (ID: {InstanceId})", results.AgentInstanceId ?? "unknown");
+            logger.LogInformation("  Agent instance: registered (ID: {InstanceId})", results.AgentInstanceId ?? "unknown");
         }
 
         // Action required — shown as its own section so it isn't conflated with completed work
@@ -126,7 +129,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
         // Warnings
@@ -135,7 +138,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogWarning("  {Warning}", warning);
         }
 
         logger.LogInformation("");
@@ -155,8 +158,14 @@ internal static class SetupHelpers
 
             if (results.IsNonDwBlueprintFlow && !results.AgentInstanceRegistered)
             {
-                logger.LogInformation("  - Agent Instance: Run 'a365 setup all --aiteammate false' to retry registration");
-                logger.LogInformation("    Ensure you have the 'Agent Registry Administrator' role in Entra ID");
+                logger.LogInformation("  - Agent Instance registration requires 'Agent Registry Administrator' role:");
+                logger.LogInformation("    Option A — Request the role from a tenant admin, then run:");
+                logger.LogInformation("      a365 setup all --aiteammate false --agent-instance-only");
+                logger.LogInformation("      (wait 5-15 min after role assignment for propagation)");
+                logger.LogInformation("    Option B — If you cannot get the role, share the config folder");
+                logger.LogInformation("      with an admin who has both Global Administrator and");
+                logger.LogInformation("      'Agent Registry Administrator', and ask them to run:");
+                logger.LogInformation("      a365 setup admin --config-dir \"<path-to-config-folder>\"");
             }
             else if (!results.IsNonDwBlueprintFlow && !results.MessagingEndpointRegistered)
             {
@@ -345,7 +354,7 @@ internal static class SetupHelpers
 
         if (results.AdminConsentGranted)
         {
-            logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
+            logger.LogInformation("  Consent: OAuth2 grants configured (tenant-wide)");
         }
 
         if (results.Errors.Count > 0)
@@ -353,7 +362,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
         if (results.Warnings.Count > 0)
@@ -361,7 +370,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogWarning("  {Warning}", warning);
         }
 
         logger.LogInformation("");

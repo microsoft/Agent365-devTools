@@ -192,7 +192,7 @@ public class NonDwSetupOrchestratorDryRunTests
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("SKIP") && o.ToString()!.Contains("Deployment")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Skip") && o.ToString()!.Contains("Deployment")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }

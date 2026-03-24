@@ -328,7 +328,7 @@ internal static class GetTokenSubcommand
                 return;
             }
 
-            logger.LogInformation("[SUCCESS] Token acquired successfully with scopes: {Scopes}",
+            logger.LogInformation("Token acquired successfully with scopes: {Scopes}",
                 string.Join(", ", requestedScopes));
             logger.LogInformation("");
 
@@ -437,7 +437,7 @@ internal static class GetTokenSubcommand
 
             if (result.Success)
             {
-                logger.LogInformation("  Status: [SUCCESS]");
+                logger.LogInformation("  Status: acquired");
                 logger.LogInformation("  Expires: ~{Expiry}", result.ExpiresOn?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "Unknown");
 
                 if (verbose && !string.IsNullOrWhiteSpace(result.Token))
@@ -456,7 +456,7 @@ internal static class GetTokenSubcommand
             }
             else
             {
-                logger.LogInformation("  Status: [FAILED]");
+                logger.LogInformation("  Status: failed");
                 logger.LogInformation("  Error: {Error}", result.Error ?? "Unknown error");
             }
 

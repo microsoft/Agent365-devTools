@@ -56,7 +56,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("[CREATE]") && o.ToString()!.Contains("Blueprint")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Create Blueprint") && o.ToString()!.Contains("multi-tenant")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -69,7 +69,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("[REUSE]") && o.ToString()!.Contains("existing-bp-id")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Reuse Blueprint") && o.ToString()!.Contains("existing-bp-id")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }

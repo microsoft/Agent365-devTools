@@ -43,6 +43,8 @@ internal static class NonDwBlueprintSetupOrchestrator
     {
         var displayName = config.AgentIdentityDisplayName;
         var existingBlueprint = !string.IsNullOrWhiteSpace(config.AgentBlueprintId);
+        var existingAgentId = !string.IsNullOrWhiteSpace(config.AgenticAppId);
+        var existingInstance = !string.IsNullOrWhiteSpace(config.AgentInstanceId);
 
         logger.LogInformation("Non-DW Blueprint Setup Plan (dry run — no changes will be made)");
         logger.LogInformation("");
@@ -50,25 +52,35 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Blueprint
         logger.LogInformation("  Blueprint");
         if (existingBlueprint)
-            logger.LogInformation("    [REUSE]  Blueprint           \"{DisplayName}\"  id: {BlueprintId}",
+            logger.LogInformation("    Reuse Blueprint:         \"{DisplayName}\"  id: {BlueprintId}",
                 displayName, config.AgentBlueprintId);
         else
-            logger.LogInformation("    [CREATE] Blueprint           \"{DisplayName}\"  (multi-tenant)", displayName);
-        logger.LogInformation("    [ASSIGN] API Permissions     Microsoft Graph: {GraphScopes}",
+            logger.LogInformation("    Create Blueprint:        \"{DisplayName}\"  (multi-tenant)", displayName);
+        logger.LogInformation("    Assign API Permissions:  Microsoft Graph: {GraphScopes}",
             string.Join(", ", GraphDelegatedPermissions));
-        logger.LogInformation("                                 Agent 365 Tools: {A365Scopes}",
+        logger.LogInformation("                             Agent 365 Tools: {A365Scopes}",
             string.Join(", ", Agent365ToolsDelegatedPermissions));
-        logger.LogInformation("    [CREATE] Blueprint SP        consent to permissions");
+        logger.LogInformation("    Configure Blueprint SP:  inherited permissions");
         logger.LogInformation("");
 
         // Agent Instance
         logger.LogInformation("  Agent Instance");
-        logger.LogInformation("    [CREATE] Agent ID            Blueprint Instance  tenant: {TenantId}", config.TenantId);
+        if (existingAgentId)
+            logger.LogInformation("    Reuse Agent ID:          Blueprint Instance  id: {AgentId}  tenant: {TenantId}",
+                config.AgenticAppId, config.TenantId);
+        else
+            logger.LogInformation("    Create Agent ID:         Blueprint Instance  tenant: {TenantId}",
+                config.TenantId);
         logger.LogInformation("");
 
         // Register
         logger.LogInformation("  Register");
-        logger.LogInformation("    [REGISTER] Agent Instance    via Agent Instance Graph API  (no manifest)");
+        if (existingInstance)
+            logger.LogInformation("    Reuse Agent Instance:    already registered  id: {InstanceId}",
+                config.AgentInstanceId);
+        else
+            logger.LogInformation("    Register Agent Instance: via Agent Instance Graph API  (no manifest)");
+        logger.LogInformation("             NOTE: Requires 'Agent Registry Administrator' role in Entra ID");
         logger.LogInformation("");
 
         logger.LogInformation("Run without --dry-run to execute these steps.");
@@ -99,7 +111,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             return;
         }
 
-        if (unconsented.Count == 0)
+        if (unconsented is null || unconsented.Count == 0)
             return;
 
         ctx.Logger.LogInformation("");
@@ -159,7 +171,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Still check and prompt for consent even when skipping other steps — consent
                 // is required for the registration call and may have been missed in a prior run.
                 await EnsureConsentWithPromptAsync(ctx);
-                goto registerAgentInstance;
+                goto createAgentIdentity;
             }
 
             // Step 1: Requirements validation
@@ -214,12 +226,69 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx, specs,
                 knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-            // Save state after permissions (before agent instance registration, so progress
-            // is not lost if the registration call fails).
+            // Save state after permissions (before agent identity creation, so progress
+            // is not lost if subsequent steps fail).
             await ctx.ConfigService.SaveStateAsync(ctx.Config);
 
-            // Step 4: Register Agent Instance via Agent Instance Graph API.
-            registerAgentInstance:
+            // Step 4: Create Agent Identity via Agent Identity Graph API.
+            createAgentIdentity:
+            ctx.Logger.LogInformation("");
+
+            if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
+            {
+                ctx.Logger.LogInformation("Agent identity already created (ID: {AgentId}). Skipping.", ctx.Config.AgenticAppId);
+                ctx.Results.AgentIdentityCreated = true;
+                ctx.Results.AgentIdentityId = ctx.Config.AgenticAppId;
+            }
+            else if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
+            {
+                ctx.Results.Errors.Add(
+                    "Agent identity creation failed: Blueprint client secret is not configured. " +
+                    "This should have been created during blueprint setup.");
+                ctx.Logger.LogError(
+                    "Agent identity creation failed: Blueprint client secret is not configured. " +
+                    "Ensure the blueprint setup completed successfully.");
+            }
+            else
+            {
+                var agentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName
+                    ?? ctx.Config.WebAppName
+                    ?? "Agent";
+
+                var clientSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.UnprotectSecret(
+                    ctx.Config.AgentBlueprintClientSecret,
+                    ctx.Config.AgentBlueprintClientSecretProtected,
+                    ctx.Logger);
+
+                ctx.Logger.LogInformation("Creating agent identity...");
+                var agentId = await ctx.GraphApiService.CreateAgentIdentityAsync(
+                    ctx.Config.TenantId!,
+                    ctx.Config.AgentBlueprintId!,
+                    clientSecret,
+                    agentIdentityDisplayName,
+                    ctx.CancellationToken);
+
+                if (agentId is not null)
+                {
+                    ctx.Config.AgenticAppId = agentId;
+                    await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                    ctx.Results.AgentIdentityCreated = true;
+                    ctx.Results.AgentIdentityId = agentId;
+                    ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
+                }
+                else
+                {
+                    ctx.Results.Errors.Add(
+                        "Agent identity creation failed. " +
+                        "Ensure the blueprint has the required permissions " +
+                        "(Application.ReadWrite.All, AgentIdentity.Create.OwnedBy).");
+                    ctx.Logger.LogError(
+                        "Agent identity creation failed. " +
+                        "Ensure the blueprint has the required permissions.");
+                }
+            }
+
+            // Step 5: Register Agent Instance via Agent Instance Graph API.
             ctx.Logger.LogInformation("");
 
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgentInstanceId))

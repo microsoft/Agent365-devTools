@@ -990,6 +990,210 @@ public class GraphApiService
             scopes: scopes);
     }
 
+    /// <summary>
+    /// Acquires an access token for the blueprint application using the OAuth 2.0 client credentials flow.
+    /// Used by <see cref="CreateAgentIdentityAsync"/> to authenticate as the blueprint application itself.
+    /// </summary>
+    public virtual async Task<string?> GetBlueprintAccessTokenAsync(
+        string tenantId,
+        string clientId,
+        string clientSecret,
+        CancellationToken ct,
+        string? correlationId = null)
+    {
+        var effectiveCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+            ? HttpClientFactory.GenerateCorrelationId()
+            : correlationId;
+
+        try
+        {
+            _logger.LogDebug("Acquiring blueprint access token via client credentials (CorrelationId: {Id})", effectiveCorrelationId);
+
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
+            var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
+
+            const int maxRetries = 5;
+            const int baseDelaySeconds = 5;
+
+            for (int attempt = 0; attempt < maxRetries; attempt++)
+            {
+                // FormUrlEncodedContent is a one-shot stream — must be recreated per attempt.
+                using var requestBody = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("client_id", clientId),
+                    new KeyValuePair<string, string>("client_secret", clientSecret),
+                    new KeyValuePair<string, string>("scope", "https://graph.microsoft.com/.default"),
+                    new KeyValuePair<string, string>("grant_type", "client_credentials"),
+                });
+
+                using var response = await httpClient.PostAsync(tokenEndpoint, requestBody, ct);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var responseContent = await response.Content.ReadAsStringAsync(ct);
+                    using var tokenDoc = JsonDocument.Parse(responseContent);
+                    return tokenDoc.RootElement.GetProperty("access_token").GetString();
+                }
+
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
+
+                // AADSTS7000215 means the credential exists in AAD but is not yet visible on this
+                // replica — same eventual consistency window as object replication. Retry with backoff.
+                var isCredentialPropagationLag = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                    && errorContent.Contains("AADSTS7000215", StringComparison.OrdinalIgnoreCase);
+
+                if (!isCredentialPropagationLag || attempt == maxRetries - 1)
+                {
+                    _logger.LogError("Failed to acquire blueprint access token: {Status} - {Error}",
+                        response.StatusCode, errorContent);
+                    if (errorContent.Contains("invalid_client", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogError("Invalid client credentials — verify the blueprint client secret in a365.generated.config.json is correct and not expired.");
+                    }
+                    return null;
+                }
+
+                var delaySecs = Math.Min(baseDelaySeconds * (int)Math.Pow(2, attempt), 60);
+                _logger.LogInformation(
+                    "Blueprint credential not yet propagated (AADSTS7000215) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
+                    delaySecs, attempt + 1, maxRetries - 1);
+                await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception acquiring blueprint access token: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Creates an Agent Identity in the tenant by instantiating the blueprint.
+    /// Authenticates as the blueprint application (client credentials), then calls
+    /// POST /beta/serviceprincipals/Microsoft.Graph.AgentIdentity.
+    /// Saves the returned identity ID as <c>AgenticAppId</c> in the config.
+    /// </summary>
+    /// <returns>The agent identity ID on success, null on failure.</returns>
+    public virtual async Task<string?> CreateAgentIdentityAsync(
+        string tenantId,
+        string blueprintId,
+        string blueprintClientSecret,
+        string displayName,
+        CancellationToken ct)
+    {
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+
+        if (string.IsNullOrWhiteSpace(blueprintClientSecret))
+        {
+            _logger.LogError("Blueprint client secret is required to create agent identity. " +
+                "Ensure blueprint setup completed successfully.");
+            return null;
+        }
+
+        var appToken = await GetBlueprintAccessTokenAsync(
+            tenantId, blueprintId, blueprintClientSecret, ct, correlationId);
+
+        if (string.IsNullOrWhiteSpace(appToken))
+        {
+            _logger.LogError("Failed to acquire blueprint access token for agent identity creation.");
+            return null;
+        }
+
+        // Optionally include the current user as sponsor.
+        string? currentUserId = null;
+        try
+        {
+            currentUserId = await GetCurrentUserObjectIdAsync(tenantId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve current user ID for sponsor (non-fatal): {Message}", ex.Message);
+        }
+
+        try
+        {
+            _logger.LogDebug("Creating agent identity (CorrelationId: {Id})", correlationId);
+
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(appToken, correlationId: correlationId);
+
+            var body = new JsonObject
+            {
+                ["displayName"] = displayName,
+                ["agentAppId"] = blueprintId,
+            };
+
+            if (!string.IsNullOrWhiteSpace(currentUserId))
+            {
+                body["sponsors@odata.bind"] = new JsonArray
+                {
+                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                };
+            }
+
+            using var content = new StringContent(
+                body.ToJsonString(),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            using var response = await httpClient.PostAsync(
+                "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity",
+                content,
+                ct);
+
+            // Some tenants reject sponsor binding — retry without it.
+            if (!response.IsSuccessStatusCode && response.StatusCode == System.Net.HttpStatusCode.BadRequest
+                && !string.IsNullOrWhiteSpace(currentUserId))
+            {
+                _logger.LogDebug("Agent identity creation with sponsor failed (400); retrying without sponsor.");
+                body.Remove("sponsors@odata.bind");
+                using var content2 = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                using var response2 = await httpClient.PostAsync(
+                    "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity",
+                    content2,
+                    ct);
+
+                if (!response2.IsSuccessStatusCode)
+                {
+                    var err = await response2.Content.ReadAsStringAsync(ct);
+                    _logger.LogError("Failed to create agent identity: {Status} - {Error}", response2.StatusCode, err);
+                    return null;
+                }
+
+                var json2 = await response2.Content.ReadAsStringAsync(ct);
+                using var doc2 = JsonDocument.Parse(json2);
+                var id2 = doc2.RootElement.GetProperty("id").GetString();
+                _logger.LogInformation("Agent identity created (ID: {Id})", id2);
+                return id2;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var err = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogError("Failed to create agent identity: {Status} - {Error}", response.StatusCode, err);
+                if (err.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
+                    err.Contains("calling identity type", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError("Authorization denied. Ensure the blueprint application has " +
+                        "Application.ReadWrite.All and AgentIdentity.Create.OwnedBy application permissions.");
+                }
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            var id = doc.RootElement.GetProperty("id").GetString();
+            _logger.LogInformation("Agent identity created (ID: {Id})", id);
+            return id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create agent identity: {Message}", ex.Message);
+            return null;
+        }
+    }
+
     private static string? ExtractAgentInstanceId(GraphResponse response)
     {
         if (response.Json == null) return null;

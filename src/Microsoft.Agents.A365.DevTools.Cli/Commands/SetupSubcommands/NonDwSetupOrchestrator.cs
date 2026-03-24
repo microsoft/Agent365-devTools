@@ -55,13 +55,13 @@ internal static class NonDwSetupOrchestrator
 
         // App Registration
         logger.LogInformation("  App Registration");
-        logger.LogInformation("    [CREATE] App Registration    \"{DisplayName}\"  (multi-tenant)", displayName);
-        logger.LogInformation("    [CREATE] Client Secret       expires in 2 years");
-        logger.LogInformation("    [CONFIG] API Identifier URI  api://botid-<appId>");
-        logger.LogInformation("    [CREATE] Scope               access_as_user");
-        logger.LogInformation("    [CONFIG] Pre-authorize       Teams desktop ({TeamsDesktop})", TeamsDesktopMobileClientId);
+        logger.LogInformation("    Create App Registration:    \"{DisplayName}\"  (multi-tenant)", displayName);
+        logger.LogInformation("    Create Client Secret:       expires in 2 years");
+        logger.LogInformation("    Configure API Identifier URI: api://botid-<appId>");
+        logger.LogInformation("    Create Scope:               access_as_user");
+        logger.LogInformation("    Configure Pre-authorization: Teams desktop ({TeamsDesktop})", TeamsDesktopMobileClientId);
         logger.LogInformation("                                 Teams web     ({TeamsWeb})", TeamsWebClientId);
-        logger.LogInformation("    [CONFIG] API Permissions     Microsoft Graph: {GraphScopes}",
+        logger.LogInformation("    Assign API Permissions:      Microsoft Graph: {GraphScopes}",
             string.Join(", ", GraphDelegatedPermissions));
         logger.LogInformation("                                 Agent 365 Tools: {A365Scopes}",
             string.Join(", ", Agent365ToolsDelegatedPermissions));
@@ -73,37 +73,37 @@ internal static class NonDwSetupOrchestrator
         if (config.NeedDeployment && !string.IsNullOrWhiteSpace(config.WebAppName))
         {
             var acrName = DeriveAcrName(config.WebAppName);
-            logger.LogInformation("    [CREATE] Container Registry  {AcrName}  sku: Basic", acrName);
-            logger.LogInformation("    [CREATE] App Service Plan    {PlanName}  sku: {Sku}  Linux",
+            logger.LogInformation("    Create Container Registry:  {AcrName}  sku: Basic", acrName);
+            logger.LogInformation("    Create App Service Plan:    {PlanName}  sku: {Sku}  Linux",
                 config.AppServicePlanName, string.IsNullOrWhiteSpace(config.AppServicePlanSku)
                     ? ConfigConstants.DefaultAppServicePlanSku
                     : config.AppServicePlanSku);
-            logger.LogInformation("    [CREATE] Web App             {WebAppName}  Docker Linux", config.WebAppName);
+            logger.LogInformation("    Create Web App:             {WebAppName}  Docker Linux", config.WebAppName);
         }
         else
         {
-            logger.LogInformation("    [SKIP]   Deployment infrastructure (needDeployment is false)");
+            logger.LogInformation("    Skip Deployment infrastructure: needDeployment is false");
         }
 
         if (config.NeedAzureOpenAI)
         {
             var aoaiName = config.AzureOpenAIName ?? $"{displayName}-aoai";
             var aoaiLocation = config.AzureOpenAILocation ?? config.Location;
-            logger.LogInformation("    [CREATE] Azure OpenAI        {AoaiName}  location: {Location}",
+            logger.LogInformation("    Create Azure OpenAI:        {AoaiName}  location: {Location}",
                 aoaiName, aoaiLocation);
             if (!string.IsNullOrWhiteSpace(config.AzureOpenAIModelDeploymentName))
-                logger.LogInformation("    [DEPLOY] Model               {ModelName}", config.AzureOpenAIModelDeploymentName);
+                logger.LogInformation("    Deploy Model:               {ModelName}", config.AzureOpenAIModelDeploymentName);
         }
 
         logger.LogInformation("");
 
         // Register Messaging Endpoint
         logger.LogInformation("  Register Messaging Endpoint");
-        logger.LogInformation("    [CREATE] Azure Bot           \"{DisplayName}\"  rg: {ResourceGroup}  sku: F0",
+        logger.LogInformation("    Create Azure Bot:           \"{DisplayName}\"  rg: {ResourceGroup}  sku: F0",
             displayName, rg);
-        logger.LogInformation("    [CONFIG] Messaging Endpoint  {Endpoint}", messagingEndpoint);
-        logger.LogInformation("    [CREATE] Teams Channel");
-        logger.LogInformation("    [CREATE] OAuth Connection    {ConnectionName}", OboConnectionName);
+        logger.LogInformation("    Configure Messaging Endpoint: {Endpoint}", messagingEndpoint);
+        logger.LogInformation("    Create Teams Channel");
+        logger.LogInformation("    Create OAuth Connection:    {ConnectionName}", OboConnectionName);
         logger.LogInformation("                                 scopes: api://botid-<appId>/access_as_user");
         logger.LogInformation("                                 tokenExchangeUrl: api://botid-<appId>");
         logger.LogInformation("");

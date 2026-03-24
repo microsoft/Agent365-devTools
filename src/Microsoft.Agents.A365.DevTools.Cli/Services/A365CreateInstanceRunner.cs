@@ -100,7 +100,7 @@ public sealed class A365CreateInstanceRunner
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[WARN] Could not parse existing generated config; starting fresh");
+                _logger.LogWarning(ex, "Could not parse existing generated config; starting fresh");
             }
         }
 
@@ -230,21 +230,19 @@ public sealed class A365CreateInstanceRunner
 
             if (string.IsNullOrWhiteSpace(agenticAppId))
             {
-                // Create new agent identity
-                var identityResult = await CreateAgentIdentityAsync(
+                // Create new agent identity via GraphApiService (shared with non-DW setup flow)
+                agenticAppId = await _graphService.CreateAgentIdentityAsync(
                     tenantId,
                     agentBlueprintId!,
                     agentBlueprintClientSecret!,
                     agentIdentityDisplayName,
                     cancellationToken);
 
-                if (!identityResult.success)
+                if (string.IsNullOrWhiteSpace(agenticAppId))
                 {
                     _logger.LogError("Failed to create agent identity");
                     return false;
                 }
-
-                agenticAppId = identityResult.identityId;
                 SetInstanceField(instance, "AgenticAppId", agenticAppId);
                 await SaveInstanceAsync(generatedConfigPath, instance, cancellationToken);
                 
@@ -430,230 +428,6 @@ public sealed class A365CreateInstanceRunner
         _logger.LogInformation("All phases complete. Agent 365 instance is ready.");
 
         return true;
-    }
-
-    /// <summary>
-    /// Create Agent Identity using Microsoft Graph API
-    /// Replaces createAgenticUser.ps1 (identity creation part)
-    /// IMPORTANT: Uses blueprint client credentials for authentication (application permissions required)
-    /// </summary>
-    private async Task<(bool success, string? identityId)> CreateAgentIdentityAsync(
-        string tenantId,
-        string agentBlueprintId,
-        string agentBlueprintClientSecret,
-        string displayName,
-        CancellationToken ct)
-    {
-        // Generate correlation ID at workflow entry point
-        var correlationId = HttpClientFactory.GenerateCorrelationId();
-
-        try
-        {
-            _logger.LogInformation("Creating Agent Identity using Graph API (CorrelationId: {CorrelationId})...", correlationId);
-            _logger.LogInformation("  - Display Name: {Name}", displayName);
-            _logger.LogInformation("  - Agent Blueprint ID: {Id}", agentBlueprintId);
-            _logger.LogInformation("  - Authenticating using blueprint client credentials...");
-
-            // Validate that we have client secret
-            if (string.IsNullOrWhiteSpace(agentBlueprintClientSecret))
-            {
-                _logger.LogError("Blueprint client secret is required to create agent identity");
-                _logger.LogError("The client secret should have been created during blueprint setup");
-                return (false, null);
-            }
-
-            // Get access token using client credentials flow (blueprint ID + secret)
-            string? accessToken = await GetBlueprintAccessTokenAsync(
-                tenantId,
-                agentBlueprintId,
-                agentBlueprintClientSecret,
-                ct,
-                correlationId: correlationId);
-
-            if (string.IsNullOrWhiteSpace(accessToken))
-            {
-                _logger.LogError("Failed to acquire access token using blueprint credentials");
-                return (false, null);
-            }
-
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(accessToken, correlationId: correlationId);
-
-            // Get current user for sponsor (optional - use delegated token for this)
-            string? currentUserId = null;
-            try
-            {
-                // Use Azure CLI token to get current user (this requires delegated context)
-                var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
-                if (!string.IsNullOrWhiteSpace(delegatedToken))
-                {
-                    using var delegatedClient = HttpClientFactory.CreateAuthenticatedClient(delegatedToken, correlationId: correlationId);
-
-                    var meResponse = await delegatedClient.GetAsync("https://graph.microsoft.com/v1.0/me", ct);
-                    if (meResponse.IsSuccessStatusCode)
-                    {
-                        var meJson = await meResponse.Content.ReadAsStringAsync(ct);
-                        var me = JsonNode.Parse(meJson)!.AsObject();
-                        currentUserId = me["id"]!.GetValue<string>();
-                        _logger.LogInformation("  - Current user ID (sponsor): {UserId}", currentUserId);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to get current user ID for sponsor, will create without sponsor");
-            }
-
-            // Create agent identity via service principal endpoint
-            var createIdentityUrl = "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
-            var identityBody = new JsonObject
-            {
-                ["displayName"] = displayName,
-                ["agentAppId"] = agentBlueprintId
-            };
-
-            // Add sponsor if we have current user ID
-            if (!string.IsNullOrWhiteSpace(currentUserId))
-            {
-                identityBody["sponsors@odata.bind"] = new JsonArray
-                {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
-                };
-            }
-
-            _logger.LogInformation("  - Sending request to create agent identity...");
-            var identityResponse = await httpClient.PostAsync(
-                createIdentityUrl,
-                new StringContent(identityBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
-
-            // Handle case where sponsor is not supported (fallback without sponsor)
-            if (!identityResponse.IsSuccessStatusCode)
-            {
-                var errorContent = await identityResponse.Content.ReadAsStringAsync(ct);
-                
-                // Check if error is due to calling identity type
-                if (errorContent.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
-                    errorContent.Contains("calling identity type", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogError("Failed to create agent identity: Authorization denied");
-                    _logger.LogError("This usually means the blueprint application doesn't have the required permissions");
-                    _logger.LogError("");
-                    _logger.LogError("REQUIRED PERMISSIONS:");
-                    _logger.LogError("  - Application.ReadWrite.All (Application permission)");
-                    _logger.LogError("  - AgentIdentity.Create.OwnedBy (Application permission)");
-                    _logger.LogError("");
-                    return (false, null);
-                }
-                
-                if (identityResponse.StatusCode == System.Net.HttpStatusCode.BadRequest &&
-                    !string.IsNullOrWhiteSpace(currentUserId))
-                {
-                    _logger.LogWarning("Agent Identity creation with sponsor failed, retrying without sponsor...");
-                    
-                    // Remove sponsor and try again
-                    identityBody.Remove("sponsors@odata.bind");
-                    
-                    identityResponse = await httpClient.PostAsync(
-                        createIdentityUrl,
-                        new StringContent(identityBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                        ct);
-                    
-                    if (!identityResponse.IsSuccessStatusCode)
-                    {
-                        errorContent = await identityResponse.Content.ReadAsStringAsync(ct);
-                    }
-                }
-            }
-
-            if (!identityResponse.IsSuccessStatusCode)
-            {
-                var errorContent = await identityResponse.Content.ReadAsStringAsync(ct);
-                _logger.LogError("Failed to create agent identity: {Status} - {Error}", identityResponse.StatusCode, errorContent);
-                return (false, null);
-            }
-
-            var identityJson = await identityResponse.Content.ReadAsStringAsync(ct);
-            var identity = JsonNode.Parse(identityJson)!.AsObject();
-            var identityId = identity["id"]!.GetValue<string>();
-
-            _logger.LogInformation("Agent Identity created successfully!");
-            _logger.LogInformation("  - Agent Identity ID: {Id}", identityId);
-
-            return (true, identityId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to create agent identity: {Message}", ex.Message);
-            return (false, null);
-        }
-    }
-
-    /// <summary>
-    /// Get access token for blueprint using client credentials flow (OAuth 2.0 Client Credentials Grant)
-    /// This uses the blueprint's client ID and secret to authenticate as the application itself
-    /// </summary>
-    private async Task<string?> GetBlueprintAccessTokenAsync(
-        string tenantId,
-        string clientId,
-        string clientSecret,
-        CancellationToken ct,
-        string? correlationId = null)
-    {
-        try
-        {
-            _logger.LogInformation("Acquiring access token using client credentials...");
-
-            // Use provided correlation ID or generate a new one
-            var effectiveCorrelationId = string.IsNullOrWhiteSpace(correlationId)
-                ? HttpClientFactory.GenerateCorrelationId()
-                : correlationId;
-
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
-            var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
-            
-            var requestBody = new FormUrlEncodedContent(new[]
-            {
-                new KeyValuePair<string, string>("client_id", clientId),
-                new KeyValuePair<string, string>("client_secret", clientSecret),
-                new KeyValuePair<string, string>("scope", "https://graph.microsoft.com/.default"),
-                new KeyValuePair<string, string>("grant_type", "client_credentials")
-            });
-
-            var response = await httpClient.PostAsync(tokenEndpoint, requestBody, ct);
-            
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync(ct);
-                _logger.LogError("Failed to acquire token: {Status} - {Error}", response.StatusCode, errorContent);
-                
-                if (errorContent.Contains("invalid_client", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogError("");
-                    _logger.LogError("AUTHENTICATION FAILED: Invalid client credentials");
-                    _logger.LogError("The blueprint client ID or secret may be incorrect or expired.");
-                    _logger.LogError("");
-                    _logger.LogError("TO FIX:");
-                    _logger.LogError("  1. Verify the blueprint was created successfully during setup");
-                    _logger.LogError("  2. Check that the client secret in a365.generated.config.json is correct");
-                    _logger.LogError("  3. If the secret expired, create a new one in Azure Portal");
-                    _logger.LogError("");
-                }
-                
-                return null;
-            }
-
-            var responseContent = await response.Content.ReadAsStringAsync(ct);
-            var tokenResponse = JsonNode.Parse(responseContent)!.AsObject();
-            var accessToken = tokenResponse["access_token"]!.GetValue<string>();
-            
-            _logger.LogInformation("Access token acquired successfully using client credentials");
-            return accessToken;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Exception acquiring access token: {Message}", ex.Message);
-            return null;
-        }
     }
 
     /// <summary>

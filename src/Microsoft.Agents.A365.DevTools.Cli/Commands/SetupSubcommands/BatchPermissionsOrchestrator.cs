@@ -133,6 +133,7 @@ internal static class BatchPermissionsOrchestrator
         logger.LogInformation("Configuring inheritable permissions and OAuth2 grants...");
 
         var inheritedPermissionsConfigured = false;
+        var oauth2GrantsSucceeded = false;
         Dictionary<string, (bool configured, bool alreadyExisted)> inheritedResults =
             new(StringComparer.OrdinalIgnoreCase);
 
@@ -168,7 +169,7 @@ internal static class BatchPermissionsOrchestrator
             // entitlement validation. Non-admin users always get 403 or 400 for all resources.
             if (isGlobalAdmin)
             {
-                await ConfigureOauth2GrantsAsync(
+                oauth2GrantsSucceeded = await ConfigureOauth2GrantsAsync(
                     graph, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, ct);
             }
         }
@@ -176,10 +177,18 @@ internal static class BatchPermissionsOrchestrator
         // Global Admin: grants done in Phase 2b — skip Phase 3 consent flow entirely.
         if (isGlobalAdmin)
         {
+            if (oauth2GrantsSucceeded)
+            {
+                logger.LogInformation("");
+                logger.LogInformation("Admin consent granted (tenant-wide grants configured in Phase 2).");
+                UpdateResourceConsents(config, specs, inheritedResults);
+                return (blueprintPermissionsUpdated, inheritedPermissionsConfigured, true, null);
+            }
+
             logger.LogInformation("");
-            logger.LogInformation("Admin consent granted (tenant-wide grants configured in Phase 2).");
-            UpdateResourceConsents(config, specs, inheritedResults);
-            return (blueprintPermissionsUpdated, inheritedPermissionsConfigured, true, null);
+            logger.LogWarning("OAuth2 permission grants did not complete. This may be a transient propagation " +
+                "issue when the blueprint service principal was just created.");
+            logger.LogWarning("Wait a few minutes and retry, or run: a365 setup admin --config-dir \"<path-to-config-folder>\"");
         }
 
         // --- Admin consent ---
@@ -376,7 +385,7 @@ internal static class BatchPermissionsOrchestrator
     /// Phase 2b: Creates AllPrincipals (tenant-wide) OAuth2 permission grants for all specs.
     /// Requires Global Administrator. Only called when the current user is confirmed GA.
     /// </summary>
-    private static async Task ConfigureOauth2GrantsAsync(
+    private static async Task<bool> ConfigureOauth2GrantsAsync(
         GraphApiService graph,
         string blueprintAppId,
         string tenantId,
@@ -390,9 +399,10 @@ internal static class BatchPermissionsOrchestrator
         if (!hasBlueprintSp)
         {
             logger.LogDebug("Skipping OAuth2 grants: blueprint SP was not resolved.");
-            return;
+            return false;
         }
 
+        var allSucceeded = true;
         foreach (var spec in specs)
         {
             if (!phase1Result.ResourceSpObjectIds.TryGetValue(spec.ResourceAppId, out var resourceSpId))
@@ -400,6 +410,7 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogDebug(
                     "   - Skipping OAuth2 grant for {ResourceName}: resource SP not resolved.",
                     spec.ResourceName);
+                allSucceeded = false;
                 continue;
             }
 
@@ -416,10 +427,17 @@ internal static class BatchPermissionsOrchestrator
                 permScopes);
 
             if (!grantResult)
+            {
                 logger.LogWarning("   - Failed to create OAuth2 permission grant for {ResourceName}.", spec.ResourceName);
+                allSucceeded = false;
+            }
             else
+            {
                 logger.LogInformation("   - OAuth2 grant configured for {ResourceName}", spec.ResourceName);
+            }
         }
+
+        return allSucceeded;
     }
 
     /// <summary>

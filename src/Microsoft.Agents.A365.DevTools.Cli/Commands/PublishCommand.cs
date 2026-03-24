@@ -312,7 +312,7 @@ public class PublishCommand
         logger.LogInformation("Non-DW Blueprint Publish Plan (dry run — no API calls will be made)");
         logger.LogInformation("");
         logger.LogInformation("  Agent Instance Registration");
-        logger.LogInformation("    [CALL] Agent Instance Graph API");
+        logger.LogInformation("    Call Agent Instance Graph API");
         logger.LogInformation("    Blueprint ID                 {BlueprintId}", blueprintId);
         logger.LogInformation("    Tenant                       {TenantId}", config.TenantId);
         logger.LogInformation("");

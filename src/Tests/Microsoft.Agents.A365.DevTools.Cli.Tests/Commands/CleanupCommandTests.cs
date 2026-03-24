@@ -368,8 +368,8 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// Verifies that blueprint cleanup with no instances proceeds exactly as before
-    /// (no instance deletion calls made).
+    /// Verifies that blueprint cleanup with no DW instances still deletes agent identity
+    /// when AgenticAppId is present (data-driven cleanup — no IsNonDwBlueprint flag required).
     /// </summary>
     [Fact]
     public async Task CleanupBlueprint_WithNoInstances_ProceedsAsNormal()
@@ -378,6 +378,7 @@ public class CleanupCommandTests
         var config = CreateValidConfig();
         // Capture blueprint ID before the command clears it during config save
         var expectedBlueprintId = config.AgentBlueprintId!;
+        var expectedIdentityId = config.AgenticAppId!;
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
@@ -398,10 +399,13 @@ public class CleanupCommandTests
         // Assert
         result.Should().Be(0);
 
+        // No DW agentic users to delete (no instances)
         await spyService.DidNotReceive().DeleteAgentUserAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-        await spyService.DidNotReceive().DeleteAgentIdentityAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        // Agent identity is deleted because AgenticAppId is set (data-driven, no flag required)
+        await spyService.Received(1).DeleteAgentIdentityAsync(
+            config.TenantId, expectedIdentityId, Arg.Any<CancellationToken>());
 
         await spyService.Received(1).DeleteAgentBlueprintAsync(
             config.TenantId, expectedBlueprintId, Arg.Any<CancellationToken>());
