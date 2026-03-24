@@ -420,6 +420,19 @@ public sealed class MsalBrowserCredential : TokenCredential
             _logger?.LogWarning("Browser cannot be opened on this platform: {Message}", ex.Message);
             return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
         }
+        catch (MsalServiceException ex) when (
+            ex.Message.Contains(AuthenticationConstants.ConditionalAccessPolicyBlockedError, StringComparison.Ordinal) ||
+            ex.Message.Contains(AuthenticationConstants.DeviceCompliancePolicyBlockedError, StringComparison.Ordinal))
+        {
+            // Conditional Access Policy (AADSTS53003) or device compliance policy (AADSTS53000)
+            // blocks interactive browser/WAM authentication. Device code flow is not subject to
+            // these policies — fall back automatically so the user is not blocked.
+            _logger?.LogWarning(
+                "Interactive authentication blocked by Conditional Access Policy ({ErrorCode}). " +
+                "Falling back to device code authentication.",
+                ex.ErrorCode);
+            return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
+        }
         catch (MsalException ex)
         {
             _logger?.LogDebug(ex, "MSAL authentication failed");

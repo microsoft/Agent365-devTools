@@ -4,6 +4,7 @@
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.Logging;
+using Microsoft.Identity.Client;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -247,6 +248,24 @@ public class AuthenticationService
             catch (MsalAuthenticationFailedException ex) when (useInteractiveBrowser && ex.InnerException is PlatformNotSupportedException)
             {
                 _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
+                _logger.LogInformation("Using device code authentication...");
+                _logger.LogInformation("Please sign in with your Microsoft account");
+                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
+                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
+            }
+            catch (MsalAuthenticationFailedException ex) when (
+                useInteractiveBrowser &&
+                ex.InnerException is MsalServiceException svcEx &&
+                (svcEx.Message.Contains(AuthenticationConstants.ConditionalAccessPolicyBlockedError, StringComparison.Ordinal) ||
+                 svcEx.Message.Contains(AuthenticationConstants.DeviceCompliancePolicyBlockedError, StringComparison.Ordinal)))
+            {
+                // Belt-and-suspenders: MsalBrowserCredential already handles this error internally
+                // by falling back to device code before throwing. This catch fires only when a
+                // custom credential implementation (e.g., test double) propagates the error instead
+                // of absorbing it — ensuring any future credential swap is still CAP-resilient.
+                _logger.LogWarning(
+                    "Interactive authentication blocked by Conditional Access Policy. " +
+                    "Falling back to device code flow...");
                 _logger.LogInformation("Using device code authentication...");
                 _logger.LogInformation("Please sign in with your Microsoft account");
                 var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
