@@ -185,7 +185,7 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogWarning("Re-run 'a365 setup admin' to retry once propagation is complete.");
                 var graphScopes = specs
                     .Where(s => s.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId)
-                    .SelectMany(s => s.Scopes.Select(scope => $"https://graph.microsoft.com/{scope}"))
+                    .SelectMany(s => s.Scopes.Select(scope => $"{graph.GraphBaseUrl}/{scope}"))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 var retryConsentUrl = graphScopes.Count > 0
