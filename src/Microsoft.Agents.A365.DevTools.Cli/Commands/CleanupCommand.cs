@@ -692,15 +692,7 @@ public class CleanupCommand
                 logger.LogInformation("Agent user deleted");
             }
 
-            // 5. Delete bot messaging endpoint using shared helper
-            if (!string.IsNullOrWhiteSpace(config.BotName))
-            {
-                var endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
-                if (!endpointDeleted)
-                {
-                    hasFailures = true;
-                }
-            }
+            // 5. Messaging endpoint deletion is temporarily disabled.
 
             // 6. Delete Azure resources (Web App and App Service Plan)
             if (!string.IsNullOrWhiteSpace(config.WebAppName) && !string.IsNullOrWhiteSpace(config.ResourceGroup))

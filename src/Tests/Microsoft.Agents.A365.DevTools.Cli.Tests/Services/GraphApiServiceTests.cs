@@ -14,6 +14,7 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+[Collection("GraphApiServiceTests")]
 public class GraphApiServiceTests
 {
     private readonly ILogger<GraphApiService> _mockLogger;
@@ -318,6 +319,12 @@ public class GraphApiServiceTests
         // This test verifies that CheckServicePrincipalCreationPrivilegesAsync also
         // sanitizes tokens with newlines. This method has its own token handling code
         // separate from EnsureGraphHeadersAsync.
+
+        // Overwrite the "fake-graph-token" warmed in the constructor with a token that has
+        // embedded newlines. GetGraphAccessTokenAsync returns it from the process-level cache;
+        // CheckServicePrincipalCreationPrivilegesAsync must trim it before using it in the
+        // Authorization header. Warming directly avoids spawning a real az subprocess.
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "privileges-check-token\r\n\n");
 
         // Arrange
         HttpRequestMessage? capturedRequest = null;
@@ -802,6 +809,12 @@ internal class TestHttpMessageHandler : HttpMessageHandler
         base.Dispose(disposing);
     }
 }
+
+// GraphApiServiceTests modifies the process-level AzCliHelper cache (WarmAzCliTokenCache /
+// ResetAzCliTokenCacheForTesting). DisableParallelization prevents races with other test
+// classes that also touch AzCliHelper static state.
+[CollectionDefinition("GraphApiServiceTests", DisableParallelization = true)]
+public class GraphApiServiceTestsCollection { }
 
 // Capturing handler that captures requests AFTER headers are applied
 internal class CapturingHttpMessageHandler : HttpMessageHandler

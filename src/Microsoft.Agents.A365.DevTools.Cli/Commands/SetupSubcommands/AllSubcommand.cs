@@ -428,9 +428,7 @@ internal static class AllSubcommand
                     logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
                 }
 
-                // Step 4: Messaging endpoint registration is temporarily disabled pending a backend fix.
-                // Run 'a365 setup blueprint --endpoint-only' to register the endpoint manually
-                // once the backend supports it. Documentation will be updated accordingly.
+                // Step 4: Messaging endpoint registration is temporarily disabled.
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);

@@ -289,4 +289,105 @@ public class CommandExecutorTests
     }
 
     #endregion
+
+    #region Regression Tests for Ctrl+C / process cancellation
+
+    [Fact]
+    public async Task ExecuteAsync_WhenCancelled_KillsChildProcessAndThrows()
+    {
+        // REGRESSION TEST: Verify that cancelling WaitForExitAsync kills the child process.
+        // Before the fix, Ctrl+C left a zombie az subprocess holding stdin, blocking the console.
+        // NOTE: WaitForExitAsync throws OperationCanceledException regardless of whether Kill()
+        // is called. The meaningful assertion is that no child process survives after cancellation.
+        using var cts = new CancellationTokenSource();
+
+        var command = OperatingSystem.IsWindows() ? "cmd.exe" : "sleep";
+        // Runs for 30 s — still alive when we cancel at 300 ms.
+        var args = OperatingSystem.IsWindows() ? "/c ping -n 30 127.0.0.1" : "30";
+        var childName = OperatingSystem.IsWindows() ? "ping" : "sleep";
+
+        // Snapshot existing child process IDs before we start, so we can identify ours.
+        var pidsBefore = System.Diagnostics.Process.GetProcessesByName(childName)
+            .Select(p => p.Id).ToHashSet();
+
+        var invokeTask = _executor.ExecuteAsync(command, args, cancellationToken: cts.Token);
+        await Task.Delay(300);
+        cts.Cancel();
+
+        // Must throw OperationCanceledException and must not hang.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invokeTask)
+            .WaitAsync(TimeSpan.FromSeconds(5)); // timeout proves the zombie fix: without Kill() the console would block
+
+        // Give the OS a moment to propagate the kill signal.
+        await Task.Delay(500);
+
+        // No child processes spawned by this test should still be running.
+        var zombiePids = System.Diagnostics.Process.GetProcessesByName(childName)
+            .Select(p => p.Id).Except(pidsBefore).ToList();
+
+        zombiePids.Should().BeEmpty(
+            because: "executor must kill child processes on cancellation; " +
+                     "surviving PIDs indicate the zombie-process regression is reintroduced");
+    }
+
+    [Fact]
+    public async Task ExecuteWithStreamingAsync_WhenCancelled_KillsChildProcessAndThrows()
+    {
+        // REGRESSION TEST: Same as above but for the streaming path.
+        using var cts = new CancellationTokenSource();
+
+        var command = OperatingSystem.IsWindows() ? "cmd.exe" : "sleep";
+        var args = OperatingSystem.IsWindows() ? "/c ping -n 30 127.0.0.1" : "30";
+        var childName = OperatingSystem.IsWindows() ? "ping" : "sleep";
+
+        var pidsBefore = System.Diagnostics.Process.GetProcessesByName(childName)
+            .Select(p => p.Id).ToHashSet();
+
+        var invokeTask = _executor.ExecuteWithStreamingAsync(command, args, cancellationToken: cts.Token);
+        await Task.Delay(300);
+        cts.Cancel();
+
+        // Must throw OperationCanceledException and must not hang.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invokeTask)
+            .WaitAsync(TimeSpan.FromSeconds(5)); // timeout proves the zombie fix: without Kill() the console would block
+
+        await Task.Delay(500);
+
+        var zombiePids = System.Diagnostics.Process.GetProcessesByName(childName)
+            .Select(p => p.Id).Except(pidsBefore).ToList();
+
+        zombiePids.Should().BeEmpty(
+            because: "executor must kill child processes on cancellation (streaming path); " +
+                     "surviving PIDs indicate the zombie-process regression is reintroduced");
+    }
+
+    #endregion
+
+    #region Regression Tests for non-actionable stderr suppression
+
+    [Theory]
+    [InlineData("UserWarning: You are using cryptography on a 32-bit Python on a 64-bit Windows Operating System.", true)]
+    [InlineData("  UserWarning: leading whitespace", true)]
+    [InlineData("userwarning: case-insensitive match", true)]
+    [InlineData("Readonly attribute name will be ignored in class <class 'azure.mgmt.web.v2023_01_01.models._models_py3.AppServicePlan'>", true)]
+    [InlineData("warnings.warn(msg, category)", true)]
+    [InlineData("ERROR: Operation cannot be completed without additional quota.", false)]
+    [InlineData("Cannot create App Service Plan", false)]
+    [InlineData("", false)]
+    public void IsNonActionableStderrLine_FiltersCorrectly(string line, bool expectedFiltered)
+    {
+        // REGRESSION TEST: Python UserWarning and az-SDK Readonly warnings must be suppressed
+        // from the console so they do not appear as fake ERRORs alongside real failure messages.
+        // Before the fix, lines like "ERROR: Error output: ...UserWarning: You are using
+        // cryptography on a 32-bit Python..." were shown to the user as if they were the root cause.
+        var method = typeof(CommandExecutor).GetMethod("IsNonActionableStderrLine",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        var result = (bool)method!.Invoke(null, new object[] { line })!;
+
+        result.Should().Be(expectedFiltered,
+            because: "non-actionable Python/az-CLI diagnostics must be suppressed; real error lines must pass through");
+    }
+
+    #endregion
 }

@@ -819,7 +819,15 @@ public static class InfrastructureSubcommand
                 
                 if (!string.IsNullOrWhiteSpace(createResult.StandardError))
                 {
-                    logger.LogError("Error output: {Error}", createResult.StandardError);
+                    // Strip non-actionable Python / az-CLI diagnostic lines (UserWarning,
+                    // Readonly attribute warnings) so they don't surface as ERRORs for the user.
+                    var cleanedError = string.Join(
+                        Environment.NewLine,
+                        createResult.StandardError
+                            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                            .Where(l => !IsNonActionableStderrLine(l)));
+                    if (!string.IsNullOrWhiteSpace(cleanedError))
+                        logger.LogError("Error output: {Error}", cleanedError);
                 }
                 
                 if (!string.IsNullOrWhiteSpace(createResult.StandardOutput))
@@ -1056,6 +1064,24 @@ public static class InfrastructureSubcommand
 
     private static string Short(string? text)
         => string.IsNullOrWhiteSpace(text) ? string.Empty : (text.Length <= 180 ? text.Trim() : text[..177] + "...");
+
+    /// <summary>
+    /// Returns true for non-actionable stderr lines from the Python interpreter bundled
+    /// inside the Azure CLI (UserWarning, Readonly attribute warnings). These appear on
+    /// stderr even during successful invocations and must not surface as user-facing ERRORs.
+    /// </summary>
+    private static bool IsNonActionableStderrLine(string line)
+    {
+        var trimmed = line.AsSpan().TrimStart();
+        if (trimmed.StartsWith("UserWarning:", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (trimmed.StartsWith("WARNING: Readonly attribute name will be ignored", StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Python file/line references that accompany UserWarning (e.g. "  warnings.warn(...)")
+        if (trimmed.StartsWith("warnings.warn(", StringComparison.Ordinal))
+            return true;
+        return false;
+    }
 
     #endregion
 }

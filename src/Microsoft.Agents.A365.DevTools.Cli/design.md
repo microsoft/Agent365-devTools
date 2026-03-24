@@ -159,6 +159,18 @@ For security and flexibility, the CLI supports environment variable overrides:
 
 **Design Decision:** All test/preprod App IDs and URLs have been removed from the codebase. The production App ID is the only hardcoded value. Internal Microsoft developers use environment variables for non-production testing.
 
+### Sovereign / Government Cloud Configuration
+
+By default the CLI targets the commercial Microsoft Graph endpoint. For sovereign or government cloud tenants, set `graphBaseUrl` in `a365.config.json`:
+
+| Cloud | `graphBaseUrl` value |
+|-------|----------------------|
+| Commercial (default) | *(omit the field)* |
+| GCC High / DoD | `https://graph.microsoft.us` |
+| China (21Vianet) | `https://microsoftgraph.chinacloudapi.cn` |
+
+This field is optional. When omitted, `https://graph.microsoft.com` is used.
+
 ---
 
 ## Command Pattern Implementation

@@ -149,6 +149,16 @@ public class Agent365Config
     [JsonPropertyName("needDeployment")]
     public bool NeedDeployment { get; init; } = true;
 
+    /// <summary>
+    /// Base URL for Microsoft Graph API.
+    /// Override this to target sovereign / government clouds:
+    ///   GCC High / DoD : "https://graph.microsoft.us"
+    ///   China (21Vianet): "https://microsoftgraph.chinacloudapi.cn"
+    /// Defaults to "https://graph.microsoft.com" when omitted.
+    /// </summary>
+    [JsonPropertyName("graphBaseUrl")]
+    public string GraphBaseUrl { get; init; } = Constants.GraphApiConstants.BaseUrl;
+
     #endregion
 
     #region Authentication Configuration

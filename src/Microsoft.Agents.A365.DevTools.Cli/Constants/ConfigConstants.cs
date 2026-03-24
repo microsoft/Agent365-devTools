@@ -21,7 +21,7 @@ public static class ConfigConstants
     /// <summary>
     /// Example configuration file name for copying
     /// </summary>
-    public const string ExampleConfigFileName = "a365.config.example.json";
+    public const string ExampleConfigFileName = "a365.config.example.jsonc";
 
     /// <summary>
     /// Microsoft Learn documentation URL for Agent 365 CLI setup and usage

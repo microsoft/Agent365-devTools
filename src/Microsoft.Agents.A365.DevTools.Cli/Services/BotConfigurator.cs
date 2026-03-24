@@ -391,6 +391,19 @@ public class BotConfigurator : IBotConfigurator
                         continue;
                     }
 
+                    // Retry on "Invalid roles" 400 — the token's wids claim does not yet include
+                    // the required Agent ID role. This happens when the role was assigned after the
+                    // token was cached. A forced refresh picks up the updated role assignment.
+                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest &&
+                        TryGetErrorCode(errorContent) == "Invalid roles" && attempt == 0)
+                    {
+                        _logger.LogWarning(
+                            "Access token does not include the required Agent ID role — " +
+                            "this can happen when a role was assigned after the token was cached. " +
+                            "Retrying with a fresh token...");
+                        continue;
+                    }
+
                     // Real error - log and return false
                     _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                     try

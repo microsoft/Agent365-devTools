@@ -56,7 +56,7 @@ public class BlueprintSubcommandTests
         Func<Task<string?>> noOpLoginHint = () => Task.FromResult<string?>(null);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
             Substitute.For<ILogger<GraphApiService>>(), _mockExecutor,
-            (HttpMessageHandler?)null, (IMicrosoftGraphTokenProvider?)null, noOpLoginHint);
+            (HttpMessageHandler?)null, (IMicrosoftGraphTokenProvider?)null, noOpLoginHint, (string?)null);
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
         _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);

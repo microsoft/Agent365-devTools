@@ -520,7 +520,7 @@ public class DeployCommand
                 logger.LogError("Configuration file not found: {Message}", fileNotFound.Message);
                 logger.LogInformation("");
                 logger.LogInformation("To get started:");
-                logger.LogInformation("  1. Copy a365.config.example.json to a365.config.json");
+                logger.LogInformation("  1. Copy a365.config.example.jsonc to a365.config.json");
                 logger.LogInformation("  2. Edit a365.config.json with your Azure tenant and subscription details");
                 logger.LogInformation("  3. Run 'a365 deploy' to perform a deployment");
                 logger.LogInformation("");

@@ -711,21 +711,67 @@ internal static class BlueprintSubcommand
             }
         }
 
-        // If blueprint exists, get service principal if we don't have it
+        // If blueprint exists, verify service principal still exists (cached ID may be stale if SP was deleted externally)
         if (blueprintAlreadyExists && !string.IsNullOrWhiteSpace(existingAppId))
         {
-            if (string.IsNullOrWhiteSpace(existingServicePrincipalId))
+            logger.LogDebug("Looking up service principal for blueprint...");
+            var spLookup = await blueprintLookupService.GetServicePrincipalByAppIdAsync(
+                tenantId, existingAppId, ct,
+                scopes: AuthenticationConstants.RequiredPermissionGrantScopes);
+
+            if (spLookup.Found)
             {
-                logger.LogDebug("Looking up service principal for blueprint...");
-                var spLookup = await blueprintLookupService.GetServicePrincipalByAppIdAsync(
-                    tenantId, existingAppId, ct,
-                    scopes: AuthenticationConstants.RequiredPermissionGrantScopes);
-                
-                if (spLookup.Found)
+                if (spLookup.ObjectId != existingServicePrincipalId)
                 {
-                    logger.LogDebug("Service principal found: {ObjectId}", spLookup.ObjectId);
-                    existingServicePrincipalId = spLookup.ObjectId;
+                    logger.LogDebug("Service principal ID updated (was: {OldId}, now: {NewId})", existingServicePrincipalId ?? "(none)", spLookup.ObjectId);
                     requiresPersistence = true;
+                }
+                existingServicePrincipalId = spLookup.ObjectId;
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(existingServicePrincipalId))
+                    logger.LogDebug("Cached service principal {CachedId} no longer exists — will recreate.", existingServicePrincipalId);
+                existingServicePrincipalId = null;
+                // SP missing for an existing app — attempt creation so downstream steps have a valid SP.
+                logger.LogInformation("Service principal not found for existing blueprint — attempting to create it...");
+                var spToken = await graphApiService.GetGraphAccessTokenAsync(tenantId, ct);
+                if (!string.IsNullOrWhiteSpace(spToken))
+                {
+                    using var spHttpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(spToken);
+                    var spRetryHelper = new Services.Helpers.RetryHelper(logger);
+                    existingServicePrincipalId = await CreateServicePrincipalAsync(existingAppId, spHttpClient, spRetryHelper, logger, ct);
+                    if (!string.IsNullOrWhiteSpace(existingServicePrincipalId))
+                    {
+                        requiresPersistence = true;
+                        // Wait for SP to replicate before OAuth2 grants are attempted.
+                        // Directory_ObjectNotFound on oauth2PermissionGrants POST means the SP's
+                        // clientId is not yet visible to the grants API replica. Polling GET /servicePrincipals
+                        // is insufficient — the object is readable almost immediately, but oauth2PermissionGrants
+                        // requires the SP to appear in a different replication index.
+                        // Probe oauth2PermissionGrants directly: a 200 (even empty list) means the grants
+                        // API can now see the SP's clientId and creation will succeed.
+                        logger.LogInformation("Waiting for service principal to propagate in directory...");
+                        var spPropagated = await spRetryHelper.ExecuteWithRetryAsync(
+                            async token =>
+                            {
+                                using var checkResp = await spHttpClient.GetAsync(
+                                    $"{Constants.GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{existingServicePrincipalId}'", token);
+                                return checkResp.IsSuccessStatusCode;
+                            },
+                            result => !result,
+                            maxRetries: 12,
+                            baseDelaySeconds: 5,
+                            ct);
+                        if (spPropagated)
+                            logger.LogDebug("Service principal propagated and verified");
+                        else
+                            logger.LogWarning("Service principal propagation check timed out — grants may fail");
+                    }
+                }
+                else
+                {
+                    logger.LogWarning("Could not acquire Graph token to create missing service principal");
                 }
             }
 
@@ -789,7 +835,7 @@ internal static class BlueprintSubcommand
                 {
                     sponsorUserId = me.Id;
                     logger.LogInformation("Current user: {DisplayName} <{UPN}>", me.DisplayName, me.UserPrincipalName);
-                    logger.LogDebug("Sponsor: https://graph.microsoft.com/v1.0/users/{UserId}", sponsorUserId);
+                    logger.LogDebug("Sponsor: {BaseUrl}/v1.0/users/{UserId}", Constants.GraphApiConstants.BaseUrl, sponsorUserId);
                 }
             }
             catch (Exception ex)
@@ -812,11 +858,11 @@ internal static class BlueprintSubcommand
             {
                 appManifest["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{sponsorUserId}"
+                    $"{Constants.GraphApiConstants.BaseUrl}/v1.0/users/{sponsorUserId}"
                 };
                 appManifest["owners@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{sponsorUserId}"
+                    $"{Constants.GraphApiConstants.BaseUrl}/v1.0/users/{sponsorUserId}"
                 };
             }
 
@@ -840,7 +886,7 @@ internal static class BlueprintSubcommand
             httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
             httpClient.DefaultRequestHeaders.Add("OData-Version", "4.0"); // Required for @odata.type
 
-            var createAppUrl = "https://graph.microsoft.com/beta/applications";
+            var createAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/beta/applications";
 
             logger.LogInformation("Creating Agent Blueprint application...");
             logger.LogInformation("  - Display Name: {DisplayName}", displayName);
@@ -930,7 +976,7 @@ internal static class BlueprintSubcommand
             var appAvailable = await retryHelper.ExecuteWithRetryAsync(
                 async ct =>
                 {
-                    var checkResp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/applications/{objectId}", ct);
+                    var checkResp = await httpClient.GetAsync($"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{objectId}", ct);
                     return checkResp.IsSuccessStatusCode;
                 },
                 result => !result,
@@ -948,7 +994,7 @@ internal static class BlueprintSubcommand
 
             // Update application with identifier URI
             var identifierUri = $"api://{appId}";
-            var patchAppUrl = $"https://graph.microsoft.com/v1.0/applications/{objectId}";
+            var patchAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{objectId}";
             var patchBody = new JsonObject
             {
                 ["identifierUris"] = new JsonArray { identifierUri }
@@ -975,75 +1021,10 @@ internal static class BlueprintSubcommand
             // by appId in all Graph API replicas even after the application object is visible by
             // objectId. Retry with backoff until the appId index is replicated.
             logger.LogInformation("Creating service principal...");
-
-            var spManifest = new JsonObject
+            string? servicePrincipalId = await CreateServicePrincipalAsync(appId, httpClient, retryHelper, logger, ct);
+            if (string.IsNullOrWhiteSpace(servicePrincipalId))
             {
-                ["appId"] = appId
-            };
-            var spManifestJson = spManifest.ToJsonString();
-            var createSpUrl = "https://graph.microsoft.com/v1.0/servicePrincipals";
-
-            // Retry on 400 NoBackingApplicationObject (appId index replication lag) up to 10 times.
-            // Retry on 403 Authorization_RequestDenied + "backing application" (blueprint replication
-            // lag) capped at 3 times — any other 403 is a real permission error and must not retry
-            // (each wasted attempt costs ~8+ minutes of exponential backoff).
-            // The async predicate overload is used so the response body can be awaited-read to
-            // distinguish transient replication-lag 403s from genuine permission denials.
-            string? servicePrincipalId = null;
-            const int maxForbiddenRetries = 3;
-            int forbiddenRetries = 0;
-            using var spResponse = await retryHelper.ExecuteWithRetryAsync(
-                async token => await httpClient.PostAsync(
-                    createSpUrl,
-                    new StringContent(spManifestJson, System.Text.Encoding.UTF8, "application/json"),
-                    token),
-                async (response, token) =>
-                {
-                    if (response.IsSuccessStatusCode)
-                        return false;
-
-                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
-                    {
-                        // 400 NoBackingApplicationObject: appId index not yet replicated after creation.
-                        logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
-                        return true;
-                    }
-
-                    if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
-                    {
-                        // Buffer the body so it can be read again by the caller after retry exhaustion.
-                        await response.Content.LoadIntoBufferAsync();
-                        var body = await response.Content.ReadAsStringAsync(token);
-
-                        if (body.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase)
-                            && body.Contains("backing application", StringComparison.OrdinalIgnoreCase)
-                            && forbiddenRetries < maxForbiddenRetries)
-                        {
-                            // 403 Authorization_RequestDenied / backing application replication lag.
-                            forbiddenRetries++;
-                            logger.LogDebug("SP creation returned 403 Forbidden (replication lag, attempt {Attempt}/{Max}) — retrying...", forbiddenRetries, maxForbiddenRetries);
-                            return true;
-                        }
-                    }
-
-                    // Non-retryable error — return the response to the caller for error logging.
-                    return false;
-                },
-                maxRetries: 10,
-                baseDelaySeconds: 8,
-                cancellationToken: ct);
-
-            if (spResponse.IsSuccessStatusCode)
-            {
-                var spJson = await spResponse.Content.ReadAsStringAsync(ct);
-                var sp = JsonNode.Parse(spJson)!.AsObject();
-                servicePrincipalId = sp["id"]!.GetValue<string>();
-                logger.LogDebug("Service principal created: {SpId}", servicePrincipalId);
-            }
-            else
-            {
-                var spError = await spResponse.Content.ReadAsStringAsync(ct);
-                logger.LogError("Service principal creation failed after retries: {StatusCode} — {Error}", (int)spResponse.StatusCode, spError);
+                logger.LogError("Service principal creation failed after retries");
             }
 
             // Wait for service principal propagation using RetryHelper
@@ -1053,17 +1034,15 @@ internal static class BlueprintSubcommand
                 var spPropagated = await retryHelper.ExecuteWithRetryAsync(
                     async ct =>
                     {
-                        var checkSp = await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'", ct);
-                        if (checkSp.IsSuccessStatusCode)
-                        {
-                            var content = await checkSp.Content.ReadAsStringAsync(ct);
-                            var spList = JsonDocument.Parse(content);
-                            return spList.RootElement.GetProperty("value").GetArrayLength() > 0;
-                        }
-                        return false;
+                        // Probe oauth2PermissionGrants directly — a 200 (even empty list) confirms
+                        // the SP's clientId is visible to the grants API replication layer.
+                        // GET /servicePrincipals resolves too fast and gives false confidence.
+                        using var checkResp = await httpClient.GetAsync(
+                            $"{Constants.GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{servicePrincipalId}'", ct);
+                        return checkResp.IsSuccessStatusCode;
                     },
                     result => !result,
-                    maxRetries: 10,
+                    maxRetries: 12,
                     baseDelaySeconds: 5,
                     ct);
 
@@ -1112,6 +1091,68 @@ internal static class BlueprintSubcommand
             logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
             return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
         }
+    }
+
+    /// <summary>
+    /// Creates a service principal for the given appId, retrying on replication lag (400/403).
+    /// Returns the SP object ID on success, or null on failure.
+    /// </summary>
+    private static async Task<string?> CreateServicePrincipalAsync(
+        string appId,
+        HttpClient httpClient,
+        Services.Helpers.RetryHelper retryHelper,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var createSpUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/servicePrincipals";
+        var spManifestJson = new JsonObject { ["appId"] = appId }.ToJsonString();
+        int forbiddenRetries = 0;
+        const int maxForbiddenRetries = 3;
+
+        using var spResponse = await retryHelper.ExecuteWithRetryAsync(
+            async token => await httpClient.PostAsync(
+                createSpUrl,
+                new StringContent(spManifestJson, System.Text.Encoding.UTF8, "application/json"),
+                token),
+            async (response, token) =>
+            {
+                if (response.IsSuccessStatusCode) return false;
+                if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                {
+                    logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
+                    return true;
+                }
+                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    await response.Content.LoadIntoBufferAsync();
+                    var body = await response.Content.ReadAsStringAsync(token);
+                    if (body.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase)
+                        && body.Contains("backing application", StringComparison.OrdinalIgnoreCase)
+                        && forbiddenRetries < maxForbiddenRetries)
+                    {
+                        forbiddenRetries++;
+                        logger.LogDebug("SP creation returned 403 Forbidden (replication lag, attempt {Attempt}/{Max}) — retrying...", forbiddenRetries, maxForbiddenRetries);
+                        return true;
+                    }
+                }
+                return false;
+            },
+            maxRetries: 10,
+            baseDelaySeconds: 8,
+            cancellationToken: ct);
+
+        if (spResponse.IsSuccessStatusCode)
+        {
+            var spJson = await spResponse.Content.ReadAsStringAsync(ct);
+            var sp = JsonNode.Parse(spJson)!.AsObject();
+            var spId = sp["id"]!.GetValue<string>();
+            logger.LogDebug("Service principal created: {SpId}", spId);
+            return spId;
+        }
+
+        var spError = await spResponse.Content.ReadAsStringAsync(ct);
+        logger.LogError("Service principal creation failed after retries: {StatusCode} — {Error}", (int)spResponse.StatusCode, spError);
+        return null;
     }
 
     /// <summary>
@@ -1194,7 +1235,7 @@ internal static class BlueprintSubcommand
                 {
                     var ownerPayload = new Dictionary<string, string>
                     {
-                        ["@odata.id"] = $"https://graph.microsoft.com/v1.0/users/{currentUserObjectId}"
+                        ["@odata.id"] = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/users/{currentUserObjectId}"
                     };
 
                     var ownerResponse = await graphApiService.GraphPostWithResponseAsync(
@@ -1611,8 +1652,8 @@ internal static class BlueprintSubcommand
                 loginHint: loginHint);
 
             var resolvedScope = string.IsNullOrWhiteSpace(scope)
-                ? "https://graph.microsoft.com/.default"
-                : $"https://graph.microsoft.com/{scope}";
+                ? $"{Constants.GraphApiConstants.BaseUrl}/.default"
+                : $"{Constants.GraphApiConstants.BaseUrl}/{scope}";
             var tokenRequestContext = new TokenRequestContext(new[] { resolvedScope });
             var token = await credential.GetTokenAsync(tokenRequestContext, ct);
 
@@ -1714,7 +1755,7 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var addPasswordUrl = $"https://graph.microsoft.com/v1.0/applications/{blueprintObjectId}/addPassword";
+            var addPasswordUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{blueprintObjectId}/addPassword";
             var secretBodyJson = secretBody.ToJsonString();
             // Retry on 404: newly created Agent Blueprints may not yet be visible to all Graph
             // API replicas due to Entra eventual consistency. Retry with backoff until propagated.
@@ -1820,7 +1861,7 @@ internal static class BlueprintSubcommand
                 {
                     ["client_id"] = clientId,
                     ["client_secret"] = plaintextSecret,
-                    ["scope"] = "https://graph.microsoft.com/.default",
+                    ["scope"] = $"{Constants.GraphApiConstants.BaseUrl}/.default",
                     ["grant_type"] = "client_credentials"
                 });
 
@@ -2157,8 +2198,8 @@ internal static class BlueprintSubcommand
 
             var urls = new []
             {
-                $"https://graph.microsoft.com/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
-                $"https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials"
+                $"{Constants.GraphApiConstants.BaseUrl}/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
+                $"{Constants.GraphApiConstants.BaseUrl}/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials"
             };
 
             // Use RetryHelper for federated credential creation with exponential backoff
