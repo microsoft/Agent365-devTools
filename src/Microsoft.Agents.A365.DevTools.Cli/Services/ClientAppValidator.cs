@@ -569,6 +569,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         CancellationToken ct = default)
         => TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
 
+
     #region Private Helper Methods
 
     private async Task<ClientAppInfo?> GetClientAppInfoAsync(string clientAppId, string tenantId, CancellationToken ct)

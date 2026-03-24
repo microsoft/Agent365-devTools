@@ -258,7 +258,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             LogRequest("GET", endpointUrl);
             
             // Make request
-            var response = await httpClient.GetAsync(endpointUrl, cancellationToken);
+            using var response = await httpClient.GetAsync(endpointUrl, cancellationToken);
 
             // Validate response using common helper
             var (isSuccess, responseContent) = await ValidateResponseAsync(response, "list environments", cancellationToken);
@@ -337,7 +337,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             LogRequest("GET", endpointUrl);
             
             // Make request
-            var response = await httpClient.GetAsync(endpointUrl, cancellationToken);
+            using var response = await httpClient.GetAsync(endpointUrl, cancellationToken);
 
             // Validate response using common helper
             var (isSuccess, responseContent) = await ValidateResponseAsync(response, "list MCP servers", cancellationToken);
@@ -418,7 +418,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             LogRequest("POST", endpointUrl, requestPayload);
 
             // Make request
-            var response = await httpClient.PostAsync(endpointUrl, jsonContent, cancellationToken);
+            using var response = await httpClient.PostAsync(endpointUrl, jsonContent, cancellationToken);
 
             // Validate response using common helper
             var (isSuccess, responseContent) = await ValidateResponseAsync(response, "publish MCP server", cancellationToken);
@@ -498,7 +498,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             LogRequest("DELETE", endpointUrl);
             
             // Make request
-            var response = await httpClient.DeleteAsync(endpointUrl, cancellationToken);
+            using var response = await httpClient.DeleteAsync(endpointUrl, cancellationToken);
 
             // Validate response using common helper
             var (isSuccess, _) = await ValidateResponseAsync(response, "unpublish MCP server", cancellationToken);
@@ -560,7 +560,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             
             // Make request with empty content
             var content = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
-            var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
+            using var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
 
             // Validate response using common helper
             var (isSuccess, responseContent) = await ValidateResponseAsync(response, "approve MCP server", cancellationToken);
@@ -622,7 +622,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             
             // Make request with empty content
             var content = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
-            var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
+            using var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
 
             // Validate response using common helper
             var (isSuccess, responseContent) = await ValidateResponseAsync(response, "block MCP server", cancellationToken);
@@ -699,7 +699,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         // Send the request
-        var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
 
         if (!response.IsSuccessStatusCode)
         {

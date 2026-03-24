@@ -34,7 +34,7 @@ public class AzureAuthRequirementCheckTests
         var check = new AzureAuthRequirementCheck(_mockAuthValidator);
         var config = new Agent365Config { SubscriptionId = "test-sub-id" };
 
-        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>())
+        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         // Act
@@ -73,14 +73,14 @@ public class AzureAuthRequirementCheckTests
         var check = new AzureAuthRequirementCheck(_mockAuthValidator);
         var config = new Agent365Config { SubscriptionId = "specific-sub-id" };
 
-        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>())
+        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         // Act
         await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync("specific-sub-id");
+        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync("specific-sub-id", Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -90,14 +90,14 @@ public class AzureAuthRequirementCheckTests
         var check = new AzureAuthRequirementCheck(_mockAuthValidator);
         var config = new Agent365Config();
 
-        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>())
+        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         // Act
         await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync(string.Empty);
+        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync(string.Empty, Arg.Any<CancellationToken>());
     }
 
     [Fact]

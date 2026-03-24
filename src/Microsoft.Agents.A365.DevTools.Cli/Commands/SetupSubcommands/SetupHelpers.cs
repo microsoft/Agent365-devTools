@@ -84,27 +84,28 @@ internal static class SetupHelpers
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
 
+        // Completed steps — [OK] only
         logger.LogInformation("Completed Steps:");
         if (results.InfrastructureCreated)
         {
             var status = results.InfrastructureAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  Infrastructure: {Status}", status);
+            logger.LogInformation("  [OK] Infrastructure {Status}", status);
         }
         if (results.BlueprintCreated)
         {
             var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  Blueprint: {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
+            logger.LogInformation("  [OK] Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
         }
         if (results.BatchPermissionsPhase2Completed)
         {
-            logger.LogInformation("  Permissions: inheritable configured and verified");
+            logger.LogInformation("  [OK] Inheritable permissions configured and verified");
             if (results.AdminConsentGranted)
-                logger.LogInformation("  Consent: OAuth2 grants configured");
+                logger.LogInformation("  [OK] OAuth2 grants and admin consent configured");
         }
         if (results.MessagingEndpointRegistered)
         {
             var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  Messaging endpoint: {Status}", status);
+            logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
         }
         if (results.AgentIdentityCreated)
         {
@@ -116,11 +117,15 @@ internal static class SetupHelpers
         }
 
         // Action required — shown as its own section so it isn't conflated with completed work
-        if (pendingAdminAction)
+        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
+        if (hasActionRequired)
         {
             logger.LogInformation("");
             logger.LogInformation("Action Required:");
-            logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
+            if (results.ClientSecretManualActionRequired)
+                logger.LogInformation("  Client secret - must be created manually in Entra ID and added to a365.generated.config.json (see instructions above)");
+            if (pendingAdminAction)
+                logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
         }
 
         // Failed steps
@@ -129,7 +134,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
-                logger.LogError("  {Error}", error);
+                logger.LogError("  [FAILED] {Error}", error);
         }
 
         // Warnings
@@ -138,7 +143,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogWarning("  {Warning}", warning);
+                logger.LogInformation("  [WARN] {Warning}", warning);
         }
 
         logger.LogInformation("");
@@ -193,7 +198,7 @@ internal static class SetupHelpers
             }
         }
 
-        if (!results.HasErrors && !pendingAdminAction)
+        if (!results.HasErrors && !hasActionRequired)
         {
             if (results.HasWarnings)
             {
@@ -354,7 +359,7 @@ internal static class SetupHelpers
 
         if (results.AdminConsentGranted)
         {
-            logger.LogInformation("  Consent: OAuth2 grants configured (tenant-wide)");
+            logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
         }
 
         if (results.Errors.Count > 0)
@@ -362,7 +367,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
-                logger.LogError("  {Error}", error);
+                logger.LogError("  [FAILED] {Error}", error);
         }
 
         if (results.Warnings.Count > 0)
@@ -370,7 +375,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogWarning("  {Warning}", warning);
+                logger.LogInformation("  [WARN] {Warning}", warning);
         }
 
         logger.LogInformation("");

@@ -191,38 +191,38 @@ internal static class AdminSubcommand
                 }
                 else
                 {
-                    var mcpManifestPath = Path.Combine(
-                        setupConfig.DeploymentProjectPath ?? string.Empty,
-                        McpConstants.ToolingManifestFileName);
-                    var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
+                var mcpManifestPath = Path.Combine(
+                    setupConfig.DeploymentProjectPath ?? string.Empty,
+                    McpConstants.ToolingManifestFileName);
+                var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
                     specs = new List<ResourcePermissionSpec>
-                    {
-                        new ResourcePermissionSpec(
-                            AuthenticationConstants.MicrosoftGraphResourceAppId,
-                            "Microsoft Graph",
-                            setupConfig.AgentApplicationScopes.ToArray(),
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            mcpResourceAppId,
-                            "Agent 365 Tools",
-                            mcpScopes,
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            ConfigConstants.MessagingBotApiAppId,
-                            "Messaging Bot API",
-                            new[] { "Authorization.ReadWrite", "user_impersonation" },
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            ConfigConstants.ObservabilityApiAppId,
-                            "Observability API",
-                            new[] { "user_impersonation" },
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                            "Power Platform API",
-                            new[] { "Connectivity.Connections.Read" },
-                            SetInheritable: false),
-                    };
+                {
+                    new ResourcePermissionSpec(
+                        AuthenticationConstants.MicrosoftGraphResourceAppId,
+                        "Microsoft Graph",
+                        setupConfig.AgentApplicationScopes.ToArray(),
+                        SetInheritable: false),
+                    new ResourcePermissionSpec(
+                        mcpResourceAppId,
+                        "Agent 365 Tools",
+                        mcpScopes,
+                        SetInheritable: false),
+                    new ResourcePermissionSpec(
+                        ConfigConstants.MessagingBotApiAppId,
+                        "Messaging Bot API",
+                        new[] { "Authorization.ReadWrite", "user_impersonation" },
+                        SetInheritable: false),
+                    new ResourcePermissionSpec(
+                        ConfigConstants.ObservabilityApiAppId,
+                        "Observability API",
+                        new[] { "user_impersonation" },
+                        SetInheritable: false),
+                    new ResourcePermissionSpec(
+                        PowerPlatformConstants.PowerPlatformApiResourceAppId,
+                        "Power Platform API",
+                        new[] { "Connectivity.Connections.Read" },
+                        SetInheritable: false),
+                };
                 }
 
                 foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -269,7 +269,7 @@ internal static class AdminSubcommand
                 setupResults.AdminConsentGranted = grantsConfigured;
 
                 // For non-DW blueprint flow: also attempt agent instance registration if not yet done.
-                // This requires 'Agent Registry Administrator' role — separate from Global Administrator.
+                // This requires 'Agent Registry Administrator' role � separate from Global Administrator.
                 // The admin running this command may or may not hold that role. We attempt it and report.
                 if (setupConfig.IsNonDwBlueprint)
                 {
@@ -283,7 +283,7 @@ internal static class AdminSubcommand
                     {
                         logger.LogInformation("");
                         logger.LogInformation("Non-DW blueprint flow: attempting agent instance registration...");
-                        logger.LogInformation("NOTE: This step requires 'Agent Registry Administrator' role — separate from Global Administrator.");
+                        logger.LogInformation("NOTE: This step requires 'Agent Registry Administrator' role � separate from Global Administrator.");
 
                         var agentDisplayName = setupConfig.AgentIdentityDisplayName
                             ?? setupConfig.WebAppName
@@ -306,7 +306,7 @@ internal static class AdminSubcommand
                         else
                         {
                             logger.LogWarning(
-                                "Agent instance registration failed — 'Agent Registry Administrator' role is not assigned " +
+                                "Agent instance registration failed � 'Agent Registry Administrator' role is not assigned " +
                                 "for this account. The developer must get that role assigned by a tenant admin and run: " +
                                 "a365 setup all --aiteammate false --agent-instance-only");
                         }

@@ -171,7 +171,15 @@ class Program
                 .UseDefaults()
                 .UseExceptionHandler((exception, context) =>
                 {
-                    if (exception is Agent365Exception myEx)
+                    if (exception is CleanExitException cleanExit)
+                    {
+                        context.ExitCode = cleanExit.ExitCode;
+                    }
+                    else if (exception is OperationCanceledException)
+                    {
+                        context.ExitCode = 1;
+                    }
+                    else if (exception is Agent365Exception myEx)
                     {
                         ExceptionHandler.HandleAgent365Exception(myEx, logFilePath: logFilePath);
                         context.ExitCode = myEx.ExitCode;

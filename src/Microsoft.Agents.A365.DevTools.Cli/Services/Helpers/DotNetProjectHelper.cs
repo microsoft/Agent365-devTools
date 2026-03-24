@@ -71,7 +71,7 @@ public static class DotNetProjectHelper
         }
 
         var version = $"{verMatch.Groups[1].Value}.{verMatch.Groups[2].Value}";
-        logger.LogInformation(
+        logger.LogDebug(
             "Detected TargetFramework: {Tfm} → .NET {Version}",
             tfm,
             version);

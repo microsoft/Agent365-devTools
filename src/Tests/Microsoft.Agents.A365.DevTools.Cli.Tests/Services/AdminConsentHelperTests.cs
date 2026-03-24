@@ -45,8 +45,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             executor.ExecuteAsync("az", Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}" }));
 
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            var result = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 3, 1, cts.Token);
+            // Use intervalSeconds=0 and a short CTS to avoid real waits — this is a mock-only test.
+            var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+            var result = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 1, 0, cts.Token);
 
             result.Should().BeFalse();
         }

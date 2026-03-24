@@ -96,6 +96,7 @@
 
 ### Output and Logging
 - No emojis or special characters in logs, output, or comments
+- The output should be plain text, and display properly in windows, macOS, and Linux terminals
 - Keep user-facing messages clear and professional
 - Follow client-facing help text conventions
 

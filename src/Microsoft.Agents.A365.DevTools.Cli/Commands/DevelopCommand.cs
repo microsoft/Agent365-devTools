@@ -168,7 +168,7 @@ public static class DevelopCommand
             // Call the endpoint directly (no environment ID needed in URL or query)
             logger.LogInformation("Making GET request to: {RequestUrl}", discoverEndpointUrl);
 
-            var response = await httpClient.GetAsync(discoverEndpointUrl);
+            using var response = await httpClient.GetAsync(discoverEndpointUrl);
 
             if (!response.IsSuccessStatusCode)
             {

@@ -67,8 +67,13 @@ internal static class CopilotStudioSubcommand
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
             var setupConfig = await configService.LoadAsync(config.FullName);
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
@@ -89,7 +94,7 @@ internal static class CopilotStudioSubcommand
             if (!dryRun)
             {
                 var copilotChecks = CopilotStudioSubcommand.GetChecks(authValidator);
-                await RequirementsSubcommand.RunChecksOrExitAsync(copilotChecks, setupConfig, logger, CancellationToken.None);
+                await RequirementsSubcommand.RunChecksOrExitAsync(copilotChecks, setupConfig, logger, ct);
             }
 
             if (dryRun)
@@ -111,7 +116,7 @@ internal static class CopilotStudioSubcommand
                 graphApiService,
                 blueprintService);
 
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }

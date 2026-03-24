@@ -17,6 +17,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// to inject fake HTTP responses. The AzCliHelper process-level token cache is
 /// pre-warmed in the constructor so no real az subprocess is spawned.
 /// </summary>
+[Collection("AzCliTokenCache")]
 public class ArmApiServiceTests
 {
     private const string TenantId = "tid";
@@ -28,6 +29,7 @@ public class ArmApiServiceTests
 
     public ArmApiServiceTests()
     {
+        AzCliHelper.ResetAzCliTokenCacheForTesting();
         AzCliHelper.WarmAzCliTokenCache(ArmApiService.ArmResource, TenantId, "fake-arm-token");
     }
 

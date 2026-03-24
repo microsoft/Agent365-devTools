@@ -62,13 +62,13 @@ internal static class AzCliHelper
     /// invalidate a token except through explicit re-authentication (az login).
     /// Call <see cref="InvalidateAzCliTokenCache"/> after 'az login' to bust the cache.
     /// </summary>
-    internal static Task<string?> AcquireAzCliTokenAsync(string resource, string tenantId = "")
+    internal static Task<string?> AcquireAzCliTokenAsync(string resource, string tenantId = "", CancellationToken ct = default)
     {
         var key = $"{resource}::{tenantId}";
         return _azCliTokenCache.GetOrAdd(key, _ =>
             AzCliTokenAcquirerOverride != null
                 ? AzCliTokenAcquirerOverride(resource, tenantId)
-                : AcquireAzCliTokenCoreAsync(resource, tenantId));
+                : AcquireAzCliTokenCoreAsync(resource, tenantId, ct));
     }
 
     /// <summary>
@@ -139,49 +139,93 @@ internal static class AzCliHelper
         return null;
     }
 
-    private static async Task<string?> AcquireAzCliTokenCoreAsync(string resource, string tenantId)
+    private static async Task<string?> AcquireAzCliTokenCoreAsync(string resource, string tenantId, CancellationToken ct = default)
     {
+        Process? process = null;
         try
         {
+            // On Windows az is az.cmd which requires cmd.exe to launch. On all platforms
+            // arguments are passed via ArgumentList (not string interpolation) so
+            // resource/tenantId values cannot alter the command line.
             var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-            var tenantArg = string.IsNullOrEmpty(tenantId) ? "" : $" --tenant {tenantId}";
-            var azArgs = $"account get-access-token --resource {resource}{tenantArg} --query accessToken -o tsv";
             var startInfo = new ProcessStartInfo
             {
                 FileName = isWindows ? "cmd.exe" : "az",
-                Arguments = isWindows ? $"/c az {azArgs}" : azArgs,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            using var process = Process.Start(startInfo);
+            // On Windows: cmd.exe /c az <args>. On other platforms: az <args>.
+            if (isWindows)
+            {
+                startInfo.ArgumentList.Add("/c");
+                startInfo.ArgumentList.Add("az");
+            }
+            startInfo.ArgumentList.Add("account");
+            startInfo.ArgumentList.Add("get-access-token");
+            startInfo.ArgumentList.Add("--resource");
+            startInfo.ArgumentList.Add(resource);
+            if (!string.IsNullOrEmpty(tenantId))
+            {
+                startInfo.ArgumentList.Add("--tenant");
+                startInfo.ArgumentList.Add(tenantId);
+            }
+            startInfo.ArgumentList.Add("--query");
+            startInfo.ArgumentList.Add("accessToken");
+            startInfo.ArgumentList.Add("-o");
+            startInfo.ArgumentList.Add("tsv");
+
+            process = Process.Start(startInfo);
             if (process == null) return null;
+            // Start reads concurrently so the pipe buffers never fill up and block the process.
+            // WaitForExitAsync(ct) is awaited first so cancellation is observed immediately;
+            // the reads complete naturally once the process exits and the pipes close.
             var outputTask = process.StandardOutput.ReadToEndAsync();
             var errorTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync(ct);
             await Task.WhenAll(outputTask, errorTask);
-            await process.WaitForExitAsync();
             var output = outputTask.Result.Trim();
             return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output) ? output : null;
         }
-        catch { }
-        return null;
+        catch (OperationCanceledException)
+        {
+            try { process?.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            process?.Dispose();
+        }
     }
 
     private static async Task<string?> ResolveLoginHintCoreAsync()
     {
         try
         {
+            // On Windows az is az.cmd and requires cmd.exe. Arguments are passed via
+            // ArgumentList rather than string interpolation to avoid shell-injection risk.
             var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             var startInfo = new ProcessStartInfo
             {
                 FileName = isWindows ? "cmd.exe" : "az",
-                Arguments = isWindows ? "/c az account show" : "account show",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            if (isWindows)
+            {
+                startInfo.ArgumentList.Add("/c");
+                startInfo.ArgumentList.Add("az");
+            }
+            startInfo.ArgumentList.Add("account");
+            startInfo.ArgumentList.Add("show");
+
             using var process = Process.Start(startInfo);
             if (process == null) return null;
             // Read stdout and stderr concurrently to prevent the process from blocking
@@ -199,6 +243,10 @@ internal static class AzCliHelper
                     user.TryGetProperty("name", out var name))
                     return name.GetString();
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch { }
         return null;

@@ -110,7 +110,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             mockExecutor,
             (System.Net.Http.HttpMessageHandler?)null,
             (IMicrosoftGraphTokenProvider?)null,
-            noOpLoginHint);
+            noOpLoginHint,
+            (string?)null);
 
         var blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
             Substitute.For<ILogger<AgentBlueprintService>>(),

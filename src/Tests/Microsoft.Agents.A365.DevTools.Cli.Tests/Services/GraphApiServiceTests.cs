@@ -14,6 +14,7 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+[Collection("AzCliTokenCache")]
 public class GraphApiServiceTests
 {
     private readonly ILogger<GraphApiService> _mockLogger;
@@ -26,7 +27,9 @@ public class GraphApiServiceTests
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        AzCliHelper.ResetAzCliTokenCacheForTesting();
         AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "fake-graph-token");
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tid", "fake-graph-token");
     }
 
 
@@ -318,6 +321,12 @@ public class GraphApiServiceTests
         // This test verifies that CheckServicePrincipalCreationPrivilegesAsync also
         // sanitizes tokens with newlines. This method has its own token handling code
         // separate from EnsureGraphHeadersAsync.
+
+        // Overwrite the "fake-graph-token" warmed in the constructor with a token that has
+        // embedded newlines. GetGraphAccessTokenAsync returns it from the process-level cache;
+        // CheckServicePrincipalCreationPrivilegesAsync must trim it before using it in the
+        // Authorization header. Warming directly avoids spawning a real az subprocess.
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "privileges-check-token\r\n\n");
 
         // Arrange
         HttpRequestMessage? capturedRequest = null;
