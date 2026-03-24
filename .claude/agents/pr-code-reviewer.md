@@ -592,6 +592,68 @@ A method with return type `bool?` (where `null` signals "fall back to az CLI") r
   return null; // 401/403/5xx — caller falls back to az CLI
   ```
 
+### 19. Unreachable Catch Clause — Inner Method Already Handles the Exception Internally
+
+A catch block in the caller catches exception type `E`, but the method being called already handles that same `E` internally before propagating. The outer catch becomes dead code. A related risk: if the inner method attempts a fallback (e.g., device code) and that fallback also throws the same exception shape, the outer catch re-triggers the same fallback — a "double attempt" that can produce confusing error messages or partial state.
+
+- **Pattern to catch**:
+  1. Outer method `A` has `catch (ExcType ex) when (inner condition)` wrapping a call to inner method `B`
+  2. Inner method `B` is in the same diff or codebase and already contains `catch (ExcType ex) when (same condition)` — meaning `B` never actually throws it
+  3. The outer catch attempts the same fallback logic `B` already tried
+- **Severity**: `high` — dead code that creates a double-attempt risk; misleads reviewers into thinking coverage exists
+- **Check**: For every new `catch` block in the diff, read the source of the called method (use `Read` tool) and verify whether the exception type/condition can actually propagate out. If the inner method swallows it, the outer catch is dead code.
+- **Fix**: Remove the outer catch block; rely on the inner implementation's guarantee.
+
+**Example (from PR #323 — C1/C2):**
+```csharp
+// AuthenticationService.cs — DEAD CODE:
+// MsalBrowserCredential.GetTokenAsync already catches MsalServiceException(AADSTS53003)
+// internally and falls back to device code before propagating. This catch never fires
+// in production and risks a double device code attempt if that internal fallback also fails.
+catch (MsalAuthenticationFailedException ex) when (
+    useInteractiveBrowser &&
+    ex.InnerException is MsalServiceException svcEx &&
+    svcEx.Message.Contains("AADSTS53003", StringComparison.Ordinal))
+{
+    // Unreachable — remove this catch block
+}
+```
+
+### 20. `MsalServiceException.ErrorCode` Used When AADSTS Code Is Expected
+
+`MsalServiceException.ErrorCode` is the OAuth 2.0 error code (e.g., `"access_denied"`, `"invalid_request"`) — it is NOT the AADSTS error code (e.g., `"AADSTS53003"`, `"AADSTS70011"`). When the intent is to log or display the specific policy-level error for diagnostics, using `ex.ErrorCode` in the message placeholder is misleading — the AADSTS code appears only in `ex.Message`.
+
+- **Pattern to catch**: Inside `catch (MsalServiceException ex) when (ex.Message.Contains("AADSTS..."))`, a log call that uses `ex.ErrorCode` as the structured log parameter when the intent is to surface the AADSTS code
+- **Severity**: `medium` — log entries record `"access_denied"` instead of `"AADSTS53003"`, making incident investigation harder
+- **Check**: For every `catch (MsalServiceException ex)` in the diff, look for `ex.ErrorCode` in log calls. If the when-clause matched on an AADSTS code in `ex.Message`, the log should use the AADSTS code, not `ex.ErrorCode`.
+- **Fix**: Extract the AADSTS code from the message or use the constants matched in the when-clause:
+  ```csharp
+  var aadErrorCode = ex.Message.Contains(AuthenticationConstants.ConditionalAccessPolicyBlockedError, StringComparison.Ordinal)
+      ? AuthenticationConstants.ConditionalAccessPolicyBlockedError
+      : AuthenticationConstants.DeviceCompliancePolicyBlockedError;
+  _logger?.LogWarning("Blocked by Conditional Access Policy ({ErrorCode}).", aadErrorCode);
+  ```
+
+### 21. Log Message / Comment Covers Fewer Cases Than the Code Handles
+
+When a catch block, comment, or doc string covers multiple distinct error conditions (e.g., both AADSTS53003 and AADSTS53000), but the associated log messages and comments only mention one of them — the omitted condition goes undocumented, misleading operators during incident triage.
+
+- **Pattern to catch**:
+  - A `when`-clause that checks for two or more constants/codes (e.g., `Contains("AADSTS53003") || Contains("AADSTS53000")`) but the log message only names one (`"Conditional Access Policy"` without mentioning device compliance)
+  - XML doc comments on constants that claim "Device code flow bypasses this policy" or "not subject to these policies" when that statement is configuration-dependent and not universally true
+- **Severity**: `medium` — operators see `"Conditional Access Policy"` in logs when the real trigger was AADSTS53000 (device compliance); inaccurate docs create false confidence in fallback guarantees
+- **Fix 1** — Log message: include all covered codes or use a broader description:
+  ```csharp
+  _logger.LogWarning(
+      "Authentication blocked by a Conditional Access or device compliance policy ({ErrorCode}). " +
+      "Retrying with device code authentication...", aadErrorCode);
+  ```
+- **Fix 2** — Doc comment: replace absolute "bypasses" claims with conditional language:
+  ```csharp
+  // Before: "Device code flow bypasses CAP — the CLI falls back automatically."
+  // After:  "Device code flow may succeed depending on your tenant's CAP configuration."
+  ```
+
 **MANDATORY REPORTING RULE**: Whenever the diff contains any test file (`.Tests.cs`), you MUST emit a named finding for this check — even if no violation is found. The finding must appear in the review output with one of three statuses:
   - **`high` severity** if a violation is found (missing warmup, dead executor mock, etc.)
   - **`info` — FIXED** if the PR is fixing a prior violation (warmup added to previously-cold classes) — list each class fixed and its measured or estimated speedup
