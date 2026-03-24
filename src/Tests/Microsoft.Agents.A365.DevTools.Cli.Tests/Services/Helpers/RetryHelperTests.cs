@@ -162,7 +162,7 @@ public class RetryHelperTests
             maxRetries: 4,
             baseDelaySeconds: 0);
 
-        // Assert - verify exponential backoff: 2, 4, 8 seconds
+        // Assert - verify retry count (baseDelaySeconds=0 so no real waits; backoff timing not tested here)
         callCount.Should().Be(4);
     }
 

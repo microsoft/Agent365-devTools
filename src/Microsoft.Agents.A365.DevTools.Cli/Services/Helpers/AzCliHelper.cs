@@ -129,10 +129,13 @@ internal static class AzCliHelper
 
             process = Process.Start(startInfo);
             if (process == null) return null;
+            // Start reads concurrently so the pipe buffers never fill up and block the process.
+            // WaitForExitAsync(ct) is awaited first so cancellation is observed immediately;
+            // the reads complete naturally once the process exits and the pipes close.
             var outputTask = process.StandardOutput.ReadToEndAsync();
             var errorTask = process.StandardError.ReadToEndAsync();
-            await Task.WhenAll(outputTask, errorTask);
             await process.WaitForExitAsync(ct);
+            await Task.WhenAll(outputTask, errorTask);
             var output = outputTask.Result.Trim();
             return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output) ? output : null;
         }
