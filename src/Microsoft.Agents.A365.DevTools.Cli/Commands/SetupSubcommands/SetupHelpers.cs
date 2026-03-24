@@ -109,11 +109,15 @@ internal static class SetupHelpers
         }
 
         // Action required — shown as its own section so it isn't conflated with completed work
-        if (pendingAdminAction)
+        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
+        if (hasActionRequired)
         {
             logger.LogInformation("");
             logger.LogInformation("Action Required:");
-            logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
+            if (results.ClientSecretManualActionRequired)
+                logger.LogInformation("  Client secret - must be created manually in Entra ID and added to a365.generated.config.json (see instructions above)");
+            if (pendingAdminAction)
+                logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
         }
 
         // Failed steps
@@ -169,7 +173,7 @@ internal static class SetupHelpers
             }
         }
 
-        if (!results.HasErrors && !pendingAdminAction)
+        if (!results.HasErrors && !hasActionRequired)
         {
             if (results.HasWarnings)
             {

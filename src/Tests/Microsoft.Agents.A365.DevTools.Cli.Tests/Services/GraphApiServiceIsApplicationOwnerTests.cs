@@ -23,6 +23,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// all queued responses in their Dispose methods. Suppressing CA2000 for this pattern.
 /// </remarks>
 #pragma warning disable CA2000 // Dispose objects before losing scope
+[Collection("AzCliTokenCache")]
 public class GraphApiServiceIsApplicationOwnerTests
 {
     private readonly ILogger<GraphApiService> _mockLogger;
@@ -33,6 +34,7 @@ public class GraphApiServiceIsApplicationOwnerTests
         _mockLogger = Substitute.For<ILogger<GraphApiService>>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        AzCliHelper.ResetAzCliTokenCacheForTesting();
         AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "fake-graph-token");
 
         // Mock Azure CLI authentication

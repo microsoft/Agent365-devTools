@@ -59,7 +59,7 @@ public class SetupCommandTests
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         // Full mock — both virtual methods are always stubbed so the real az CLI is never spawned
         _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
-        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>()).Returns(Task.FromResult(true));
+        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         _mockAuthValidator.GetAppServiceTokenAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
         _mockGraphApiService = Substitute.For<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);

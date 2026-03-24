@@ -14,7 +14,7 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
-[Collection("GraphApiServiceTests")]
+[Collection("AzCliTokenCache")]
 public class GraphApiServiceTests
 {
     private readonly ILogger<GraphApiService> _mockLogger;
@@ -27,7 +27,9 @@ public class GraphApiServiceTests
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        AzCliHelper.ResetAzCliTokenCacheForTesting();
         AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "fake-graph-token");
+        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tid", "fake-graph-token");
     }
 
 
@@ -809,12 +811,6 @@ internal class TestHttpMessageHandler : HttpMessageHandler
         base.Dispose(disposing);
     }
 }
-
-// GraphApiServiceTests modifies the process-level AzCliHelper cache (WarmAzCliTokenCache /
-// ResetAzCliTokenCacheForTesting). DisableParallelization prevents races with other test
-// classes that also touch AzCliHelper static state.
-[CollectionDefinition("GraphApiServiceTests", DisableParallelization = true)]
-public class GraphApiServiceTestsCollection { }
 
 // Capturing handler that captures requests AFTER headers are applied
 internal class CapturingHttpMessageHandler : HttpMessageHandler

@@ -24,7 +24,7 @@ public class GraphApiService
     private readonly CommandExecutor _executor;
     private readonly HttpClient _httpClient;
     private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
-    private readonly string _graphBaseUrl;
+    private string _graphBaseUrl;
 
     // Token caching is handled at the process level by AzCliHelper.AcquireAzCliTokenAsync.
     // All GraphApiService instances (and other services) share a single token per
@@ -45,6 +45,17 @@ public class GraphApiService
     /// When set, this will be passed to Connect-MgGraph -ClientId parameter.
     /// </summary>
     public string? CustomClientAppId { get; set; }
+
+    /// <summary>
+    /// Override the Microsoft Graph base URL for sovereign / government cloud tenants.
+    /// Defaults to <see cref="GraphApiConstants.BaseUrl"/> (commercial cloud).
+    /// Set this after construction when the config is available (e.g. from Agent365Config.GraphBaseUrl).
+    /// </summary>
+    public string GraphBaseUrl
+    {
+        get => _graphBaseUrl;
+        set => _graphBaseUrl = string.IsNullOrWhiteSpace(value) ? GraphApiConstants.BaseUrl : value;
+    }
 
     // Lightweight wrapper to surface HTTP status, reason and body to callers
     public record GraphResponse
@@ -86,7 +97,7 @@ public class GraphApiService
     /// <summary>
     /// Get access token for Microsoft Graph API using Azure CLI
     /// </summary>
-    public async Task<string?> GetGraphAccessTokenAsync(string tenantId, CancellationToken ct = default)
+    public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, CancellationToken ct = default)
     {
         _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
 

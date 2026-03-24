@@ -9,6 +9,13 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+// The cancellation regression tests snapshot process lists by name (ping/sleep).
+// Running them in parallel risks false failures when unrelated processes with the same
+// name start concurrently. DisableParallelization ensures stable process-list assertions.
+[CollectionDefinition("CommandExecutorTests", DisableParallelization = true)]
+public class CommandExecutorTestsCollection { }
+
+[Collection("CommandExecutorTests")]
 public class CommandExecutorTests
 {
     private readonly ILogger<CommandExecutor> _logger;
@@ -310,8 +317,9 @@ public class CommandExecutorTests
         var pidsBefore = System.Diagnostics.Process.GetProcessesByName(childName)
             .Select(p => p.Id).ToHashSet();
 
-        var invokeTask = _executor.ExecuteAsync(command, args, cancellationToken: cts.Token);
-        await Task.Delay(300);
+        // captureOutput:false avoids output-stream EOF waiting in WaitForExitAsync, making cancellation faster.
+        var invokeTask = _executor.ExecuteAsync(command, args, captureOutput: false, cancellationToken: cts.Token);
+        await Task.Delay(100);
         cts.Cancel();
 
         // Must throw OperationCanceledException and must not hang.
@@ -319,7 +327,7 @@ public class CommandExecutorTests
             .WaitAsync(TimeSpan.FromSeconds(5)); // timeout proves the zombie fix: without Kill() the console would block
 
         // Give the OS a moment to propagate the kill signal.
-        await Task.Delay(500);
+        await Task.Delay(100);
 
         // No child processes spawned by this test should still be running.
         var zombiePids = System.Diagnostics.Process.GetProcessesByName(childName)
@@ -344,14 +352,14 @@ public class CommandExecutorTests
             .Select(p => p.Id).ToHashSet();
 
         var invokeTask = _executor.ExecuteWithStreamingAsync(command, args, cancellationToken: cts.Token);
-        await Task.Delay(300);
+        await Task.Delay(100);
         cts.Cancel();
 
         // Must throw OperationCanceledException and must not hang.
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invokeTask)
             .WaitAsync(TimeSpan.FromSeconds(5)); // timeout proves the zombie fix: without Kill() the console would block
 
-        await Task.Delay(500);
+        await Task.Delay(100);
 
         var zombiePids = System.Diagnostics.Process.GetProcessesByName(childName)
             .Select(p => p.Id).Except(pidsBefore).ToList();

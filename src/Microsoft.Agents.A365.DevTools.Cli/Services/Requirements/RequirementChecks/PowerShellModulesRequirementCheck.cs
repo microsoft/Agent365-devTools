@@ -303,6 +303,10 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             logger.LogDebug("PowerShell command failed: {Error}", error);
             return (false, error);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogDebug("PowerShell execution failed: {Error}", ex.Message);

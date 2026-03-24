@@ -171,6 +171,8 @@ By default the CLI targets the commercial Microsoft Graph endpoint. For sovereig
 
 This field is optional. When omitted, `https://graph.microsoft.com` is used.
 
+The value is read from `Agent365Config.GraphBaseUrl` and forwarded to `GraphApiService` via its `GraphBaseUrl` property after config is loaded. This controls both the HTTP endpoint used for all Graph API calls and the token resource identifier passed to `az account get-access-token`.
+
 ---
 
 ## Command Pattern Implementation

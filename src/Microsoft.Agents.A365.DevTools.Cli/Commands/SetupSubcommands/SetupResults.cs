@@ -52,6 +52,12 @@ public class SetupResults
     /// </summary>
     public string? FederatedCredentialError { get; set; }
     
+    /// <summary>
+    /// True when the client secret could not be created automatically and the user must
+    /// create it manually in Entra ID and re-run setup. Surfaces in the summary as Action Required.
+    /// </summary>
+    public bool ClientSecretManualActionRequired { get; set; }
+
     // Idempotency tracking flags - track whether resources already existed (vs newly created)
     public bool InfrastructureAlreadyExisted { get; set; }
     public bool BlueprintAlreadyExisted { get; set; }

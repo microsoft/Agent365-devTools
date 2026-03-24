@@ -58,6 +58,13 @@ internal class BlueprintCreationResult
     public string? GraphInheritablePermissionsError { get; set; }
 
     /// <summary>
+    /// True when the client secret could not be created automatically (e.g. Forbidden) and
+    /// the user must create it manually and re-run setup. The summary should surface this as
+    /// an Action Required item.
+    /// </summary>
+    public bool ClientSecretManualActionRequired { get; set; }
+
+    /// <summary>
     /// Indicates whether the Federated Identity Credential was successfully configured.
     /// When false and MSI was expected, agent token exchange will not work at runtime.
     /// </summary>
@@ -159,8 +166,17 @@ internal static class BlueprintSubcommand
         command.AddOption(updateEndpointOption);
         command.AddOption(skipRequirementsOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipEndpointRegistration, endpointOnly, updateEndpoint, skipRequirements) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var skipEndpointRegistration = context.ParseResult.GetValueForOption(skipEndpointRegistrationOption);
+            var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
+            var updateEndpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
+            var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
+            var ct = context.GetCancellationToken();
+
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogDebug("Starting blueprint setup (CorrelationId: {CorrelationId})", correlationId);
@@ -184,6 +200,10 @@ internal static class BlueprintSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
+            // Wire the sovereign/government cloud base URL from config so all Graph calls
+            // target the correct national cloud endpoint (commercial by default).
+            graphApiService.GraphBaseUrl = setupConfig.GraphBaseUrl;
+
             // Handle --update-endpoint flag
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
             {
@@ -204,7 +224,7 @@ internal static class BlueprintSubcommand
                 {
                     var checks = BlueprintSubcommand.GetChecks(authValidator, clientAppValidator);
                     await RequirementsSubcommand.RunChecksOrExitAsync(
-                        checks, setupConfig, logger, CancellationToken.None);
+                        checks, setupConfig, logger, ct);
                 }
                 catch (Exception reqEx) when (reqEx is not OperationCanceledException)
                 {
@@ -259,7 +279,7 @@ internal static class BlueprintSubcommand
                 correlationId: correlationId
                 );
 
-        }, configOption, verboseOption, dryRunOption, skipEndpointRegistrationOption, endpointOnlyOption, updateEndpointOption, skipRequirementsOption);
+        });
 
         return command;
     }
@@ -365,7 +385,8 @@ internal static class BlueprintSubcommand
             cleanLoggerFactory.CreateLogger<DelegatedConsentService>(),
             new GraphApiService(
                 cleanLoggerFactory.CreateLogger<GraphApiService>(),
-                executor));
+                executor,
+                graphBaseUrl: setupConfig.GraphBaseUrl));
 
         // Use DI-provided GraphApiService which already has MicrosoftGraphTokenProvider configured
         var graphService = graphApiService;
@@ -474,6 +495,7 @@ internal static class BlueprintSubcommand
         // ========================================================================
 
         // Skip secret creation if blueprint already existed and secret is already configured
+        bool clientSecretManualActionRequired;
         if (blueprintAlreadyExisted && !string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintClientSecret))
         {
             logger.LogInformation("Validating existing client secret...");
@@ -488,11 +510,12 @@ internal static class BlueprintSubcommand
             if (isValid)
             {
                 logger.LogInformation("Client secret is valid, skipping creation");
+                clientSecretManualActionRequired = false;
             }
             else
             {
                 logger.LogInformation("Client secret is invalid or expired, creating new secret...");
-                await CreateBlueprintClientSecretAsync(
+                var secretCreated = await CreateBlueprintClientSecretAsync(
                     blueprintObjectId!,
                     blueprintAppId!,
                     graphService,
@@ -500,11 +523,12 @@ internal static class BlueprintSubcommand
                     configService,
                     logger,
                     loginHintResolver: loginHintResolver);
+                clientSecretManualActionRequired = !secretCreated;
             }
         }
         else
         {
-            await CreateBlueprintClientSecretAsync(
+            var secretCreated = await CreateBlueprintClientSecretAsync(
                 blueprintObjectId!,
                 blueprintAppId!,
                 graphService,
@@ -512,6 +536,7 @@ internal static class BlueprintSubcommand
                 configService,
                 logger,
                 loginHintResolver: loginHintResolver);
+            clientSecretManualActionRequired = !secretCreated;
         }
 
         logger.LogInformation("");
@@ -575,6 +600,7 @@ internal static class BlueprintSubcommand
         {
             BlueprintCreated = true,
             BlueprintAlreadyExisted = blueprintAlreadyExisted,
+            ClientSecretManualActionRequired = clientSecretManualActionRequired,
             EndpointRegistered = endpointRegistered,
             EndpointAlreadyExisted = endpointAlreadyExisted,
             EndpointRegistrationAttempted = !skipEndpointRegistration,
@@ -1642,6 +1668,13 @@ internal static class BlueprintSubcommand
     /// </summary>
     private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null, string? loginHint = null)
     {
+        // Guard: MSAL will fail (and block for ~30s on WAM) with empty credentials.
+        if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
+        {
+            logger.LogDebug("Skipping MSAL token acquisition: clientAppId or tenantId is empty");
+            return null;
+        }
+
         try
         {
             var credential = new MsalBrowserCredential(
@@ -1659,7 +1692,7 @@ internal static class BlueprintSubcommand
 
             return token.Token;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "Failed to acquire MSAL Graph access token");
             return null;
@@ -1707,7 +1740,8 @@ internal static class BlueprintSubcommand
     /// Creates client secret for Agent Blueprint (Phase 2.5)
     /// Used by: BlueprintSubcommand and A365SetupRunner
     /// </summary>
-    public static async Task CreateBlueprintClientSecretAsync(
+    /// <returns>True if the secret was created successfully; false if it failed and manual action is required.</returns>
+    public static async Task<bool> CreateBlueprintClientSecretAsync(
         string blueprintObjectId,
         string blueprintAppId,
         GraphApiService graphService,
@@ -1807,24 +1841,15 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("WARNING: Secret encryption is only available on Windows. The secret is stored in plaintext.");
                 logger.LogWarning("Consider using environment variables or Azure Key Vault for production deployments.");
             }
+
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to create client secret automatically: {Message}", ex.Message);
-            logger.LogWarning("To create the secret manually you need one of the following on the blueprint app registration:");
-            logger.LogWarning("  - Owner of the app registration");
-            logger.LogWarning("  - Application Administrator, Cloud Application Administrator, or Global Administrator role in your Entra tenant");
-            logger.LogWarning("See: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference#application-administrator");
-            logger.LogInformation("Manual steps to create and add the secret:");
-            logger.LogInformation("  1. Go to Microsoft Entra admin center (https://entra.microsoft.com)");
-            logger.LogInformation("  2. Navigate to App registrations > All applications");
-            logger.LogInformation("  3. Find your blueprint app by ID: {AppId}", blueprintAppId);
-            logger.LogInformation("  4. Open Certificates & secrets > Client secrets > New client secret");
-            logger.LogInformation("  5. Copy the Value (not the Secret ID) - it is only shown once");
-            logger.LogInformation("  6. Add both fields to a365.generated.config.json:");
-            logger.LogInformation("       \"agentBlueprintClientSecret\": \"<your secret value>\"");
-            logger.LogInformation("       \"agentBlueprintClientSecretProtected\": false");
-            logger.LogInformation("  7. Re-run: a365 setup all");
+            logger.LogWarning("Create the client secret manually for blueprint app {AppId} and add it to a365.generated.config.json, then re-run: a365 setup all", blueprintAppId);
+            logger.LogWarning("See: https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials");
+            return false;
         }
     }
 

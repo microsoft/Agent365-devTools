@@ -15,6 +15,5 @@
   "managerEmail": "manager@yourdomain.onmicrosoft.com",
   "agentUserUsageLocation": "US",
   "deploymentProjectPath": "/path/to/your/agent/project",
-  "agentDescription": "Description of your agent's capabilities",
-  "graphBaseUrl": ""
+  "agentDescription": "Description of your agent's capabilities"
 }

@@ -78,80 +78,83 @@ public class FederatedCredentialService
                 return new List<FederatedCredentialInfo>();
             }
 
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("value", out var valueElement))
+            using (doc)
             {
-                return new List<FederatedCredentialInfo>();
-            }
-
-            var credentials = new List<FederatedCredentialInfo>();
-            foreach (var item in valueElement.EnumerateArray())
-            {
-                try
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("value", out var valueElement))
                 {
-                    // Use TryGetProperty to handle missing fields gracefully
-                    if (!item.TryGetProperty("id", out var idElement) || string.IsNullOrWhiteSpace(idElement.GetString()))
-                    {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'id' field");
-                        continue;
-                    }
+                    return new List<FederatedCredentialInfo>();
+                }
 
-                    if (!item.TryGetProperty("name", out var nameElement) || string.IsNullOrWhiteSpace(nameElement.GetString()))
+                var credentials = new List<FederatedCredentialInfo>();
+                foreach (var item in valueElement.EnumerateArray())
+                {
+                    try
                     {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'name' field");
-                        continue;
-                    }
-
-                    if (!item.TryGetProperty("issuer", out var issuerElement) || string.IsNullOrWhiteSpace(issuerElement.GetString()))
-                    {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'issuer' field");
-                        continue;
-                    }
-
-                    if (!item.TryGetProperty("subject", out var subjectElement) || string.IsNullOrWhiteSpace(subjectElement.GetString()))
-                    {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'subject' field");
-                        continue;
-                    }
-
-                    var id = idElement.GetString();
-                    var name = nameElement.GetString();
-                    var issuer = issuerElement.GetString();
-                    var subject = subjectElement.GetString();
-                    
-                    var audiences = new List<string>();
-                    if (item.TryGetProperty("audiences", out var audiencesElement))
-                    {
-                        foreach (var audience in audiencesElement.EnumerateArray())
+                        // Use TryGetProperty to handle missing fields gracefully
+                        if (!item.TryGetProperty("id", out var idElement) || string.IsNullOrWhiteSpace(idElement.GetString()))
                         {
-                            var audienceValue = audience.GetString();
-                            if (!string.IsNullOrWhiteSpace(audienceValue))
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'id' field");
+                            continue;
+                        }
+
+                        if (!item.TryGetProperty("name", out var nameElement) || string.IsNullOrWhiteSpace(nameElement.GetString()))
+                        {
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'name' field");
+                            continue;
+                        }
+
+                        if (!item.TryGetProperty("issuer", out var issuerElement) || string.IsNullOrWhiteSpace(issuerElement.GetString()))
+                        {
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'issuer' field");
+                            continue;
+                        }
+
+                        if (!item.TryGetProperty("subject", out var subjectElement) || string.IsNullOrWhiteSpace(subjectElement.GetString()))
+                        {
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'subject' field");
+                            continue;
+                        }
+
+                        var id = idElement.GetString();
+                        var name = nameElement.GetString();
+                        var issuer = issuerElement.GetString();
+                        var subject = subjectElement.GetString();
+
+                        var audiences = new List<string>();
+                        if (item.TryGetProperty("audiences", out var audiencesElement))
+                        {
+                            foreach (var audience in audiencesElement.EnumerateArray())
                             {
-                                audiences.Add(audienceValue);
+                                var audienceValue = audience.GetString();
+                                if (!string.IsNullOrWhiteSpace(audienceValue))
+                                {
+                                    audiences.Add(audienceValue);
+                                }
                             }
                         }
+
+                        credentials.Add(new FederatedCredentialInfo
+                        {
+                            Id = id,
+                            Name = name,
+                            Issuer = issuer,
+                            Subject = subject,
+                            Audiences = audiences
+                        });
                     }
-
-                    credentials.Add(new FederatedCredentialInfo
+                    catch (Exception itemEx)
                     {
-                        Id = id,
-                        Name = name,
-                        Issuer = issuer,
-                        Subject = subject,
-                        Audiences = audiences
-                    });
+                        // Log individual credential parsing errors but continue processing remaining credentials
+                        _logger.LogWarning(itemEx, "Failed to parse federated credential entry, skipping");
+                    }
                 }
-                catch (Exception itemEx)
-                {
-                    // Log individual credential parsing errors but continue processing remaining credentials
-                    _logger.LogWarning(itemEx, "Failed to parse federated credential entry, skipping");
-                }
-            }
 
-            _logger.LogDebug("Found {Count} federated credential(s) for blueprint: {ObjectId}", 
-                credentials.Count, blueprintObjectId);
+                _logger.LogDebug("Found {Count} federated credential(s) for blueprint: {ObjectId}",
+                    credentials.Count, blueprintObjectId);
 
-            return credentials;
+                return credentials;
+            } // end using (doc)
         }
         catch (Exception ex)
         {

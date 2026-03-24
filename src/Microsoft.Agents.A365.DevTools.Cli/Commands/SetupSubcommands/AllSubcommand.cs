@@ -246,6 +246,7 @@ internal static class AllSubcommand
 
                     setupResults.BlueprintCreated = result.BlueprintCreated;
                     setupResults.BlueprintAlreadyExisted = result.BlueprintAlreadyExisted;
+                    setupResults.ClientSecretManualActionRequired = result.ClientSecretManualActionRequired;
 
                     // Graph permissions and admin consent are deferred to the batch orchestrator
                     // (DeferConsent: true above). Flags are updated in Step 4 after the orchestrator runs.
@@ -439,12 +440,16 @@ internal static class AllSubcommand
             {
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
             }
             catch (FileNotFoundException fnfEx)
             {
                 logger.LogError("Setup failed: {Message}", fnfEx.Message);
                 ExceptionHandler.ExitWithCleanup(1);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {

@@ -26,12 +26,12 @@ public class AzureAuthValidator
     /// </summary>
     /// <param name="expectedSubscriptionId">The expected subscription ID to validate against. If null, only checks authentication.</param>
     /// <returns>True if authenticated and subscription matches (if specified), false otherwise.</returns>
-    public virtual async Task<bool> ValidateAuthenticationAsync(string? expectedSubscriptionId = null)
+    public virtual async Task<bool> ValidateAuthenticationAsync(string? expectedSubscriptionId = null, CancellationToken ct = default)
     {
         try
         {
             // Check Azure CLI authentication by trying to get current account
-            var result = await _executor.ExecuteAsync("az", "account show --output json", captureOutput: true, suppressErrorLogging: true);
+            var result = await _executor.ExecuteAsync("az", "account show --output json", captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
 
             if (!result.Success)
             {
@@ -71,7 +71,7 @@ public class AzureAuthValidator
             _logger.LogError("Failed to parse Azure account information: {Message}", ex.Message);
             return false;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Failed to validate Azure CLI authentication");
             return false;

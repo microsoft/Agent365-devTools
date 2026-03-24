@@ -86,7 +86,7 @@ public abstract class RequirementCheck : IRequirementCheck
 
             return result;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var errorMessage = $"Exception during check: {ex.Message}";
             var resolutionGuidance = "Please check the logs for more details and ensure all prerequisites are met";
