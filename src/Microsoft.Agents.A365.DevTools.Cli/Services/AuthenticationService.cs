@@ -252,7 +252,6 @@ public class AuthenticationService
                 var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
                 tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
             }
-
             _logger.LogInformation("Authentication successful!");
 
             return new TokenInfo

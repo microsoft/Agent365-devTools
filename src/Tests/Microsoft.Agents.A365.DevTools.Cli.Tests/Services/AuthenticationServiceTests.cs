@@ -915,8 +915,67 @@ public class AuthenticationServiceTests : IDisposable
             forceRefresh: true,
             useInteractiveBrowser: true);
 
-        // Assert — no fallback; error propagates as AzureAuthenticationException
-        await act.Should().ThrowAsync<AzureAuthenticationException>();
+        // Assert — non-CAP errors must NOT trigger device code fallback; only AADSTS53003/53000 should
+        await act.Should().ThrowAsync<AzureAuthenticationException>(
+            because: "unrecognized auth errors (e.g. user cancelled) must not silently fall back " +
+                     "to device code — only Conditional Access Policy errors qualify for automatic fallback");
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenBrowserThrowsMsalServiceExceptionWithUnrelatedCode_DoesNotFallBack()
+    {
+        // Arrange — browser fails with a real MsalServiceException but for an unrelated reason
+        // (e.g. AADSTS70011 "invalid scope") — must NOT fall back to device code
+        var msalServiceEx = new Microsoft.Identity.Client.MsalServiceException(
+            "invalid_request",
+            "AADSTS70011: The provided request must include a 'scope' input parameter.");
+        var browserCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException("Invalid scope request.", msalServiceEx));
+
+        var deviceCodeCredential = new StubTokenCredential("should-not-be-used", DateTimeOffset.UtcNow.AddHours(1));
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
+
+        // Act
+        Func<Task> act = async () => await sut.GetAccessTokenAsync(
+            "https://agent365.svc.cloud.microsoft",
+            forceRefresh: true,
+            useInteractiveBrowser: true);
+
+        // Assert
+        await act.Should().ThrowAsync<AzureAuthenticationException>(
+            because: "only AADSTS53003 and AADSTS53000 qualify for automatic device code fallback; " +
+                     "other MsalServiceException codes must surface as errors so the user can diagnose them");
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenDeviceCodeFailsWithCapError_ThrowsAzureAuthenticationException()
+    {
+        // Arrange — useInteractiveBrowser: false means device code is the first (and only) path.
+        // If device code itself fails, there is no further fallback — the error must surface.
+        var msalServiceEx = new Microsoft.Identity.Client.MsalServiceException(
+            "access_denied",
+            "AADSTS53003: Access has been blocked by Conditional Access policies.");
+        var browserCredential = new StubTokenCredential("unused", DateTimeOffset.UtcNow.AddHours(1));
+        var deviceCodeCredential = new ThrowingTokenCredential(
+            new MsalAuthenticationFailedException(
+                "Device code authentication failed.",
+                msalServiceEx));
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
+
+        // Act
+        Func<Task> act = async () => await sut.GetAccessTokenAsync(
+            "https://agent365.svc.cloud.microsoft",
+            forceRefresh: true,
+            useInteractiveBrowser: false);
+
+        // Assert
+        await act.Should().ThrowAsync<AzureAuthenticationException>(
+            because: "when device code itself fails there is no further fallback — " +
+                     "the error must surface to the user rather than looping");
     }
 
     #endregion

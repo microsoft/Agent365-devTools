@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `a365 cleanup` blueprint deletion now succeeds for Global Administrators even when the blueprint was created by a different user
 - `a365 setup all` no longer times out for non-admin users — the CLI immediately surfaces a consent URL to share with an administrator instead of waiting for a browser prompt
 - `a365 setup all` requests admin consent once for all resources instead of prompting once per resource
+- Browser and WAM authentication blocked by Conditional Access Policy (AADSTS53003, AADSTS53000) now automatically falls back to device code flow (#294)
 - macOS/Linux: device code fallback when browser authentication is unavailable (#309)
 - Linux: MSAL fallback when PowerShell `Connect-MgGraph` fails in non-TTY environments (#309)
 - Admin consent polling no longer times out after 180s — blueprint service principal now resolved with correct MSAL token (#309)

@@ -232,4 +232,19 @@ public static class AuthenticationConstants
     /// for testing purposes only. It should NOT be deployed to production Azure environments.
     /// </summary>
     public const string BearerTokenEnvironmentVariable = "BEARER_TOKEN";
+
+    /// <summary>
+    /// AADSTS53003: Access blocked by Conditional Access Policy.
+    /// MSAL throws MsalServiceException with ErrorCode "access_denied" and this code in the Message.
+    /// Device code flow may succeed depending on your tenant's Conditional Access Policy configuration.
+    /// Reference: https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes
+    /// </summary>
+    public const string ConditionalAccessPolicyBlockedError = "AADSTS53003";
+
+    /// <summary>
+    /// AADSTS53000: Device does not comply with device compliance policy (a subset of CAP).
+    /// Treated identically to AADSTS53003 for fallback purposes.
+    /// Device code flow may succeed depending on your tenant's Conditional Access Policy configuration.
+    /// </summary>
+    public const string DeviceCompliancePolicyBlockedError = "AADSTS53000";
 }

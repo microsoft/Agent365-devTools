@@ -153,6 +153,19 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
                 var result = await ExecuteWithFallbackAsync(script, ct);
                 token = ProcessResult(result);
+
+                // If PowerShell browser auth was blocked by Conditional Access Policy, retry with
+                // device code. This covers the case where clientAppId is null (MSAL skipped) and the
+                // user is on a CAP-enforced tenant where browser auth is blocked.
+                if (string.IsNullOrWhiteSpace(token) && !useDeviceCode && IsConditionalAccessError(result))
+                {
+                    _logger.LogWarning(
+                        "PowerShell browser authentication blocked by a Conditional Access or device compliance policy (AADSTS53003/AADSTS53000). " +
+                        "Retrying with device code authentication...");
+                    var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
+                    var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
+                    token = ProcessResult(deviceCodeResult);
+                }
             }
 
             if (string.IsNullOrWhiteSpace(token))
@@ -474,6 +487,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
         _logger.LogDebug("Microsoft Graph access token acquired successfully");
         return token;
+    }
+
+    private static bool IsConditionalAccessError(CommandResult result)
+    {
+        return !string.IsNullOrWhiteSpace(result.StandardError) &&
+               (result.StandardError.Contains(AuthenticationConstants.ConditionalAccessPolicyBlockedError, StringComparison.Ordinal) ||
+                result.StandardError.Contains(AuthenticationConstants.DeviceCompliancePolicyBlockedError, StringComparison.Ordinal));
     }
 
     private static bool IsPowerShellNotFoundError(CommandResult result)
