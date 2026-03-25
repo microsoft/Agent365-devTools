@@ -369,23 +369,9 @@ internal static class AllSubcommand
                     ctx, specs,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-                // DW-specific post: populate consent URLs when the user is not a GA.
-                List<string>? consentResourceNames = null;
-                if (!ctx.Results.AdminConsentGranted && !string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
-                {
-                    consentResourceNames = SetupHelpers.PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes);
-                }
+                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
-
-                if (consentResourceNames is not null)
-                {
-                    ctx.Results.ConsentUrlsSavedToPath = generatedConfigPath;
-                    ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
-                    ctx.Results.CombinedConsentUrl = SetupHelpers.BuildCombinedConsentUrl(
-                        ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
-                        ctx.Config.AgentApplicationScopes, mcpScopes);
-                }
 
                 // Step 4: Register messaging endpoint
                 await ExecuteMessagingEndpointStepAsync(ctx);

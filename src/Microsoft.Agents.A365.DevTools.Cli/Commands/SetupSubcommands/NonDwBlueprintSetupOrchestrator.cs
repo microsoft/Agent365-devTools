@@ -18,7 +18,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// Steps:
 ///   1. Requirements validation (Azure auth + custom client app)
 ///   2. Blueprint creation (shared with DW via AllSubcommand.ExecuteBlueprintStepAsync)
-///   3. Batch permissions — Graph delegated + Agent 365 Tools delegated only
+///   3. Batch permissions — Graph delegated + Agent 365 Tools + Messaging Bot + Observability + Power Platform
 ///   4. Agent Instance registration via POST /beta/agentRegistry/agentInstances
 /// </summary>
 internal static class NonDwBlueprintSetupOrchestrator
@@ -34,6 +34,15 @@ internal static class NonDwBlueprintSetupOrchestrator
     [
         "McpServers.Mail.All", "McpServersMetadata.Read.All", "AgentTools.ListMCPServers.All"
     ];
+
+    internal static readonly string[] MessagingBotApiPermissions =
+        ["Authorization.ReadWrite", "user_impersonation"];
+
+    internal static readonly string[] ObservabilityApiPermissions =
+        ["user_impersonation"];
+
+    internal static readonly string[] PowerPlatformApiPermissions =
+        ["Connectivity.Connections.Read"];
 
     /// <summary>
     /// Prints a dry-run plan showing all resources that would be created or configured,
@@ -203,9 +212,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             // Step 2: Blueprint creation (shared with DW)
             await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
 
-            // Step 3: Batch permissions — Graph delegated + Agent 365 Tools delegated only.
-            // Non-DW blueprint agents do not use Azure Bot Service, so Bot API, Observability,
-            // and Power Platform are not added to the spec list.
+            // Step 3: Batch permissions — same full spec list as DW blueprints.
             var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
 
             var specs = new List<ResourcePermissionSpec>
@@ -220,11 +227,28 @@ internal static class NonDwBlueprintSetupOrchestrator
                     "Agent 365 Tools",
                     Agent365ToolsDelegatedPermissions,
                     SetInheritable: true),
+                new ResourcePermissionSpec(
+                    ConfigConstants.MessagingBotApiAppId,
+                    "Messaging Bot API",
+                    MessagingBotApiPermissions,
+                    SetInheritable: true),
+                new ResourcePermissionSpec(
+                    ConfigConstants.ObservabilityApiAppId,
+                    "Observability API",
+                    ObservabilityApiPermissions,
+                    SetInheritable: true),
+                new ResourcePermissionSpec(
+                    PowerPlatformConstants.PowerPlatformApiResourceAppId,
+                    "Power Platform API",
+                    PowerPlatformApiPermissions,
+                    SetInheritable: true),
             };
 
             await AllSubcommand.ExecuteBatchPermissionsStepAsync(
                 ctx, specs,
                 knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
+
+            SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, GraphDelegatedPermissions, Agent365ToolsDelegatedPermissions);
 
             // Save state after permissions (before agent identity creation, so progress
             // is not lost if subsequent steps fail).

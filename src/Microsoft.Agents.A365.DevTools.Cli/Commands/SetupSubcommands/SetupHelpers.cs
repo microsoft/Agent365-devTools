@@ -345,6 +345,29 @@ internal static class SetupHelpers
     }
 
     /// <summary>
+    /// Populates per-resource consent URLs in config and sets <see cref="SetupResults.CombinedConsentUrl"/>
+    /// when the running account is not a Global Administrator. Called by both DW and non-DW setup paths
+    /// after the batch permissions step.
+    /// No-op if admin consent was already granted or blueprint ID is absent.
+    /// </summary>
+    internal static void ApplyConsentUrlsIfNeeded(
+        SetupContext ctx,
+        string mcpResourceAppId,
+        IEnumerable<string> graphScopes,
+        IEnumerable<string> mcpScopes)
+    {
+        if (ctx.Results.AdminConsentGranted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
+            return;
+
+        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes);
+        ctx.Results.ConsentUrlsSavedToPath = ctx.GeneratedConfigPath;
+        ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
+        ctx.Results.CombinedConsentUrl = BuildCombinedConsentUrl(
+            ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
+            graphScopes, mcpScopes);
+    }
+
+    /// <summary>
     /// Displays the setup summary for 'a365 setup admin' — shows grant results and
     /// a Graph Explorer query the administrator can use to verify the grants.
     /// </summary>

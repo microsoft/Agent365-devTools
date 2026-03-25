@@ -187,6 +187,21 @@ internal static class AdminSubcommand
                             "Agent 365 Tools",
                             NonDwBlueprintSetupOrchestrator.Agent365ToolsDelegatedPermissions,
                             SetInheritable: false),
+                        new ResourcePermissionSpec(
+                            ConfigConstants.MessagingBotApiAppId,
+                            "Messaging Bot API",
+                            NonDwBlueprintSetupOrchestrator.MessagingBotApiPermissions,
+                            SetInheritable: false),
+                        new ResourcePermissionSpec(
+                            ConfigConstants.ObservabilityApiAppId,
+                            "Observability API",
+                            NonDwBlueprintSetupOrchestrator.ObservabilityApiPermissions,
+                            SetInheritable: false),
+                        new ResourcePermissionSpec(
+                            PowerPlatformConstants.PowerPlatformApiResourceAppId,
+                            "Power Platform API",
+                            NonDwBlueprintSetupOrchestrator.PowerPlatformApiPermissions,
+                            SetInheritable: false),
                     };
                 }
                 else
