@@ -165,52 +165,14 @@ internal static class AdminSubcommand
                     return;
                 }
 
-                // Build the spec list matching the flow that created the blueprint.
-                // Non-DW blueprint: Graph + A365 Tools only (no Bot API, Observability, Power Platform).
-                // DW blueprint: full spec list including all resource APIs.
+                // Build the spec list using dynamic config values (same for both DW and non-DW).
                 var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
-
-                List<ResourcePermissionSpec> specs;
-
-                if (setupConfig.IsNonDwBlueprint)
-                {
-                    logger.LogDebug("Non-DW blueprint flow detected — using trimmed spec list (Graph + A365 Tools only)");
-                    specs = new List<ResourcePermissionSpec>
-                    {
-                        new ResourcePermissionSpec(
-                            AuthenticationConstants.MicrosoftGraphResourceAppId,
-                            "Microsoft Graph",
-                            NonDwBlueprintSetupOrchestrator.GraphDelegatedPermissions,
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            mcpResourceAppId,
-                            "Agent 365 Tools",
-                            NonDwBlueprintSetupOrchestrator.Agent365ToolsDelegatedPermissions,
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            ConfigConstants.MessagingBotApiAppId,
-                            "Messaging Bot API",
-                            NonDwBlueprintSetupOrchestrator.MessagingBotApiPermissions,
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            ConfigConstants.ObservabilityApiAppId,
-                            "Observability API",
-                            NonDwBlueprintSetupOrchestrator.ObservabilityApiPermissions,
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                            "Power Platform API",
-                            NonDwBlueprintSetupOrchestrator.PowerPlatformApiPermissions,
-                            SetInheritable: false),
-                    };
-                }
-                else
-                {
                 var mcpManifestPath = Path.Combine(
                     setupConfig.DeploymentProjectPath ?? string.Empty,
                     McpConstants.ToolingManifestFileName);
                 var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
-                    specs = new List<ResourcePermissionSpec>
+
+                var specs = new List<ResourcePermissionSpec>
                 {
                     new ResourcePermissionSpec(
                         AuthenticationConstants.MicrosoftGraphResourceAppId,
@@ -238,7 +200,6 @@ internal static class AdminSubcommand
                         new[] { "Connectivity.Connections.Read" },
                         SetInheritable: false),
                 };
-                }
 
                 foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
                 {

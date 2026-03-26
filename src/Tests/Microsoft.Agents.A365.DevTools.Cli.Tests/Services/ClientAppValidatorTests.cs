@@ -38,6 +38,12 @@ public class ClientAppValidatorTests
     private const string AgentBlueprintAddRemoveCredsId = "aaaa0004-0000-0000-0000-000000000000";
     private const string DelegatedPermissionGrantReadWriteAllId = "aaaa0005-0000-0000-0000-000000000000";
     private const string DirectoryReadAllId = "aaaa0006-0000-0000-0000-000000000000";
+    private const string AgentInstanceReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
+    private const string AgentIdentityReadWriteAllId = "aaaa0008-0000-0000-0000-000000000000";
+
+    // Separate SP object ID used only by the consent-grant path (GetConsentedPermissionsAsync)
+    // so it does not conflict with SetupAdminConsentSp / SetupAdminConsentGrantsEmpty.
+    private const string ConsentSpObjId = "consent-check-sp-id-999";
 
     public ClientAppValidatorTests()
     {
@@ -491,8 +497,10 @@ public class ClientAppValidatorTests
     }
 
     /// <summary>
-    /// Sets up the app info GET with all 6 required permissions.
-    /// The permission GUIDs match those returned by SetupPermissionResolution so validation passes.
+    /// Sets up the app info GET with all required permissions (8 with GUIDs + AgentIdentity.Create.All
+    /// via consent grant). The permission GUIDs match those returned by SetupPermissionResolution so
+    /// validation passes. Also sets up the consent grant mock for AgentIdentity.Create.All (no GUID
+    /// in v1.0 oauth2PermissionScopes — resolved via GetConsentedPermissionsAsync fallback).
     /// </summary>
     private void SetupAppInfoWithAllPermissions(string appId)
     {
@@ -506,13 +514,16 @@ public class ClientAppValidatorTests
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"}
+                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
+                    {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentIdentityReadWriteAllId}}", "type": "Scope"}
                 ]
             }
         ]
         """;
 
         SetupAppInfoGet(appId, requiredResourceAccess: requiredResourceAccess);
+        SetupConsentGrantForAgentIdentityCreate();
     }
 
     /// <summary>
@@ -532,7 +543,9 @@ public class ClientAppValidatorTests
                         {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
                         {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
                         {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
-                        {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"}
+                        {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
+                        {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
+                        {"id": "{{AgentIdentityReadWriteAllId}}", "value": "AgentIdentity.ReadWrite.All"}
                     ]
                 }
             ]
@@ -545,6 +558,34 @@ public class ClientAppValidatorTests
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
+    }
+
+    /// <summary>
+    /// Sets up the consent-grant fallback path for AgentIdentity.Create.All.
+    /// This permission has no GUID in v1.0 oauth2PermissionScopes, so ClientAppValidator
+    /// resolves it via GetConsentedPermissionsAsync (step 3.5). Uses a distinct SP object ID
+    /// (ConsentSpObjId) so this mock does not interfere with SetupAdminConsentSp/SetupAdminConsentGrantsEmpty.
+    /// </summary>
+    private void SetupConsentGrantForAgentIdentityCreate()
+    {
+        // SP lookup used by GetConsentedPermissionsAsync: $select=id (no extra fields).
+        // Discriminated from ValidateAdminConsentAsync ($select=id,appId) by EndsWith.
+        var spJson = $$"""{"value": [{"id": "{{ConsentSpObjId}}"}]}""";
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("servicePrincipals") && p.EndsWith("&$select=id")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(spJson)));
+
+        // Grants for ConsentSpObjId — contains AgentIdentity.Create.All so it is removed from missingPermissions.
+        var grantsJson = """{"value": [{"scope": "AgentIdentity.Create.All"}]}""";
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(grantsJson)));
     }
 
     /// <summary>

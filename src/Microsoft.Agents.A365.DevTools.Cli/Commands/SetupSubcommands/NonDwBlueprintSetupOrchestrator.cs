@@ -12,38 +12,18 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 /// <summary>
 /// Orchestrates setup for blueprint-based non-AI Teammate agent deployments.
-/// Creates an Agent Identity Blueprint in Entra, provisions a Blueprint SP with API permissions,
-/// and registers an Agent Instance via the Agent Instance Graph API.
-/// No Azure Bot Service, manifest zip, or client secret is required.
+/// Runs the same steps as DW (infrastructure, blueprint, permissions) then appends
+/// two non-DW-only steps: Agent Identity creation and AgentX agent registration.
 ///
 /// Steps:
-///   1. Requirements validation (Azure auth + custom client app)
-///   2. Blueprint creation (shared with DW via AllSubcommand.ExecuteBlueprintStepAsync)
-///   3. Batch permissions — Graph delegated + Agent 365 Tools + Messaging Bot + Observability + Power Platform
-///   4. Agent Instance registration via POST /beta/agentRegistry/agentInstances
+///   1. Requirements validation
+///   2. Blueprint creation (shared with DW)
+///   3. Batch permissions (shared with DW — dynamic scopes from config)
+///   4. Agent Identity creation via POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity
+///   5. Agent registration via AgentX Agent Registration API V2
 /// </summary>
 internal static class NonDwBlueprintSetupOrchestrator
 {
-    // Microsoft Graph delegated permissions added to the blueprint
-    internal static readonly string[] GraphDelegatedPermissions =
-    [
-        "User.Read", "openid", "profile", "email", "offline_access"
-    ];
-
-    // Agent 365 Tools delegated permissions added to the blueprint
-    internal static readonly string[] Agent365ToolsDelegatedPermissions =
-    [
-        "McpServers.Mail.All", "McpServersMetadata.Read.All", "AgentTools.ListMCPServers.All"
-    ];
-
-    internal static readonly string[] MessagingBotApiPermissions =
-        ["Authorization.ReadWrite", "user_impersonation"];
-
-    internal static readonly string[] ObservabilityApiPermissions =
-        ["user_impersonation"];
-
-    internal static readonly string[] PowerPlatformApiPermissions =
-        ["Connectivity.Connections.Read"];
 
     /// <summary>
     /// Prints a dry-run plan showing all resources that would be created or configured,
@@ -59,40 +39,40 @@ internal static class NonDwBlueprintSetupOrchestrator
         logger.LogInformation("Non-DW Blueprint Setup Plan (dry run — no changes will be made)");
         logger.LogInformation("");
 
-        // Blueprint
-        logger.LogInformation("  Blueprint");
+        // Step 1: Infrastructure
+        if (config.NeedDeployment)
+            logger.LogInformation("  1. Create Azure infrastructure");
+        else
+            logger.LogInformation("  1. Skip: Azure infrastructure (needDeployment=false)");
+
+        // Step 2: Blueprint
         if (existingBlueprint)
-            logger.LogInformation("    Reuse Blueprint:         \"{DisplayName}\"  id: {BlueprintId}",
+            logger.LogInformation("  2. Reuse blueprint: \"{DisplayName}\"  id: {BlueprintId}",
                 displayName, config.AgentBlueprintId);
         else
-            logger.LogInformation("    Create Blueprint:        \"{DisplayName}\"  (multi-tenant)", displayName);
-        logger.LogInformation("    Assign API Permissions:  Microsoft Graph: {GraphScopes}",
-            string.Join(", ", GraphDelegatedPermissions));
-        logger.LogInformation("                             Agent 365 Tools: {A365Scopes}",
-            string.Join(", ", Agent365ToolsDelegatedPermissions));
-        logger.LogInformation("    Configure Blueprint SP:  inherited permissions");
-        logger.LogInformation("");
+            logger.LogInformation("  2. Create blueprint: \"{DisplayName}\"  (multi-tenant)", displayName);
 
-        // Agent Instance
-        logger.LogInformation("  Agent Instance");
+        // Step 3: Permissions
+        logger.LogInformation("  3. Configure permissions:");
+        logger.LogInformation("       Microsoft Graph: {GraphScopes}", string.Join(", ", config.AgentApplicationScopes));
+        logger.LogInformation("       Agent 365 Tools: (read from mcpToolingManifest.json)");
+        logger.LogInformation("       Messaging Bot API, Observability API, Power Platform API");
+        if (config.CustomBlueprintPermissions?.Count > 0)
+            logger.LogInformation("       Custom: {Custom}", string.Join(", ", config.CustomBlueprintPermissions.Select(p => p.ResourceName ?? p.ResourceAppId)));
+
+        // Step 4: Agent Identity
         if (existingAgentId)
-            logger.LogInformation("    Reuse Agent ID:          Blueprint Instance  id: {AgentId}  tenant: {TenantId}",
-                config.AgenticAppId, config.TenantId);
+            logger.LogInformation("  4. Reuse agent identity: id={AgentId}", config.AgenticAppId);
         else
-            logger.LogInformation("    Create Agent ID:         Blueprint Instance  tenant: {TenantId}",
-                config.TenantId);
-        logger.LogInformation("");
+            logger.LogInformation("  4. Create agent identity: tenant={TenantId}", config.TenantId);
 
-        // Register
-        logger.LogInformation("  Register");
+        // Step 5: Agent Registration
         if (existingInstance)
-            logger.LogInformation("    Reuse Agent:             already registered  id: {RegistrationId}",
-                config.AgentRegistrationId);
+            logger.LogInformation("  5. Reuse agent registration: id={RegistrationId}", config.AgentRegistrationId);
         else
-            logger.LogInformation("    Register Agent:          via AgentX Agent Registration API V2  (no manifest)");
-        logger.LogInformation("             NOTE: Requires 'Agent Registry Administrator' role in Entra ID");
-        logger.LogInformation("");
+            logger.LogInformation("  5. Register agent via AgentX Agent Registration API V2");
 
+        logger.LogInformation("");
         logger.LogInformation("Run without --dry-run to execute these steps.");
     }
 
@@ -187,7 +167,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             // Step 1: Requirements validation
             if (!ctx.SkipRequirements)
             {
-                var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator);
+                var includeInfra = !ctx.SkipInfrastructure && ctx.Config.NeedDeployment;
+                var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfra);
                 try
                 {
                     await RequirementsSubcommand.RunChecksOrExitAsync(checks, ctx.Config, ctx.Logger, ctx.CancellationToken);
@@ -205,57 +186,28 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
 
             // Step 1.5: Consent check — detect missing consent for required permissions and prompt.
-            // Requirements check passes even when individual scopes are missing from the grant
-            // (ValidateAdminConsentAsync only verifies that ANY required permission is consented).
-            // We surface any gap here so the user can confirm before we proceed.
             await EnsureConsentWithPromptAsync(ctx);
 
-            // Step 2: Blueprint creation (shared with DW)
+            // Step 2: Infrastructure (shared with DW, skipped when NeedDeployment=false or --skip-infrastructure)
+            await AllSubcommand.ExecuteInfrastructureStepAsync(ctx);
+
+            // Step 3: Blueprint creation (shared with DW)
             await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
 
-            // Step 3: Batch permissions — same full spec list as DW blueprints.
-            var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
-
-            var specs = new List<ResourcePermissionSpec>
-            {
-                new ResourcePermissionSpec(
-                    AuthenticationConstants.MicrosoftGraphResourceAppId,
-                    "Microsoft Graph",
-                    GraphDelegatedPermissions,
-                    SetInheritable: true),
-                new ResourcePermissionSpec(
-                    mcpResourceAppId,
-                    "Agent 365 Tools",
-                    Agent365ToolsDelegatedPermissions,
-                    SetInheritable: true),
-                new ResourcePermissionSpec(
-                    ConfigConstants.MessagingBotApiAppId,
-                    "Messaging Bot API",
-                    MessagingBotApiPermissions,
-                    SetInheritable: true),
-                new ResourcePermissionSpec(
-                    ConfigConstants.ObservabilityApiAppId,
-                    "Observability API",
-                    ObservabilityApiPermissions,
-                    SetInheritable: true),
-                new ResourcePermissionSpec(
-                    PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                    "Power Platform API",
-                    PowerPlatformApiPermissions,
-                    SetInheritable: true),
-            };
+            // Step 4: Batch permissions — same dynamic spec list as DW (AgentApplicationScopes + MCP manifest + CustomBlueprintPermissions)
+            var (specs, mcpResourceAppId, mcpScopes) = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
 
             await AllSubcommand.ExecuteBatchPermissionsStepAsync(
                 ctx, specs,
                 knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-            SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, GraphDelegatedPermissions, Agent365ToolsDelegatedPermissions);
+            SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
 
             // Save state after permissions (before agent identity creation, so progress
             // is not lost if subsequent steps fail).
             await ctx.ConfigService.SaveStateAsync(ctx.Config);
 
-            // Step 4: Create Agent Identity via Agent Identity Graph API.
+            // Step 5: Create Agent Identity via Agent Identity Graph API.
             createAgentIdentity:
             ctx.Logger.LogInformation("");
 
@@ -317,7 +269,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 }
             }
 
-            // Step 5: Register Agent via AgentX Agent Registration API V2.
+            // Step 6: Register Agent via AgentX Agent Registration API V2.
             ctx.Logger.LogInformation("");
 
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))

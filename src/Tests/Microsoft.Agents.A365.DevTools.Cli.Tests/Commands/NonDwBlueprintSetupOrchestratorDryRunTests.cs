@@ -56,7 +56,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Create Blueprint") && o.ToString()!.Contains("multi-tenant")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Create blueprint") && o.ToString()!.Contains("multi-tenant")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -69,7 +69,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Reuse Blueprint") && o.ToString()!.Contains("existing-bp-id")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Reuse blueprint") && o.ToString()!.Contains("existing-bp-id")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -103,12 +103,14 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     [Fact]
     public void PrintDryRunPlan_IncludesAgent365ToolsPermissions()
     {
+        // Agent 365 Tools scopes are read dynamically from the MCP manifest at runtime.
+        // The dry-run plan indicates the manifest file rather than listing hardcoded scopes.
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
 
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("McpServers.Mail.All")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Agent 365 Tools") && o.ToString()!.Contains("mcpToolingManifest.json")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -129,25 +131,27 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     [Fact]
     public void PrintDryRunPlan_IncludesAgentInstanceRegistration()
     {
+        // Registration uses the AgentX Agent Registration API V2 (not the Graph agentRegistry).
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
 
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Agent Instance") && o.ToString()!.Contains("Graph API")),
+            Arg.Is<object>(o => o.ToString()!.Contains("AgentX") && o.ToString()!.Contains("Registration")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
 
     [Fact]
-    public void PrintDryRunPlan_MentionsNoManifest()
+    public void PrintDryRunPlan_ShowsAgentXApiV2ForRegistration()
     {
+        // The registration step should explicitly call out AgentX Agent Registration API V2.
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
 
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("no manifest")),
+            Arg.Is<object>(o => o.ToString()!.Contains("AgentX Agent Registration API V2")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }

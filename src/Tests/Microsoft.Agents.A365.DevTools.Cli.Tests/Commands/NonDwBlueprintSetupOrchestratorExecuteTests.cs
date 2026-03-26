@@ -16,7 +16,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// Tests for NonDwBlueprintSetupOrchestrator.ExecuteAsync — Phase B setup execution.
 ///
 /// Behavioral coverage:
-///   - Permission spec constants are correct (Graph + A365 Tools only, no Bot/Observability/Power Platform)
 ///   - Blueprint failure results in exit code 1 and populated errors
 ///   - Agent instance ID is recorded on success
 ///
@@ -26,50 +25,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// </summary>
 public class NonDwBlueprintSetupOrchestratorExecuteTests
 {
-    // -------------------------------------------------------------------------
-    // Permission spec constant tests — verifies non-DW uses only Graph + A365
-    // -------------------------------------------------------------------------
-
-    [Fact]
-    public void GraphDelegatedPermissions_ContainsExpectedScopes()
-    {
-        NonDwBlueprintSetupOrchestrator.GraphDelegatedPermissions.Should()
-            .Contain("User.Read")
-            .And.Contain("openid")
-            .And.Contain("profile")
-            .And.Contain("email")
-            .And.Contain("offline_access");
-    }
-
-    [Fact]
-    public void Agent365ToolsDelegatedPermissions_ContainsExpectedScopes()
-    {
-        NonDwBlueprintSetupOrchestrator.Agent365ToolsDelegatedPermissions.Should()
-            .Contain("McpServers.Mail.All")
-            .And.Contain("McpServersMetadata.Read.All")
-            .And.Contain("AgentTools.ListMCPServers.All");
-    }
-
-    /// <summary>
-    /// Non-DW blueprint agents do not use Azure Bot Service, Observability, or Power Platform.
-    /// This test guards against accidentally including DW-only resources in the non-DW spec list.
-    /// </summary>
-    [Fact]
-    public void Agent365ToolsDelegatedPermissions_DoesNotContainBotApiOrObservabilityScopes()
-    {
-        // Bot API scopes
-        NonDwBlueprintSetupOrchestrator.Agent365ToolsDelegatedPermissions.Should()
-            .NotContain("Authorization.ReadWrite")
-            .And.NotContain("user_impersonation");
-    }
-
-    [Fact]
-    public void GraphDelegatedPermissions_DoesNotContainPowerPlatformScopes()
-    {
-        NonDwBlueprintSetupOrchestrator.GraphDelegatedPermissions.Should()
-            .NotContain("Connectivity.Connections.Read");
-    }
-
     // -------------------------------------------------------------------------
     // ExecuteAsync behavioral tests — error paths
     // -------------------------------------------------------------------------

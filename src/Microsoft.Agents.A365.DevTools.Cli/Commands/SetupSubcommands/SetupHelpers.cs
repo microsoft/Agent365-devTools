@@ -109,11 +109,11 @@ internal static class SetupHelpers
         }
         if (results.AgentIdentityCreated)
         {
-            logger.LogInformation("  Agent identity: created (ID: {AgentId})", results.AgentIdentityId ?? "unknown");
+            logger.LogInformation("  [OK] Agent identity: created (ID: {AgentId})", results.AgentIdentityId ?? "unknown");
         }
         if (results.AgentInstanceRegistered)
         {
-            logger.LogInformation("  Agent instance: registered (ID: {InstanceId})", results.AgentInstanceId ?? "unknown");
+            logger.LogInformation("  [OK] Agent registration: registered (ID: {InstanceId})", results.AgentInstanceId ?? "unknown");
         }
 
         // Action required — shown as its own section so it isn't conflated with completed work

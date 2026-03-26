@@ -49,16 +49,24 @@ internal static class AllSubcommand
 
     /// <summary>
     /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
-    /// Skips Location and Infrastructure — no Azure resources are provisioned for blueprint agents.
+    /// Mirrors DW checks: includes Location and optionally Infrastructure when the agent needs deployment.
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
         AzureAuthValidator auth,
-        IClientAppValidator clientAppValidator)
+        IClientAppValidator clientAppValidator,
+        bool includeInfrastructure)
     {
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
+            new LocationRequirementCheck(),
             new ClientAppRequirementCheck(clientAppValidator),
         };
+
+        if (includeInfrastructure)
+        {
+            checks.Add(new InfrastructureRequirementCheck());
+        }
+
         return checks;
     }
 
@@ -179,7 +187,7 @@ internal static class AllSubcommand
                     configFile: config,
                     generatedConfigPath: nonDwGeneratedConfigPath,
                     correlationId: correlationId,
-                    skipInfrastructure: true,
+                    skipInfrastructure: skipInfrastructure,
                     skipRequirements: skipRequirements,
                     cancellationToken: ct,
                     configService: configService,
@@ -226,7 +234,6 @@ internal static class AllSubcommand
                 logger.LogInformation("  2. Create agent blueprint (Entra ID application)");
                 logger.LogInformation("  3. Configure MCP server permissions");
                 logger.LogInformation("  4. Configure Bot API permissions");
-                logger.LogInformation("  5. Register blueprint messaging endpoint and sync project settings");
                 logger.LogInformation("No actual changes will be made.");
                 return;
             }
@@ -306,64 +313,7 @@ internal static class AllSubcommand
                 await ExecuteBlueprintStepAsync(ctx);
 
                 // Step 3: Configure all permissions in a batch.
-                // Pre-step: remove stale custom permissions before building the spec list.
-                var desiredCustomIds = new HashSet<string>(
-                    (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-                        .Select(p => p.ResourceAppId),
-                    StringComparer.OrdinalIgnoreCase);
-                await PermissionsSubcommand.RemoveStaleCustomPermissionsAsync(
-                    logger, graphApiService, blueprintService, ctx.Config, desiredCustomIds, ct);
-
-                var mcpManifestPath = Path.Combine(
-                    ctx.Config.DeploymentProjectPath ?? string.Empty,
-                    McpConstants.ToolingManifestFileName);
-                var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
-                var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
-
-                var specs = new List<ResourcePermissionSpec>
-                {
-                    new ResourcePermissionSpec(
-                        AuthenticationConstants.MicrosoftGraphResourceAppId,
-                        "Microsoft Graph",
-                        ctx.Config.AgentApplicationScopes.ToArray(),
-                        SetInheritable: true),
-                    new ResourcePermissionSpec(
-                        mcpResourceAppId,
-                        "Agent 365 Tools",
-                        mcpScopes,
-                        SetInheritable: true),
-                    new ResourcePermissionSpec(
-                        ConfigConstants.MessagingBotApiAppId,
-                        "Messaging Bot API",
-                        new[] { "Authorization.ReadWrite", "user_impersonation" },
-                        SetInheritable: true),
-                    new ResourcePermissionSpec(
-                        ConfigConstants.ObservabilityApiAppId,
-                        "Observability API",
-                        new[] { "user_impersonation" },
-                        SetInheritable: true),
-                    new ResourcePermissionSpec(
-                        PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                        "Power Platform API",
-                        new[] { "Connectivity.Connections.Read" },
-                        SetInheritable: true),
-                };
-
-                foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-                {
-                    var (isValid, _) = customPerm.Validate();
-                    if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
-                    {
-                        var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                            ? customPerm.ResourceAppId
-                            : customPerm.ResourceName;
-                        specs.Add(new ResourcePermissionSpec(
-                            customPerm.ResourceAppId,
-                            resourceName,
-                            customPerm.Scopes.ToArray(),
-                            SetInheritable: true));
-                    }
-                }
+                var (specs, mcpResourceAppId, mcpScopes) = await BuildPermissionSpecsAsync(ctx);
 
                 await ExecuteBatchPermissionsStepAsync(
                     ctx, specs,
@@ -372,9 +322,6 @@ internal static class AllSubcommand
                 SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
-
-                // Step 4: Register messaging endpoint
-                await ExecuteMessagingEndpointStepAsync(ctx);
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
@@ -405,8 +352,8 @@ internal static class AllSubcommand
     // -------------------------------------------------------------------------
     // Shared step methods — called by both DW (AllSubcommand) and non-DW
     // (NonDwBlueprintSetupOrchestrator). Steps are intentionally non-fatal
-    // when appropriate (Permissions, MessagingEndpoint) so partial progress
-    // is preserved and the caller can report what succeeded.
+    // when appropriate (Permissions) so partial progress is preserved and
+    // the caller can report what succeeded.
     // -------------------------------------------------------------------------
 
     /// <summary>
@@ -553,12 +500,76 @@ internal static class AllSubcommand
         }
     }
 
-    // -------------------------------------------------------------------------
-    // DW-only step methods
-    // -------------------------------------------------------------------------
+    /// <summary>
+    /// Step 3 (pre) — Removes stale custom permissions and builds the full resource permission
+    /// spec list from dynamic config values (AgentApplicationScopes, MCP manifest, CustomBlueprintPermissions).
+    /// Shared by both DW and non-DW flows so permissions are always consistent.
+    /// </summary>
+    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx)
+    {
+        var desiredCustomIds = new HashSet<string>(
+            (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+                .Select(p => p.ResourceAppId),
+            StringComparer.OrdinalIgnoreCase);
+        await PermissionsSubcommand.RemoveStaleCustomPermissionsAsync(
+            ctx.Logger, ctx.GraphApiService, ctx.BlueprintService, ctx.Config, desiredCustomIds, ctx.CancellationToken);
 
-    /// <summary>Step 1 — Creates Azure infrastructure (DW only, optional).</summary>
-    private static async Task ExecuteInfrastructureStepAsync(SetupContext ctx)
+        var mcpManifestPath = Path.Combine(
+            ctx.Config.DeploymentProjectPath ?? string.Empty,
+            McpConstants.ToolingManifestFileName);
+        var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, ctx.Logger);
+        var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
+
+        var specs = new List<ResourcePermissionSpec>
+        {
+            new ResourcePermissionSpec(
+                AuthenticationConstants.MicrosoftGraphResourceAppId,
+                "Microsoft Graph",
+                ctx.Config.AgentApplicationScopes.ToArray(),
+                SetInheritable: true),
+            new ResourcePermissionSpec(
+                mcpResourceAppId,
+                "Agent 365 Tools",
+                mcpScopes,
+                SetInheritable: true),
+            new ResourcePermissionSpec(
+                ConfigConstants.MessagingBotApiAppId,
+                "Messaging Bot API",
+                new[] { "Authorization.ReadWrite", "user_impersonation" },
+                SetInheritable: true),
+            new ResourcePermissionSpec(
+                ConfigConstants.ObservabilityApiAppId,
+                "Observability API",
+                new[] { "user_impersonation" },
+                SetInheritable: true),
+            new ResourcePermissionSpec(
+                PowerPlatformConstants.PowerPlatformApiResourceAppId,
+                "Power Platform API",
+                new[] { "Connectivity.Connections.Read" },
+                SetInheritable: true),
+        };
+
+        foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+        {
+            var (isValid, _) = customPerm.Validate();
+            if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+            {
+                var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                    ? customPerm.ResourceAppId
+                    : customPerm.ResourceName;
+                specs.Add(new ResourcePermissionSpec(
+                    customPerm.ResourceAppId,
+                    resourceName,
+                    customPerm.Scopes.ToArray(),
+                    SetInheritable: true));
+            }
+        }
+
+        return (specs, mcpResourceAppId, mcpScopes);
+    }
+
+    /// <summary>Step 1 — Creates Azure infrastructure (optional, skippable via --skip-infrastructure).</summary>
+    internal static async Task ExecuteInfrastructureStepAsync(SetupContext ctx)
     {
         try
         {
@@ -587,29 +598,6 @@ internal static class AllSubcommand
             ctx.Results.Errors.Add($"Infrastructure: {infraEx.Message}");
             ctx.Logger.LogError("Failed to create infrastructure: {Message}", infraEx.Message);
             throw;
-        }
-    }
-
-    /// <summary>Step 4 — Registers the blueprint messaging endpoint (DW only).</summary>
-    private static async Task ExecuteMessagingEndpointStepAsync(SetupContext ctx)
-    {
-        ctx.Logger.LogInformation("");
-        ctx.Logger.LogInformation("Registering blueprint messaging endpoint...");
-        try
-        {
-            var (endpointSuccess, endpointAlreadyExisted) =
-                await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-                    ctx.Config, ctx.Logger, ctx.BotConfigurator, correlationId: ctx.CorrelationId);
-
-            ctx.Results.MessagingEndpointRegistered = endpointSuccess;
-            ctx.Results.EndpointAlreadyExisted = endpointAlreadyExisted;
-        }
-        catch (Exception endpointEx)
-        {
-            ctx.Results.MessagingEndpointRegistered = false;
-            ctx.Results.Errors.Add($"Messaging endpoint registration failed: {endpointEx.Message}");
-            ctx.Logger.LogWarning("Endpoint registration failed: {Message}", endpointEx.Message);
-            ctx.Logger.LogWarning("To retry after resolving the issue: a365 setup blueprint --endpoint-only");
         }
     }
 }
