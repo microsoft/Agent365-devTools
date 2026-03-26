@@ -1793,17 +1793,32 @@ internal static class BlueprintSubcommand
 
             var addPasswordUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{blueprintObjectId}/addPassword";
             var secretBodyJson = secretBody.ToJsonString();
-            // Retry on 404 (blueprint not yet visible on all replicas) and 403 (owner propagation
-            // lag — the blueprint was just created with owners@odata.bind, and Entra may not yet
-            // recognize the caller as owner when addPassword is called immediately after creation).
+            // Retry on 404 (blueprint not yet visible on all replicas) and transient 403 (owner
+            // propagation lag — the blueprint was just created with owners@odata.bind, and Entra
+            // may not yet recognize the caller as owner when addPassword is called immediately after
+            // creation). Do NOT retry on Authorization_RequestDenied (permanent permission failure).
             var retryHelper = new RetryHelper(logger);
             var passwordResponse = await retryHelper.ExecuteWithRetryAsync(
                 async token => await httpClient.PostAsync(
                     addPasswordUrl,
                     new StringContent(secretBodyJson, System.Text.Encoding.UTF8, "application/json"),
                     token),
-                response => response.StatusCode == System.Net.HttpStatusCode.NotFound
-                         || response.StatusCode == System.Net.HttpStatusCode.Forbidden,
+                async (response, token) =>
+                {
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                        return true;
+                    if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        // Buffer so the body can be re-read by the caller after this predicate.
+                        await response.Content.LoadIntoBufferAsync();
+                        var body = await response.Content.ReadAsStringAsync(token);
+                        // Authorization_RequestDenied = permanent privilege failure — no point retrying.
+                        if (body.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase))
+                            return false;
+                        return true; // transient 403 (owner propagation lag), retry
+                    }
+                    return false;
+                },
                 maxRetries: 5,
                 baseDelaySeconds: 5,
                 cancellationToken: ct);

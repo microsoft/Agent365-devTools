@@ -209,6 +209,33 @@ public class CleanupCommand
                     }
                 }
 
+                if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+                {
+                    if (graphApiService is null)
+                    {
+                        logger.LogWarning("Agent registration deletion skipped (GraphApiService not available). Delete registration {RegistrationId} manually.", config.AgentRegistrationId);
+                    }
+                    else
+                    {
+                        logger.LogInformation("Deleting agent registration {RegistrationId} via AgentX V2 API...", config.AgentRegistrationId);
+                        var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
+                            config.TenantId,
+                            config.AgentRegistrationId,
+                            CancellationToken.None);
+
+                        if (registrationDeleted)
+                        {
+                            logger.LogInformation("Agent registration deleted");
+                            config.AgentRegistrationId = string.Empty;
+                            await configService.SaveStateAsync(config);
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete agent registration {RegistrationId} -- will continue with cleanup", config.AgentRegistrationId);
+                        }
+                    }
+                }
+
                 if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
                 {
                     if (graphApiService is null)
@@ -648,6 +675,8 @@ public class CleanupCommand
             logger.LogInformation("WARNING: ALL RESOURCES WILL BE DELETED:");
             if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
                 logger.LogInformation("    Blueprint Application: {BlueprintId}", config.AgentBlueprintId);
+            if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+                logger.LogInformation("    Agent Registration (AgentX): {RegistrationId}", config.AgentRegistrationId);
             if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
                 logger.LogInformation("    Agent Registry Instance: {InstanceId}", config.AgentInstanceId);
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
@@ -679,7 +708,36 @@ public class CleanupCommand
 
             logger.LogInformation("Starting complete cleanup...");
 
-            // 1a. For non-DW blueprint flow: delete Agent Registry instance before blueprint
+            // 1a. For non-DW blueprint flow: delete AgentX agent registration before blueprint
+            if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+            {
+                if (graphApiService is null)
+                {
+                    logger.LogWarning("Agent registration deletion skipped (GraphApiService not available). Delete registration {RegistrationId} manually.", config.AgentRegistrationId);
+                    hasFailures = true;
+                }
+                else
+                {
+                    logger.LogInformation("Deleting agent registration {RegistrationId} via AgentX V2 API...", config.AgentRegistrationId);
+                    var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
+                        config.TenantId,
+                        config.AgentRegistrationId,
+                        CancellationToken.None);
+
+                    if (registrationDeleted)
+                    {
+                        logger.LogInformation("Agent registration deleted");
+                        config.AgentRegistrationId = string.Empty;
+                    }
+                    else
+                    {
+                        logger.LogWarning("Failed to delete agent registration {RegistrationId} -- will continue with blueprint deletion", config.AgentRegistrationId);
+                        hasFailures = true;
+                    }
+                }
+            }
+
+            // 1b. For non-DW blueprint flow: delete Agent Registry instance before blueprint
             if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
             {
                 if (graphApiService is null)

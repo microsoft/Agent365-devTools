@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Extensions.Logging;
@@ -53,7 +54,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         var displayName = config.AgentIdentityDisplayName;
         var existingBlueprint = !string.IsNullOrWhiteSpace(config.AgentBlueprintId);
         var existingAgentId = !string.IsNullOrWhiteSpace(config.AgenticAppId);
-        var existingInstance = !string.IsNullOrWhiteSpace(config.AgentInstanceId);
+        var existingInstance = !string.IsNullOrWhiteSpace(config.AgentRegistrationId);
 
         logger.LogInformation("Non-DW Blueprint Setup Plan (dry run — no changes will be made)");
         logger.LogInformation("");
@@ -85,10 +86,10 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Register
         logger.LogInformation("  Register");
         if (existingInstance)
-            logger.LogInformation("    Reuse Agent Instance:    already registered  id: {InstanceId}",
-                config.AgentInstanceId);
+            logger.LogInformation("    Reuse Agent:             already registered  id: {RegistrationId}",
+                config.AgentRegistrationId);
         else
-            logger.LogInformation("    Register Agent Instance: via Agent Instance Graph API  (no manifest)");
+            logger.LogInformation("    Register Agent:          via AgentX Agent Registration API V2  (no manifest)");
         logger.LogInformation("             NOTE: Requires 'Agent Registry Administrator' role in Entra ID");
         logger.LogInformation("");
 
@@ -264,33 +265,38 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Results.AgentIdentityCreated = true;
                 ctx.Results.AgentIdentityId = ctx.Config.AgenticAppId;
             }
-            else if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
-            {
-                ctx.Results.Errors.Add(
-                    "Agent identity creation failed: Blueprint client secret is not configured. " +
-                    "This should have been created during blueprint setup.");
-                ctx.Logger.LogError(
-                    "Agent identity creation failed: Blueprint client secret is not configured. " +
-                    "Ensure the blueprint setup completed successfully.");
-            }
             else
             {
                 var agentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName
                     ?? ctx.Config.WebAppName
                     ?? "Agent";
 
-                var clientSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.UnprotectSecret(
-                    ctx.Config.AgentBlueprintClientSecret,
-                    ctx.Config.AgentBlueprintClientSecretProtected,
-                    ctx.Logger);
-
-                ctx.Logger.LogInformation("Creating agent identity...");
-                var agentId = await ctx.GraphApiService.CreateAgentIdentityAsync(
+                // Try delegated flow first (AgentIdentity.Create.All) — no client secret required.
+                // Requires Agent ID Administrator, Agent ID Developer, or Global Administrator role.
+                ctx.Logger.LogInformation("Creating agent identity (delegated flow)...");
+                var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
                     ctx.Config.TenantId!,
                     ctx.Config.AgentBlueprintId!,
-                    clientSecret,
                     agentIdentityDisplayName,
                     ctx.CancellationToken);
+
+                // Fall back to blueprint client credentials if delegated flow failed and secret is available.
+                if (agentId is null && !string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
+                {
+                    ctx.Logger.LogInformation("Delegated flow failed — retrying via blueprint client credentials...");
+
+                    var clientSecret = SecretProtectionHelper.UnprotectSecret(
+                        ctx.Config.AgentBlueprintClientSecret,
+                        ctx.Config.AgentBlueprintClientSecretProtected,
+                        ctx.Logger);
+
+                    agentId = await ctx.GraphApiService.CreateAgentIdentityAsync(
+                        ctx.Config.TenantId!,
+                        ctx.Config.AgentBlueprintId!,
+                        clientSecret,
+                        agentIdentityDisplayName,
+                        ctx.CancellationToken);
+                }
 
                 if (agentId is not null)
                 {
@@ -304,53 +310,59 @@ internal static class NonDwBlueprintSetupOrchestrator
                 {
                     ctx.Results.Errors.Add(
                         "Agent identity creation failed. " +
-                        "Ensure the blueprint has the required permissions " +
-                        "(Application.ReadWrite.All, AgentIdentity.Create.OwnedBy).");
+                        "Ensure the account has Agent ID Administrator, Agent ID Developer, or Global Administrator role.");
                     ctx.Logger.LogError(
                         "Agent identity creation failed. " +
-                        "Ensure the blueprint has the required permissions.");
+                        "Ensure the account has Agent ID Administrator, Agent ID Developer, or Global Administrator role.");
                 }
             }
 
-            // Step 5: Register Agent Instance via Agent Instance Graph API.
+            // Step 5: Register Agent via AgentX Agent Registration API V2.
             ctx.Logger.LogInformation("");
 
-            if (!string.IsNullOrWhiteSpace(ctx.Config.AgentInstanceId))
+            if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
             {
-                ctx.Logger.LogInformation("Agent instance already registered (ID: {InstanceId}). Skipping.", ctx.Config.AgentInstanceId);
+                ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", ctx.Config.AgentRegistrationId);
                 ctx.Results.AgentInstanceRegistered = true;
-                ctx.Results.AgentInstanceId = ctx.Config.AgentInstanceId;
+                ctx.Results.AgentInstanceId = ctx.Config.AgentRegistrationId;
             }
             else
             {
-                ctx.Logger.LogInformation("Registering agent instance...");
+                ctx.Logger.LogInformation("Registering agent...");
 
                 var agentDisplayName = ctx.Config.AgentIdentityDisplayName
                     ?? ctx.Config.WebAppName
                     ?? "Agent";
+                // AgentX registration represents the agent itself, not the Entra identity.
+                // Normalize any legacy " Identity" suffix to " Agent".
+                if (agentDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
+                    agentDisplayName = agentDisplayName[..^" Identity".Length] + " Agent";
 
-                var instanceId = await ctx.GraphApiService.RegisterAgentInstanceAsync(
+                var registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
                     ctx.Config.TenantId!,
                     agentDisplayName,
+                    ctx.Config.AgentDescription,
                     ctx.Config.AgentBlueprintId,
+                    ctx.Config.AgenticAppId,
+                    ctx.Config.ClientAppId,
                     ctx.CancellationToken);
 
-                if (instanceId is not null)
+                if (registrationId is not null)
                 {
-                    ctx.Config.AgentInstanceId = instanceId;
+                    ctx.Config.AgentRegistrationId = registrationId;
                     await ctx.ConfigService.SaveStateAsync(ctx.Config);
                     ctx.Results.AgentInstanceRegistered = true;
-                    ctx.Results.AgentInstanceId = instanceId;
-                    ctx.Logger.LogInformation("Agent instance registered (ID: {InstanceId})", instanceId);
+                    ctx.Results.AgentInstanceId = registrationId;
+                    ctx.Logger.LogInformation("Agent registered (ID: {RegistrationId})", registrationId);
                 }
                 else
                 {
                     ctx.Results.Errors.Add(
-                        "Agent instance registration failed. " +
-                        "Ensure you have the 'Agent Registry Administrator' role in Entra ID.");
+                        "Agent registration failed via AgentX V2 API. " +
+                        "Ensure 'az login' is completed and the account has access to the AgentX resource.");
                     ctx.Logger.LogError(
-                        "Agent instance registration failed. " +
-                        "Ensure you have the 'Agent Registry Administrator' role in Entra ID.");
+                        "Agent registration failed via AgentX V2 API. " +
+                        "Ensure 'az login' is completed and the account has access to the AgentX resource.");
                 }
             }
         }

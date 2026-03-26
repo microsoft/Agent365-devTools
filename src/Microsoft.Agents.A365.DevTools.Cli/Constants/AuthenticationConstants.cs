@@ -198,7 +198,9 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
-        "AgentInstance.ReadWrite.All"  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
+        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
+        "AgentIdentity.ReadWrite.All",  // Required for general agent identity operations
+        "AgentIdentity.Create.All",  // Required for POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity; not in v1.0 oauth2PermissionScopes so ClientAppValidator provisions it via consent grant patch (no GUID needed)
         // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
         // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
         // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded
@@ -220,6 +222,16 @@ public static class AuthenticationConstants
     };
 
     /// <summary>
+    /// Delegated scope for creating an Agent Identity (service principal) from a blueprint.
+    /// Used by POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity with agentIdentityBlueprintId.
+    /// Requires Agent ID Administrator, Agent ID Developer, or Global Administrator role.
+    /// This path does NOT require a blueprint client secret.
+    /// AgentIdentity.Create.All is required — AgentIdentity.ReadWrite.All alone is NOT sufficient
+    /// (confirmed via Graph Explorer: the endpoint returns 403 without Create.All in the scp claim).
+    /// </summary>
+    public const string AgentIdentityCreateAllScope = "AgentIdentity.Create.All";
+
+    /// <summary>
     /// Delegated scope for creating and managing agent instances in the Microsoft Agent Registry.
     /// Required for POST /beta/agentRegistry/agentInstances.
     /// Requires the "Agent Registry Administrator" Entra role.
@@ -232,6 +244,23 @@ public static class AuthenticationConstants
     /// for testing purposes only. It should NOT be deployed to production Azure environments.
     /// </summary>
     public const string BearerTokenEnvironmentVariable = "BEARER_TOKEN";
+
+    /// <summary>
+    /// Resource URI for the AgentX service (private preview Agent Registration API V2).
+    /// Used with 'az account get-access-token --resource' to acquire a bearer token.
+    /// </summary>
+    public const string AgentXResource = "api://59eca866-2f46-40b8-96ff-63f663121ef9";
+
+    /// <summary>
+    /// Base URL for the AgentX service (private preview Agent Registration API V2 endpoint).
+    /// </summary>
+    public const string AgentXBaseUrl = "https://agentxppe.microsoft.com";
+
+    /// <summary>
+    /// Delegated scope for the AgentX Agent Registration API V2.
+    /// This scope must be consented on the custom client app to use the V2 registration endpoint.
+    /// </summary>
+    public const string AgentXAccessScope = "api://59eca866-2f46-40b8-96ff-63f663121ef9/AgentX.Access";
 
     /// <summary>
     /// AADSTS53003: Access blocked by Conditional Access Policy.

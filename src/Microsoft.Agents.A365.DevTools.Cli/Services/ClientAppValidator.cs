@@ -671,9 +671,12 @@ public sealed class ClientAppValidator : IClientAppValidator
             }
             else
             {
-                _logger.LogWarning("Could not resolve permission ID for: {PermissionName}", permissionName);
-                _logger.LogWarning("This permission may be a beta API or unavailable in your tenant. Validation cannot verify its presence.");
-                // Don't add to missing list - we can't verify it
+                // GUID not in v1.0 oauth2PermissionScopes (e.g. preview scopes like AgentIdentity.Create.All).
+                // Add to missing so EnsurePermissionsConfiguredAsync -> TryExtendConsentGrantScopesAsync
+                // patches the consent grant by scope name (no GUID required). The step-3.5 consent
+                // fallback will remove this entry if already granted.
+                _logger.LogDebug("Could not resolve permission GUID for {PermissionName} — will verify via consent grants", permissionName);
+                missingPermissions.Add(permissionName);
             }
         }
 

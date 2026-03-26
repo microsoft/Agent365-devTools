@@ -254,6 +254,12 @@ public class GraphApiService
             }
 
             _logger.LogDebug("Successfully acquired Graph token with specific scopes (cached or new)");
+            var tokenScp = TryDecodeTokenClaim(token, "scp");
+            var tokenOid = TryDecodeTokenClaim(token, "oid");
+            var tokenUpn = TryDecodeTokenClaim(token, "upn") ?? TryDecodeTokenClaim(token, "unique_name");
+            _logger.LogDebug("Token scp  : {Scp}", tokenScp ?? "(missing)");
+            _logger.LogDebug("Token oid  : {Oid}", tokenOid ?? "(missing)");
+            _logger.LogDebug("Token upn  : {Upn}", tokenUpn ?? "(missing)");
         }
         else if (scopes != null && _tokenProvider == null)
         {
@@ -1018,6 +1024,232 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Registers an agent instance via the AgentX Agent Registration API V2
+    /// (POST https://agentxppe.microsoft.com/api/a365/agents/registration).
+    /// Acquires a bearer token via the token provider (delegated, AgentX.Access scope) when
+    /// configured, or falls back to az CLI for the AgentX resource.
+    /// Returns the new agent instance ID on success (202 Accepted), or null on failure.
+    /// </summary>
+    public virtual async Task<string?> RegisterAgentInstanceAsyncV2(
+        string tenantId,
+        string displayName,
+        string? description,
+        string? blueprintId,
+        string? agentIdentityId,
+        string? clientAppId,
+        CancellationToken ct = default)
+    {
+        // Resolve current user ID from Graph (needed for ownerIds and createdBy).
+        var currentUserId = await GetCurrentUserObjectIdAsync(tenantId, ct);
+        if (string.IsNullOrWhiteSpace(currentUserId))
+        {
+            _logger.LogError("Failed to retrieve current user ID — required for agent registration V2.");
+            return null;
+        }
+
+        // Acquire AgentX token — prefer delegated (token provider) over az CLI.
+        string? token = null;
+
+        var agentXScopes = new[] { Constants.AuthenticationConstants.AgentXAccessScope };
+
+        if (_tokenProvider != null)
+        {
+            var loginHint = await ResolveLoginHintAsync();
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId, agentXScopes, false, CustomClientAppId, ct, loginHint);
+
+            if (string.IsNullOrWhiteSpace(token))
+                _logger.LogWarning("Delegated token acquisition for AgentX failed — falling back to az CLI.");
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            token = await AzCliHelper.AcquireAzCliTokenAsync(
+                Constants.AuthenticationConstants.AgentXResource, tenantId);
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            _logger.LogError("Failed to acquire AgentX access token. Ensure the custom app has 'AgentX.Access' consented and 'az login' is completed.");
+            return null;
+        }
+
+        token = token.ReplaceLineEndings(string.Empty).Trim();
+
+        var now = DateTimeOffset.UtcNow.ToString("o");
+        var payload = new Dictionary<string, object?>
+        {
+            ["id"] = Guid.NewGuid().ToString(),
+            ["displayName"] = displayName,
+            ["ownerIds"] = new[] { currentUserId },
+            ["createdBy"] = currentUserId,
+            ["createdDateTime"] = now,
+            ["lastModifiedDateTime"] = now,
+        };
+
+        if (!string.IsNullOrWhiteSpace(description))
+            payload["description"] = description;
+        if (!string.IsNullOrWhiteSpace(blueprintId))
+            payload["agentIdentityBlueprintId"] = blueprintId;
+        // sourceAgentId is required by the contract. Use agentIdentityId when available,
+        // fall back to blueprintId as the stable external identifier.
+        payload["sourceAgentId"] = !string.IsNullOrWhiteSpace(agentIdentityId) ? agentIdentityId : blueprintId ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(agentIdentityId))
+            payload["agentIdentityId"] = agentIdentityId;
+        // managedBy must be the AgentX service app ID, not the CLI client app ID.
+        // Using the CLI client app ID causes 424 "You do not have permission to create
+        // an agent registration managed by another AppId."
+        payload["managedBy"] = "59eca866-2f46-40b8-96ff-63f663121ef9";
+
+        var json = JsonSerializer.Serialize(payload);
+        var url = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration";
+
+        _logger.LogInformation("POST {Url} (AgentX V2)", url);
+        _logger.LogInformation("Body: {Body}", json);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        try
+        {
+            using var response = await _httpClient.SendAsync(request, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            _logger.LogInformation("AgentX V2 response: {StatusCode} {Reason}", (int)response.StatusCode, response.ReasonPhrase);
+
+            if ((int)response.StatusCode == 202 || response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("AgentX V2 response body: {Body}", body);
+
+                // Extract the registration ID from the 202 response body, or fall back to our generated ID.
+                string? registrationId = null;
+                if (!string.IsNullOrWhiteSpace(body))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(body);
+                        if (doc.RootElement.TryGetProperty("id", out var idProp))
+                            registrationId = idProp.GetString();
+                    }
+                    catch (JsonException) { }
+                }
+                registrationId ??= payload["id"]?.ToString();
+
+                // 202 = accepted for async processing. Poll GET up to 3 times (10s apart)
+                // to confirm the registration is fully committed and visible in MAC.
+                if (!string.IsNullOrWhiteSpace(registrationId))
+                {
+                    var getUrl = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration/{registrationId}";
+                    const int maxAttempts = 3;
+                    const int delaySeconds = 10;
+                    bool confirmed = false;
+
+                    for (int attempt = 1; attempt <= maxAttempts && !confirmed; attempt++)
+                    {
+                        try
+                        {
+                            _logger.LogInformation("GET {Url} (status check {Attempt}/{Max})", getUrl, attempt, maxAttempts);
+                            using var getRequest = new HttpRequestMessage(HttpMethod.Get, getUrl);
+                            getRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                            using var getResponse = await _httpClient.SendAsync(getRequest, ct);
+                            _logger.LogInformation("AgentX GET response: {StatusCode} {Reason}", (int)getResponse.StatusCode, getResponse.ReasonPhrase);
+
+                            if (getResponse.IsSuccessStatusCode)
+                            {
+                                confirmed = true;
+                                _logger.LogInformation("Agent registration confirmed visible (attempt {Attempt})", attempt);
+                            }
+                            else if (attempt < maxAttempts)
+                            {
+                                _logger.LogDebug("Not yet visible (HTTP {StatusCode}), retrying in {Delay}s...", (int)getResponse.StatusCode, delaySeconds);
+                                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Agent registration accepted but not yet visible after {Total}s — it may appear in MAC shortly.", maxAttempts * delaySeconds);
+                            }
+                        }
+                        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                        {
+                            _logger.LogDebug("AgentX GET status check attempt {Attempt} failed (non-fatal): {Message}", attempt, ex.Message);
+                            break;
+                        }
+                    }
+                }
+
+                return registrationId;
+            }
+
+            _logger.LogError("AgentX agent registration failed with HTTP {StatusCode}. Body: {Body}", (int)response.StatusCode, body);
+            return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogError(ex, "AgentX agent registration request failed: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Deletes an agent registration via the AgentX Agent Registration API V2
+    /// (DELETE https://agentxppe.microsoft.com/api/a365/agents/registration/{id}).
+    /// Returns true on success (204) or if the registration was already deleted (404).
+    /// </summary>
+    public virtual async Task<bool> DeleteAgentRegistrationAsync(
+        string tenantId,
+        string registrationId,
+        CancellationToken ct = default)
+    {
+        // Acquire AgentX token — prefer delegated (token provider) over az CLI.
+        string? token = null;
+        var agentXScopes = new[] { Constants.AuthenticationConstants.AgentXAccessScope };
+
+        if (_tokenProvider != null)
+        {
+            var loginHint = await ResolveLoginHintAsync();
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId, agentXScopes, false, CustomClientAppId, ct, loginHint);
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+            token = await AzCliHelper.AcquireAzCliTokenAsync(
+                Constants.AuthenticationConstants.AgentXResource, tenantId);
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            _logger.LogError("Failed to acquire AgentX access token for delete.");
+            return false;
+        }
+
+        token = token.ReplaceLineEndings(string.Empty).Trim();
+        var url = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration/{registrationId}";
+        _logger.LogInformation("DELETE {Url} (AgentX V2)", url);
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+            using var response = await _httpClient.SendAsync(request, ct);
+            _logger.LogInformation("AgentX delete response: {StatusCode} {Reason}", (int)response.StatusCode, response.ReasonPhrase);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent ||
+                response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return true;
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("AgentX agent delete failed with HTTP {StatusCode}. Body: {Body}", (int)response.StatusCode, body);
+            return false;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogError(ex, "AgentX agent delete request failed: {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Deletes an agent instance from the Microsoft Agent Registry via
     /// DELETE /beta/agentRegistry/agentInstances/{instanceId}.
     /// Requires AgentInstance.ReadWrite.All delegated scope.
@@ -1117,6 +1349,116 @@ public class GraphApiService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Exception acquiring blueprint access token: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Creates an Agent Identity in the tenant using the delegated flow.
+    /// Authenticates as the calling user with <c>AgentIdentity.Create.All</c> scope and calls
+    /// POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity with agentIdentityBlueprintId.
+    /// Requires Agent ID Administrator, Agent ID Developer, or Global Administrator role.
+    /// No blueprint client secret required — preferred over the client-credentials path when possible.
+    /// </summary>
+    /// <returns>The agent identity ID on success, null on failure.</returns>
+    public virtual async Task<string?> CreateAgentIdentityDelegatedAsync(
+        string tenantId,
+        string blueprintId,
+        string displayName,
+        CancellationToken ct)
+    {
+        var correlationId = HttpClientFactory.GenerateCorrelationId();
+        _logger.LogDebug("Creating agent identity via delegated flow (CorrelationId: {Id})", correlationId);
+
+        string? currentUserId = null;
+        try
+        {
+            currentUserId = await GetCurrentUserObjectIdAsync(tenantId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve current user ID (non-fatal): {Message}", ex.Message);
+        }
+
+        var scopes = new[] { Constants.AuthenticationConstants.AgentIdentityCreateAllScope };
+
+        // Log the token claims once here so it's easy to correlate with the 403 if it fails.
+        if (_tokenProvider != null)
+        {
+            try
+            {
+                var loginHint = await ResolveLoginHintAsync();
+                var previewToken = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                    tenantId, scopes, false, CustomClientAppId, ct, loginHint);
+                if (!string.IsNullOrWhiteSpace(previewToken))
+                {
+                    var scp = TryDecodeTokenClaim(previewToken, "scp");
+                    var upn = TryDecodeTokenClaim(previewToken, "upn") ?? TryDecodeTokenClaim(previewToken, "unique_name");
+                    _logger.LogInformation("Agent identity token scp : {Scp}", scp ?? "(missing)");
+                    _logger.LogInformation("Agent identity token upn : {Upn}", upn ?? "(missing)");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not preview token claims (non-fatal)");
+            }
+        }
+
+        try
+        {
+            var body = new JsonObject
+            {
+                ["displayName"] = displayName,
+                ["agentIdentityBlueprintId"] = blueprintId,
+            };
+
+            if (!string.IsNullOrWhiteSpace(currentUserId))
+            {
+                body["sponsors@odata.bind"] = new JsonArray
+                {
+                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                };
+                body["owners@odata.bind"] = new JsonArray
+                {
+                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                };
+            }
+
+            _logger.LogInformation("POST https://graph.microsoft.com/beta/servicePrincipals/Microsoft.Graph.AgentIdentity (delegated)");
+            _logger.LogInformation("Body: {Body}", body.ToJsonString());
+
+            // Use GraphPostWithResponseAsync so we can log the full error body on failure.
+            var postResult = await GraphPostWithResponseAsync(
+                tenantId,
+                "/beta/servicePrincipals/Microsoft.Graph.AgentIdentity",
+                body,
+                ct,
+                scopes: scopes);
+
+            if (!postResult.IsSuccess)
+            {
+                _logger.LogWarning("Graph POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity failed: HTTP {Status} {Reason}",
+                    postResult.StatusCode, postResult.ReasonPhrase);
+                _logger.LogInformation("Error response body: {Body}", postResult.Body);
+                postResult.Json?.Dispose();
+                return null;
+            }
+
+            if (postResult.Json == null)
+            {
+                _logger.LogDebug("Delegated agent identity creation returned null — will fall back to client credentials if available.");
+                return null;
+            }
+
+            using var doc = postResult.Json;
+
+            var id = doc.RootElement.GetProperty("id").GetString();
+            _logger.LogInformation("Agent identity created via delegated flow (ID: {Id})", id);
+            return id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Delegated agent identity creation failed: {Message}", ex.Message);
             return null;
         }
     }
@@ -1252,6 +1594,29 @@ public class GraphApiService
         if (!response.Json.RootElement.TryGetProperty("id", out var idProp))
             return null;
         return idProp.GetString();
+    }
+
+    /// <summary>
+    /// Decodes a JWT payload and returns the value of the specified claim.
+    /// Used for debug logging only — never log the full token.
+    /// Returns null if the token cannot be decoded or the claim is absent.
+    /// </summary>
+    private static string? TryDecodeTokenClaim(string token, string claimName)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2) return null;
+            var payload = parts[1];
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty(claimName, out var claim) ? claim.GetString() : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

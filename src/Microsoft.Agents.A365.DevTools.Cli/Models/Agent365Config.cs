@@ -441,6 +441,14 @@ public class Agent365Config
     public string? AgentInstanceId { get; set; }
 
     /// <summary>
+    /// Unique identifier returned by the AgentX Agent Registration API V2
+    /// (POST https://agentxppe.microsoft.com/api/a365/agents/registration).
+    /// Stored separately from agentInstanceId which tracks the Graph agentRegistry instance.
+    /// </summary>
+    [JsonPropertyName("agentRegistrationId")]
+    public string? AgentRegistrationId { get; set; }
+
+    /// <summary>
     /// Azure AD object ID for the agent blueprint application.
     /// Used as authoritative identifier for all blueprint operations to handle cases
     /// where multiple blueprints may exist with the same display name.
