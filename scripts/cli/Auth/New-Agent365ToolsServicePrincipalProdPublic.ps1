@@ -28,8 +28,8 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Service Principal Creation for the 'Agent 365 Tools' application (Admin Only)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "⚠ IMPORTANT: This requires admin permissions!" -ForegroundColor Yellow
-Write-Host "⚠ This only needs to be run ONCE per tenant!" -ForegroundColor Yellow
+Write-Host "WARNING: This requires admin permissions!" -ForegroundColor Yellow
+Write-Host "WARNING: This only needs to be run ONCE per tenant!" -ForegroundColor Yellow
 Write-Host ""
 
 # Validate prerequisites — install Microsoft.Graph modules if not present

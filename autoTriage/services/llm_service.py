@@ -8,6 +8,7 @@ import os
 import re
 import json
 import time
+import threading
 import logging
 from typing import Dict, Any, List, Optional
 from openai import OpenAI, AzureOpenAI
@@ -17,121 +18,64 @@ from services.prompt_loader import get_prompt_loader
 # Shared constants — defined once and imported here to avoid duplication.
 from constants import MAX_CONTRIBUTORS_TO_SHOW
 
+# Sanitisation utilities live in utils/sanitise.py so they can be shared
+# across services without creating import cycles.
+from utils.sanitise import (
+    sanitise_exception as _sanitise_exception,
+    sanitise_user_content as _sanitise_user_content,
+    MAX_ISSUE_TITLE_LENGTH,
+    MAX_ISSUE_BODY_LENGTH,
+)
+
 logger = logging.getLogger(__name__)
 
-# Maximum input lengths for LLM calls (prevents excessive token usage)
-MAX_ISSUE_TITLE_LENGTH = 200
-MAX_ISSUE_BODY_LENGTH = 2000
-
 # Valid values for LLM classification output fields.
+# Must match the type/priority vocabulary in the classify_issue_system prompt.
 # Used to reject hallucinated or prompt-injected values before they propagate.
 VALID_TYPES = {"feature", "bug", "documentation", "question"}
 VALID_PRIORITIES = {"P1", "P2", "P3", "P4"}
 
 
-def _sanitise_exception(e: Exception) -> str:
-    """
-    Return a safe string representation of an exception with credentials redacted.
-
-    API client libraries (e.g. OpenAI, PyGithub) sometimes embed the request
-    headers or query parameters — including Authorization values and API keys —
-    inside exception messages.  Logging those messages verbatim would expose
-    secrets in log streams.
-
-    This function strips any key=value or key: value pair whose key matches a
-    known credential field name before the string reaches a log sink.
-
-    Args:
-        e: The exception to sanitise.
-
-    Returns:
-        A redacted string safe for logging.
-    """
-    return re.sub(
-        r'(?i)(authorization|api.?key|token|secret|password|client.?secret)'
-        r'["\']?\s*[:=]\s*["\']?[^\s"\']*',
-        r'\1=[REDACTED]',
-        str(e),
-    )
-
-
-def _sanitise_user_content(text: str, max_length: int = MAX_ISSUE_BODY_LENGTH) -> str:
-    """
-    Sanitise user-supplied content before LLM submission.
-
-    Defends against prompt injection by:
-    - Truncating to a maximum length to bound the attack surface.
-    - Stripping ASCII control characters that have no legitimate place in
-      issue titles/bodies but can confuse tokenisers or inject hidden
-      instructions (keeps \\n and \\t which are meaningful in Markdown).
-
-    Args:
-        text: Raw user-supplied string (issue title, body, etc.)
-        max_length: Maximum number of characters to retain (default MAX_ISSUE_BODY_LENGTH).
-
-    Returns:
-        Sanitised string safe for interpolation into an LLM prompt.
-    """
-    if not text:
-        return ""
-    # Log and truncate if the content exceeds the limit.
-    if len(text) > max_length:
-        logger.info("Truncated input from %d to %d characters", len(text), max_length)
-        text = text[:max_length]
-    # Strip C0 control characters except tab (0x09) and newline (0x0a).
-    # Also strips DEL (0x7f) which has no printable meaning.
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    # Escape XML angle-bracket delimiters so user content cannot break out of
-    # the XML tags used in prompts (e.g. <issue_title>...</issue_title>).
-    # This is a lightweight structural defence against prompt injection; keyword
-    # filtering is intentionally omitted to avoid false positives on legitimate
-    # issue text that contains words like "ignore" or "system".
-    text = text.replace('<', '&lt;').replace('>', '&gt;')
-    return text
-
-
 class RateLimiter:
-    """Simple token-bucket rate limiter for LLM API calls.
+    """Thread-safe token-bucket rate limiter for LLM API calls.
 
     Tracks call timestamps over a rolling 60-second window and blocks the
-    calling thread when the configured limit would be exceeded.  This is
-    intentionally synchronous because autoTriage uses synchronous I/O
-    throughout; no asyncio primitives are needed.
-
-    Note: This class is NOT thread-safe.  If autoTriage is ever refactored to
-    use concurrent threads or async I/O, access to _calls must be guarded by a
-    threading.Lock (or replaced with an asyncio-compatible implementation).
+    calling thread when the configured limit would be exceeded. A threading.Lock
+    guards _calls so the module-level singleton is safe when autoTriage is
+    invoked from concurrent threads (e.g. Azure Functions with concurrency > 1).
     """
 
     def __init__(self, max_calls_per_minute: int = 60):
         self._max_calls = max_calls_per_minute
         self._calls: List[float] = []
+        self._lock = threading.Lock()
 
     def wait_if_needed(self) -> None:
         """Block until a call is allowed under the rate limit."""
-        now = time.monotonic()
-        # Remove timestamps that have aged out of the 60-second window.
-        self._calls = [t for t in self._calls if now - t < 60]
-
-        if len(self._calls) >= self._max_calls:
-            # Sleep until the oldest recorded call falls outside the window.
-            # max(0, ...) guards against a negative value that could arise from
-            # clock skew or a race where the window entry just aged out between
-            # the list-comprehension above and this calculation.
-            sleep_time = max(0, 60 - (now - self._calls[0]))
-            if sleep_time > 0:
-                logger.info(
-                    "LLM rate limit reached (%d/%d calls). Waiting %.1fs.",
-                    len(self._calls),
-                    self._max_calls,
-                    sleep_time,
-                )
-                time.sleep(sleep_time)
-            # Refresh the window after sleeping.
+        with self._lock:
             now = time.monotonic()
+            # Remove timestamps that have aged out of the 60-second window.
             self._calls = [t for t in self._calls if now - t < 60]
 
-        self._calls.append(time.monotonic())
+            if len(self._calls) >= self._max_calls:
+                # Sleep until the oldest recorded call falls outside the window.
+                # max(0, ...) guards against a negative value that could arise from
+                # clock skew or a race where the window entry just aged out between
+                # the list-comprehension above and this calculation.
+                sleep_time = max(0, 60 - (now - self._calls[0]))
+                if sleep_time > 0:
+                    logger.info(
+                        "LLM rate limit reached (%d/%d calls). Waiting %.1fs.",
+                        len(self._calls),
+                        self._max_calls,
+                        sleep_time,
+                    )
+                    time.sleep(sleep_time)
+                # Refresh the window after sleeping.
+                now = time.monotonic()
+                self._calls = [t for t in self._calls if now - t < 60]
+
+            self._calls.append(time.monotonic())
 
 
 # Module-level rate limiter instance — shared across all LlmService instances

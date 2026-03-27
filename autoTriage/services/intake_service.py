@@ -15,7 +15,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urlparse
 
 from services.github_service import GitHubService, MAX_CONFIG_FILES
-from services.llm_service import LlmService, MAX_ISSUE_BODY_LENGTH, _sanitise_exception, _sanitise_user_content
+from services.llm_service import LlmService
+from utils.sanitise import MAX_ISSUE_BODY_LENGTH, sanitise_exception as _sanitise_exception, sanitise_user_content as _sanitise_user_content
 from services.config_parser import ConfigParser
 from services.teams_service import TeamsService
 from services.copilot_service import CopilotService
@@ -553,7 +554,7 @@ def _fetch_issues_to_triage(
     since_hours: int,
     issue_url: Optional[str],
     issue_numbers: Optional[List[int]],
-) -> Tuple[List[Any], Optional[datetime], str, str, Optional[int]]:
+) -> Tuple[List[Any], Optional[datetime], str, str, Optional[int], str]:
     """
     Resolve which issues should be triaged based on the caller's inputs.
 
@@ -577,12 +578,22 @@ def _fetch_issues_to_triage(
         - owner: resolved repository owner.
         - repo: resolved repository name.
         - target_issue_number: the single issue number when in URL mode, else None.
+        - github_host: hostname extracted from issue_url (e.g. "github.com" or a
+          GitHub Enterprise hostname). Defaults to "github.com" when no URL was given.
 
     Raises:
-        ValueError: When issue_url cannot be parsed.
+        ValueError: When issue_url cannot be parsed, or when both issue_url
+            and issue_numbers are provided (they are mutually exclusive).
     """
+    if issue_url and issue_numbers:
+        raise ValueError(
+            "issue_url and issue_numbers are mutually exclusive. "
+            "Provide one or the other, not both."
+        )
+
     target_issue_number: Optional[int] = None
     since_time: Optional[datetime] = None
+    github_host: str = "github.com"
 
     if issue_url:
         parsed = _parse_issue_url(issue_url)
@@ -592,6 +603,12 @@ def _fetch_issues_to_triage(
                 "Expected: https://<host>/owner/repo/issues/123"
             )
         owner, repo, target_issue_number = parsed
+        # Preserve the host for GHE deployments so issue_url in
+        # IssueClassification points at the correct server.
+        try:
+            github_host = urlparse(issue_url).netloc or "github.com"
+        except Exception:
+            github_host = "github.com"
         # Look back a full year so the issue is always included regardless of age.
         since_hours = 8760
         logging.info(f"Single issue mode: {owner}/{repo}#{target_issue_number}")
@@ -621,7 +638,7 @@ def _fetch_issues_to_triage(
                     untriaged_issues = [single_issue]
                     logging.info(f"Fetched single issue #{target_issue_number} directly")
 
-    return untriaged_issues, since_time, owner, repo, target_issue_number
+    return untriaged_issues, since_time, owner, repo, target_issue_number, github_host
 
 
 def _classify_single_issue(
@@ -632,6 +649,7 @@ def _classify_single_issue(
     llm_service: LlmService,
     config: Any,
     repo_context: Dict[str, Any],
+    github_host: str = "github.com",
 ) -> IssueClassification:
     """
     Run the full classification pipeline for a single GitHub issue.
@@ -795,7 +813,7 @@ def _classify_single_issue(
     combined_reason = triage_rationale.to_summary()
 
     return IssueClassification(
-        issue_url=f"https://github.com/{owner}/{repo}/issues/{issue.number}",
+        issue_url=f"https://{github_host}/{owner}/{repo}/issues/{issue.number}",
         issue_number=issue.number,
         issue_type=classification["type"],
         priority=classification["priority"],
@@ -887,7 +905,7 @@ def triage_issues(
     config = config_parser.get_default_config()
 
     # --- Fetch issues ---
-    untriaged_issues, since_time, owner, repo, _target_number = _fetch_issues_to_triage(
+    untriaged_issues, since_time, owner, repo, _target_number, github_host = _fetch_issues_to_triage(
         github_service=github_service,
         owner=owner,
         repo=repo,
@@ -988,6 +1006,7 @@ def triage_issues(
             llm_service=llm_service,
             config=config,
             repo_context=repo_context,
+            github_host=github_host,
         )
 
         validation_result = _validate_classification(github_service, owner, repo, issue_classification)
