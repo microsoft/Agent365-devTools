@@ -561,8 +561,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return null;
             }
 
-            _logger.LogDebug("Graph app query returned 401 — invalidating token cache and retrying (possible CAE revocation)");
-            AzCliHelper.InvalidateAzCliTokenCache();
+            _logger.LogDebug("Graph app query returned 401 — retrying with fresh token (possible CAE revocation)");
             graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
                 string.Format(path, clientAppId), ct);
 

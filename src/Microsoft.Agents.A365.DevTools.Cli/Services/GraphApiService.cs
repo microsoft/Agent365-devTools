@@ -24,20 +24,20 @@ public class GraphApiService
     private readonly CommandExecutor _executor;
     private readonly HttpClient _httpClient;
     private readonly IMicrosoftGraphTokenProvider? _tokenProvider;
+    private readonly IAuthenticationService _authService;
+    private readonly RetryHelper _retryHelper;
     private string _graphBaseUrl;
 
-    // Token caching is handled at the process level by AzCliHelper.AcquireAzCliTokenAsync.
-    // All GraphApiService instances (and other services) share a single token per
-    // (resource, tenantId) pair — no per-instance cache needed.
-
-    // Login hint resolved once per GraphApiService instance from 'az account show'.
-    // Used to direct MSAL/WAM to the correct Azure CLI identity, preventing the Windows
-    // account (WAM default) or a stale cached MSAL account from being used instead.
+    // Login hint resolved once per GraphApiService instance.
+    // Used to direct MSAL/WAM to the correct identity, preventing the Windows default
+    // account (WAM) or a stale cached MSAL account from being used instead.
+    // Resolved from az CLI if available, otherwise from the AuthenticationService token cache.
     private string? _loginHint;
     private bool _loginHintResolved;
 
-    // Resolver delegate for the login hint. Defaults to AzCliHelper.ResolveLoginHintAsync;
-    // injectable via constructor so unit tests can bypass the real 'az account show' process.
+    // Resolver delegate for the login hint.
+    // Defaults to az CLI first, then AuthenticationService JWT cache as fallback.
+    // Injectable via constructor so unit tests can bypass the real az process.
     private readonly Func<Task<string?>> _loginHintResolver;
 
     /// <summary>
@@ -68,164 +68,69 @@ public class GraphApiService
     }
 
     // Allow injecting a custom HttpMessageHandler for unit testing.
-    // loginHintResolver: optional override for 'az account show' login-hint resolution.
-    // Pass () => Task.FromResult<string?>(null) in unit tests to skip the real az process.
-    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null, Func<Task<string?>>? loginHintResolver = null, string? graphBaseUrl = null)
+    // loginHintResolver: optional override for login-hint resolution.
+    // Pass () => Task.FromResult<string?>(null) in unit tests to skip login-hint resolution.
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, IAuthenticationService authService, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null, Func<Task<string?>>? loginHintResolver = null, string? graphBaseUrl = null, RetryHelper? retryHelper = null)
     {
         _logger = logger;
         _executor = executor;
+        _authService = authService;
         _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
         _tokenProvider = tokenProvider;
-        _loginHintResolver = loginHintResolver ?? AzCliHelper.ResolveLoginHintAsync;
+        _retryHelper = retryHelper ?? new RetryHelper(_logger);
+        // Default: try az CLI first (if present), fall back to JWT cache in AuthenticationService.
+        _loginHintResolver = loginHintResolver ?? (() => ResolveLoginHintWithFallbackAsync(authService));
         _graphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl;
     }
 
     // Parameterless constructor to ease test mocking/substitution frameworks which may
     // require creating proxy instances without providing constructor arguments.
     public GraphApiService()
-        : this(NullLogger<GraphApiService>.Instance, new CommandExecutor(NullLogger<CommandExecutor>.Instance), null, null, null)
+        : this(NullLogger<GraphApiService>.Instance, new CommandExecutor(NullLogger<CommandExecutor>.Instance), new AuthenticationService(NullLogger<AuthenticationService>.Instance), null, null, null)
     {
     }
 
     // Two-argument convenience constructor used by tests and callers that supply
     // a logger and an existing CommandExecutor (no custom handler).
     public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor)
-        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), null, null, null)
+        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), new AuthenticationService(NullLogger<AuthenticationService>.Instance), null, null, null)
     {
     }
 
+    private static async Task<string?> ResolveLoginHintWithFallbackAsync(IAuthenticationService authService)
+    {
+        // Try az CLI first — most reliable when the user has run 'az login'.
+        var hint = await AzCliHelper.ResolveLoginHintAsync();
+        if (!string.IsNullOrWhiteSpace(hint))
+            return hint;
+        // Fall back to the UPN embedded in a previously cached MSAL JWT.
+        return await authService.ResolveLoginHintFromCacheAsync();
+    }
+
     /// <summary>
-    /// Get access token for Microsoft Graph API using Azure CLI
+    /// Acquires an access token for Microsoft Graph API via MSAL (WAM on Windows,
+    /// browser/device-code on macOS/Linux). Token is cached persistently by
+    /// AuthenticationService — no az CLI subprocess involved.
     /// </summary>
     public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, CancellationToken ct = default)
     {
         _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
-
         try
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
-
-            // Check the process-level cache first. AzCliHelper caches tokens per (resource, tenantId)
-            // for the process lifetime — avoids spawning duplicate 'az account get-access-token'
-            // subprocesses when multiple services request the same token.
-            var cachedToken = await AzCliHelper.AcquireAzCliTokenAsync(resource, tenantId);
-            if (!string.IsNullOrWhiteSpace(cachedToken))
-            {
-                _logger.LogDebug("Graph API access token acquired from cache");
-                return cachedToken;
-            }
-
-            // Cache miss or az CLI not authenticated — check login state via the injectable resolver.
-            // Using _loginHintResolver (not the static helper directly) keeps the test seam consistent.
             var loginHint = await _loginHintResolver();
-            if (loginHint == null)
+            var token = await _authService.GetAccessTokenAsync(resource, tenantId, userId: loginHint);
+            if (!string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogInformation("Azure CLI not authenticated. Initiating login...");
-                _logger.LogInformation("A browser window will open for authentication. Please check your taskbar or browser if you don't see it.");
-                var loginResult = await _executor.ExecuteAsync(
-                    "az",
-                    $"login --tenant {tenantId}",
-                    cancellationToken: ct);
-
-                if (!loginResult.Success)
-                {
-                    _logger.LogError("Azure CLI login failed");
-                    return null;
-                }
-
-                // Bust the caches so the fresh login identity and token are picked up.
-                AzCliHelper.InvalidateLoginHintCache();
-                AzCliHelper.InvalidateAzCliTokenCache();
-            }
-
-            // Acquire the token — this goes through AzCliHelper so it is cached for all
-            // subsequent callers (including those that call AzCliHelper directly).
-            var tokenResult = await _executor.ExecuteAsync(
-                "az",
-                $"account get-access-token --resource {resource} --tenant {tenantId} --query accessToken -o tsv",
-                captureOutput: true,
-                cancellationToken: ct);
-
-            if (tokenResult.Success && !string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
-            {
-                var token = tokenResult.StandardOutput.Trim();
-                // Warm the shared cache so other services that call AzCliHelper.AcquireAzCliTokenAsync
-                // directly receive this token without spawning another subprocess.
-                AzCliHelper.WarmAzCliTokenCache(resource, tenantId, token);
                 _logger.LogDebug("Graph API access token acquired successfully");
                 return token;
             }
-
-            // Check for CAE-related errors in the error output
-            var errorOutput = tokenResult.StandardError ?? "";
-            if (errorOutput.Contains("AADSTS50173", StringComparison.OrdinalIgnoreCase) ||
-                errorOutput.Contains("session", StringComparison.OrdinalIgnoreCase) ||
-                errorOutput.Contains("expired", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogWarning("Authentication session may have expired. Attempting fresh login...");
-
-                // Force logout and re-login
-                _logger.LogInformation("Logging out of Azure CLI...");
-                await _executor.ExecuteAsync("az", "logout", suppressErrorLogging: true, cancellationToken: ct);
-
-                _logger.LogInformation("Initiating fresh login...");
-                var freshLoginResult = await _executor.ExecuteAsync(
-                    "az",
-                    $"login --tenant {tenantId}",
-                    cancellationToken: ct);
-
-                if (!freshLoginResult.Success)
-                {
-                    _logger.LogError("Fresh login failed. Please manually run: az login --tenant {TenantId}", tenantId);
-                    return null;
-                }
-
-                // Bust caches after re-authentication so stale tokens are not returned.
-                AzCliHelper.InvalidateLoginHintCache();
-                AzCliHelper.InvalidateAzCliTokenCache();
-
-                // Retry token acquisition
-                _logger.LogInformation("Retrying token acquisition...");
-                var retryTokenResult = await _executor.ExecuteAsync(
-                    "az",
-                    $"account get-access-token --resource {resource} --tenant {tenantId} --query accessToken -o tsv",
-                    captureOutput: true,
-                    cancellationToken: ct);
-
-                if (retryTokenResult.Success && !string.IsNullOrWhiteSpace(retryTokenResult.StandardOutput))
-                {
-                    var token = retryTokenResult.StandardOutput.Trim();
-                    AzCliHelper.WarmAzCliTokenCache(resource, tenantId, token);
-                    _logger.LogInformation("Graph API access token acquired successfully after re-authentication");
-                    return token;
-                }
-
-                _logger.LogError("Failed to acquire token after re-authentication: {Error}", retryTokenResult.StandardError);
-                return null;
-            }
-
-            _logger.LogError("Failed to acquire Graph API access token: {Error}", tokenResult.StandardError);
+            _logger.LogError("Failed to acquire Graph API access token for tenant {TenantId}", tenantId);
             return null;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error acquiring Graph API access token");
-            
-            // Check for CAE-related exceptions
-            if (ex.Message.Contains("TokenIssuedBeforeRevocationTimestamp", StringComparison.OrdinalIgnoreCase) ||
-                ex.Message.Contains("InteractionRequired", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogError("");
-                _logger.LogError("=== AUTHENTICATION SESSION EXPIRED ===");
-                _logger.LogError("Your authentication session is no longer valid.");
-                _logger.LogError("");
-                _logger.LogError("TO RESOLVE:");
-                _logger.LogError("  1. Run: az logout");
-                _logger.LogError("  2. Run: az login --tenant {TenantId}", tenantId);
-                _logger.LogError("  3. Retry your command");
-                _logger.LogError("");
-            }
-            
             return null;
         }
     }
@@ -234,9 +139,9 @@ public class GraphApiService
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
         // Authentication Strategy:
-        // 1. If specific scopes required AND token provider configured: Use interactive browser auth (cached)
-        // 2. Otherwise: Use Azure CLI token (requires 'az login')
-        // This dual approach minimizes auth prompts while supporting special scope requirements
+        // 1. If specific scopes required AND token provider configured: Use MSAL with delegated scopes (WAM/browser/device-code)
+        // 2. Otherwise: Use MSAL via AuthenticationService (WAM/browser/device-code, persistent cache)
+        // All paths go through MSAL — no az CLI subprocess involved.
 
         string? token;
 
@@ -263,25 +168,13 @@ public class GraphApiService
         }
         else
         {
-            // Use the process-level token cache in AzCliHelper — shared across all service
-            // instances so a token acquired in any phase is reused by subsequent phases.
-            token = await AzCliHelper.AcquireAzCliTokenAsync(GraphApiConstants.GetResource(_graphBaseUrl), tenantId);
+            // Default path: acquire via AuthenticationService (MSAL, persistent disk cache).
+            token = await GetGraphAccessTokenAsync(tenantId, ct);
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                // Cache miss or az CLI not authenticated — run full auth + recovery flow.
-                _logger.LogDebug("Process-level token cache miss; running full auth flow for tenant {TenantId}", tenantId);
-                token = await GetGraphAccessTokenAsync(tenantId, ct);
-
-                if (string.IsNullOrWhiteSpace(token))
-                {
-                    _logger.LogError("Failed to acquire Graph token via Azure CLI. Ensure 'az login' is completed.");
-                    return false;
-                }
-
-                // Warm the process-level cache so subsequent callers (including other
-                // GraphApiService instances and services) skip the auth flow entirely.
-                AzCliHelper.WarmAzCliTokenCache(GraphApiConstants.GetResource(_graphBaseUrl), tenantId, token);
+                _logger.LogError("Failed to acquire Graph token. Sign-in will be prompted on the next attempt.");
+                return false;
             }
         }
 
@@ -328,16 +221,27 @@ public class GraphApiService
     {
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
-        using var resp = await _httpClient.GetAsync(url, ct);
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            var errorBody = await resp.Content.ReadAsStringAsync(ct);
-            _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, errorBody);
+            using var resp = await _retryHelper.ExecuteWithRetryAsync(
+                ct => _httpClient.GetAsync(url, ct), cancellationToken: ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var errorBody = await resp.Content.ReadAsStringAsync(ct);
+                _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, errorBody);
+                return null;
+            }
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            return JsonDocument.Parse(json);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "Graph GET {Url} failed with exception", url);
             return null;
         }
-        var json = await resp.Content.ReadAsStringAsync(ct);
-
-        return JsonDocument.Parse(json);
     }
 
     /// <summary>
@@ -377,7 +281,10 @@ public class GraphApiService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Graph GET {Url} threw an exception", url);
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "Graph GET {Url} threw an exception", url);
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = ex.Message, Body = string.Empty };
         }
     }
@@ -387,20 +294,31 @@ public class GraphApiService
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var resp = await _httpClient.PostAsync(url, content, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            var errorMessage = TryExtractGraphErrorMessage(body);
-            if (errorMessage != null)
-                _logger.LogWarning("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
-            else
-                _logger.LogWarning("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
-            _logger.LogDebug("Graph POST response body: {Body}", body);
-            return null;
-        }
+            using var resp = await _httpClient.PostAsync(url, content, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var errorMessage = TryExtractGraphErrorMessage(body);
+                if (errorMessage != null)
+                    _logger.LogWarning("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
+                else
+                    _logger.LogWarning("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                _logger.LogDebug("Graph POST response body: {Body}", body);
+                return null;
+            }
 
-        return string.IsNullOrWhiteSpace(body) ? null : JsonDocument.Parse(body);
+            return string.IsNullOrWhiteSpace(body) ? null : JsonDocument.Parse(body);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "Graph POST {Url} failed with exception", url);
+            throw;
+        }
     }
 
     /// <summary>
@@ -416,23 +334,34 @@ public class GraphApiService
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
 
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var resp = await _httpClient.PostAsync(url, content, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
-        JsonDocument? json = null;
-        if (!string.IsNullOrWhiteSpace(body))
+        try
         {
-            try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
+            using var resp = await _httpClient.PostAsync(url, content, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            JsonDocument? json = null;
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
+            }
+
+            return new GraphResponse
+            {
+                IsSuccess = resp.IsSuccessStatusCode,
+                StatusCode = (int)resp.StatusCode,
+                ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
+                Body = body ?? string.Empty,
+                Json = json
+            };
         }
-
-        return new GraphResponse
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            IsSuccess = resp.IsSuccessStatusCode,
-            StatusCode = (int)resp.StatusCode,
-            ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
-            Body = body ?? string.Empty,
-            Json = json
-        };
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "Graph POST {Url} failed with exception", url);
+            throw;
+        }
     }
 
     /// <summary>
@@ -444,22 +373,33 @@ public class GraphApiService
         if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
-        using var resp = await _httpClient.SendAsync(request, ct);
-
-        // Many PATCH calls return 204 NoContent on success
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            var errorMessage = TryExtractGraphErrorMessage(body);
-            if (errorMessage != null)
-                _logger.LogError("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
-            else
-                _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
-            _logger.LogDebug("Graph PATCH response body: {Body}", body);
-        }
+            using var request = new HttpRequestMessage(new HttpMethod("PATCH"), url) { Content = content };
+            using var resp = await _httpClient.SendAsync(request, ct);
 
-        return resp.IsSuccessStatusCode;
+            // Many PATCH calls return 204 NoContent on success
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                var errorMessage = TryExtractGraphErrorMessage(body);
+                if (errorMessage != null)
+                    _logger.LogError("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
+                else
+                    _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                _logger.LogDebug("Graph PATCH response body: {Body}", body);
+            }
+
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "Graph PATCH {Url} failed with exception", url);
+            throw;
+        }
     }
 
     public async Task<bool> GraphDeleteAsync(
@@ -473,25 +413,36 @@ public class GraphApiService
 
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
 
-        using var req = new HttpRequestMessage(HttpMethod.Delete, url);
-        using var resp = await _httpClient.SendAsync(req, ct);
-
-        // 404 can be considered success for idempotent deletes
-        if (treatNotFoundAsSuccess && (int)resp.StatusCode == 404) return true;
-
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            var errorMessage = TryExtractGraphErrorMessage(body);
-            if (errorMessage != null)
-                _logger.LogError("Graph DELETE {Url} failed: {ErrorMessage}", url, errorMessage);
-            else
-                _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
-            _logger.LogDebug("Graph DELETE response body: {Body}", body);
-            return false;
-        }
+            using var req = new HttpRequestMessage(HttpMethod.Delete, url);
+            using var resp = await _httpClient.SendAsync(req, ct);
 
-        return true;
+            // 404 can be considered success for idempotent deletes
+            if (treatNotFoundAsSuccess && (int)resp.StatusCode == 404) return true;
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                var errorMessage = TryExtractGraphErrorMessage(body);
+                if (errorMessage != null)
+                    _logger.LogError("Graph DELETE {Url} failed: {ErrorMessage}", url, errorMessage);
+                else
+                    _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                _logger.LogDebug("Graph DELETE response body: {Body}", body);
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "Graph DELETE {Url} failed with exception", url);
+            throw;
+        }
     }
 
     /// <summary>

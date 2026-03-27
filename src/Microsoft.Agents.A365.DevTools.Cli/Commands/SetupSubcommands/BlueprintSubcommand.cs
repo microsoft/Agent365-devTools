@@ -386,6 +386,7 @@ internal static class BlueprintSubcommand
             new GraphApiService(
                 cleanLoggerFactory.CreateLogger<GraphApiService>(),
                 executor,
+                new AuthenticationService(cleanLoggerFactory.CreateLogger<AuthenticationService>()),
                 graphBaseUrl: setupConfig.GraphBaseUrl));
 
         // Use DI-provided GraphApiService which already has MicrosoftGraphTokenProvider configured

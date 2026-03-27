@@ -254,6 +254,7 @@ class Program
         services.AddSingleton<IConfigService, ConfigService>();
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
+        services.AddSingleton<IAuthenticationService>(sp => sp.GetRequiredService<AuthenticationService>());
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
         services.AddSingleton<IVersionCheckService, VersionCheckService>();
         services.AddSingleton<INoticeService, NoticeService>();
