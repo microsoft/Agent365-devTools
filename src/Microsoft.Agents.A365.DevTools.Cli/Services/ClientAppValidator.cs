@@ -659,8 +659,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("CollectMissingRedirectUrisAsync failed (non-fatal): {Message}", ex.Message);
-            return new List<string>();
+            // On error, assume all redirect URIs are missing so the prompt still appears.
+            // Failing closed (prompt) is safer than failing open (silent mutation without disclosure).
+            _logger.LogDebug("CollectMissingRedirectUrisAsync failed — assuming all redirect URIs missing: {Message}", ex.Message);
+            return AuthenticationConstants.GetRequiredRedirectUris(clientAppId).ToList();
         }
     }
 
@@ -689,8 +691,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("IsPublicClientFlowsDisabledAsync failed (non-fatal): {Message}", ex.Message);
-            return false;
+            // On error, assume public client flows need enabling so the prompt still appears.
+            // Failing closed (prompt) is safer than failing open (silent mutation without disclosure).
+            _logger.LogDebug("IsPublicClientFlowsDisabledAsync failed — assuming public client flows need enabling: {Message}", ex.Message);
+            return true;
         }
     }
 
