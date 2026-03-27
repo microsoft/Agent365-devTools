@@ -87,11 +87,19 @@ def clear_cache():
 class GitHubService:
     """Service for interacting with GitHub API with caching and rate limit handling."""
 
-    def __init__(self):
+    def __init__(self, github_host: str = "github.com"):
         token = os.environ.get("GITHUB_TOKEN", "")
         if not token:
             logger.warning("GITHUB_TOKEN not set - using unauthenticated requests (60/hour limit)")
-        self.client = Github(token, per_page=DEFAULT_PER_PAGE) if token else Github(per_page=DEFAULT_PER_PAGE)
+
+        kwargs: Dict[str, Any] = {"per_page": DEFAULT_PER_PAGE}
+        if github_host and github_host != "github.com":
+            # PyGithub accepts a base_url for GitHub Enterprise Server deployments.
+            # The GHE REST API is served at https://<host>/api/v3.
+            kwargs["base_url"] = f"https://{github_host}/api/v3"
+            logger.info("Connecting to GitHub Enterprise Server at %s", github_host)
+
+        self.client = Github(token, **kwargs) if token else Github(**kwargs)
         self._repo_cache: Dict[str, Any] = {}
 
     def _get_repo(self, owner: str, repo: str):

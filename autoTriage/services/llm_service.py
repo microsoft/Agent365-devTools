@@ -80,9 +80,23 @@ class RateLimiter:
 
 # Module-level rate limiter instance — shared across all LlmService instances
 # within a process.  The limit can be tuned via LLM_MAX_CALLS_PER_MINUTE.
-_rate_limiter = RateLimiter(
-    max_calls_per_minute=int(os.environ.get("LLM_MAX_CALLS_PER_MINUTE", "60"))
-)
+_DEFAULT_MAX_CALLS_PER_MINUTE = 60
+_env_max_calls = os.environ.get("LLM_MAX_CALLS_PER_MINUTE")
+if _env_max_calls is not None:
+    try:
+        _max_calls_per_minute = int(_env_max_calls)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid LLM_MAX_CALLS_PER_MINUTE value %r — must be a plain integer. "
+            "Falling back to default (%d).",
+            _env_max_calls,
+            _DEFAULT_MAX_CALLS_PER_MINUTE,
+        )
+        _max_calls_per_minute = _DEFAULT_MAX_CALLS_PER_MINUTE
+else:
+    _max_calls_per_minute = _DEFAULT_MAX_CALLS_PER_MINUTE
+
+_rate_limiter = RateLimiter(max_calls_per_minute=_max_calls_per_minute)
 
 
 

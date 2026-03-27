@@ -892,9 +892,18 @@ def triage_issues(
     Returns:
         Dict with triage results
     """
-    # Initialize services if not injected
+    # Initialize services if not injected.
+    # Extract the GitHub host from issue_url now (before _fetch_issues_to_triage)
+    # so GitHubService can be pointed at the correct GHE endpoint if needed.
     if github_service is None:
-        github_service = GitHubService()
+        _initial_host = "github.com"
+        if issue_url:
+            try:
+                from urllib.parse import urlparse as _urlparse
+                _initial_host = _urlparse(issue_url).netloc or "github.com"
+            except Exception:
+                pass
+        github_service = GitHubService(github_host=_initial_host)
     if llm_service is None:
         llm_service = LlmService()
     if config_parser is None:
