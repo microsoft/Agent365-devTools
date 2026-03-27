@@ -37,7 +37,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckWarning(ILogger logger, string? message = null)
     {
-        logger.LogWarning("WARNING: {Name}{Details}", Name,
+        logger.LogWarning("[WARN] {Name}{Details}", Name,
             string.IsNullOrWhiteSpace(message) ? "" : $" - {message}");
     }
 

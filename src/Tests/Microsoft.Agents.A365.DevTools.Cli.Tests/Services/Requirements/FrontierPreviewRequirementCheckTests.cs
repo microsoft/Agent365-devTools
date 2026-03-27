@@ -52,11 +52,11 @@ public class FrontierPreviewRequirementCheckTests
         // Act
         await check.CheckAsync(config, _mockLogger);
 
-        // Assert — WARNING: prefix is included in the message (logged at Warning severity → yellow in formatter)
+        // Assert — [WARN] prefix is included in the message (logged at Warning severity → yellow in formatter)
         _mockLogger.Received().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("WARNING: Frontier Preview Program")),
+            Arg.Is<object>(o => o.ToString()!.Contains("[WARN] Frontier Preview Program")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
