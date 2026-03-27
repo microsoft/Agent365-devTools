@@ -47,7 +47,7 @@ public abstract class RequirementCheck : IRequirementCheck
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
     {
         // Name logged at Error level (red) — formatter already prefixes ERROR:
-        logger.LogError("{Name}", Name);
+        logger.LogError("[FAIL] {Name}", Name);
 
         // Error details in red (split multi-line messages into separate lines)
         foreach (var line in errorMessage.Split('\n', StringSplitOptions.RemoveEmptyEntries))

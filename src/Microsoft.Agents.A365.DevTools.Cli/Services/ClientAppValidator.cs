@@ -129,6 +129,18 @@ public sealed class ClientAppValidator : IClientAppValidator
                 if (!applyFixes)
                 {
                     _logger.LogInformation("App registration was not modified. Re-run and accept the prompt, or configure manually.");
+
+                    var details = new List<string>();
+                    if (hasMissingPermissions)
+                        details.Add($"Missing permissions: {string.Join(", ", missingPermissions)}");
+                    if (hasMissingRedirectUris)
+                        details.Add($"Missing redirect URIs: {string.Join(", ", missingRedirectUris)}");
+                    if (needsPublicClientEnabled)
+                        details.Add("Public client flows ('Allow public client flows') must be enabled");
+                    throw ClientAppValidationException.ValidationFailed(
+                        "App registration changes were declined — manual configuration required",
+                        details,
+                        clientAppId);
                 }
             }
 
