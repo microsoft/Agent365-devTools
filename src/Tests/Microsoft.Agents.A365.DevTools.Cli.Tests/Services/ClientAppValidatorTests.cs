@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.Text.Json;
 using Xunit;
@@ -128,8 +129,9 @@ public class ClientAppValidatorTests
         _graphApiService.GraphGetWithResponseAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("displayName")),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = false,
@@ -762,8 +764,9 @@ public class ClientAppValidatorTests
         _graphApiService.GraphGetWithResponseAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("displayName")),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,
@@ -780,8 +783,9 @@ public class ClientAppValidatorTests
         _graphApiService.GraphGetWithResponseAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("displayName")),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,

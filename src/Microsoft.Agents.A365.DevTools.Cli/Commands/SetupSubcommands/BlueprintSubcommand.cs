@@ -386,6 +386,7 @@ internal static class BlueprintSubcommand
             new GraphApiService(
                 cleanLoggerFactory.CreateLogger<GraphApiService>(),
                 executor,
+                new AuthenticationService(cleanLoggerFactory.CreateLogger<AuthenticationService>()),
                 graphBaseUrl: setupConfig.GraphBaseUrl));
 
         // Use DI-provided GraphApiService which already has MicrosoftGraphTokenProvider configured
@@ -761,7 +762,7 @@ internal static class BlueprintSubcommand
                 existingServicePrincipalId = null;
                 // SP missing for an existing app — attempt creation so downstream steps have a valid SP.
                 logger.LogInformation("Service principal not found for existing blueprint — attempting to create it...");
-                var spToken = await graphApiService.GetGraphAccessTokenAsync(tenantId, ct);
+                var spToken = await graphApiService.GetGraphAccessTokenAsync(tenantId, ct: ct);
                 if (!string.IsNullOrWhiteSpace(spToken))
                 {
                     using var spHttpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(spToken);

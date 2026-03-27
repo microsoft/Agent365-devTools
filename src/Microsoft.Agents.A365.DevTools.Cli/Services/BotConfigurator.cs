@@ -61,26 +61,9 @@ public class BotConfigurator : IBotConfigurator
 
         try
         {
-            // Get subscription info for tenant ID
-            var subscriptionResult = await _executor.ExecuteAsync("az", "account show", captureOutput: true);
-            if (subscriptionResult == null)
-            {
-                _logger.LogError("Failed to execute account show command - null result");
-                return EndpointRegistrationResult.Failed;
-            }
-
-            if (!subscriptionResult.Success)
-            {
-                _logger.LogError("Failed to get subscription information for endpoint creation");
-                return EndpointRegistrationResult.Failed;
-            }
-
-            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
-            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
-            var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
-            var currentUser = subscriptionInfo.TryGetProperty("user", out var userProp) &&
-                              userProp.TryGetProperty("name", out var nameProp)
-                ? nameProp.GetString() : null;
+            // Load config first to get tenant ID — avoids az CLI subprocess for account info.
+            var config = await _configService.LoadAsync();
+            var tenantId = config.TenantId;
 
             if (string.IsNullOrEmpty(tenantId))
             {
@@ -88,12 +71,17 @@ public class BotConfigurator : IBotConfigurator
                 return EndpointRegistrationResult.Failed;
             }
 
+            // Resolve login hint for account pre-selection in WAM/MSAL.
+            // Try az CLI first (if the user has run 'az login'); fall back to the
+            // UPN embedded in a previously cached MSAL token — non-fatal if unavailable.
+            var currentUser = await AzCliHelper.ResolveLoginHintAsync()
+                ?? await _authService.ResolveLoginHintFromCacheAsync();
+
             // Create new endpoint with agent blueprint identity
             _logger.LogInformation("Creating new endpoint with Agent Blueprint Identity...");
 
             try
             {
-                var config = await _configService.LoadAsync();
                 var createEndpointUrl = EndpointHelper.GetCreateEndpointUrl(config.Environment);
 
                 _logger.LogInformation("Calling create endpoint directly...");
@@ -254,27 +242,8 @@ public class BotConfigurator : IBotConfigurator
 
         try
         {
-            // Get subscription info for tenant ID
-            var subscriptionResult = await _executor.ExecuteAsync("az", "account show", captureOutput: true);
-            if (subscriptionResult == null)
-            {
-                _logger.LogError("Failed to execute account show command - null result");
-                return false;
-            }
-
-            if (!subscriptionResult.Success)
-            {
-                _logger.LogError("Failed to get subscription information for endpoint deletion");
-                return false;
-            }
-
-            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
-            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
-            var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
-            var currentUser = subscriptionInfo.TryGetProperty("user", out var userProp) &&
-                              userProp.TryGetProperty("name", out var nameProp)
-                ? nameProp.GetString() : null;
-            _logger.LogDebug("ATG token request — current user from az account: {CurrentUser}", currentUser ?? "(null)");
+            var config = await _configService.LoadAsync();
+            var tenantId = config.TenantId;
 
             if (string.IsNullOrEmpty(tenantId))
             {
@@ -282,12 +251,15 @@ public class BotConfigurator : IBotConfigurator
                 return false;
             }
 
+            var currentUser = await AzCliHelper.ResolveLoginHintAsync()
+                ?? await _authService.ResolveLoginHintFromCacheAsync();
+            _logger.LogDebug("ATG token request — current user: {CurrentUser}", currentUser ?? "(null)");
+
             // Delete endpoint with agent blueprint identity
             _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
 
             try
             {
-                var config = await _configService.LoadAsync();
                 var deleteEndpointUrl = EndpointHelper.GetDeleteEndpointUrl(config.Environment);
 
                 _logger.LogInformation("Calling delete endpoint directly...");

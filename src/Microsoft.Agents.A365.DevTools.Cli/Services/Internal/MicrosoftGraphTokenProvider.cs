@@ -91,11 +91,12 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         bool useDeviceCode = false,
         string? clientAppId = null,
         CancellationToken ct = default,
-        string? loginHint = null)
+        string? loginHint = null,
+        bool forceRefresh = false)
     {
         var validatedScopes = ValidateAndPrepareScopes(scopes);
         ValidateTenantId(tenantId);
-        
+
         if (!string.IsNullOrWhiteSpace(clientAppId))
         {
             ValidateClientAppId(clientAppId);
@@ -103,6 +104,10 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
         var cacheKey = MakeCacheKey(tenantId, validatedScopes, clientAppId, loginHint);
         var tokenExpirationMinutes = AuthenticationConstants.TokenExpirationBufferMinutes;
+
+        // When forceRefresh is requested, evict the cached entry so the acquire path always runs.
+        if (forceRefresh)
+            _tokenCache.TryRemove(cacheKey, out _);
 
         // Fast path: cached + not expiring soon
         if (_tokenCache.TryGetValue(cacheKey, out var cached) &&
@@ -119,7 +124,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         await gate.WaitAsync(ct);
         try
         {
-            // Re-check inside lock
+            // Re-check inside lock (forceRefresh already evicted the entry above the lock)
             if (_tokenCache.TryGetValue(cacheKey, out cached) &&
                 cached.ExpiresOnUtc > DateTimeOffset.UtcNow.AddMinutes(tokenExpirationMinutes) &&
                 !string.IsNullOrWhiteSpace(cached.AccessToken))

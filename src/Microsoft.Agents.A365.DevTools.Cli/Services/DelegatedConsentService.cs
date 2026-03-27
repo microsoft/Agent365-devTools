@@ -69,7 +69,7 @@ public sealed class DelegatedConsentService
 
             // Get Graph access token with required scopes
             _logger.LogInformation("Acquiring Graph API access token...");
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, cancellationToken);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token");
@@ -275,13 +275,9 @@ public sealed class DelegatedConsentService
                 return null;
             }
 
-            // The new az login session invalidates any previously cached tokens.
-            AzCliHelper.InvalidateAzCliTokenCache();
-
             _logger.LogInformation("    Acquiring fresh Graph API token...");
 
-            // Re-populate the process-level cache with the new session's token.
-            var token = await AzCliHelper.AcquireAzCliTokenAsync(GraphApiConstants.GetResource(GraphApiConstants.BaseUrl), tenantId);
+            var token = await _graphService.GetGraphAccessTokenAsync(tenantId);
 
             if (!string.IsNullOrWhiteSpace(token))
             {

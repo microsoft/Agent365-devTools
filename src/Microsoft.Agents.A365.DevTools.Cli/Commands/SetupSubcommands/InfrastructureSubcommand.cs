@@ -300,42 +300,10 @@ public static class InfrastructureSubcommand
             logger.LogDebug("Azure CLI already authenticated as {LoginHint}", loginHint);
         }
         
-        // Verify we have the management scope (token is cached at process level by AzCliHelper).
-        logger.LogDebug("Verifying access to Azure management resources...");
-        var managementToken = await AzCliHelper.AcquireAzCliTokenAsync(ArmApiService.ArmResource, tenantId);
-
-        if (string.IsNullOrWhiteSpace(managementToken))
-        {
-            logger.LogWarning("Unable to acquire management scope token. Attempting re-authentication...");
-            logger.LogInformation("A browser window will open for authentication.");
-
-            var loginResult = await executor.ExecuteAsync("az", $"login --tenant {tenantId}", cancellationToken: cancellationToken);
-
-            if (!loginResult.Success)
-            {
-                logger.LogError("Azure CLI login with management scope failed. Please run manually: az login --scope https://management.core.windows.net//.default");
-                return false;
-            }
-
-            logger.LogInformation("Azure CLI re-authentication successful!");
-            AzCliHelper.InvalidateAzCliTokenCache();
-            await Task.Delay(2000, cancellationToken);
-
-            var retryToken = await AzCliHelper.AcquireAzCliTokenAsync(ArmApiService.ArmResource, tenantId);
-            if (string.IsNullOrWhiteSpace(retryToken))
-            {
-                logger.LogWarning("Still unable to acquire management scope token after re-authentication.");
-                logger.LogWarning("Continuing anyway - you may encounter permission errors later.");
-            }
-            else
-            {
-                logger.LogDebug("Management scope token acquired successfully!");
-            }
-        }
-        else
-        {
-            logger.LogDebug("Management scope verified successfully");
-        }
+        // ARM token acquisition is handled lazily by ArmApiService via MSAL (WAM/browser/device-code).
+        // No eager token pre-fetch is needed here — MSAL will prompt for sign-in when the
+        // first ARM call is made if no valid cached token exists.
+        logger.LogDebug("Azure authentication verified. ARM token will be acquired on first resource call.");
         return true;
     }
 

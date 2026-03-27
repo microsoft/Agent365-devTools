@@ -718,7 +718,7 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         const string path = "/v1.0/applications?$filter=appId eq '{0}'&$select=id,appId,displayName,requiredResourceAccess";
         var graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-            string.Format(path, clientAppId), ct);
+            string.Format(path, clientAppId), ct: ct);
 
         if (graphResponse == null || !graphResponse.IsSuccess)
         {
@@ -731,10 +731,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return null;
             }
 
-            _logger.LogDebug("Graph app query returned 401 — invalidating token cache and retrying (possible CAE revocation)");
-            AzCliHelper.InvalidateAzCliTokenCache();
+            _logger.LogDebug("Graph app query returned 401 — retrying with fresh token (possible CAE revocation)");
             graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-                string.Format(path, clientAppId), ct);
+                string.Format(path, clientAppId), forceRefresh: true, ct: ct);
 
             if (!graphResponse.IsSuccess)
                 throw ClientAppValidationException.TokenRevoked(clientAppId);
