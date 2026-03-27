@@ -85,7 +85,7 @@ public class ClientAppRequirementCheckTests
         _mockValidator.EnsureValidClientAppAsync(
             config.ClientAppId,
             config.TenantId,
-            Arg.Any<CancellationToken>())
+            ct: Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
         // Act
@@ -102,7 +102,7 @@ public class ClientAppRequirementCheckTests
         await _mockValidator.Received(1).EnsureValidClientAppAsync(
             config.ClientAppId,
             config.TenantId,
-            Arg.Any<CancellationToken>());
+            ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -131,7 +131,7 @@ public class ClientAppRequirementCheckTests
         _mockValidator.EnsureValidClientAppAsync(
             config.ClientAppId,
             config.TenantId,
-            Arg.Any<CancellationToken>())
+            ct: Arg.Any<CancellationToken>())
             .Throws(validationException);
 
         // Act
@@ -163,7 +163,7 @@ public class ClientAppRequirementCheckTests
         _mockValidator.EnsureValidClientAppAsync(
             config.ClientAppId,
             config.TenantId,
-            Arg.Any<CancellationToken>())
+            ct: Arg.Any<CancellationToken>())
             .Throws(unexpectedException);
 
         // Act
@@ -261,6 +261,31 @@ public class ClientAppRequirementCheckTests
     }
 
     [Fact]
+    public async Task CheckAsync_WhenValidatorThrowsOperationCanceledException_ShouldPropagate()
+    {
+        // Arrange
+        var check = new ClientAppRequirementCheck(_mockValidator);
+        var config = new Agent365Config
+        {
+            ClientAppId = "test-client-app-id",
+            TenantId = "test-tenant-id"
+        };
+
+        _mockValidator.EnsureValidClientAppAsync(
+            config.ClientAppId,
+            config.TenantId,
+            ct: Arg.Any<CancellationToken>())
+            .Throws(new OperationCanceledException());
+
+        // Act
+        var act = async () => await check.CheckAsync(config, _mockLogger);
+
+        // Assert — Ctrl+C must propagate, not be swallowed into a failure result
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "cancellation must exit cleanly without logging a failure result");
+    }
+
+    [Fact]
     public async Task CheckAsync_ShouldPassCancellationTokenToValidator()
     {
         // Arrange
@@ -275,7 +300,7 @@ public class ClientAppRequirementCheckTests
         _mockValidator.EnsureValidClientAppAsync(
             config.ClientAppId,
             config.TenantId,
-            Arg.Any<CancellationToken>())
+            ct: Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
         // Act
@@ -285,6 +310,6 @@ public class ClientAppRequirementCheckTests
         await _mockValidator.Received(1).EnsureValidClientAppAsync(
             config.ClientAppId,
             config.TenantId,
-            cancellationToken);
+            ct: cancellationToken);
     }
 }

@@ -66,7 +66,7 @@ public class ClientAppRequirementCheck : RequirementCheck
             await _clientAppValidator.EnsureValidClientAppAsync(
                 config.ClientAppId,
                 config.TenantId,
-                cancellationToken
+                ct: cancellationToken
             );
 
             return RequirementCheckResult.Success(
@@ -75,12 +75,18 @@ public class ClientAppRequirementCheck : RequirementCheck
         }
         catch (ClientAppValidationException ex)
         {
-            // Convert ClientAppValidationException to RequirementCheckResult
+            // Use IssueDescription + ErrorDetails to avoid exposing internal error codes from ex.Message
+            var errorLines = new List<string> { ex.IssueDescription };
+            errorLines.AddRange(ex.ErrorDetails);
             return RequirementCheckResult.Failure(
-                errorMessage: ex.Message,
+                errorMessage: string.Join("\n", errorLines),
                 resolutionGuidance: string.Join("\n", ex.MitigationSteps),
                 details: $"Client app validation failed for {config.ClientAppId}. Please ensure the app exists and has the required configuration."
             );
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

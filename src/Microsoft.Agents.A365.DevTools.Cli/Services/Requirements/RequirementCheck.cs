@@ -37,7 +37,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckWarning(ILogger logger, string? message = null)
     {
-        logger.LogWarning("[WARN] {Name}{Details}", Name,
+        logger.LogWarning("WARNING: {Name}{Details}", Name,
             string.IsNullOrWhiteSpace(message) ? "" : $" - {message}");
     }
 
@@ -46,9 +46,20 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
     {
-        logger.LogError("[FAIL] {Name}", Name);
-        logger.LogError("  Issue: {ErrorMessage}", errorMessage);
-        logger.LogError("  Resolution: {ResolutionGuidance}", resolutionGuidance);
+        // Name logged at Error level (red) — formatter already prefixes ERROR:
+        logger.LogError("{Name}", Name);
+
+        // Error details in red (split multi-line messages into separate lines)
+        foreach (var line in errorMessage.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            logger.LogError("  {Line}", line.TrimEnd());
+
+        // Resolution guidance in white (not red) — it is helpful guidance, not an error
+        if (!string.IsNullOrWhiteSpace(resolutionGuidance))
+        {
+            logger.LogInformation("");
+            foreach (var step in resolutionGuidance.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                logger.LogInformation("  {Step}", step.TrimEnd());
+        }
     }
 
     /// <summary>

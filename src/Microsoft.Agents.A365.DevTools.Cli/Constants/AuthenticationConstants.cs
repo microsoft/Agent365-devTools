@@ -30,8 +30,16 @@ public static class AuthenticationConstants
     public const string LocalhostRedirectUri = "http://localhost:8400/";
 
     /// <summary>
-    /// Required redirect URIs for Microsoft Graph PowerShell SDK authentication.
-    /// The SDK requires both http://localhost and http://localhost:8400/ for different auth flows.
+    /// Required redirect URIs for authentication.
+    /// <list type="bullet">
+    /// <item><term>http://localhost</term><description>Required by the Microsoft Graph PowerShell SDK
+    /// (<c>Connect-MgGraph -ClientId</c>). Without this URI, PowerShell-based operations (OAuth2 grants,
+    /// service principal lookups) fall back to the Azure CLI token, which lacks required delegated
+    /// permissions and causes 403 errors on inheritable permissions operations.</description></item>
+    /// <item><term>http://localhost:8400/</term><description>Required by MSAL for interactive browser
+    /// authentication. Uses a fixed port to ensure consistent OAuth callbacks.</description></item>
+    /// </list>
+    /// See also <see cref="WamBrokerRedirectUriFormat"/> for the Windows WAM broker URI.
     /// </summary>
     public static readonly string[] RequiredRedirectUris = new[]
     {

@@ -19,11 +19,13 @@ public sealed class ClientAppValidator : IClientAppValidator
 {
     private readonly ILogger<ClientAppValidator> _logger;
     private readonly GraphApiService _graphApiService;
+    private readonly IConfirmationProvider? _confirmationProvider;
 
-    public ClientAppValidator(ILogger<ClientAppValidator> logger, GraphApiService graphApiService)
+    public ClientAppValidator(ILogger<ClientAppValidator> logger, GraphApiService graphApiService, IConfirmationProvider? confirmationProvider = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _graphApiService = graphApiService ?? throw new ArgumentNullException(nameof(graphApiService));
+        _confirmationProvider = confirmationProvider;
     }
 
     /// <summary>
@@ -33,11 +35,14 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// </summary>
     /// <param name="clientAppId">The client app ID to validate</param>
     /// <param name="tenantId">The tenant ID where the app should exist</param>
+    /// <param name="skipConfirmation">When true, applies any required app registration fixes without prompting the user.
+    /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="ClientAppValidationException">Thrown when validation fails</exception>
     public async Task EnsureValidClientAppAsync(
         string clientAppId,
         string tenantId,
+        bool skipConfirmation = false,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
@@ -71,7 +76,7 @@ public sealed class ClientAppValidator : IClientAppValidator
 
             _logger.LogDebug("Found client app: {DisplayName} ({AppId})", appInfo.DisplayName, clientAppId);
 
-            // Step 3: Validate permissions in manifest
+            // Step 3: Validate permissions in manifest (read-only)
             var missingPermissions = await ValidatePermissionsConfiguredAsync(appInfo, tenantId, ct);
 
             // Step 3.5: For any unresolvable permissions (beta APIs), check oauth2PermissionGrants as fallback
@@ -87,8 +92,48 @@ public sealed class ClientAppValidator : IClientAppValidator
                 }
             }
 
+            // Read-only pre-flight: collect what redirect URIs and public client settings need fixing
+            var missingRedirectUris = await CollectMissingRedirectUrisAsync(clientAppId, tenantId, ct);
+            var publicClientNeedsEnabling = await IsPublicClientFlowsDisabledAsync(clientAppId, tenantId, ct);
+
+            // Determine what mutations are needed
+            bool hasMissingPermissions = missingPermissions.Count > 0;
+            bool hasMissingRedirectUris = missingRedirectUris.Count > 0;
+            bool needsPublicClientEnabled = publicClientNeedsEnabling;
+            bool hasPendingMutations = hasMissingPermissions || hasMissingRedirectUris || needsPublicClientEnabled;
+
+            // Prompt the user before making any changes (unless skipConfirmation or no confirmation provider)
+            bool applyFixes = true;
+            if (hasPendingMutations && _confirmationProvider != null && !skipConfirmation)
+            {
+                _logger.LogInformation("The following changes will be applied to app registration ({AppId}):", clientAppId);
+                _logger.LogInformation("");
+                if (hasMissingPermissions)
+                {
+                    _logger.LogInformation("  - Add permissions and grant admin consent:");
+                    foreach (var perm in missingPermissions)
+                        _logger.LogInformation("      {Permission}", perm);
+                }
+                if (hasMissingRedirectUris)
+                {
+                    _logger.LogInformation("  - Add redirect URIs:");
+                    foreach (var uri in missingRedirectUris)
+                        _logger.LogInformation("      {Uri}", uri);
+                }
+                if (needsPublicClientEnabled)
+                    _logger.LogInformation("  - Enable 'Allow public client flows' (required for device code fallback)");
+                _logger.LogInformation("For more information: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/custom-client-app-registration");
+                _logger.LogInformation("");
+
+                applyFixes = await _confirmationProvider.ConfirmAsync("Do you want to proceed? (y/N): ");
+                if (!applyFixes)
+                {
+                    _logger.LogInformation("App registration was not modified. Re-run and accept the prompt, or configure manually.");
+                }
+            }
+
             // Step 3.6: Auto-provision any remaining missing permissions (self-healing)
-            if (missingPermissions.Count > 0)
+            if (applyFixes && missingPermissions.Count > 0)
             {
                 _logger.LogInformation("Auto-provisioning {Count} missing permission(s): {Permissions}",
                     missingPermissions.Count, string.Join(", ", missingPermissions));
@@ -125,16 +170,23 @@ public sealed class ClientAppValidator : IClientAppValidator
             }
 
             // Step 5: Verify and fix redirect URIs
-            await EnsureRedirectUrisAsync(clientAppId, tenantId, ct);
+            if (applyFixes)
+                await EnsureRedirectUrisAsync(clientAppId, tenantId, ct);
 
-            // Step 6: Verify and fix public client flows (required for device code fallback on non-Windows)
-            await EnsurePublicClientFlowsEnabledAsync(clientAppId, tenantId, ct);
+            // Step 6: Verify and fix public client flows (required for device code fallback)
+            if (applyFixes)
+                await EnsurePublicClientFlowsEnabledAsync(clientAppId, tenantId, ct);
 
             _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
         }
         catch (ClientAppValidationException)
         {
             // Re-throw validation exceptions as-is
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            // Ctrl+C / cancellation — propagate immediately without wrapping
             throw;
         }
         catch (JsonException ex)
@@ -298,7 +350,10 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return;
             }
 
-            _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback).");
+            _logger.LogInformation(
+                "Enabling 'Allow public client flows' on app registration " +
+                "(required for device code authentication fallback on macOS, Linux, WSL, " +
+                "headless environments, and as a Conditional Access Policy fallback on Windows).");
             _logger.LogInformation("Run 'a365 setup requirements' at any time to re-verify and auto-fix this setting.");
 
             var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
@@ -524,7 +579,11 @@ public sealed class ClientAppValidator : IClientAppValidator
 
                 if (patchSuccess)
                 {
-                    _logger.LogInformation("Extended consent grant with scope(s): {Scopes}", string.Join(", ", scopesToAdd));
+                    _logger.LogInformation("Extending admin consent grant with {Count} new permission(s): {Scopes}.",
+                        scopesToAdd.Count, string.Join(", ", scopesToAdd));
+                    // Invalidate the process-level az CLI token cache so the next Graph call
+                    // re-acquires a token that includes the newly consented scope(s).
+                    Services.Helpers.AzCliHelper.InvalidateAzCliTokenCache();
                 }
                 else
                 {
@@ -537,6 +596,101 @@ public sealed class ClientAppValidator : IClientAppValidator
         catch (Exception ex)
         {
             _logger.LogDebug("TryExtendConsentGrantScopesAsync failed (non-fatal): {Message}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Returns the subset of <see cref="AuthenticationConstants.RequiredClientAppPermissions"/>
+    /// that are not yet present in the client app's oauth2PermissionGrant (i.e. not consented).
+    /// </summary>
+    public async Task<List<string>> GetUnconsentedRequiredPermissionsAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        var consented = await GetConsentedPermissionsAsync(clientAppId, tenantId, ct);
+        return AuthenticationConstants.RequiredClientAppPermissions
+            .Where(p => !consented.Contains(p, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Extends the client app's oauth2PermissionGrant to include the specified permissions.
+    /// Call after the user has confirmed they want to grant admin consent.
+    /// </summary>
+    public Task GrantConsentForPermissionsAsync(
+        string clientAppId,
+        List<string> permissions,
+        string tenantId,
+        CancellationToken ct = default)
+        => TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
+
+
+    /// <summary>
+    /// Read-only check: returns the redirect URIs that are missing from the app registration
+    /// without making any changes. Used to build the pre-flight mutation summary.
+    /// </summary>
+    private async Task<List<string>> CollectMissingRedirectUrisAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient", ct);
+
+            if (appDoc == null) return new List<string>();
+
+            var response = JsonNode.Parse(appDoc.RootElement.GetRawText());
+            var apps = response?["value"]?.AsArray();
+            if (apps == null || apps.Count == 0) return new List<string>();
+
+            var publicClient = apps[0]!.AsObject()["publicClient"]?.AsObject();
+            var currentRedirectUris = publicClient?["redirectUris"]?.AsArray()
+                ?.Select(uri => uri?.GetValue<string>())
+                .Where(uri => !string.IsNullOrWhiteSpace(uri))
+                .Select(uri => uri!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            return AuthenticationConstants.GetRequiredRedirectUris(clientAppId)
+                .Where(uri => !currentRedirectUris.Contains(uri))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("CollectMissingRedirectUrisAsync failed (non-fatal): {Message}", ex.Message);
+            return new List<string>();
+        }
+    }
+
+    /// <summary>
+    /// Read-only check: returns true if 'Allow public client flows' (isFallbackPublicClient)
+    /// is currently disabled on the app registration, without making any changes.
+    /// </summary>
+    private async Task<bool> IsPublicClientFlowsDisabledAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,isFallbackPublicClient", ct);
+
+            if (appDoc == null) return false;
+
+            var response = JsonNode.Parse(appDoc.RootElement.GetRawText());
+            var apps = response?["value"]?.AsArray();
+            if (apps == null || apps.Count == 0) return false;
+
+            var isFallbackPublicClient = apps[0]!.AsObject()["isFallbackPublicClient"]?.GetValue<bool>() ?? false;
+            return !isFallbackPublicClient;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("IsPublicClientFlowsDisabledAsync failed (non-fatal): {Message}", ex.Message);
+            return false;
         }
     }
 

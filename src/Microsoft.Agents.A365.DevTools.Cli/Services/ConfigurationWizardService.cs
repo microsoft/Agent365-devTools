@@ -988,7 +988,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
 
             try
             {
-                await validator.EnsureValidClientAppAsync(clientAppId, tenantId, CancellationToken.None);
+                await validator.EnsureValidClientAppAsync(clientAppId, tenantId, ct: CancellationToken.None);
                 Console.WriteLine("Client app validation successful!");
                 Console.WriteLine();
                 return clientAppId;
