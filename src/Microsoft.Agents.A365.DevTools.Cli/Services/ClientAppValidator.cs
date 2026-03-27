@@ -593,9 +593,6 @@ public sealed class ClientAppValidator : IClientAppValidator
                 {
                     _logger.LogInformation("Extending admin consent grant with {Count} new permission(s): {Scopes}.",
                         scopesToAdd.Count, string.Join(", ", scopesToAdd));
-                    // Invalidate the process-level az CLI token cache so the next Graph call
-                    // re-acquires a token that includes the newly consented scope(s).
-                    Services.Helpers.AzCliHelper.InvalidateAzCliTokenCache();
                 }
                 else
                 {
