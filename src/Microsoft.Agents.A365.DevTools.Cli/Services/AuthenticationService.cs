@@ -124,14 +124,14 @@ public class AuthenticationService : IAuthenticationService
                         }
                         else
                         {
-                            _logger.LogInformation("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                            _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
                                 resourceUrl, tenantId);
                             return cachedToken.AccessToken;
                         }
                     }
                     else
                     {
-                        _logger.LogInformation("Using cached authentication token for {ResourceUrl}", resourceUrl);
+                        _logger.LogDebug("Using cached authentication token for {ResourceUrl}", resourceUrl);
                         return cachedToken.AccessToken;
                     }
                 }
@@ -187,8 +187,8 @@ public class AuthenticationService : IAuthenticationService
                 // This creates the format required by Azure AD for the TokenRequestContext: {resourceAppId}/{scope}
                 // Example: "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
                 scopes = explicitScopes.Select(s => $"{resourceUrl}/{s}").ToArray();
-                _logger.LogInformation("Using explicit scopes for authentication: {Scopes}", string.Join(", ", explicitScopes));
-                _logger.LogInformation("Formatted as: {FormattedScopes}", string.Join(", ", scopes));
+                _logger.LogDebug("Using explicit scopes for authentication: {Scopes}", string.Join(", ", explicitScopes));
+                _logger.LogDebug("Formatted as: {FormattedScopes}", string.Join(", ", scopes));
             }
             else
             {
@@ -225,13 +225,13 @@ public class AuthenticationService : IAuthenticationService
                     scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                         ? resourceUrl
                         : $"{resourceUrl}/.default";
-                    _logger.LogInformation("Using custom resource for authentication: {Resource}", resourceUrl);
+                    _logger.LogDebug("Using custom resource for authentication: {Resource}", resourceUrl);
                 }
                 scopes = [scope];
-                _logger.LogInformation($"Token scope: {scope}");
+                _logger.LogDebug("Token scope: {Scope}", scope);
             }
 
-            _logger.LogInformation("Authenticating for tenant: {TenantId}", effectiveTenantId);
+            _logger.LogDebug("Authenticating for tenant: {TenantId}", effectiveTenantId);
 
             // Use provided client ID or default to PowerShell client ID
             effectiveClientId = string.IsNullOrWhiteSpace(clientId) 
