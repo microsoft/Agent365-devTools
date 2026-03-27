@@ -129,8 +129,9 @@ public class ClientAppValidatorTests
         _graphApiService.GraphGetWithResponseAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("displayName")),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = false,
@@ -463,8 +464,9 @@ public class ClientAppValidatorTests
         _graphApiService.GraphGetWithResponseAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("displayName")),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,
@@ -481,8 +483,9 @@ public class ClientAppValidatorTests
         _graphApiService.GraphGetWithResponseAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("displayName")),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,

@@ -985,8 +985,10 @@ public class AuthenticationServiceTests : IDisposable
     private static string BuildJwt(object payload)
     {
         var json = System.Text.Json.JsonSerializer.Serialize(payload);
-        var payloadB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json)).TrimEnd('=');
-        return $"header.{payloadB64}.signature";
+        // JWT uses Base64Url: replace standard Base64 chars to match real MSAL token format.
+        var payloadB64Url = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        return $"header.{payloadB64Url}.signature";
     }
 
     private void WriteTokenCache(string accessToken)

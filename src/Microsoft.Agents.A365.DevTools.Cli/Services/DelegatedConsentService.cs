@@ -69,7 +69,7 @@ public sealed class DelegatedConsentService
 
             // Get Graph access token with required scopes
             _logger.LogInformation("Acquiring Graph API access token...");
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, cancellationToken);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token");

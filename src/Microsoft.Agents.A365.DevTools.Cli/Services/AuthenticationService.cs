@@ -614,6 +614,8 @@ public class AuthenticationService : IAuthenticationService
             var parts = jwt.Split('.');
             if (parts.Length < 2) return null;
             var payload = parts[1];
+            // JWT uses Base64Url encoding: replace URL-safe chars before standard Base64 decode.
+            payload = payload.Replace('-', '+').Replace('_', '/');
             // Restore Base64 padding stripped by JWT encoding.
             payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
             var bytes = Convert.FromBase64String(payload);

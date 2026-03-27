@@ -52,7 +52,7 @@ public class BlueprintSubcommandTests
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
-            Substitute.For<ILogger<GraphApiService>>(), _mockExecutor);
+            Substitute.For<ILogger<GraphApiService>>(), _mockExecutor, (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
         _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);

@@ -90,10 +90,20 @@ public class GraphApiService
     {
     }
 
-    // Two-argument convenience constructor used by tests and callers that supply
-    // a logger and an existing CommandExecutor (no custom handler).
+    // Convenience constructors for tests. Castle DynamicProxy (used by NSubstitute) resolves
+    // constructors by exact argument count — it does not handle C# optional parameters.
+    // Both forms must exist as separate constructors so Castle can proxy either call site.
+    //
+    // 2-arg form: used by tests that do not need loginHintResolver control.
     public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor)
         : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), new AuthenticationService(NullLogger<AuthenticationService>.Instance), null, null, null)
+    {
+    }
+
+    // 3-arg form: used by partial-mock tests that inject loginHintResolver to prevent
+    // a real az account show subprocess. Pass () => Task.FromResult<string?>(null).
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, Func<Task<string?>>? loginHintResolver)
+        : this(logger ?? NullLogger<GraphApiService>.Instance, executor ?? throw new ArgumentNullException(nameof(executor)), new AuthenticationService(NullLogger<AuthenticationService>.Instance), null, null, loginHintResolver)
     {
     }
 
@@ -112,14 +122,14 @@ public class GraphApiService
     /// browser/device-code on macOS/Linux). Token is cached persistently by
     /// AuthenticationService — no az CLI subprocess involved.
     /// </summary>
-    public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, CancellationToken ct = default)
+    public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, bool forceRefresh = false, CancellationToken ct = default)
     {
         _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
         try
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var loginHint = await _loginHintResolver();
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, userId: loginHint);
+            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, userId: loginHint);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -136,7 +146,7 @@ public class GraphApiService
     }
 
 
-    private async Task<bool> EnsureGraphHeadersAsync(string tenantId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    private async Task<bool> EnsureGraphHeadersAsync(string tenantId, bool forceRefresh = false, IEnumerable<string>? scopes = null, CancellationToken ct = default)
     {
         // Authentication Strategy:
         // 1. If specific scopes required AND token provider configured: Use MSAL with delegated scopes (WAM/browser/device-code)
@@ -150,7 +160,7 @@ public class GraphApiService
             // Use token provider with delegated scopes (interactive browser auth with caching)
             _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes));
             var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct, loginHint);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -169,7 +179,7 @@ public class GraphApiService
         else
         {
             // Default path: acquire via AuthenticationService (MSAL, persistent disk cache).
-            token = await GetGraphAccessTokenAsync(tenantId, ct);
+            token = await GetGraphAccessTokenAsync(tenantId, forceRefresh: forceRefresh, ct: ct);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -219,7 +229,7 @@ public class GraphApiService
     /// </summary>
     public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         try
         {
@@ -249,35 +259,38 @@ public class GraphApiService
     /// Use this instead of GraphGetAsync when the caller needs to distinguish auth failures
     /// (401) from transient server errors (503, 429, network exceptions).
     /// </summary>
-    public virtual async Task<GraphResponse> GraphGetWithResponseAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<GraphResponse> GraphGetWithResponseAsync(string tenantId, string relativePath, bool forceRefresh = false, IEnumerable<string>? scopes = null, CancellationToken ct = default)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct))
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
 
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
 
         try
         {
-            using var resp = await _httpClient.GetAsync(url, ct);
-            var body = await resp.Content.ReadAsStringAsync(ct);
-
-            JsonDocument? json = null;
-            if (resp.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body))
+            return await _retryHelper.ExecuteWithRetryAsync(async (token) =>
             {
-                try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
-            }
+                using var resp = await _httpClient.GetAsync(url, token);
+                var body = await resp.Content.ReadAsStringAsync(token);
 
-            if (!resp.IsSuccessStatusCode)
-                _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+                JsonDocument? json = null;
+                if (resp.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(body))
+                {
+                    try { json = JsonDocument.Parse(body); } catch { /* ignore parse errors */ }
+                }
 
-            return new GraphResponse
-            {
-                IsSuccess = resp.IsSuccessStatusCode,
-                StatusCode = (int)resp.StatusCode,
-                ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
-                Body = body ?? string.Empty,
-                Json = json
-            };
+                if (!resp.IsSuccessStatusCode)
+                    _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+
+                return new GraphResponse
+                {
+                    IsSuccess = resp.IsSuccessStatusCode,
+                    StatusCode = (int)resp.StatusCode,
+                    ReasonPhrase = resp.ReasonPhrase ?? string.Empty,
+                    Body = body ?? string.Empty,
+                    Json = json
+                };
+            }, cancellationToken: ct);
         }
         catch (Exception ex)
         {
@@ -291,9 +304,9 @@ public class GraphApiService
 
     public virtual async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return null;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
-        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try
         {
             using var resp = await _httpClient.PostAsync(url, content, ct);
@@ -326,14 +339,14 @@ public class GraphApiService
     /// </summary>
     public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct))
         {
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
         }
 
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
 
-        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try
         {
             using var resp = await _httpClient.PostAsync(url, content, ct);
@@ -370,7 +383,7 @@ public class GraphApiService
     /// </summary>
     public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return false;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try
@@ -409,7 +422,7 @@ public class GraphApiService
         bool treatNotFoundAsSuccess = true,
         IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes)) return false;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return false;
 
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
 
@@ -610,7 +623,7 @@ public class GraphApiService
         {
             _logger.LogDebug("Checking user's directory roles for service principal creation privileges");
 
-            var token = await GetGraphAccessTokenAsync(tenantId, ct);
+            var token = await GetGraphAccessTokenAsync(tenantId, ct: ct);
             if (token == null)
             {
                 _logger.LogWarning("Could not acquire Graph token to check privileges");
@@ -697,7 +710,7 @@ public class GraphApiService
             // Get current user's object ID if not provided
             if (string.IsNullOrWhiteSpace(userObjectId))
             {
-                if (!await EnsureGraphHeadersAsync(tenantId, ct, scopes))
+                if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct))
                 {
                     _logger.LogWarning("Could not acquire Graph token to check application owner");
                     return false;
