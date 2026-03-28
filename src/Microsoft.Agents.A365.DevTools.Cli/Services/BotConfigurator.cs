@@ -51,25 +51,19 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogDebug("   Messaging Endpoint: {Endpoint}", messagingEndpoint);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return EndpointRegistrationResult.Failed;
+        }
+
         try
         {
-            // Get subscription info for tenant ID
-            var subscriptionResult = await _executor.ExecuteAsync("az", "account show", captureOutput: true);
-            if (subscriptionResult == null)
-            {
-                _logger.LogError("Failed to execute account show command - null result");
-                return EndpointRegistrationResult.Failed;
-            }
-
-            if (!subscriptionResult.Success)
-            {
-                _logger.LogError("Failed to get subscription information for endpoint creation");
-                return EndpointRegistrationResult.Failed;
-            }
-
-            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
-            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
-            var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
+            // Load config first to get tenant ID — avoids az CLI subprocess for account info.
+            var config = await _configService.LoadAsync();
+            var tenantId = config.TenantId;
 
             if (string.IsNullOrEmpty(tenantId))
             {
@@ -77,31 +71,24 @@ public class BotConfigurator : IBotConfigurator
                 return EndpointRegistrationResult.Failed;
             }
 
+            // Resolve login hint for account pre-selection in WAM/MSAL.
+            // Try az CLI first (if the user has run 'az login'); fall back to the
+            // UPN embedded in a previously cached MSAL token — non-fatal if unavailable.
+            var currentUser = await AzCliHelper.ResolveLoginHintAsync()
+                ?? await _authService.ResolveLoginHintFromCacheAsync();
+
             // Create new endpoint with agent blueprint identity
             _logger.LogInformation("Creating new endpoint with Agent Blueprint Identity...");
 
             try
             {
-                var config = await _configService.LoadAsync();
                 var createEndpointUrl = EndpointHelper.GetCreateEndpointUrl(config.Environment);
 
                 _logger.LogInformation("Calling create endpoint directly...");
-
-                // Get authentication token interactively (unless skip-auth is specified)
-                string? authToken = null;
-                _logger.LogInformation("Getting authentication token...");
+                _logger.LogDebug("Create endpoint URL: {Url}", createEndpointUrl);
 
                 // Determine the audience (App ID) based on the environment
                 var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
-                authToken = await _authService.GetAccessTokenAsync(audience, tenantId);
-
-                if (string.IsNullOrWhiteSpace(authToken))
-                {
-                    _logger.LogError("Failed to acquire authentication token");
-                    return EndpointRegistrationResult.Failed;
-                }
-                _logger.LogInformation("Successfully acquired access token");
-
                 var normalizedLocation = NormalizeLocation(location);
                 var createEndpointBody = new JsonObject
                 {
@@ -114,30 +101,50 @@ public class BotConfigurator : IBotConfigurator
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
-                // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                // Call the endpoint
-                _logger.LogInformation("Making request to create endpoint (Location: {Location}).", normalizedLocation);
-
-                var response = await httpClient.PostAsync(createEndpointUrl,
-                 new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
-
-                if (!response.IsSuccessStatusCode)
+                // Attempt the request up to twice: first with a cached token, then with a
+                // force-refreshed token if the backend rejects with "Invalid roles".
+                // The "Invalid roles" 400 means the token's wids claim does not yet include
+                // the Agent ID role — this happens when a role was assigned after the token
+                // was cached. A forced refresh picks up the new role assignment.
+                for (int attempt = 0; attempt < 2; attempt++)
                 {
+                    bool forceRefresh = attempt > 0;
+
+                    _logger.LogInformation("Getting authentication token...");
+                    var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+
+                    if (string.IsNullOrWhiteSpace(authToken))
+                    {
+                        _logger.LogError("Failed to acquire authentication token");
+                        return EndpointRegistrationResult.Failed;
+                    }
+                    _logger.LogInformation("Successfully acquired access token");
+
+                    using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+                    _logger.LogInformation("Making request to create endpoint (Location: {Location}).", normalizedLocation);
+
+                    using var response = await httpClient.PostAsync(createEndpointUrl,
+                        new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Successfully received response from create endpoint");
+                        return EndpointRegistrationResult.Created;
+                    }
+
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    
-                    // Check for "already exists" condition - must be bot/endpoint-specific to avoid false positives
-                    // Valid patterns:
+
+                    // Check for "already exists" condition — must be bot/endpoint-specific to avoid false positives.
                     // 1. HTTP 409 Conflict (standard REST pattern for resource conflicts)
                     // 2. HTTP 500 with bot-specific "already exists" message (Azure Bot Service pattern)
-                    //    - Must contain "already exists" AND at least one bot-specific keyword
                     bool isBotAlreadyExists = response.StatusCode == System.Net.HttpStatusCode.Conflict ||
                         (errorContent.Contains(AlreadyExistsErrorMessage, StringComparison.OrdinalIgnoreCase) &&
                          (errorContent.Contains("bot", StringComparison.OrdinalIgnoreCase) ||
                           errorContent.Contains("endpoint", StringComparison.OrdinalIgnoreCase) ||
                           errorContent.Contains(endpointName, StringComparison.OrdinalIgnoreCase)));
-                    
+
                     if (isBotAlreadyExists)
                     {
                         _logger.LogWarning("Endpoint '{EndpointName}' {AlreadyExistsMessage} in the resource group", endpointName, AlreadyExistsErrorMessage);
@@ -148,10 +155,34 @@ public class BotConfigurator : IBotConfigurator
                         _logger.LogInformation("  2. Register new endpoint: a365 setup blueprint --endpoint-only");
                         return EndpointRegistrationResult.AlreadyExists;
                     }
-                    
-                    // Log error only for actual failures (not idempotent "already exists" scenarios)
+
                     _logger.LogError("Failed to call create endpoint. Status: {Status}", response.StatusCode);
-                    
+
+                    if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && attempt == 0)
+                    {
+                        _logger.LogWarning(
+                            "ATG returned 401 Unauthorized — cached token may be stale or belong to a different user. " +
+                            "Retrying with a fresh token...");
+                        continue;
+                    }
+
+                    if (TryGetErrorCode(errorContent) == "Invalid roles")
+                    {
+                        if (attempt == 0)
+                        {
+                            _logger.LogWarning(
+                                "Access token does not include the required Agent ID role — " +
+                                "this can happen when a role was assigned after the token was cached. " +
+                                "Retrying with a fresh token...");
+                            continue;
+                        }
+
+                        var apiMessage = TryGetErrorMessage(errorContent);
+                        if (!string.IsNullOrWhiteSpace(apiMessage))
+                            _logger.LogError("{Message}", apiMessage);
+                        return EndpointRegistrationResult.Failed;
+                    }
+
                     if (errorContent.Contains("Failed to provision bot resource via Azure Management API. Status: BadRequest", StringComparison.OrdinalIgnoreCase))
                     {
                         _logger.LogError("Please ensure that the Agent 365 CLI is supported in the selected region ('{Location}') and that your web app name ('{EndpointName}') is globally unique.", location, endpointName);
@@ -167,8 +198,8 @@ public class BotConfigurator : IBotConfigurator
                     return EndpointRegistrationResult.Failed;
                 }
 
-                _logger.LogInformation("Successfully received response from create endpoint");
-                return EndpointRegistrationResult.Created;
+                // Unreachable — the loop always returns. Satisfies the compiler.
+                return EndpointRegistrationResult.Failed;
             }
             catch (Exception ex)
             {
@@ -198,28 +229,21 @@ public class BotConfigurator : IBotConfigurator
         string? correlationId = null)
     {
         _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
-        _logger.LogDebug("   Endpoint Name: {EndpointName}", endpointName);
-        _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
+        _logger.LogInformation("   Endpoint Name: {EndpointName}", endpointName);
+        _logger.LogInformation("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
+
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            _logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
+            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
+            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
+            return false;
+        }
 
         try
         {
-            // Get subscription info for tenant ID
-            var subscriptionResult = await _executor.ExecuteAsync("az", "account show", captureOutput: true);
-            if (subscriptionResult == null)
-            {
-                _logger.LogError("Failed to execute account show command - null result");
-                return false;
-            }
-
-            if (!subscriptionResult.Success)
-            {
-                _logger.LogError("Failed to get subscription information for endpoint deletion");
-                return false;
-            }
-
-            var cleanedOutput = JsonDeserializationHelper.CleanAzureCliJsonOutput(subscriptionResult.StandardOutput);
-            var subscriptionInfo = JsonSerializer.Deserialize<JsonElement>(cleanedOutput);
-            var tenantId = subscriptionInfo.GetProperty("tenantId").GetString();
+            var config = await _configService.LoadAsync();
+            var tenantId = config.TenantId;
 
             if (string.IsNullOrEmpty(tenantId))
             {
@@ -227,35 +251,25 @@ public class BotConfigurator : IBotConfigurator
                 return false;
             }
 
+            var currentUser = await AzCliHelper.ResolveLoginHintAsync()
+                ?? await _authService.ResolveLoginHintFromCacheAsync();
+            _logger.LogDebug("ATG token request — current user: {CurrentUser}", currentUser ?? "(null)");
+
             // Delete endpoint with agent blueprint identity
             _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
 
             try
             {
-                var config = await _configService.LoadAsync();
                 var deleteEndpointUrl = EndpointHelper.GetDeleteEndpointUrl(config.Environment);
 
                 _logger.LogInformation("Calling delete endpoint directly...");
                 _logger.LogInformation("Environment: {Env}", config.Environment);
                 _logger.LogInformation("Endpoint URL: {Url}", deleteEndpointUrl);
 
-                // Get authentication token interactively (unless skip-auth is specified)
-                string? authToken = null;
-                _logger.LogInformation("Getting authentication token...");
-
                 // Determine the audience (App ID) based on the environment
                 var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
 
                 _logger.LogInformation("Environment: {Environment}, Audience: {Audience}", config.Environment, audience);
-
-                authToken = await _authService.GetAccessTokenAsync(audience, tenantId);
-
-                if (string.IsNullOrWhiteSpace(authToken))
-                {
-                    _logger.LogError("Failed to acquire authentication token");
-                    return false;
-                }
-                _logger.LogInformation("Successfully acquired access token");
 
                 var normalizedLocation = NormalizeLocation(location);
                 var deleteEndpointBody = new JsonObject
@@ -267,23 +281,49 @@ public class BotConfigurator : IBotConfigurator
                     ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
                     ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
-                // Use helper to create authenticated HTTP client
-                using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                // Call the endpoint
-                _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
+                _logger.LogInformation("Delete request payload:");
+                _logger.LogInformation("   AzureBotServiceInstanceName: {Name}", endpointName);
+                _logger.LogInformation("   AppId: {AppId}", agentBlueprintId);
+                _logger.LogInformation("   TenantId: {TenantId}", tenantId);
+                _logger.LogInformation("   Location: {Location}", normalizedLocation);
+                _logger.LogInformation("   Environment: {Environment}", EndpointHelper.GetDeploymentEnvironment(config.Environment));
 
-                using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
-                request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
-                var response = await httpClient.SendAsync(request);
-
-
-                if (!response.IsSuccessStatusCode)
+                // Attempt the request up to twice: first with a cached token, then with a
+                // force-refreshed token if ATG rejects with 401 Unauthorized (stale/wrong-user token).
+                for (int attempt = 0; attempt < 2; attempt++)
                 {
+                    bool forceRefresh = attempt > 0;
+
+                    _logger.LogInformation("Getting authentication token...");
+                    var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+
+                    if (string.IsNullOrWhiteSpace(authToken))
+                    {
+                        _logger.LogError("Failed to acquire authentication token");
+                        return false;
+                    }
+                    _logger.LogInformation("Successfully acquired access token");
+
+                    using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+                    _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
+
+                    using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
+                    request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                    using var response = await httpClient.SendAsync(request);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Successfully received response from delete endpoint");
+                        return true;
+                    }
+
                     // Read error content ONCE for all error handling
                     var errorContent = await response.Content.ReadAsStringAsync();
+
                     // Check if resource was not found - this is success for deletion (idempotent)
-                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound || 
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound ||
                         response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                     {
                         // For BadRequest, verify it's actually "not found" scenario
@@ -313,32 +353,48 @@ public class BotConfigurator : IBotConfigurator
                             return true; // Not found is success for deletion
                         }
                     }
+
+                    // Retry on 401 Unauthorized — cached token may be stale or belong to a different user.
+                    if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && attempt == 0)
+                    {
+                        _logger.LogWarning(
+                            "ATG returned 401 Unauthorized — cached token may be stale or belong to a different user. " +
+                            "Retrying with a fresh token...");
+                        continue;
+                    }
+
+                    // Retry on "Invalid roles" 400 — the token's wids claim does not yet include
+                    // the required Agent ID role. This happens when the role was assigned after the
+                    // token was cached. A forced refresh picks up the updated role assignment.
+                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest &&
+                        TryGetErrorCode(errorContent) == "Invalid roles" && attempt == 0)
+                    {
+                        _logger.LogWarning(
+                            "Access token does not include the required Agent ID role — " +
+                            "this can happen when a role was assigned after the token was cached. " +
+                            "Retrying with a fresh token...");
+                        continue;
+                    }
+
                     // Real error - log and return false
+                    _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                     try
                     {
                         var errorJson = JsonSerializer.Deserialize<JsonElement>(errorContent);
                         if (errorJson.TryGetProperty("error", out var errorMessage))
-                        {
-                            var error = errorMessage.GetString();
-                            _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
-                            _logger.LogError("{Error}", error);
-                        }
+                            _logger.LogError("{Error}", errorMessage.GetString());
                         else
-                        {
-                            _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                             _logger.LogError("Error response: {Error}", errorContent);
-                        }
                     }
                     catch
                     {
-                        _logger.LogError("Failed to delete bot endpoint. Status: {Status}", response.StatusCode);
                         _logger.LogError("Error response: {Error}", errorContent);
                     }
                     return false;
                 }
 
-                _logger.LogInformation("Successfully received response from delete endpoint");
-                return true;
+                // Unreachable — the loop always returns. Satisfies the compiler.
+                return false;
             }
             catch (AzureAuthenticationException ex)
             {
@@ -361,6 +417,42 @@ public class BotConfigurator : IBotConfigurator
             _logger.LogError(ex, "Unexpected error deleting endpoint with agent blueprint: {Message}", ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Parses a JSON error response and returns the value of the top-level "error" field,
+    /// which is a stable machine-readable code. Returns null if parsing fails or field is absent.
+    /// </summary>
+    private static string? TryGetErrorCode(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (doc.RootElement.TryGetProperty("error", out var errorElement) &&
+                errorElement.ValueKind == JsonValueKind.String)
+            {
+                return errorElement.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
+    }
+
+    private static string? TryGetErrorMessage(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (doc.RootElement.TryGetProperty("message", out var messageElement) &&
+                messageElement.ValueKind == JsonValueKind.String)
+            {
+                return messageElement.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
     }
 
     private string NormalizeLocation(string location)

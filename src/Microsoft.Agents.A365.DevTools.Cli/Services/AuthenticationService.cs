@@ -7,9 +7,29 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
+
+/// <summary>
+/// Abstraction over MSAL token acquisition used by ArmApiService and GraphApiService.
+/// Enables test substitution without triggering real interactive authentication.
+/// Co-located with AuthenticationService per the related-interfaces convention.
+/// </summary>
+public interface IAuthenticationService
+{
+    Task<string> GetAccessTokenAsync(
+        string resourceUrl,
+        string? tenantId = null,
+        bool forceRefresh = false,
+        string? clientId = null,
+        IEnumerable<string>? scopes = null,
+        bool useInteractiveBrowser = true,
+        string? userId = null);
+
+    Task<string?> ResolveLoginHintFromCacheAsync();
+}
 
 /// <summary>
 /// Service for handling authentication to Agent 365 Tools and Microsoft Graph API.
@@ -21,7 +41,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 ///
 /// TOKEN CACHING:
 /// - Cache Location: %LocalApplicationData%\Agent365\token-cache.json (Windows)
-/// - Cache Key Format: {resourceUrl}:tenant:{tenantId}
+/// - Cache Key Format: {resourceUrl}:tenant:{tenantId}[:user:{userId}]
 /// - Cache Expiration: Validated with 5-minute buffer before token expiry
 /// - Reuse Across Commands: All CLI commands share the same token cache
 ///
@@ -36,7 +56,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// - Subsequent commands: 0 prompts (uses cached tokens)
 /// - Token refresh: Automatic when within 5 minutes of expiration
 /// </summary>
-public class AuthenticationService
+public class AuthenticationService : IAuthenticationService
 {
     private readonly ILogger<AuthenticationService> _logger;
     private readonly string _tokenCachePath;
@@ -64,15 +84,21 @@ public class AuthenticationService
         bool forceRefresh = false,
         string? clientId = null,
         IEnumerable<string>? scopes = null,
-        bool useInteractiveBrowser = true)
+        bool useInteractiveBrowser = true,
+        string? userId = null)
     {
-        // Build cache key based on resource and tenant only
+        // Build cache key based on resource, tenant, and user identity.
+        // Including userId ensures that cached tokens are not shared across different users
+        // (e.g., a developer's cached token is not reused when an admin runs cleanup).
         // Azure AD returns tokens with all consented scopes regardless of which scopes are requested,
         // so we don't include scopes in the cache key to avoid duplicate cache entries for the same token.
         // The scopes parameter is still passed to Azure AD for incremental consent and validation.
         string cacheKey = string.IsNullOrWhiteSpace(tenantId)
             ? resourceUrl
             : $"{resourceUrl}:tenant:{tenantId}";
+        if (!string.IsNullOrWhiteSpace(userId))
+            cacheKey = $"{cacheKey}:user:{userId}";
+        _logger.LogDebug("ATG cache key: {CacheKey}", cacheKey);
 
         // Try to load cached token for this cache key
         if (!forceRefresh && File.Exists(_tokenCachePath))
@@ -98,14 +124,14 @@ public class AuthenticationService
                         }
                         else
                         {
-                            _logger.LogInformation("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                            _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
                                 resourceUrl, tenantId);
                             return cachedToken.AccessToken;
                         }
                     }
                     else
                     {
-                        _logger.LogInformation("Using cached authentication token for {ResourceUrl}", resourceUrl);
+                        _logger.LogDebug("Using cached authentication token for {ResourceUrl}", resourceUrl);
                         return cachedToken.AccessToken;
                     }
                 }
@@ -118,7 +144,7 @@ public class AuthenticationService
 
         // Authenticate interactively with specific tenant and scopes
         _logger.LogInformation("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser);
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
 
         // Cache the token with the appropriate cache key
         await CacheTokenAsync(cacheKey, token);
@@ -135,11 +161,12 @@ public class AuthenticationService
     /// <param name="explicitScopes">Optional explicit scopes to request. If not provided, uses .default scope pattern</param>
     /// <param name="useInteractiveBrowser">If true, uses browser authentication with redirect URI; if false, uses device code flow. Default is false for backward compatibility.</param>
     private async Task<TokenInfo> AuthenticateInteractivelyAsync(
-        string resourceUrl, 
-        string? tenantId = null, 
+        string resourceUrl,
+        string? tenantId = null,
         string? clientId = null,
         IEnumerable<string>? explicitScopes = null,
-        bool useInteractiveBrowser = false)
+        bool useInteractiveBrowser = false,
+        string? loginHint = null)
     {
         // Declare variables outside try block so they're available in catch for logging
         string effectiveTenantId = tenantId ?? "unknown";
@@ -160,8 +187,8 @@ public class AuthenticationService
                 // This creates the format required by Azure AD for the TokenRequestContext: {resourceAppId}/{scope}
                 // Example: "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
                 scopes = explicitScopes.Select(s => $"{resourceUrl}/{s}").ToArray();
-                _logger.LogInformation("Using explicit scopes for authentication: {Scopes}", string.Join(", ", explicitScopes));
-                _logger.LogInformation("Formatted as: {FormattedScopes}", string.Join(", ", scopes));
+                _logger.LogDebug("Using explicit scopes for authentication: {Scopes}", string.Join(", ", explicitScopes));
+                _logger.LogDebug("Formatted as: {FormattedScopes}", string.Join(", ", scopes));
             }
             else
             {
@@ -198,13 +225,13 @@ public class AuthenticationService
                     scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                         ? resourceUrl
                         : $"{resourceUrl}/.default";
-                    _logger.LogInformation("Using custom resource for authentication: {Resource}", resourceUrl);
+                    _logger.LogDebug("Using custom resource for authentication: {Resource}", resourceUrl);
                 }
                 scopes = [scope];
-                _logger.LogInformation($"Token scope: {scope}");
+                _logger.LogDebug("Token scope: {Scope}", scope);
             }
 
-            _logger.LogInformation("Authenticating for tenant: {TenantId}", effectiveTenantId);
+            _logger.LogDebug("Authenticating for tenant: {TenantId}", effectiveTenantId);
 
             // Use provided client ID or default to PowerShell client ID
             effectiveClientId = string.IsNullOrWhiteSpace(clientId) 
@@ -220,45 +247,30 @@ public class AuthenticationService
                 _logger.LogInformation("Please sign in with your Microsoft account and grant consent for the requested permissions.");
                 _logger.LogInformation("");
 
-                credential = new MsalBrowserCredential(
-                    effectiveClientId,
-                    effectiveTenantId,
-                    redirectUri: null,  // Let MsalBrowserCredential use WAM on Windows
-                    _logger);
+                credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint);
             }
             else
             {
                 // Device code flow - works in all environments including SSH/remote sessions
                 _logger.LogInformation("Using device code authentication...");
                 _logger.LogInformation("Please sign in with your Microsoft account");
-
-                credential = new DeviceCodeCredential(new DeviceCodeCredentialOptions
-                {
-                    TenantId = effectiveTenantId,
-                    ClientId = effectiveClientId,
-                    AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-                    TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-                    {
-                        Name = AuthenticationConstants.ApplicationName
-                    },
-                    DeviceCodeCallback = (code, cancellation) =>
-                    {
-                        Console.WriteLine();
-                        Console.WriteLine("==========================================================================");
-                        Console.WriteLine($"To sign in, use a web browser to open the page:");
-                        Console.WriteLine($"    {code.VerificationUri}");
-                        Console.WriteLine();
-                        Console.WriteLine($"And enter the code: {code.UserCode}");
-                        Console.WriteLine("==========================================================================");
-                        Console.WriteLine();
-                        return Task.CompletedTask;
-                    }
-                });
+                credential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
             }
 
             var tokenRequestContext = new TokenRequestContext(scopes);
-            var tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
-
+            AccessToken tokenResult;
+            try
+            {
+                tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
+            }
+            catch (MsalAuthenticationFailedException ex) when (useInteractiveBrowser && ex.InnerException is PlatformNotSupportedException)
+            {
+                _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
+                _logger.LogInformation("Using device code authentication...");
+                _logger.LogInformation("Please sign in with your Microsoft account");
+                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
+                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
+            }
             _logger.LogInformation("Authentication successful!");
 
             return new TokenInfo
@@ -338,7 +350,7 @@ public class AuthenticationService
         cache.Tokens[resourceUrl] = token;
         var updatedJson = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(_tokenCachePath, updatedJson);
-        _logger.LogInformation("Authentication token cached for {ResourceUrl} at: {Path}", resourceUrl, _tokenCachePath);
+        _logger.LogDebug("Authentication token cached for {ResourceUrl} at: {Path}", resourceUrl, _tokenCachePath);
     }
 
     /// <summary>
@@ -358,6 +370,8 @@ public class AuthenticationService
     /// <param name="tenantId">Optional tenant ID for single-tenant authentication</param>
     /// <param name="forceRefresh">Force token refresh even if cached token is valid</param>
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
+    /// <param name="userId">Optional UPN/email to pre-select the account for WAM and silent acquisition.
+    /// When provided, WAM will target this identity instead of the first cached account.</param>
     /// <returns>Access token with the requested scopes</returns>
     public async Task<string> GetAccessTokenWithScopesAsync(
         string resourceAppId,
@@ -365,19 +379,20 @@ public class AuthenticationService
         string? tenantId = null,
         bool forceRefresh = false,
         string? clientId = null,
-        bool useInteractiveBrowser = true)
+        bool useInteractiveBrowser = true,
+        string? userId = null)
     {
         if (string.IsNullOrWhiteSpace(resourceAppId))
             throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));
-        
+
         if (scopes == null || !scopes.Any())
             throw new ArgumentException("At least one scope must be specified", nameof(scopes));
 
-        _logger.LogInformation("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}", 
+        _logger.LogInformation("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}",
             resourceAppId, string.Join(", ", scopes));
 
         // Delegate to the consolidated GetAccessTokenAsync method
-        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser);
+        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser, userId);
     }
 
     /// <summary>
@@ -398,7 +413,8 @@ public class AuthenticationService
 
         // Use the existing method for backward compatibility
         // For explicit scope control, callers should use GetAccessTokenWithScopesAsync
-        return await GetAccessTokenAsync(resourceUrl, tenantId, forceRefresh);
+        var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+        return await GetAccessTokenAsync(resourceUrl, tenantId, forceRefresh, userId: loginHint);
     }
 
     /// <summary>
@@ -521,6 +537,96 @@ public class AuthenticationService
             _logger.LogWarning(ex, "Failed to validate scopes for resource {ResourceUrl}", resourceUrl);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Creates a browser credential for interactive authentication.
+    /// Protected virtual to allow substitution in tests.
+    /// </summary>
+    protected virtual TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null)
+        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, loginHint: loginHint);
+
+    /// <summary>
+    /// Creates a DeviceCodeCredential configured for interactive device code authentication.
+    /// This flow works in all environments including SSH, remote sessions, and platforms where
+    /// browser-based authentication is unavailable.
+    /// Protected virtual to allow substitution in tests.
+    /// </summary>
+    protected virtual TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
+    {
+        return new DeviceCodeCredential(new DeviceCodeCredentialOptions
+        {
+            TenantId = tenantId,
+            ClientId = clientId,
+            AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+            TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+            {
+                Name = AuthenticationConstants.ApplicationName
+            },
+            DeviceCodeCallback = (code, cancellation) =>
+            {
+                _logger.LogInformation("");
+                _logger.LogInformation("==========================================================================");
+                _logger.LogInformation("To sign in, use a web browser to open the page:");
+                _logger.LogInformation("    {VerificationUri}", code.VerificationUri);
+                _logger.LogInformation("");
+                _logger.LogInformation("And enter the code: {UserCode}", code.UserCode);
+                _logger.LogInformation("==========================================================================");
+                _logger.LogInformation("");
+                return Task.CompletedTask;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Resolves the login hint (UPN) from the persistent token cache by decoding a cached JWT.
+    /// Used to pre-select the correct account for WAM/MSAL when az CLI is not available.
+    /// Returns null if no cached token exists or the UPN claim cannot be read.
+    /// </summary>
+    public async Task<string?> ResolveLoginHintFromCacheAsync()
+    {
+        if (!File.Exists(_tokenCachePath))
+            return null;
+        try
+        {
+            var json = await File.ReadAllTextAsync(_tokenCachePath);
+            var cache = JsonSerializer.Deserialize<TokenCache>(json);
+            if (cache?.Tokens == null) return null;
+            foreach (var entry in cache.Tokens.Values)
+            {
+                var upn = TryExtractUpnFromJwt(entry.AccessToken);
+                if (!string.IsNullOrWhiteSpace(upn))
+                    return upn;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve login hint from token cache");
+        }
+        return null;
+    }
+
+    private static string? TryExtractUpnFromJwt(string? jwt)
+    {
+        if (string.IsNullOrWhiteSpace(jwt)) return null;
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return null;
+            var payload = parts[1];
+            // JWT uses Base64Url encoding: replace URL-safe chars before standard Base64 decode.
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            // Restore Base64 padding stripped by JWT encoding.
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var bytes = Convert.FromBase64String(payload);
+            using var doc = JsonDocument.Parse(bytes);
+            if (doc.RootElement.TryGetProperty("upn", out var upn) && !string.IsNullOrWhiteSpace(upn.GetString()))
+                return upn.GetString();
+            if (doc.RootElement.TryGetProperty("preferred_username", out var pref) && !string.IsNullOrWhiteSpace(pref.GetString()))
+                return pref.GetString();
+        }
+        catch { } // Static helper — no logger access. Caller logs via ResolveLoginHintFromCacheAsync.
+        return null;
     }
 
     /// <summary>

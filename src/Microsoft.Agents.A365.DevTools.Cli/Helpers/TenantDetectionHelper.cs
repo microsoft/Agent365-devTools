@@ -18,7 +18,7 @@ public static class TenantDetectionHelper
     /// <param name="config">Optional configuration containing tenant ID</param>
     /// <param name="logger">Logger for output messages</param>
     /// <returns>Detected tenant ID or null if not found</returns>
-    public static async Task<string?> DetectTenantIdAsync(Agent365Config? config, ILogger logger)
+    public static async Task<string?> DetectTenantIdAsync(Agent365Config? config, ILogger logger, CommandExecutor? executor = null)
     {
         // First, try to get tenant ID from config
         if (config != null && !string.IsNullOrWhiteSpace(config.TenantId))
@@ -31,7 +31,7 @@ public static class TenantDetectionHelper
 
         try
         {
-            var executor = new CommandExecutor(
+            executor ??= new CommandExecutor(
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<CommandExecutor>.Instance);
 
             var result = await executor.ExecuteAsync(

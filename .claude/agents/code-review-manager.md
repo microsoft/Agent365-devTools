@@ -15,6 +15,7 @@ You are a Senior Code Review Manager with 15+ years of experience leading engine
 - Warnings are treated as errors
 - IDisposable objects must be properly disposed
 - Cross-platform compatibility required (Windows, macOS, Linux)
+- `CHANGELOG.md` must be updated in `[Unreleased]` for user-facing changes (features, bug fixes, behavioral changes)
 
 **Your Primary Responsibilities**:
 

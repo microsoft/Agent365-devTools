@@ -35,10 +35,16 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 
-        var provider = new MicrosoftGraphTokenProvider(_executor, _logger);
+        // MSAL is primary but we skip it here to test PS-path behavior (ClientId in script)
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(null)
+        };
 
         // Act
         var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
@@ -50,6 +56,8 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Is<string>(args => args.Contains($"-ClientId '{clientAppId}'")),
             Arg.Any<string?>(),
             Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
     }
@@ -68,6 +76,8 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 
@@ -83,6 +93,8 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Is<string>(args => !args.Contains("-ClientId")),
             Arg.Any<string?>(),
             Arg.Any<string>(),
+            Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
     }
@@ -158,6 +170,8 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = "PowerShell error" });
 
@@ -184,6 +198,8 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 
@@ -194,6 +210,92 @@ public class MicrosoftGraphTokenProviderTests
 
         // Assert
         token.Should().Be(expectedToken);
+    }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WhenMsalSucceeds_ReturnsMsalTokenWithoutCallingPowerShell()
+    {
+        // Arrange
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "AgentIdentityBlueprint.DeleteRestore.All" };
+        var clientAppId = "87654321-4321-4321-4321-cba987654321";
+        var msalToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWxsYWsifQ.signature";
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(msalToken)
+        };
+
+        // Act
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+
+        // Assert
+        token.Should().Be(msalToken);
+        await _executor.DidNotReceive().ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WhenMsalFails_FallsBackToPowerShell()
+    {
+        // Arrange
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "AgentIdentityBlueprint.DeleteRestore.All" };
+        var clientAppId = "87654321-4321-4321-4321-cba987654321";
+        var psToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmYWxsYmFjayJ9.signature";
+
+        _executor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = psToken, StandardError = string.Empty });
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(null) // MSAL fails
+        };
+
+        // Act
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+
+        // Assert
+        token.Should().Be(psToken);
+        await _executor.Received(1).ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WhenMsalSucceeds_SecondCallReturnsCachedToken()
+    {
+        // Arrange
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "AgentIdentityBlueprint.DeleteRestore.All" };
+        var clientAppId = "87654321-4321-4321-4321-cba987654321";
+        // Valid JWT with a future exp claim (year 2099)
+        var msalToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWxsYWsiLCJleHAiOjQwNzA5MDg4MDB9.signature";
+        var callCount = 0;
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) =>
+            {
+                callCount++;
+                return Task.FromResult<string?>(msalToken);
+            }
+        };
+
+        // Act
+        var token1 = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+        var token2 = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+
+        // Assert
+        token1.Should().Be(msalToken);
+        token2.Should().Be(msalToken);
+        callCount.Should().Be(1, "second call should return cached token without re-invoking MSAL");
     }
 
     [Theory]
@@ -229,15 +331,55 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string?>(),
             Arg.Any<string>(),
             Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new CommandResult { ExitCode = 0, StandardOutput = expectedToken, StandardError = string.Empty });
 
-        var provider = new MicrosoftGraphTokenProvider(_executor, _logger);
+        // MSAL is primary but we skip it here to test PS-path escaping behavior
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(null)
+        };
 
         // Act
         var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
 
         // Assert
         token.Should().Be(expectedToken);
+    }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WithForceRefresh_BypassesCache()
+    {
+        // Arrange
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "AgentIdentityBlueprint.DeleteRestore.All" };
+        var clientAppId = "87654321-4321-4321-4321-cba987654321";
+        // Valid JWT with a future exp claim (year 2099)
+        var msalToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWxsYWsiLCJleHAiOjQwNzA5MDg4MDB9.signature";
+        var callCount = 0;
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) =>
+            {
+                callCount++;
+                return Task.FromResult<string?>(msalToken);
+            }
+        };
+
+        // Prime the cache with a first call
+        await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+        callCount.Should().Be(1);
+
+        // Act — second call with forceRefresh: true should bypass the cache
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId, forceRefresh: true);
+
+        // Assert
+        token.Should().Be(msalToken);
+        callCount.Should().Be(2,
+            because: "forceRefresh: true must evict the cached token and re-invoke MSAL, " +
+                     "ensuring a stale CAE-revoked token is not reused");
     }
 }

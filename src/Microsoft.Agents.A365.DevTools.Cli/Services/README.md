@@ -28,7 +28,6 @@ This folder contains business logic services used by CLI commands. Services are 
 | **IAgentBlueprintService** | `IAgentBlueprintService.cs` | Blueprint management interface |
 | **AgentBlueprintService** | `AgentBlueprintService.cs` | Create/manage agent blueprints |
 | **BlueprintLookupService** | `BlueprintLookupService.cs` | Query existing blueprints |
-| **AgentPublishService** | `AgentPublishService.cs` | Publish agents to MOS Titles |
 | **ManifestTemplateService** | `ManifestTemplateService.cs` | Embedded manifest template handling |
 
 ### Platform Builders
@@ -63,7 +62,6 @@ This folder contains business logic services used by CLI commands. Services are 
 | **AuthenticationService** | `AuthenticationService.cs` | MSAL.NET authentication orchestration |
 | **InteractiveGraphAuthService** | `InteractiveGraphAuthService.cs` | Interactive browser authentication |
 | **MsalBrowserCredential** | `MsalBrowserCredential.cs` | MSAL browser credential provider |
-| **MosTokenService** | `MosTokenService.cs` | MOS Titles token acquisition |
 | **DelegatedConsentService** | `DelegatedConsentService.cs` | Handle delegated consent flows |
 | **AdminConsentHelper** | `AdminConsentHelper.cs` | Admin consent URL generation |
 

@@ -24,35 +24,21 @@ public abstract class RequirementCheck : IRequirementCheck
     public abstract Task<RequirementCheckResult> CheckAsync(Agent365Config config, ILogger logger, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Helper method to log check start
-    /// </summary>
-    protected virtual void LogCheckStart(ILogger logger)
-    {
-        logger.LogInformation("Requirement: {Name}", Name);
-    }
-
-    /// <summary>
     /// Helper method to log check success
     /// </summary>
     protected virtual void LogCheckSuccess(ILogger logger, string? details = null)
     {
-        logger.LogInformation("[PASS] {Name}: PASSED", Name);
-        if (!string.IsNullOrWhiteSpace(details))
-        {
-            logger.LogInformation("  Details: {Details}", details);
-        }
+        logger.LogInformation("[PASS] {Name}{Details}", Name,
+            string.IsNullOrWhiteSpace(details) ? "" : $" ({details})");
     }
 
     /// <summary>
     /// Helper method to log check warning
     /// </summary>
-    protected virtual void LogCheckWarning(ILogger logger, string? details = null)
+    protected virtual void LogCheckWarning(ILogger logger, string? message = null)
     {
-        logger.LogWarning("[WARNING] {Name}: Cannot automatically verify", Name);
-        if (!string.IsNullOrWhiteSpace(details))
-        {
-            logger.LogWarning("  Details: {Details}", details);
-        }
+        logger.LogWarning("[WARN] {Name}{Details}", Name,
+            string.IsNullOrWhiteSpace(message) ? "" : $" - {message}");
     }
 
     /// <summary>
@@ -60,7 +46,7 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
     {
-        logger.LogError("[FAIL] {Name}: FAILED", Name);
+        logger.LogError("[FAIL] {Name}", Name);
         logger.LogError("  Issue: {ErrorMessage}", errorMessage);
         logger.LogError("  Resolution: {ResolutionGuidance}", resolutionGuidance);
     }
@@ -74,7 +60,6 @@ public abstract class RequirementCheck : IRequirementCheck
         Func<Agent365Config, ILogger, CancellationToken, Task<RequirementCheckResult>> checkImplementation,
         CancellationToken cancellationToken = default)
     {
-        LogCheckStart(logger);
 
         try
         {
@@ -84,7 +69,10 @@ public abstract class RequirementCheck : IRequirementCheck
             {
                 if (result.IsWarning)
                 {
-                    LogCheckWarning(logger, result.Details);
+                    var warningMessage = (!string.IsNullOrWhiteSpace(result.ErrorMessage) && !string.IsNullOrWhiteSpace(result.Details))
+                        ? $"{result.ErrorMessage} - {result.Details}"
+                        : result.ErrorMessage ?? result.Details;
+                    LogCheckWarning(logger, warningMessage);
                 }
                 else
                 {
@@ -98,7 +86,7 @@ public abstract class RequirementCheck : IRequirementCheck
 
             return result;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var errorMessage = $"Exception during check: {ex.Message}";
             var resolutionGuidance = "Please check the logs for more details and ensure all prerequisites are met";

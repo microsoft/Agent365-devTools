@@ -332,66 +332,61 @@ public class DotNetSdkValidationTests : IDisposable
     }
 
     /// <summary>
-    /// Test that exponential backoff respects the maximum delay cap
+    /// Verifies that the retry loop observes the injected delay between attempts.
+    /// Uses a small but detectable override (50ms base → 50ms, 100ms) so the test
+    /// completes in ~150ms instead of ~1500ms while still proving delays are applied.
+    /// The mathematical formula (InitialRetryDelayMs, MaxRetryDelayMs, exponential growth)
+    /// is covered separately by <see cref="ExponentialBackoff_WithCap_PreventsExcessiveDelays"/>.
     /// </summary>
     [Fact]
-    public async Task ResolveDotNetRuntimeVersion_ExponentialBackoff_RespectsMaximumDelayCap()
+    public async Task ResolveDotNetRuntimeVersion_ExponentialBackoff_AppliesDelaysBetweenAttempts()
     {
         // Arrange
         CreateTestProject("net8.0");
-        
+
+        const int delayOverrideMs = 50;
         var callTimes = new List<DateTime>();
-        
-        // Mock: All attempts fail to test full retry sequence
+
+        // Mock: All attempts fail to exercise the full retry sequence
         _commandExecutor.ExecuteAsync("dotnet", "--version", captureOutput: true, cancellationToken: Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
                 callTimes.Add(DateTime.UtcNow);
-                var callNumber = callTimes.Count;
-                
-                _output.WriteLine($"Attempt {callNumber} at {callTimes.Last():HH:mm:ss.fff}");
-                
-                return Task.FromResult(new CommandResult 
-                { 
-                    ExitCode = 1, 
-                    StandardError = "dotnet command failed" 
-                });
+                _output.WriteLine($"Attempt {callTimes.Count} at {callTimes.Last():HH:mm:ss.fff}");
+                return Task.FromResult(new CommandResult { ExitCode = 1, StandardError = "dotnet command failed" });
             });
-        
-        // Act
+
+        // Act — small non-zero override: detectable delay without real production waits
         try
         {
             await InvokeResolveDotNetRuntimeVersionAsync(
                 ProjectPlatform.DotNet,
                 _testProjectPath,
-                CancellationToken.None);
+                CancellationToken.None,
+                retryDelayMsOverride: delayOverrideMs);
         }
         catch (DotNetSdkVersionMismatchException)
         {
-            // Expected - all retries failed
+            // Expected — all retries failed
         }
-        
-        // Assert - Verify exponential backoff delays
+
+        // Assert — all attempts ran
         callTimes.Should().HaveCount(3); // MaxSdkValidationAttempts = 3
-        
+
+        // Assert — a measurable delay was applied between each attempt (at least half the override)
         if (callTimes.Count >= 2)
         {
             var delay1 = (callTimes[1] - callTimes[0]).TotalMilliseconds;
-            _output.WriteLine($"Delay between attempt 1 and 2: {delay1}ms (expected ~500ms)");
-            
-            // Allow some tolerance for execution time
-            delay1.Should().BeGreaterOrEqualTo(450).And.BeLessThan(1500);
+            _output.WriteLine($"Delay 1→2: {delay1}ms (expected ≥{delayOverrideMs / 2}ms)");
+            delay1.Should().BeGreaterOrEqualTo(delayOverrideMs / 2);
         }
-        
+
         if (callTimes.Count >= 3)
         {
             var delay2 = (callTimes[2] - callTimes[1]).TotalMilliseconds;
-            _output.WriteLine($"Delay between attempt 2 and 3: {delay2}ms (expected ~1000ms)");
-            
-            delay2.Should().BeGreaterOrEqualTo(950).And.BeLessThan(2500);
+            _output.WriteLine($"Delay 2→3: {delay2}ms (expected ≥{delayOverrideMs / 2}ms)");
+            delay2.Should().BeGreaterOrEqualTo(delayOverrideMs / 2);
         }
-        
-        _output.WriteLine("Exponential backoff delays verified: 500ms -> 1000ms");
     }
 
     /// <summary>
@@ -451,14 +446,15 @@ public class DotNetSdkValidationTests : IDisposable
     }
 
     private async Task<string?> InvokeResolveDotNetRuntimeVersionAsync(
-        ProjectPlatform platform, 
+        ProjectPlatform platform,
         string projectPath,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? retryDelayMsOverride = 0)
     {
         // Use reflection to call the private static async method
         var infrastructureType = typeof(InfrastructureSubcommand);
         var method = infrastructureType.GetMethod(
-            "ResolveDotNetRuntimeVersionAsync", 
+            "ResolveDotNetRuntimeVersionAsync",
             BindingFlags.NonPublic | BindingFlags.Static);
 
         if (method == null)
@@ -468,20 +464,21 @@ public class DotNetSdkValidationTests : IDisposable
 
         try
         {
-            var task = method.Invoke(null, new object[] 
-            { 
-                platform, 
-                projectPath, 
-                _commandExecutor, 
+            var task = method.Invoke(null, new object?[]
+            {
+                platform,
+                projectPath,
+                _commandExecutor,
                 _logger,
-                cancellationToken
+                cancellationToken,
+                retryDelayMsOverride
             }) as Task<string?>;
-            
+
             if (task == null)
             {
                 throw new InvalidOperationException("Method did not return a Task<string?>");
             }
-            
+
             return await task;
         }
         catch (TargetInvocationException ex)

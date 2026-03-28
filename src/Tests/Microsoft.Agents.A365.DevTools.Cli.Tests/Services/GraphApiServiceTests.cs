@@ -5,8 +5,11 @@ using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -47,7 +50,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful POST with JSON body
         var bodyObj = new { result = "ok" };
@@ -88,7 +91,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue failing POST with JSON error body
         var errorBody = new { error = new { code = "Authorization_RequestDenied", message = "Insufficient privileges" } };
@@ -112,18 +115,9 @@ public class GraphApiServiceTests
     public async Task LookupServicePrincipalAsync_DoesNotIncludeConsistencyLevelHeader()
     {
         // This test verifies that the ConsistencyLevel header is NOT sent during service principal lookup.
-        // The ConsistencyLevel: eventual header is only required for advanced Graph queries and causes
-        // HTTP 400 "One or more headers are invalid" errors for simple $filter queries.
+        // Per Graph docs, servicePrincipal $filter=appId eq is "Default+Advanced" — it works without
+        // ConsistencyLevel. Adding it caused HTTP 400 "One or more headers are invalid" in some scenarios.
         // Regression test for issue discovered on 2025-12-19.
-        //
-        // NOTE: This test covers BOTH bug locations:
-        // 1. ExecutePublishGraphStepsAsync (line 211) - where header was incorrectly set after token acquisition
-        // 2. EnsureGraphHeadersAsync (lines 745-746) - where header was incorrectly set before all Graph API calls
-        //
-        // The bug in ExecutePublishGraphStepsAsync was "defensive" - it set the header on the HttpClient, but
-        // EnsureGraphHeadersAsync would have overwritten it anyway. By testing EnsureGraphHeadersAsync (which is
-        // called by ALL Graph API operations), we ensure the header is never sent regardless of whether
-        // ExecutePublishGraphStepsAsync tries to set it.
 
         // Arrange
         HttpRequestMessage? capturedRequest = null;
@@ -165,7 +159,7 @@ public class GraphApiServiceTests
             });
 
         // Create GraphApiService with our capturing handler
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response for service principal lookup
         var spResponse = new { value = new[] { new { id = "sp-object-id-123", appId = "blueprint-456" } } };
@@ -190,7 +184,7 @@ public class GraphApiServiceTests
         // Verify the ConsistencyLevel header is NOT present on the service principal lookup request
         capturedRequest.Headers.Contains("ConsistencyLevel").Should().BeFalse(
             "ConsistencyLevel header should NOT be present for simple service principal lookup queries. " +
-            "This header is only needed for advanced Graph query capabilities and causes HTTP 400 errors otherwise.");
+            "Per Graph docs, appId eq is Default+Advanced and does not require this header.");
     }
 
     [Theory]
@@ -247,7 +241,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -292,10 +286,11 @@ public class GraphApiServiceTests
             Arg.Any<IEnumerable<string>>(),
             Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("token-from-provider\r\nwith-embedded-newlines\n");
 
-        var service = new GraphApiService(logger, executor, handler, tokenProvider);
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -320,9 +315,9 @@ public class GraphApiServiceTests
     [Fact]
     public async Task CheckServicePrincipalCreationPrivilegesAsync_SanitizesTokenWithNewlines()
     {
-        // This test verifies that CheckServicePrincipalCreationPrivilegesAsync also
-        // sanitizes tokens with newlines. This method has its own token handling code
-        // separate from EnsureGraphHeadersAsync.
+        // This test verifies that CheckServicePrincipalCreationPrivilegesAsync sanitizes
+        // tokens with embedded whitespace before setting the Authorization header.
+        // Token acquisition now goes through IAuthenticationService (MSAL), not az CLI.
 
         // Arrange
         HttpRequestMessage? capturedRequest = null;
@@ -330,38 +325,13 @@ public class GraphApiServiceTests
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
-        // Mock az CLI to return a token WITH newline characters
-        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo =>
-            {
-                var cmd = callInfo.ArgAt<string>(0);
-                var args = callInfo.ArgAt<string>(1);
+        // Auth service returns a token WITH embedded newlines — simulates a whitespace-padded token.
+        var authWithNewlines = Substitute.For<IAuthenticationService>();
+        authWithNewlines.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("privileges-check-token\r\n\n"));
 
-                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
-                {
-                    return Task.FromResult(new CommandResult
-                    {
-                        ExitCode = 0,
-                        StandardOutput = "{}",
-                        StandardError = string.Empty
-                    });
-                }
-
-                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Return token WITH embedded newlines
-                    return Task.FromResult(new CommandResult
-                    {
-                        ExitCode = 0,
-                        StandardOutput = "privileges-check-token\r\n\n",
-                        StandardError = string.Empty
-                    });
-                }
-
-                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
-            });
-
-        var service = new GraphApiService(logger, executor, handler);
+        var service = new GraphApiService(logger, executor, authWithNewlines, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response for the directory roles query
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -387,6 +357,405 @@ public class GraphApiServiceTests
         hasPrivileges.Should().BeTrue("User has Application Administrator role");
         roles.Should().Contain("Application Administrator");
     }
+
+    #region GetServicePrincipalDisplayNameAsync Tests
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_SuccessfulLookup_ReturnsDisplayName()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        // Mock az CLI token acquisition
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+
+        // Queue successful response with Microsoft Graph service principal
+        var spResponse = new { value = new[] { new { displayName = "Microsoft Graph" } } };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(spResponse))
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "00000003-0000-0000-c000-000000000000");
+
+        // Assert
+        displayName.Should().Be("Microsoft Graph");
+    }
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_ServicePrincipalNotFound_ReturnsNull()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+
+        // Queue response with empty array (service principal not found)
+        var spResponse = new { value = Array.Empty<object>() };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(spResponse))
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "12345678-1234-1234-1234-123456789012");
+
+        // Assert
+        displayName.Should().BeNull("service principal with unknown appId should not be found");
+    }
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_NullResponse_ReturnsNull()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+
+        // Queue error response (simulating network error or Graph API error)
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("Internal Server Error")
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "00000003-0000-0000-c000-000000000000");
+
+        // Assert
+        displayName.Should().BeNull("failed Graph API call should return null");
+    }
+
+    [Fact]
+    public async Task GetServicePrincipalDisplayNameAsync_MissingDisplayNameProperty_ReturnsNull()
+    {
+        // Arrange
+        using var handler = new TestHttpMessageHandler();
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var cmd = callInfo.ArgAt<string>(0);
+                var args = callInfo.ArgAt<string>(1);
+                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+
+        // Queue response with malformed object (missing displayName)
+        var spResponse = new { value = new[] { new { id = "sp-id-123", appId = "00000003-0000-0000-c000-000000000000" } } };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(spResponse))
+        });
+
+        // Act
+        var displayName = await service.GetServicePrincipalDisplayNameAsync("tenant-123", "00000003-0000-0000-c000-000000000000");
+
+        // Assert
+        displayName.Should().BeNull("malformed response missing displayName should return null");
+    }
+
+    #endregion
+
+    #region IsCurrentUserAdminAsync
+
+    [Fact]
+    public async Task IsCurrentUserAdminAsync_UserWithGlobalAdminRole_ReturnsHasRole()
+    {
+        // Arrange — user holds the Global Administrator role
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new
+        {
+            value = new[]
+            {
+                new { roleTemplateId = "62e90394-69f5-4237-9190-012177145e10" }  // Global Administrator
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.HasRole, "a user holding the Global Administrator role should pass the admin check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAdminAsync_UserWithNoAdminRole_ReturnsDoesNotHaveRole()
+    {
+        // Arrange — user has no admin roles
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new { value = Array.Empty<object>() };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.DoesNotHaveRole, "a user with no admin role should not pass the Global Administrator check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAdminAsync_GraphFails_ReturnsUnknown()
+    {
+        // Arrange — Graph call fails (500 causes GraphGetAsync to return null)
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        // Act
+        var result = await service.IsCurrentUserAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.Unknown, "a failed Graph call should return Unknown, not DoesNotHaveRole");
+    }
+
+    #endregion
+
+    #region IsCurrentUserAgentIdAdminAsync
+
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
+    }
+
+    private static GraphApiService CreateServiceWithTokenProvider(TestHttpMessageHandler handler)
+    {
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
+            .Returns("fake-token");
+        return new GraphApiService(logger, executor, FakeAuth(), handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null), retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithNoRelevantRole_ReturnsDoesNotHaveRole()
+    {
+        // Arrange — user is an Agent ID developer (no admin roles)
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new { value = Array.Empty<object>() };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.DoesNotHaveRole, "a developer with no admin roles should not pass the Agent ID Administrator check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithAgentIdAdminRole_ReturnsHasRole()
+    {
+        // Arrange — user holds the Agent ID Administrator role
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var rolesResponse = new
+        {
+            value = new[]
+            {
+                new { roleTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f" }  // Agent ID Administrator
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.HasRole, "a user holding the Agent ID Administrator role should pass the check");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_UserWithGlobalAdminRoleOnly_ReturnsDoesNotHaveRole()
+    {
+        // Arrange — user is a Global Administrator but not an Agent ID Administrator
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        // User holds Global Administrator only — not Agent ID Administrator
+        var rolesResponse = new
+        {
+            value = new[]
+            {
+                new { roleTemplateId = "62e90394-69f5-4237-9190-012177145e10" }  // Global Administrator
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
+        });
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.DoesNotHaveRole, "Global Administrator alone does not satisfy the Agent ID Administrator role requirement");
+    }
+
+    [Fact]
+    public async Task IsCurrentUserAgentIdAdminAsync_GraphReturnsNull_ReturnsUnknown()
+    {
+        // Arrange — Graph call fails (null response simulates network/auth error)
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        // Act
+        var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
+
+        // Assert
+        result.Should().Be(RoleCheckResult.Unknown, "a failed Graph call should return Unknown, not DoesNotHaveRole");
+    }
+
+    #endregion
+
+    #region GetCurrentUserObjectIdAsync
+
+    [Fact]
+    public async Task GetCurrentUserObjectIdAsync_WhenGraphReturnsId_ReturnsObjectId()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"user-obj-id-123\"}")
+        });
+
+        var result = await service.GetCurrentUserObjectIdAsync("tenant-123");
+
+        result.Should().Be("user-obj-id-123",
+            because: "the object ID is read from the 'id' property of the /me response");
+    }
+
+    [Fact]
+    public async Task GetCurrentUserObjectIdAsync_WhenGraphFails_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent(string.Empty)
+        });
+
+        var result = await service.GetCurrentUserObjectIdAsync("tenant-123");
+
+        result.Should().BeNull(because: "a failed Graph call should return null so the caller can fall back to az CLI");
+    }
+
+    #endregion
+
+    #region ServicePrincipalExistsAsync
+
+    [Fact]
+    public async Task ServicePrincipalExistsAsync_WhenSpFound_ReturnsTrue()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"sp-obj-id\"}")
+        });
+
+        var result = await service.ServicePrincipalExistsAsync("tenant-123", "sp-obj-id");
+
+        result.Should().BeTrue(because: "a 200 response means the service principal is visible in the tenant");
+    }
+
+    [Fact]
+    public async Task ServicePrincipalExistsAsync_WhenSpNotFound_ReturnsFalse()
+    {
+        // MSI propagation polling: SP is not yet visible immediately after creation.
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithTokenProvider(handler);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            Content = new StringContent(string.Empty)
+        });
+
+        var result = await service.ServicePrincipalExistsAsync("tenant-123", "sp-obj-id");
+
+        result.Should().BeFalse(
+            because: "a 404 means the service principal has not yet propagated — the retry loop should keep polling");
+    }
+
+    #endregion
 }
 
 // Simple test handler that returns queued responses sequentially

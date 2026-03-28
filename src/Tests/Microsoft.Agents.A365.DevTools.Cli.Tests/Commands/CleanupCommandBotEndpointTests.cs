@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using NSubstitute;
 using Xunit;
 
@@ -21,6 +23,8 @@ public class CleanupCommandBotEndpointTests
     private readonly FederatedCredentialService _federatedCredentialService;
     private readonly IMicrosoftGraphTokenProvider _mockTokenProvider;
     private readonly IConfirmationProvider _mockConfirmationProvider;
+    private readonly IPrerequisiteRunner _mockPrerequisiteRunner;
+    private readonly AzureAuthValidator _mockAuthValidator;
 
     public CleanupCommandBotEndpointTests()
     {
@@ -47,22 +51,24 @@ public class CleanupCommandBotEndpointTests
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         
         _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), 
-            Arg.Any<string>(), 
-            Arg.Any<string>())
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string?>())
             .Returns(Task.FromResult(true));
         
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
         _mockTokenProvider.GetMgGraphAccessTokenAsync(
-            Arg.Any<string>(), 
-            Arg.Any<IEnumerable<string>>(), 
-            Arg.Any<bool>(), 
+            Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(),
+            Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("test-token");
         
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
-        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider);
+        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), null, _mockTokenProvider);
         
         var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         _agentBlueprintService = new AgentBlueprintService(mockBlueprintLogger, _graphApiService);
@@ -75,6 +81,15 @@ public class CleanupCommandBotEndpointTests
         _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
         _mockConfirmationProvider.ConfirmWithTypedResponseAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
+
+        _mockPrerequisiteRunner = Substitute.For<IPrerequisiteRunner>();
+        _mockPrerequisiteRunner.RunAsync(
+                Arg.Any<IEnumerable<IRequirementCheck>>(),
+                Arg.Any<Agent365Config>(),
+                Arg.Any<ILogger>(),
+                Arg.Any<CancellationToken>())
+            .Returns(true);
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
     }
 
     [Fact]
@@ -101,13 +116,14 @@ public class CleanupCommandBotEndpointTests
             AgentBlueprintId = "blueprint-id"
         };
         var command = CleanupCommand.CreateCommand(
-            _mockLogger, 
-            _mockConfigService, 
-            _mockBotConfigurator, 
-            _mockExecutor, 
+            _mockLogger,
+            _mockConfigService,
+            _mockBotConfigurator,
+            _mockExecutor,
             _agentBlueprintService,
             _mockConfirmationProvider,
-            _federatedCredentialService);
+            _federatedCredentialService,
+            _mockAuthValidator);
 
         Assert.NotNull(command);
         Assert.Equal("cleanup", command.Name);

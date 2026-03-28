@@ -2,10 +2,10 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -49,13 +49,13 @@ public sealed class A365CreateInstanceRunner
         string step = "all",
         CancellationToken cancellationToken = default)
     {
-        // DEPRECATED: This service bypasses MOS workflows
+        // DEPRECATED: This service bypasses the standard agent registration workflow
         _logger.LogError("===============================================================================");
-        _logger.LogError("WARNING: A365CreateInstanceRunner bypasses MOS workflow");
+        _logger.LogError("WARNING: A365CreateInstanceRunner bypasses the standard agent registration workflow");
         _logger.LogError("===============================================================================");
         _logger.LogError("");
-        _logger.LogError("This service uses Graph API directly and skips Microsoft Online Services");
-        _logger.LogError("(MOS) workflows. Agents provisioned this way will NOT:");
+        _logger.LogError("This service uses Graph API directly and skips the standard agent registration");
+        _logger.LogError("workflow. Agents provisioned this way will NOT:");
         _logger.LogError("  - Be properly registered with Microsoft 365 partners");
         _logger.LogError("  - Receive OnHire events");
         _logger.LogError("  - Work correctly with messaging and event propagation");
@@ -200,7 +200,7 @@ public sealed class A365CreateInstanceRunner
         if (agentIdentityScopes.Count == 0)
         {
             _logger.LogWarning("No agent identity scopes available, falling back to Graph default");
-            agentIdentityScopes.Add("https://graph.microsoft.com/.default");
+            agentIdentityScopes.Add($"{GraphApiConstants.BaseUrl}/.default");
         }
 
         var usageLocation = GetConfig("agentUserUsageLocation");
@@ -483,12 +483,12 @@ public sealed class A365CreateInstanceRunner
             try
             {
                 // Use Azure CLI token to get current user (this requires delegated context)
-                var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
+                var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: ct);
                 if (!string.IsNullOrWhiteSpace(delegatedToken))
                 {
                     using var delegatedClient = HttpClientFactory.CreateAuthenticatedClient(delegatedToken, correlationId: correlationId);
 
-                    var meResponse = await delegatedClient.GetAsync("https://graph.microsoft.com/v1.0/me", ct);
+                    using var meResponse = await delegatedClient.GetAsync($"{GraphApiConstants.BaseUrl}/v1.0/me", ct);
                     if (meResponse.IsSuccessStatusCode)
                     {
                         var meJson = await meResponse.Content.ReadAsStringAsync(ct);
@@ -504,7 +504,7 @@ public sealed class A365CreateInstanceRunner
             }
 
             // Create agent identity via service principal endpoint
-            var createIdentityUrl = "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
+            var createIdentityUrl = $"{GraphApiConstants.BaseUrl}/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
             var identityBody = new JsonObject
             {
                 ["displayName"] = displayName,
@@ -516,7 +516,7 @@ public sealed class A365CreateInstanceRunner
             {
                 identityBody["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                    $"{GraphApiConstants.BaseUrl}/v1.0/users/{currentUserId}"
                 };
             }
 
@@ -615,11 +615,11 @@ public sealed class A365CreateInstanceRunner
             {
                 new KeyValuePair<string, string>("client_id", clientId),
                 new KeyValuePair<string, string>("client_secret", clientSecret),
-                new KeyValuePair<string, string>("scope", "https://graph.microsoft.com/.default"),
+                new KeyValuePair<string, string>("scope", $"{GraphApiConstants.BaseUrl}/.default"),
                 new KeyValuePair<string, string>("grant_type", "client_credentials")
             });
 
-            var response = await httpClient.PostAsync(tokenEndpoint, requestBody, ct);
+            using var response = await httpClient.PostAsync(tokenEndpoint, requestBody, ct);
             
             if (!response.IsSuccessStatusCode)
             {
@@ -680,7 +680,7 @@ public sealed class A365CreateInstanceRunner
             _logger.LogInformation("  - Agent Identity ID: {Id}", agenticAppId);
 
             // Get Graph access token
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: ct);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token");
@@ -692,7 +692,7 @@ public sealed class A365CreateInstanceRunner
             // Check if user already exists
             try
             {
-                var checkUserUrl = $"https://graph.microsoft.com/beta/users/{Uri.EscapeDataString(userPrincipalName)}";
+                var checkUserUrl = $"{GraphApiConstants.BaseUrl}/beta/users/{Uri.EscapeDataString(userPrincipalName)}";
                 var checkResponse = await httpClient.GetAsync(checkUserUrl, ct);
                 
                 if (checkResponse.IsSuccessStatusCode)
@@ -716,7 +716,7 @@ public sealed class A365CreateInstanceRunner
 
             // Create agent user
             var mailNickname = userPrincipalName.Split('@')[0];
-            var createUserUrl = "https://graph.microsoft.com/beta/users";
+            var createUserUrl = $"{GraphApiConstants.BaseUrl}/beta/users";
             var userBody = new JsonObject
             {
                 ["@odata.type"] = "microsoft.graph.agentUser",
@@ -783,7 +783,7 @@ public sealed class A365CreateInstanceRunner
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Look up manager by email
-            var managerUrl = $"https://graph.microsoft.com/v1.0/users?$filter=mail eq '{managerEmail}'";
+            var managerUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users?$filter=mail eq '{managerEmail}'";
             var managerResponse = await httpClient.GetAsync(managerUrl, ct);
 
             if (!managerResponse.IsSuccessStatusCode)
@@ -807,10 +807,10 @@ public sealed class A365CreateInstanceRunner
             var managerName = manager["displayName"]?.GetValue<string>();
 
             // Assign manager
-            var assignManagerUrl = $"https://graph.microsoft.com/v1.0/users/{userId}/manager/$ref";
+            var assignManagerUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users/{userId}/manager/$ref";
             var assignBody = new JsonObject
             {
-                ["@odata.id"] = $"https://graph.microsoft.com/v1.0/users/{managerId}"
+                ["@odata.id"] = $"{GraphApiConstants.BaseUrl}/v1.0/users/{managerId}"
             };
 
             var assignResponse = await httpClient.PutAsync(
@@ -940,7 +940,7 @@ public sealed class A365CreateInstanceRunner
             _logger.LogInformation("Assigning licenses to user {UserId} using Graph API (CorrelationId: {CorrelationId})", userId, correlationId);
 
             // Get Graph access token
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, cancellationToken);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token for license assignment");
@@ -953,7 +953,7 @@ public sealed class A365CreateInstanceRunner
             if (!string.IsNullOrWhiteSpace(usageLocation))
             {
                 _logger.LogInformation("  - Setting usage location: {Location}", usageLocation);
-                var updateUserUrl = $"https://graph.microsoft.com/v1.0/users/{userId}";
+                var updateUserUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users/{userId}";
                 var updateBody = new JsonObject
                 {
                     ["usageLocation"] = usageLocation
@@ -973,7 +973,7 @@ public sealed class A365CreateInstanceRunner
 
             // Assign licenses
             _logger.LogInformation("  - Assigning Microsoft 365 licenses");
-            var assignLicenseUrl = $"https://graph.microsoft.com/v1.0/users/{userId}/assignLicense";
+            var assignLicenseUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users/{userId}/assignLicense";
             var licenseBody = new JsonObject
             {
                 ["addLicenses"] = new JsonArray
@@ -1046,7 +1046,7 @@ public sealed class A365CreateInstanceRunner
         _logger.LogInformation("URL: {Url}", consentUrl);
 
         // Open browser
-        TryOpenBrowser(consentUrl);
+        BrowserHelper.TryOpenUrl(consentUrl, _logger);
 
         _logger.LogInformation("");
         _logger.LogInformation("Waiting for admin consent (timeout: {Timeout} seconds)...", timeoutSeconds);
@@ -1064,7 +1064,7 @@ public sealed class A365CreateInstanceRunner
             {
                 var spResult = await _executor.ExecuteAsync(
                     "az",
-                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
+                    $"rest --method GET --url \"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
                     captureOutput: true,
                     suppressErrorLogging: true,
                     cancellationToken: cancellationToken);
@@ -1089,7 +1089,7 @@ public sealed class A365CreateInstanceRunner
             {
                 var grants = await _executor.ExecuteAsync(
                     "az",
-                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
+                    $"rest --method GET --url \"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
                     captureOutput: true,
                     suppressErrorLogging: true,
                     cancellationToken: cancellationToken);
@@ -1131,24 +1131,6 @@ public sealed class A365CreateInstanceRunner
         return false;
     }
 
-    private void TryOpenBrowser(string url)
-    {
-        try
-        {
-            using var process = new System.Diagnostics.Process();
-            process.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true
-            };
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to open browser automatically");
-            _logger.LogInformation("Please manually open: {Url}", url);
-        }
-    }
 
     /// <summary>
     /// Verify that a service principal exists in Azure AD for the given app ID.
@@ -1169,7 +1151,7 @@ public sealed class A365CreateInstanceRunner
         try
         {
             // Use Graph API to check if service principal exists
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: ct);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogWarning("Failed to acquire Graph token for service principal verification");
@@ -1179,8 +1161,8 @@ public sealed class A365CreateInstanceRunner
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Query for service principal by appId
-            var spUrl = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
-            var response = await httpClient.GetAsync(spUrl, ct);
+            var spUrl = $"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
+            using var response = await httpClient.GetAsync(spUrl, ct);
 
             if (!response.IsSuccessStatusCode)
             {

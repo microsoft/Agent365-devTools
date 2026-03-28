@@ -48,13 +48,51 @@ class Program
             ConfigureServices(services, logLevel, logFilePath);
             var serviceProvider = services.BuildServiceProvider();
 
-            // Check for updates (non-blocking, with timeout)
+            // Notice and version checks run concurrently — worst-case startup delay is ~2s, not ~4s.
+            using var noticeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var versionCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+            var noticeService = serviceProvider.GetRequiredService<INoticeService>();
+            var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
+
+            var noticeTask = noticeService.CheckForNoticeAsync(noticeCts.Token);
+            var versionTask = versionCheckService.CheckForUpdatesAsync(versionCts.Token);
+
+            await Task.WhenAll(
+                noticeTask.ContinueWith(_ => { }, TaskContinuationOptions.None),
+                versionTask.ContinueWith(_ => { }, TaskContinuationOptions.None));
+
+            // Display notice result
             try
             {
-                var versionCheckService = serviceProvider.GetRequiredService<IVersionCheckService>();
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                var result = await versionCheckService.CheckForUpdatesAsync(cts.Token);
+                var noticeResult = await noticeTask;
+                if (noticeResult.HasNotice)
+                {
+                    const string separator = "------------------------------------------------------------";
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("URGENT NOTICE");
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("{Message}", noticeResult.Message);
+                    startupLogger.LogWarning("");
+                    startupLogger.LogWarning("To update, run: {Command}", noticeResult.UpdateCommand);
+                    startupLogger.LogWarning(separator);
+                    startupLogger.LogWarning("");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                startupLogger.LogDebug("Notice check timed out");
+            }
+            catch (Exception ex)
+            {
+                startupLogger.LogDebug(ex, "Notice check failed: {Message}", ex.Message);
+            }
 
+            // Display version check result
+            try
+            {
+                var result = await versionTask;
                 if (result.UpdateAvailable)
                 {
                     startupLogger.LogWarning("");
@@ -90,7 +128,7 @@ class Program
             var configService = serviceProvider.GetRequiredService<IConfigService>();
             var executor = serviceProvider.GetRequiredService<CommandExecutor>();
             var authService = serviceProvider.GetRequiredService<AuthenticationService>();
-            var azureValidator = serviceProvider.GetRequiredService<IAzureValidator>();
+            var azureAuthValidator = serviceProvider.GetRequiredService<AzureAuthValidator>();
             var toolingService = serviceProvider.GetRequiredService<IAgent365ToolingService>();
 
             // Get services needed by commands
@@ -98,11 +136,10 @@ class Program
             var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
             var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
-            var agentPublishService = serviceProvider.GetRequiredService<AgentPublishService>();
+            var armApiService = serviceProvider.GetRequiredService<ArmApiService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
             var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
             var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
-            var webAppCreator = serviceProvider.GetRequiredService<AzureWebAppCreator>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
             var processService = serviceProvider.GetRequiredService<IProcessService>();
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
@@ -110,23 +147,23 @@ class Program
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
+            var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, azureValidator, webAppCreator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator));
+                deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
-                botConfigurator, graphApiService, azureValidator));
+                botConfigurator, graphApiService));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, azureValidator, graphApiService, agentBlueprintService));
+                deploymentService, azureAuthValidator, graphApiService, agentBlueprintService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
             var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
             var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
-            var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, agentPublishService, graphApiService, agentBlueprintService, manifestTemplateService));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
@@ -134,7 +171,15 @@ class Program
                 .UseDefaults()
                 .UseExceptionHandler((exception, context) =>
                 {
-                    if (exception is Agent365Exception myEx)
+                    if (exception is CleanExitException cleanExit)
+                    {
+                        context.ExitCode = cleanExit.ExitCode;
+                    }
+                    else if (exception is OperationCanceledException)
+                    {
+                        context.ExitCode = 1;
+                    }
+                    else if (exception is Agent365Exception myEx)
                     {
                         ExceptionHandler.HandleAgent365Exception(myEx, logFilePath: logFilePath);
                         context.ExitCode = myEx.ExitCode;
@@ -157,6 +202,21 @@ class Program
 
             var parser = builder.Build();
             return await parser.InvokeAsync(args);
+        }
+        catch (Exception ex)
+        {
+            // Catch anything that escapes before or after the System.CommandLine pipeline
+            // (e.g. DI setup failures, exceptions in InvokeAsync itself).
+            // Log the full details to the file; show only a clean one-liner to the user.
+            startupLogger.LogCritical(ex, "Unhandled exception in CLI startup");
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Error.WriteLine($"ERROR: {ex.Message}");
+            Console.ResetColor();
+            Console.Error.WriteLine();
+            if (!string.IsNullOrEmpty(logFilePath))
+                Console.Error.WriteLine($"For details, see the log file at: {logFilePath}");
+            Console.Error.WriteLine("If this error persists, please report it at: https://github.com/microsoft/Agent365-devTools/issues");
+            return 1;
         }
         finally
         {
@@ -194,8 +254,10 @@ class Program
         services.AddSingleton<IConfigService, ConfigService>();
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
+        services.AddSingleton<IAuthenticationService>(sp => sp.GetRequiredService<AuthenticationService>());
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
         services.AddSingleton<IVersionCheckService, VersionCheckService>();
+        services.AddSingleton<INoticeService, NoticeService>();
 
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
@@ -232,8 +294,6 @@ class Program
         services.AddSingleton<AzureAuthValidator>();
         services.AddSingleton<IAzureEnvironmentValidator, AzureEnvironmentValidator>();
 
-        // Add unified Azure validator
-        services.AddSingleton<IAzureValidator, AzureValidator>();
 
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
@@ -246,15 +306,12 @@ class Program
         services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
 
         services.AddSingleton<GraphApiService>();
-        services.AddSingleton<AgentPublishService>();
+        services.AddSingleton<ArmApiService>();
         services.AddSingleton<AgentBlueprintService>();
         services.AddSingleton<BlueprintLookupService>();
         services.AddSingleton<FederatedCredentialService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
-
-        // Register AzureWebAppCreator for SDK-based web app creation
-        services.AddSingleton<AzureWebAppCreator>();
 
         // Register ProcessService for cross-platform process launching
         services.AddSingleton<IProcessService, ProcessService>();

@@ -35,6 +35,11 @@ flowchart TB
 
     subgraph Storage["File Storage"]
         MocksDir["mocks/<br/>*.json files"]
+        SnapshotsDir["snapshots/<br/>Authoritative tool catalogs<br/>from real M365 servers"]
+    end
+
+    subgraph Testing["Fidelity Testing"]
+        FidelityTests["MockToolFidelityTests<br/>Asserts mock coverage<br/>against snapshots"]
     end
 
     subgraph Endpoints["HTTP Endpoints"]
@@ -51,6 +56,8 @@ flowchart TB
     ServerClass --> MockToolExecutor
     MockToolExecutor --> IMockToolStore
     ServerClass --> Endpoints
+    FidelityTests --> SnapshotsDir
+    FidelityTests --> MocksDir
 ```
 
 ---
@@ -199,6 +206,37 @@ The `FileMockToolStore` uses `FileSystemWatcher` to detect changes to mock defin
 2. **Automatic Reload:** Cache is cleared and reloaded on file change
 3. **Thread Safety:** Uses `SemaphoreSlim` for concurrent access protection
 4. **Graceful Error Handling:** Failed reloads are logged but don't crash the server
+
+---
+
+## Fidelity Contract
+
+The mock server maintains a contract with the real M365 MCP servers through a two-layer design.
+
+### Two-layer design
+
+- **`mocks/`** (behavior layer) — Contains mock tool definitions including response templates, simulated delay, and error simulation configuration. This is what the mock server loads at runtime.
+- **`snapshots/`** (contract layer) — Contains authoritative tool catalogs captured from real M365 MCP servers. Each snapshot records the exact tool names, descriptions, and input schemas as they exist on the real server. Snapshots are the source of truth for what the mock must cover.
+
+### CI enforcement
+
+`MockToolFidelityTests` loads each snapshot file alongside the corresponding mock definition file and asserts that:
+
+- Every tool present in the snapshot exists in the mock (same name, same casing)
+- Every enabled tool in the mock exists in the snapshot (no phantom tools with unverified names)
+
+These tests run as part of the standard test suite. Snapshots where `capturedAt` is `"UNPOPULATED"` are skipped — they do not block CI until real data has been captured.
+
+### The `capturedAt` freshness indicator
+
+Each snapshot file includes a `capturedAt` field set to an ISO 8601 UTC timestamp at time of capture. The value `"UNPOPULATED"` indicates the file is a placeholder that has never been verified against a real server. Fidelity tests skip for UNPOPULATED snapshots.
+
+### Update process
+
+1. **Detect drift** — Run `MockToolSnapshotCaptureTests` with `MCP_BEARER_TOKEN` set to query live M365 MCP servers and compare against snapshots. Tests fail with a clear diff if the real server has changed.
+2. **Refresh snapshots** — Re-run with `MCP_UPDATE_SNAPSHOTS=true` to write updated snapshot files to disk.
+3. **Update mocks** — Add, rename, or remove tools in the corresponding `mocks/` JSON files to match the refreshed snapshots.
+4. **Verify** — Run `MockToolFidelityTests` (no credentials required) to confirm all mock files satisfy their snapshot contracts.
 
 ---
 

@@ -14,6 +14,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementCh
 /// </summary>
 public class PowerShellModulesRequirementCheck : RequirementCheck
 {
+    private readonly Func<string, string, CancellationToken, Task<(bool success, string? output)>>? _commandRunner;
+    public PowerShellModulesRequirementCheck(
+        Func<string, string, CancellationToken, Task<(bool success, string? output)>>? commandRunner = null)
+    {
+        _commandRunner = commandRunner;
+    }
+
     /// <inheritdoc />
     public override string Name => "PowerShell Modules";
 
@@ -43,20 +50,26 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
     /// </summary>
     private async Task<RequirementCheckResult> CheckImplementationAsync(Agent365Config config, ILogger logger, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Checking if PowerShell is available on this system...");
-
         // Check if PowerShell is available
         var powerShellAvailable = await CheckPowerShellAvailabilityAsync(logger, cancellationToken);
         if (!powerShellAvailable)
         {
+            bool isWsl = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WSL_DISTRO_NAME"))
+                         || await IsWslEnvironmentAsync(cancellationToken);
+
+            var resolution = isWsl
+                ? "Install PowerShell 7+ in your WSL distribution.\n" +
+                  "Installation steps vary by Linux distribution. Follow the official guidance for your distro:\n" +
+                  "  https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux"
+                : "Install PowerShell 7+ from https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell";
+
             return RequirementCheckResult.Failure(
                 errorMessage: "PowerShell is not available on this system",
-                resolutionGuidance: "Install PowerShell 7+ from https://docs.microsoft.com/powershell/scripting/install/installing-powershell",
+                resolutionGuidance: resolution,
                 details: "PowerShell is required for Microsoft Graph operations and Azure authentication"
             );
         }
 
-        logger.LogInformation("Checking PowerShell modules...");
         var missingModules = new List<RequiredModule>();
         var installedModules = new List<RequiredModule>();
 
@@ -78,24 +91,89 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             }
         }
 
-        // Return results
+        // All modules present - done
         if (missingModules.Count == 0)
         {
             return RequirementCheckResult.Success(
-                details: $"All required PowerShell modules are installed: {string.Join(", ", installedModules.Select(m => m.Name))}"
+                details: string.Join(", ", installedModules.Select(m => m.Name))
             );
         }
 
-        var missingModuleNames = string.Join(", ", missingModules.Select(m => m.Name));
-        var installCommands = GenerateInstallationInstructions(missingModules);
+        // Attempt auto-install for missing modules
+        logger.LogDebug("Attempting to auto-install missing PowerShell modules...");
+        var autoInstalled = new List<RequiredModule>();
+        var stillMissing = new List<RequiredModule>();
+
+        foreach (var module in missingModules)
+        {
+            logger.LogDebug("Installing {ModuleName}...", module.Name);
+            var installSuccess = await InstallModuleAsync(module.Name, logger, cancellationToken);
+
+            if (installSuccess)
+            {
+                var verified = await CheckModuleInstalledAsync(module.Name, logger, cancellationToken);
+                if (verified)
+                {
+                    autoInstalled.Add(module);
+                    logger.LogDebug("Successfully installed {ModuleName}", module.Name);
+                }
+                else
+                {
+                    stillMissing.Add(module);
+                    logger.LogDebug("Install succeeded but {ModuleName} not found in module path after install", module.Name);
+                }
+            }
+            else
+            {
+                stillMissing.Add(module);
+            }
+        }
+
+        if (stillMissing.Count == 0)
+        {
+            var autoInstalledNames = string.Join(", ", autoInstalled.Select(m => m.Name));
+            var alreadyInstalled = installedModules.Count > 0
+                ? $" Previously installed: {string.Join(", ", installedModules.Select(m => m.Name))}."
+                : string.Empty;
+            return RequirementCheckResult.Success(
+                details: $"Auto-installed missing modules: {autoInstalledNames}.{alreadyInstalled}"
+            );
+        }
+
+        // Some modules could not be auto-installed
+        var stillMissingNames = string.Join(", ", stillMissing.Select(m => m.Name));
+        var installCommands = GenerateInstallationInstructions(stillMissing);
+        var autoInstalledNote = autoInstalled.Count > 0
+            ? $"Auto-installed: {string.Join(", ", autoInstalled.Select(m => m.Name))}. "
+            : string.Empty;
 
         return RequirementCheckResult.Failure(
-            errorMessage: $"Missing required PowerShell modules: {missingModuleNames}",
-            resolutionGuidance: installCommands,
-            details: $"These modules are required for Microsoft Graph operations, app registration, and Azure authentication. " +
-                    $"Missing: {missingModuleNames}. " +
-                    $"Installed: {string.Join(", ", installedModules.Select(m => m.Name))}"
+            errorMessage: $"Missing required PowerShell modules (auto-install failed): {stillMissingNames}",
+            resolutionGuidance: $"{autoInstalledNote}{installCommands}",
+            details: $"These modules are required for Microsoft Graph operations. " +
+                     $"Auto-install was attempted but failed for: {stillMissingNames}. " +
+                     $"Installed: {string.Join(", ", installedModules.Concat(autoInstalled).Select(m => m.Name))}"
         );
+    }
+
+    /// <summary>
+    /// Detects whether the process is running inside WSL (Windows Subsystem for Linux)
+    /// by checking the WSL_DISTRO_NAME environment variable or /proc/version content.
+    /// </summary>
+    internal static async Task<bool> IsWslEnvironmentAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists("/proc/version"))
+                return false;
+
+            var procVersion = await File.ReadAllTextAsync("/proc/version", cancellationToken);
+            return procVersion.Contains("microsoft", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -106,7 +184,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         try
         {
             // Check for PowerShell 7+ (pwsh)
-            var result = await ExecutePowerShellCommandAsync("pwsh", "$PSVersionTable.PSVersion.Major", logger, cancellationToken);
+            var result = await RunCommandAsync("pwsh", "$PSVersionTable.PSVersion.Major", logger, cancellationToken);
             if (result.success && int.TryParse(result.output?.Trim(), out var major) && major >= 7)
             {
                 logger.LogDebug("PowerShell availability check succeeded.");
@@ -131,7 +209,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
         {
             var command = $"(Get-Module -ListAvailable -Name '{moduleName}' | Select-Object -First 1).Name";
             
-            var result = await ExecutePowerShellCommandAsync("pwsh", command, logger, cancellationToken);
+            var result = await RunCommandAsync("pwsh", command, logger, cancellationToken);
             if (!result.success || string.IsNullOrWhiteSpace(result.output))
             {
                 return false;
@@ -148,6 +226,40 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             logger.LogDebug("Module check failed for {ModuleName}: {Error}", moduleName, ex.Message);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Attempts to install a PowerShell module using Install-Module with CurrentUser scope.
+    /// Uses -Force and -AllowClobber to handle conflicts without requiring elevation.
+    /// </summary>
+    private async Task<bool> InstallModuleAsync(string moduleName, ILogger logger, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var command = $"Install-Module -Name '{moduleName}' -Repository 'PSGallery' -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop";
+            var result = await RunCommandAsync("pwsh", command, logger, cancellationToken);
+            if (!result.success)
+            {
+                logger.LogDebug("Auto-install failed for {ModuleName}: {Output}", moduleName, result.output);
+            }
+            return result.success;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("Auto-install threw exception for {ModuleName}: {Error}", moduleName, ex.Message);
+            return false;
+        }
+    }
+
+    private Task<(bool success, string? output)> RunCommandAsync(
+        string executable,
+        string command,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (_commandRunner != null)
+            return _commandRunner(executable, command, cancellationToken);
+        return ExecutePowerShellCommandAsync(executable, command, logger, cancellationToken);
     }
 
     /// <summary>
@@ -189,7 +301,11 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             }
             
             logger.LogDebug("PowerShell command failed: {Error}", error);
-            return (false, null);
+            return (false, error);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -210,9 +326,9 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             "Method 1: Install all required modules at once"
         };
 
-        // PowerShell 7+ command
-        var moduleNames = string.Join(",", missingModules.Select(m => $"'{m.Name}'"));
-        instructions.Add($"  pwsh -Command \"Install-Module -Name '{moduleNames}' -Scope CurrentUser -Force\"");
+        // PowerShell 7+ command — pass quoted module names directly as an array literal (no outer quotes)
+        var moduleNames = string.Join(", ", missingModules.Select(m => $"'{m.Name}'"));
+        instructions.Add($"  pwsh -Command \"Install-Module -Name {moduleNames} -Scope CurrentUser -Force\"");
         instructions.Add("");
 
         // Individual module instructions

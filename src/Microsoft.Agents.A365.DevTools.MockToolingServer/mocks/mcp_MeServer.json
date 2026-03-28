@@ -1,6 +1,6 @@
 [
   {
-    "name": "getMyProfile",
+    "name": "GetMyDetails",
     "description": "Get the profile of the currently signed-in user, including their display name, email address, job title, and other basic information.",
     "inputSchema": {
       "type": "object",
@@ -8,6 +8,10 @@
         "select": {
           "type": "string",
           "description": "Comma-separated list of properties to return (e.g., 'displayName,mail,jobTitle'). If not specified, returns default properties."
+        },
+        "expand": {
+          "type": "string",
+          "description": "Expand related entities"
         }
       },
       "required": []
@@ -19,33 +23,43 @@
     "enabled": true
   },
   {
-    "name": "listUsers",
-    "description": "Search for users in the organization directory. Use this to find a person's email address when you only know their name. Supports filtering by displayName, mail, userPrincipalName, and other properties.",
+    "name": "GetMultipleUsersDetails",
+    "description": "Search for multiple users in the directory by name, job title, office location, or other properties.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "search": {
-          "type": "string",
-          "description": "Search string to find users. Use format like '\"displayName:John\"' to search by display name, or '\"mail:john@\"' to search by email. Supports partial matching."
+        "searchValues": {
+          "type": "array",
+          "description": "List of search terms (e.g., ['John Smith', 'Jane Doe'] or ['Software Engineer', 'Product Manager'] or ['Building 40', 'Building 41']). Each term is searched independently - results include users matching ANY term.",
+          "items": {
+            "type": "string"
+          }
         },
-        "filter": {
+        "propertyToSearchBy": {
           "type": "string",
-          "description": "OData filter expression (e.g., \"startsWith(displayName,'John')\" or \"mail eq 'john@contoso.com'\")."
+          "description": "User property to search (e.g., 'displayName', 'jobTitle', 'officeLocation', 'userPrincipalName', 'id')."
         },
         "select": {
           "type": "string",
-          "description": "Comma-separated list of properties to return (e.g., 'displayName,mail,id')."
+          "description": "Comma-separated list of user properties to include in response (e.g., 'displayName,mail,jobTitle,officeLocation,mobilePhone')"
+        },
+        "expand": {
+          "type": "string",
+          "description": "Navigation properties to expand (e.g., 'manager' to include manager details)"
         },
         "top": {
-          "type": "integer",
-          "description": "Maximum number of results to return. Default is 10, maximum is 999."
+          "type": "object",
+          "properties": {},
+          "required": []
         },
         "orderby": {
           "type": "string",
-          "description": "Property to sort results by (e.g., 'displayName asc')."
+          "description": "Property name to sort results by (e.g., 'displayName', 'jobTitle')"
         }
       },
-      "required": []
+      "required": [
+        "searchValues"
+      ]
     },
     "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#users\", \"value\": [{\"id\": \"mock-user-{{search}}\", \"displayName\": \"{{search}} (Mock User)\", \"mail\": \"{{search}}@contoso.com\", \"userPrincipalName\": \"{{search}}@contoso.com\", \"jobTitle\": \"Team Member\", \"officeLocation\": \"Remote\"}]}",
     "delayMs": 150,
@@ -54,40 +68,50 @@
     "enabled": true
   },
   {
-    "name": "getUser",
-    "description": "Get the profile of a specific user by their ID or userPrincipalName.",
+    "name": "GetUserDetails",
+    "description": "Find a specified user's profile by name, email, or ID. Use this when you need to look up a specific person in your organization.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "userId": {
+        "userIdentifier": {
           "type": "string",
-          "description": "The unique identifier (GUID) or userPrincipalName (email) of the user to retrieve."
+          "description": "The user's name or object ID (GUID) or userPrincipalName (email-like UPN)."
         },
         "select": {
           "type": "string",
-          "description": "Comma-separated list of properties to return."
+          "description": "Always pass in comma-separated list of properties you need"
+        },
+        "expand": {
+          "type": "string",
+          "description": "Expand a related entity for the user"
         }
       },
-      "required": ["userId"]
+      "required": ["userIdentifier"]
     },
-    "responseTemplate": "{\"id\": \"{{userId}}\", \"displayName\": \"{{userId}} (Mock User)\", \"mail\": \"{{userId}}\", \"userPrincipalName\": \"{{userId}}\", \"jobTitle\": \"Team Member\", \"officeLocation\": \"Building 1\"}",
+    "responseTemplate": "{\"id\": \"{{userIdentifier}}\", \"displayName\": \"{{userIdentifier}} (Mock User)\", \"mail\": \"{{userIdentifier}}\", \"userPrincipalName\": \"{{userIdentifier}}\", \"jobTitle\": \"Team Member\", \"officeLocation\": \"Building 1\"}",
     "delayMs": 100,
     "errorRate": 0,
     "statusCode": 200,
     "enabled": true
   },
   {
-    "name": "getManager",
-    "description": "Get the manager of a specific user or the currently signed-in user.",
+    "name": "GetManagerDetails",
+    "description": "Get a user's manager information - name, email, job title, etc.,",
     "inputSchema": {
       "type": "object",
       "properties": {
         "userId": {
           "type": "string",
-          "description": "The unique identifier or userPrincipalName of the user. Use 'me' for the currently signed-in user."
+          "description": "Name of the user whose manager to retrieve. Use \"me\" for current / signed-in user."
+        },
+        "select": {
+          "type": "string",
+          "description": "Always pass in comma-separated list of properties you need"
         }
       },
-      "required": []
+      "required": [
+        "userId"
+      ]
     },
     "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#directoryObjects/$entity\", \"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-manager-001\", \"displayName\": \"Mock Manager\", \"mail\": \"mock.manager@contoso.com\", \"userPrincipalName\": \"mock.manager@contoso.com\", \"jobTitle\": \"Engineering Manager\"}",
     "delayMs": 100,
@@ -96,21 +120,23 @@
     "enabled": true
   },
   {
-    "name": "getDirectReports",
-    "description": "Get the direct reports of a specific user or the currently signed-in user.",
+    "name": "GetDirectReportsDetails",
+    "description": "Retrieve a user's team, or direct reports (people who report to them in the organizational hierarchy). Use this for organizational team structure, NOT for Microsoft Teams workspace membership. Examples for calling this tool: 'set up meeting with John's team', 'who reports to Sarah', 'list manager's direct reports'.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "userId": {
           "type": "string",
-          "description": "The unique identifier or userPrincipalName of the user. Use 'me' for the currently signed-in user."
+          "description": "Name of the user whose direct reports (organizational team members) to retrieve. Use \"me\" for current / signed-in user."
         },
-        "top": {
-          "type": "integer",
-          "description": "Maximum number of results to return."
+        "select": {
+          "type": "string",
+          "description": "Always pass in comma-separated list of properties you need for each direct report"
         }
       },
-      "required": []
+      "required": [
+        "userId"
+      ]
     },
     "responseTemplate": "{\"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#directoryObjects\", \"value\": [{\"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-report-001\", \"displayName\": \"Alice Johnson (Mock)\", \"mail\": \"alice.johnson@contoso.com\", \"jobTitle\": \"Software Engineer\"}, {\"@odata.type\": \"#microsoft.graph.user\", \"id\": \"mock-report-002\", \"displayName\": \"Bob Smith (Mock)\", \"mail\": \"bob.smith@contoso.com\", \"jobTitle\": \"Software Engineer\"}]}",
     "delayMs": 100,
@@ -119,4 +145,3 @@
     "enabled": true
   }
 ]
-

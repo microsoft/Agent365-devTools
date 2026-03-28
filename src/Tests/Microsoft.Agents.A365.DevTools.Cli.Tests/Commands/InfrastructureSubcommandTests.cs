@@ -54,7 +54,7 @@ public class InfrastructureSubcommandTests
         var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
                 _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-                maxRetries: 2, baseDelaySeconds: 1));
+                maxRetries: 2, baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.QuotaExceeded);
         exception.PlanName.Should().Be(planName);
@@ -83,7 +83,7 @@ public class InfrastructureSubcommandTests
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
             _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-            maxRetries: 2, baseDelaySeconds: 1);
+            maxRetries: 2, baseDelaySeconds: 0);
 
         // Assert - Verify creation command was never called
         await _commandExecutor.DidNotReceive().ExecuteAsync("az",
@@ -126,7 +126,7 @@ public class InfrastructureSubcommandTests
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
             _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-            maxRetries: 2, baseDelaySeconds: 1);
+            maxRetries: 2, baseDelaySeconds: 0);
 
         // Assert - Verify the plan creation was called
         await _commandExecutor.Received(1).ExecuteAsync("az",
@@ -168,7 +168,7 @@ public class InfrastructureSubcommandTests
         var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
                 _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-                maxRetries: 2, baseDelaySeconds: 1));
+                maxRetries: 2, baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.VerificationTimeout);
         exception.PlanName.Should().Be(planName);
@@ -205,7 +205,7 @@ public class InfrastructureSubcommandTests
         var exception = await Assert.ThrowsAsync<AzureAppServicePlanException>(
             async () => await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
                 _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-                maxRetries: 2, baseDelaySeconds: 1));
+                maxRetries: 2, baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.AuthorizationFailed);
         exception.PlanName.Should().Be(planName);
@@ -240,7 +240,7 @@ public class InfrastructureSubcommandTests
         // Act
         await InfrastructureSubcommand.EnsureAppServicePlanExistsAsync(
             _commandExecutor, _logger, resourceGroup, planName, planSku, "eastus", subscriptionId,
-            maxRetries: 2, baseDelaySeconds: 1);
+            maxRetries: 2, baseDelaySeconds: 0);
 
         // Assert - Verify show was called multiple times (initial check + retries)
         await _commandExecutor.Received(3).ExecuteAsync("az",
@@ -283,7 +283,7 @@ public class InfrastructureSubcommandTests
                 "eastus",
                 subscriptionId,
                 maxRetries: 2,
-                baseDelaySeconds: 1));
+                baseDelaySeconds: 0));
 
         exception.ErrorType.Should().Be(AppServicePlanErrorType.VerificationTimeout);
         exception.PlanName.Should().Be(planName);
@@ -342,13 +342,13 @@ public class InfrastructureSubcommandTests
                     if (args.Contains("ad signed-in-user show"))
                         return new CommandResult { ExitCode = 0, StandardOutput = "12345678-1234-1234-1234-123456789abc" };
 
+                    // Role pre-check: no existing role found (empty output triggers assignment)
+                    if (args.Contains("role assignment list"))
+                        return new CommandResult { ExitCode = 0, StandardOutput = "" };
+
                     // Role assignment create
                     if (args.Contains("role assignment create"))
                         return new CommandResult { ExitCode = 0, StandardOutput = "{\"id\": \"test-role-assignment-id\"}" };
-
-                    // Role assignment verification
-                    if (args.Contains("role assignment list"))
-                        return new CommandResult { ExitCode = 0, StandardOutput = "Website Contributor" };
 
                     return new CommandResult { ExitCode = 0 };
                 });
@@ -372,21 +372,15 @@ public class InfrastructureSubcommandTests
                 externalHosting: false,
                 CancellationToken.None);
 
-            // Assert - Verify role assignment command was called
+            // Assert - Verify pre-check was called (role assignment list with include-inherited)
             await _commandExecutor.Received().ExecuteAsync("az",
-                Arg.Is<string>(s =>
-                    s.Contains("role assignment create") &&
-                    s.Contains("Website Contributor") &&
-                    s.Contains("12345678-1234-1234-1234-123456789abc")),
+                Arg.Is<string>(s => s.Contains("role assignment list") && s.Contains("include-inherited")),
                 captureOutput: true,
                 suppressErrorLogging: true);
 
-            // Assert - Verify role assignment verification was called
+            // Assert - Verify role assignment create was called (since pre-check returned empty)
             await _commandExecutor.Received().ExecuteAsync("az",
-                Arg.Is<string>(s =>
-                    s.Contains("role assignment list") &&
-                    s.Contains("Website Contributor") &&
-                    s.Contains("12345678-1234-1234-1234-123456789abc")),
+                Arg.Is<string>(s => s.Contains("role assignment create") && s.Contains("Website Contributor")),
                 captureOutput: true,
                 suppressErrorLogging: true);
         }
@@ -506,8 +500,8 @@ public class InfrastructureSubcommandTests
         var webAppName = "test-webapp";
         var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
         var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
-        var logger = Substitute.For<ILogger>();
-        
+        var logger = new TestLogger();
+
         try
         {
             // Create temporary project directory
@@ -582,22 +576,8 @@ public class InfrastructureSubcommandTests
 
             // Assert - Principal ID should still be set, warning logged
             principalId.Should().Be("test-principal-id");
-            
-            // Verify warning was logged for assignment failure
-            logger.Received().Log(
-                LogLevel.Warning,
-                Arg.Any<EventId>(),
-                Arg.Is<object>(o => o.ToString()!.Contains("Could not assign Website Contributor role")),
-                Arg.Any<Exception>(),
-                Arg.Any<Func<object, Exception?, string>>());
-
-            // Verify warning was logged for verification failure
-            logger.Received().Log(
-                LogLevel.Warning,
-                Arg.Any<EventId>(),
-                Arg.Is<object>(o => o.ToString()!.Contains("Could not verify Website Contributor role")),
-                Arg.Any<Exception>(),
-                Arg.Any<Func<object, Exception?, string>>());
+            logger.HasWarning("Could not assign Website Contributor role to user. Diagnostic logs may not be accessible.")
+                .Should().BeTrue("the code must warn when role assignment fails");
         }
         finally
         {
@@ -621,7 +601,7 @@ public class InfrastructureSubcommandTests
         var webAppName = "test-webapp";
         var generatedConfigPath = Path.Combine(Path.GetTempPath(), $"test-{Guid.NewGuid()}.json");
         var deploymentProjectPath = Path.Combine(Path.GetTempPath(), $"test-project-{Guid.NewGuid()}");
-        var logger = Substitute.For<ILogger>();
+        var logger = new TestLogger();
 
         try
         {
@@ -695,22 +675,14 @@ public class InfrastructureSubcommandTests
             // Assert - Principal ID should be set
             principalId.Should().Be("test-principal-id");
 
-            // Verify role assignment verification was called
+            // Verify pre-check (role assignment list --include-inherited) was called
             await _commandExecutor.Received().ExecuteAsync("az",
-                Arg.Is<string>(s =>
-                    s.Contains("role assignment list") &&
-                    s.Contains("Website Contributor") &&
-                    s.Contains("12345678-1234-1234-1234-123456789abc")),
+                Arg.Is<string>(s => s.Contains("role assignment list") && s.Contains("include-inherited")),
                 captureOutput: true,
                 suppressErrorLogging: true);
 
-            // Verify success confirmation was logged
-            logger.Received().Log(
-                LogLevel.Information,
-                Arg.Any<EventId>(),
-                Arg.Is<object>(o => o.ToString()!.Contains("Current user is confirmed as Website Contributor")),
-                Arg.Any<Exception>(),
-                Arg.Any<Func<object, Exception?, string>>());
+            logger.HasInformation("log access confirmed, skipping")
+                .Should().BeTrue("the code must log when an existing role is detected and assignment is skipped");
         }
         finally
         {
@@ -720,5 +692,23 @@ public class InfrastructureSubcommandTests
             if (Directory.Exists(deploymentProjectPath))
                 Directory.Delete(deploymentProjectPath, true);
         }
+    }
+
+    private sealed class TestLogger : ILogger
+    {
+        private readonly List<(LogLevel Level, string Message)> _entries = [];
+
+        public bool HasWarning(string fragment) =>
+            _entries.Any(e => e.Level == LogLevel.Warning && e.Message.Contains(fragment));
+
+        public bool HasInformation(string fragment) =>
+            _entries.Any(e => e.Level == LogLevel.Information && e.Message.Contains(fragment));
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => _entries.Add((logLevel, formatter(state, exception)));
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     }
 }

@@ -5,6 +5,7 @@ using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -30,11 +31,25 @@ public static class AdminConsentHelper
     {
         var start = DateTime.UtcNow;
         string? spId = null;
+        int lastProgressReportSeconds = 0;
+
+        logger.LogInformation(
+            "Waiting for admin consent to be granted. Open the URL above in a browser and complete the consent flow. The CLI will continue automatically (timeout: {TimeoutSeconds}s).",
+            timeoutSeconds);
 
         try
         {
             while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
             {
+                var elapsedSeconds = (int)(DateTime.UtcNow - start).TotalSeconds;
+                if (elapsedSeconds > 0 && elapsedSeconds - lastProgressReportSeconds >= 60)
+                {
+                    lastProgressReportSeconds = elapsedSeconds;
+                    logger.LogInformation(
+                        "Still waiting for admin consent... ({ElapsedSeconds}s / {TimeoutSeconds}s).",
+                        elapsedSeconds, timeoutSeconds);
+                }
+
                 if (spId == null)
                 {
                     var spResult = await executor.ExecuteAsync("az",
@@ -83,12 +98,90 @@ public static class AdminConsentHelper
                 await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
             }
 
+            logger.LogWarning(
+                "Admin consent was not detected within {TimeoutSeconds}s. Continuing — you can re-run this command after granting consent.",
+                timeoutSeconds);
             return false;
         }
         catch (OperationCanceledException)
         {
             // Treat cancellation as a graceful timeout/no-consent scenario
             logger.LogDebug("Polling for admin consent was cancelled or timed out for app {AppId} ({Scope}).", appId, scopeDescriptor);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Polls Microsoft Graph directly (via MSAL token) to detect an oauth2 permission grant.
+    /// Preferred over the az-cli-based overload for cross-platform compatibility.
+    /// Caller must supply the blueprint service principal object ID directly to avoid
+    /// a servicePrincipals $filter query that requires ConsistencyLevel: eventual.
+    /// </summary>
+    public static async Task<bool> PollAdminConsentAsync(
+        Services.GraphApiService graphApiService,
+        ILogger logger,
+        string tenantId,
+        string clientSpId,
+        string scopeDescriptor,
+        int timeoutSeconds,
+        int intervalSeconds,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(clientSpId))
+        {
+            logger.LogDebug("Blueprint service principal ID not available, falling back to az rest polling.");
+            return false;
+        }
+
+        var start = DateTime.UtcNow;
+        int lastProgressReportSeconds = 0;
+
+        logger.LogInformation(
+            "Waiting for admin consent to be granted. Open the URL above in a browser and complete the consent flow. The CLI will continue automatically (timeout: {TimeoutSeconds}s).",
+            timeoutSeconds);
+
+        try
+        {
+            while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
+            {
+                var elapsedSeconds = (int)(DateTime.UtcNow - start).TotalSeconds;
+                if (elapsedSeconds > 0 && elapsedSeconds - lastProgressReportSeconds >= 60)
+                {
+                    lastProgressReportSeconds = elapsedSeconds;
+                    logger.LogInformation(
+                        "Still waiting for admin consent... ({ElapsedSeconds}s / {TimeoutSeconds}s).",
+                        elapsedSeconds, timeoutSeconds);
+                }
+
+                // Mirror original az-rest polling behavior: check for any grant for clientId.
+                // No resourceId filter or scope check — consent just needs to exist.
+                var grantDoc = await graphApiService.GraphGetAsync(
+                    tenantId,
+                    $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpId}'",
+                    ct,
+                    AuthenticationConstants.RequiredPermissionGrantScopes);
+
+                if (grantDoc != null &&
+                    grantDoc.RootElement.TryGetProperty("value", out var arr) &&
+                    arr.GetArrayLength() > 0)
+                {
+                    logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
+                    return true;
+                }
+
+                logger.LogDebug("No consent grants found for blueprint SP {ClientSpId} yet.", clientSpId);
+
+                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
+            }
+
+            logger.LogWarning(
+                "Admin consent was not detected within {TimeoutSeconds}s. Continuing — you can re-run this command after granting consent.",
+                timeoutSeconds);
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogDebug("Polling for admin consent was cancelled or timed out for SP {ClientSpId} ({Scope}).", clientSpId, scopeDescriptor);
             return false;
         }
     }
@@ -104,6 +197,8 @@ public static class AdminConsentHelper
     /// <param name="requiredScopes">List of required scope names (case-insensitive)</param>
     /// <param name="logger">Logger for diagnostics</param>
     /// <param name="ct">Cancellation token</param>
+    /// <param name="scopes">OAuth2 scopes for Graph token acquisition. Should include DelegatedPermissionGrant.ReadWrite.All
+    /// to read oauth2PermissionGrants. When null, falls back to Azure CLI token which may lack required permissions.</param>
     /// <returns>True if all required scopes are already granted, false otherwise</returns>
     public static async Task<bool> CheckConsentExistsAsync(
         Services.GraphApiService graphApiService,
@@ -112,7 +207,8 @@ public static class AdminConsentHelper
         string resourceSpId,
         System.Collections.Generic.IEnumerable<string> requiredScopes,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        System.Collections.Generic.IEnumerable<string>? scopes = null)
     {
         if (string.IsNullOrWhiteSpace(clientSpId) || string.IsNullOrWhiteSpace(resourceSpId))
         {
@@ -123,11 +219,13 @@ public static class AdminConsentHelper
 
         try
         {
-            // Query existing grants
+            // Query existing grants — pass scopes so EnsureGraphHeadersAsync uses the MSAL token provider
+            // (which has DelegatedPermissionGrant.ReadWrite.All) instead of falling back to the Azure CLI token.
             var grantDoc = await graphApiService.GraphGetAsync(
                 tenantId,
                 $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpId}' and resourceId eq '{resourceSpId}'",
-                ct);
+                ct,
+                scopes);
 
             if (grantDoc == null || !grantDoc.RootElement.TryGetProperty("value", out var grants) || grants.GetArrayLength() == 0)
             {

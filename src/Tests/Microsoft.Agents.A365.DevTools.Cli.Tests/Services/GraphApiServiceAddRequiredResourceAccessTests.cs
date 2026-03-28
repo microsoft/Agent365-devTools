@@ -6,11 +6,16 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+/// <summary>
+/// Tests for AgentBlueprintService.AddRequiredResourceAccessAsync.
+/// </summary>
+[Collection("AgentBlueprintServiceAddRequiredResourceAccessTests")]
 public class AgentBlueprintServiceAddRequiredResourceAccessTests
 {
     private const string TenantId = "test-tenant-id";
@@ -27,7 +32,7 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         var graphLogger = Substitute.For<ILogger<GraphApiService>>();
         var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue responses
@@ -55,7 +60,7 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         var graphLogger = Substitute.For<ILogger<GraphApiService>>();
         var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue responses
@@ -82,7 +87,7 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         var graphLogger = Substitute.For<ILogger<GraphApiService>>();
         var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue empty application response
@@ -110,7 +115,7 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         var graphLogger = Substitute.For<ILogger<GraphApiService>>();
         var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue application response with null id
@@ -135,7 +140,7 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         var graphLogger = Substitute.For<ILogger<GraphApiService>>();
         var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Queue responses
@@ -177,7 +182,7 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         var graphLogger = Substitute.For<ILogger<GraphApiService>>();
         var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         var executor = CreateMockExecutor();
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Application with existing requiredResourceAccess
@@ -221,6 +226,15 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
 
         // Assert
         result.Should().BeTrue();
+    }
+
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
     }
 
     private static CommandExecutor CreateMockExecutor()
@@ -312,3 +326,6 @@ public class AgentBlueprintServiceAddRequiredResourceAccessTests
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
     }
 }
+
+[CollectionDefinition("AgentBlueprintServiceAddRequiredResourceAccessTests", DisableParallelization = true)]
+public class AgentBlueprintServiceAddRequiredResourceAccessTestCollection { }

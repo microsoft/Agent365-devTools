@@ -98,11 +98,50 @@ public static class ErrorMessages
 
     #region Configuration Messages
 
-    public const string ConfigFileNotFound = 
+    public const string ConfigFileNotFound =
         "Configuration file not found. Run 'a365 config init' to create one";
 
-    public const string InvalidConfigFormat = 
+    public const string InvalidConfigFormat =
         "Configuration file has invalid JSON format";
+
+    #endregion
+
+    #region Endpoint Registration Messages
+
+    public const string EndpointLocationRequiredForCreate =
+        "Location is required to register the messaging endpoint.";
+
+    public const string EndpointLocationRequiredForDelete =
+        "Location is required to delete the messaging endpoint.";
+
+    public const string EndpointLocationAddToConfig =
+        "Run 'a365 config init' to configure your location.";
+
+    public const string EndpointLocationExample =
+        "Example: \"location\": \"eastus\"";
+
+    #endregion
+
+    #region Configuration Wizard Messages
+
+    /// <summary>
+    /// Prompt header for region selection when creating a new App Service Plan.
+    /// </summary>
+    public const string WizardLocationPromptForAppServicePlan =
+        "Select Azure region for the new App Service Plan:";
+
+    /// <summary>
+    /// Prompt header for region selection when registering a Bot Framework endpoint without deployment.
+    /// </summary>
+    public const string WizardLocationPromptForEndpointRegistration =
+        "Select Azure region for Bot Framework endpoint registration:";
+
+    /// <summary>
+    /// Note explaining why location is required even for external hosting scenarios.
+    /// </summary>
+    public const string WizardLocationRequiredForExternalHostingNote =
+        "NOTE: An Azure region is required to register the messaging endpoint with the Bot Framework,\n" +
+        "      even when the agent is hosted externally (needDeployment: false).";
 
     #endregion
 
@@ -116,75 +155,4 @@ public static class ErrorMessages
 
     #endregion
 
-    #region MOS Token and Prerequisites Messages
-
-    public const string MosClientAppIdMissing = 
-        "Custom client app ID not found in configuration. Run 'a365 config init' first.";
-
-    public const string MosClientAppNotFound = 
-        "Custom client app not found in tenant. Verify the app exists and you have access.";
-
-    public const string MosTokenAcquisitionFailed = 
-        "Failed to acquire MOS token. Check your authentication and permissions.";
-
-    public const string MosAdminConsentRequired = 
-        "Admin consent required for MOS API permissions. Visit the Azure Portal to grant consent.";
-
-    /// <summary>
-    /// Gets mitigation steps for MOS service principal creation failures.
-    /// </summary>
-    public static List<string> GetMosServicePrincipalMitigation(string appId)
-    {
-        return new List<string>
-        {
-            $"Insufficient privileges to create service principal for {appId}.",
-            "Required role: Application Administrator, Cloud Application Administrator, or Global Administrator.",
-            $"Ask your tenant administrator to run: az ad sp create --id {appId}"
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for first-party client app service principal creation.
-    /// </summary>
-    public static List<string> GetFirstPartyClientAppServicePrincipalMitigation()
-    {
-        return new List<string>
-        {
-            "Insufficient privileges to create service principal for Microsoft first-party client app.",
-            "This app is required for MOS token acquisition.",
-            "Required role: Application Administrator, Cloud Application Administrator, or Global Administrator.",
-            $"Ask your tenant administrator to run: az ad sp create --id {MosConstants.TpsAppServicesClientAppId}"
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for all MOS resource app service principals.
-    /// </summary>
-    public static List<string> GetMosResourceAppsServicePrincipalMitigation()
-    {
-        return new List<string>
-        {
-            "Insufficient privileges to create service principals for MOS resource applications.",
-            "Required role: Application Administrator, Cloud Application Administrator, or Global Administrator.",
-            "Ask your tenant administrator to run:",
-            "  az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1",
-            "  az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43",
-            "  az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda"
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for MOS admin consent issues.
-    /// </summary>
-    public static List<string> GetMosAdminConsentMitigation(string clientAppId)
-    {
-        return new List<string>
-        {
-            "Admin consent required for MOS API permissions.",
-            $"Grant consent at: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{clientAppId}",
-            "Click 'Grant admin consent for [Your Organization]' and wait 1-2 minutes for propagation."
-        };
-    }
-
-    #endregion
 }

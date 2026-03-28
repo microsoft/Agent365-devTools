@@ -36,6 +36,8 @@
 - Focus on quality over quantity of tests
 - Add regression tests for bug fixes
 - Tests should verify CLI reliability
+- **Tests must assert requirements, not implementation** — when a test is changed to match new code behavior (rather than to reflect a changed requirement), that is a red flag. A test that silently tracks whatever the code does provides no regression protection. If a test needs to be updated, explicitly document the requirement the new assertion encodes (use `because:` in FluentAssertions). If you cannot articulate a requirement reason, the test change should be questioned.
+- **FluentAssertions `because:` is mandatory for non-obvious assertions** — any assertion on a URL structure, encoding format, security-sensitive behavior, or protocol requirement must include a `because:` clause explaining the invariant being enforced.
 - **Dispose IDisposable objects properly**:
   - `HttpResponseMessage` objects created in tests must be disposed
   - Even in mock/test handlers, follow proper disposal patterns
@@ -94,12 +96,14 @@
 
 ### Output and Logging
 - No emojis or special characters in logs, output, or comments
+- The output should be plain text, and display properly in windows, macOS, and Linux terminals
 - Keep user-facing messages clear and professional
 - Follow client-facing help text conventions
 
 ### Code Review Mindset
 - Be cautious about deleting code; avoid `git restore` without review
 - Do not create unnecessary documentation files
+- For user-facing changes (features, bug fixes, behavioral changes): verify `CHANGELOG.md` has an entry in the `[Unreleased]` section
 
 ---
 
@@ -113,7 +117,18 @@
   - Check if it's a legacy reference that needs to be updated
 - **Files to check**: All `.cs`, `.csx` files in the repository
 
-### Rule 2: Verify Copyright Headers
+### Rule 2: Flag Tests Changed to Match Implementation
+- **Description**: When a PR or staged change modifies a test assertion to match new code behavior, treat it as a high-priority review flag — not a routine update.
+- **The anti-pattern**: A test previously asserted `X`. Code changed, so the test was updated to assert `not X` (or a different value of `X`) without documenting *why the requirement changed*.
+- **Why it matters**: Tests that chase implementation provide zero regression protection. They give false confidence — all tests green, but the regression was in the test suite, not just the code. This is how silent regressions reach production.
+- **Action**: For every test assertion change in the diff:
+  1. Ask: "Did the *requirement* change, or just the implementation?"
+  2. If the requirement changed: the PR must include a comment or `because:` clause stating the new requirement.
+  3. If only the implementation changed: the test assertion should not need to change. Flag as **HIGH** if a test is weakened (e.g., `Contain` → `NotContain`, `Equal("x")` → `NotBeNull()`).
+  4. If the assertion is on a security-sensitive, protocol-level, or external-API contract (OAuth URLs, HTTP headers, encoding format): flag as **CRITICAL** — require explicit documented justification.
+- **Example of the failure mode** (from project history): Consent URL tests asserted `redirect_uri=` was present. When URL encoding was changed, tests were updated to match. No one asked whether `redirect_uri` was still required by the AAD protocol. The regression (`AADSTS500113`) reached the user before any test caught it.
+
+### Rule 3: Verify Copyright Headers
 - **Description**: Ensure all C# files have proper Microsoft copyright headers
 - **Action**: If a `.cs` file is missing a copyright header:
   - Add the Microsoft copyright header at the top of the file

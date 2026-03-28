@@ -54,9 +54,34 @@ public static class ConfigConstants
     public const string MessagingBotApiAppId = "5a807f24-c9de-44ee-a3a7-329e88a00ffc";
 
     /// <summary>
+    /// Messaging Bot API identifier URI (used for admin consent URL construction).
+    /// </summary>
+    public const string MessagingBotApiIdentifierUri = "https://botapi.skype.com";
+
+    /// <summary>
     /// Observability API App ID
     /// </summary>
     public const string ObservabilityApiAppId = "9b975845-388f-4429-889e-eab1ef63949c";
+
+    /// <summary>
+    /// Observability API identifier URI (uses api:// scheme — no public https URI registered).
+    /// </summary>
+    public const string ObservabilityApiIdentifierUri = "api://9b975845-388f-4429-889e-eab1ef63949c";
+
+    /// <summary>
+    /// Messaging Bot API scope used for admin consent URL construction.
+    /// Note: the orchestrator grants "Authorization.ReadWrite" + "user_impersonation" via OAuth2
+    /// permission grants; this scope name is what the /adminconsent endpoint accepts for the
+    /// same resource and maps to the same effective consent.
+    /// </summary>
+    public const string MessagingBotApiAdminConsentScope = "AgentData.ReadWrite";
+
+    /// <summary>
+    /// Observability API scope used for admin consent URL construction.
+    /// Note: the orchestrator grants "user_impersonation" via OAuth2 permission grants; this
+    /// scope is the consent-URL-facing name for the same resource.
+    /// </summary>
+    public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
 
     /// <summary>
     /// Production deployment environment

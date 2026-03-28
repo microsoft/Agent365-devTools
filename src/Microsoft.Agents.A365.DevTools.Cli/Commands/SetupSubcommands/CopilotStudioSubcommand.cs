@@ -1,10 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -16,6 +20,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class CopilotStudioSubcommand
 {
+    /// <summary>
+    /// Returns the requirement checks for <c>setup permissions copilotstudio</c>.
+    /// </summary>
+    public static List<IRequirementCheck> GetChecks(AzureAuthValidator auth)
+        => SetupCommand.GetBaseChecks(auth);
+
     /// <summary>
     /// Validates CopilotStudio permissions prerequisites without performing any actions.
     /// </summary>
@@ -29,6 +39,7 @@ internal static class CopilotStudioSubcommand
 
     public static Command CreateCommand(
         ILogger logger,
+        AzureAuthValidator authValidator,
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -56,14 +67,19 @@ internal static class CopilotStudioSubcommand
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
             var setupConfig = await configService.LoadAsync(config.FullName);
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -72,12 +88,21 @@ internal static class CopilotStudioSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
+            // Verify system requirements (PowerShell modules are required for Graph operations).
+            // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
+            // which would be a side effect in a mode that is supposed to be non-mutating.
+            if (!dryRun)
+            {
+                var copilotChecks = CopilotStudioSubcommand.GetChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(copilotChecks, setupConfig, logger, ct);
+            }
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Configure CopilotStudio Permissions");
                 logger.LogInformation("Would configure Power Platform API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Resource: Power Platform API ({ResourceAppId})", MosConstants.PowerPlatformApiResourceAppId);
+                logger.LogInformation("  - Resource: Power Platform API ({ResourceAppId})", PowerPlatformConstants.PowerPlatformApiResourceAppId);
                 logger.LogInformation("  - Scopes: CopilotStudio.Copilots.Invoke");
                 return;
             }
@@ -91,7 +116,7 @@ internal static class CopilotStudioSubcommand
                 graphApiService,
                 blueprintService);
 
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -124,9 +149,9 @@ internal static class CopilotStudioSubcommand
                 graphService,
                 blueprintService,
                 setupConfig,
-                MosConstants.PowerPlatformApiResourceAppId,
+                PowerPlatformConstants.PowerPlatformApiResourceAppId,
                 "Power Platform API (CopilotStudio)",
-                new[] { MosConstants.PermissionNames.PowerPlatformCopilotStudioInvoke },
+                new[] { PowerPlatformConstants.PermissionNames.PowerPlatformCopilotStudioInvoke },
                 logger,
                 addToRequiredResourceAccess: false,
                 setInheritablePermissions: true,
@@ -144,7 +169,8 @@ internal static class CopilotStudioSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to configure CopilotStudio permissions: {Message}", ex.Message);
+            logger.LogError("Failed to configure CopilotStudio permissions: {Message}", ex.Message);
+            logger.LogDebug(ex, "Failed to configure CopilotStudio permissions exception details");
             return false;
         }
     }

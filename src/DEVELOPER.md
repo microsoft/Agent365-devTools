@@ -148,32 +148,26 @@ a365 develop-mcp list-servers -e "myenv" --verbose
 
 ### Publish Command
 
-The `publish` command packages and publishes your agent manifest to the MOS (Microsoft Online Services) Titles service. It uses **embedded templates** for complete portability - no external file dependencies required.
+The `publish` command updates manifest IDs from your agent blueprint and packages the manifest files into a zip ready for upload to the Microsoft 365 Admin Center. It uses **embedded templates** for complete portability — no external file dependencies required.
 
 **Key Features:**
 - **Embedded Templates**: Manifest templates (JSON + PNG) are embedded in the CLI binary
-- **Fully Portable**: No external file dependencies - works from any directory
-- **Automatic ID Updates**: Updates both `manifest.json` and `agenticUserTemplateManifest.json` with agent blueprint ID
-- **Interactive Customization**: Prompts for manifest customization before upload
-- **Graceful Degradation**: Falls back to manual upload if permissions are insufficient
-- **Graph API Integration**: Configures federated identity credentials and role assignments
+- **Fully Portable**: No external file dependencies — works from any directory
+- **Automatic ID Updates**: Updates both `manifest.json` and `agenticUserTemplateManifest.json` with the agent blueprint ID
 
 **Command Options:**
-- `a365 publish` — Publish agent manifest with embedded templates
-- `a365 publish --dry-run` — Preview changes without uploading
-- `a365 publish --skip-graph` — Skip Graph API operations (federated identity, role assignments)
-- `a365 publish --mos-env <env>` — Target specific MOS environment (default: prod)
-- `a365 publish --mos-token <token>` — Override MOS authentication token
+- `a365 publish` — Update manifest IDs and create the manifest zip package
+- `a365 publish --dry-run` — Preview changes without writing files or creating the zip
 
 **Manifest Structure:**
 
 The publish command works with two manifest files:
 
 1. **`manifest.json`** - Teams app manifest with agent metadata
-   - Updated fields: `id`, `name.short`, `name.full`, `bots[0].botId`
-   
+   - Updated fields: `id`, `copilotAgents.customEngineAgents[0].id`, `bots[0].botId`
+
 2. **`agenticUserTemplateManifest.json`** - Agent identity blueprint configuration
-   - Updated fields: `agentIdentityBlueprintId` (replaces old `webApplicationInfo.id`)
+   - Updated field: `agentIdentityBlueprintId`
 
 **Workflow:**
 
@@ -184,26 +178,11 @@ a365 config display
 # 2. Run setup to create agent blueprint (if not already done)
 a365 setup all
 
-# 3. Publish the manifest
+# 3. Package the manifest
 a365 publish
+
+# 4. Upload the generated manifest.zip to the Microsoft 365 Admin Center
 ```
-
-**Interactive Customization Prompt:**
-
-Before uploading, you'll be prompted to customize:
-- **Version**: Must increment for republishing (e.g., 1.0.0 → 1.0.1)
-- **Agent Name**: Short (≤30 chars) and full display names
-- **Descriptions**: Short (1-2 sentences) and full capabilities
-- **Developer Info**: Name, website URL, privacy URL
-- **Icons**: Custom branding (color.png, outline.png)
-
-**Manual Upload Fallback:**
-
-If you receive an authorization error (401/403), the CLI will:
-1. Create the manifest package locally in a temporary directory
-2. Display the package location
-3. Provide instructions for manual upload to MOS Titles portal
-4. Reference documentation for detailed steps
 
 **Example:**
 
@@ -213,90 +192,32 @@ a365 publish
 
 # Dry run to preview changes
 a365 publish --dry-run
-
-# Skip Graph API operations
-a365 publish --skip-graph
-
-# Use custom MOS environment
-$env:MOS_TITLES_URL = "https://titles.dev.mos.microsoft.com"
-a365 publish
 ```
 
 **Manual Upload Instructions:**
 
-If automated upload fails due to insufficient privileges:
+After `a365 publish` completes:
 
-1. Locate the generated `manifest.zip` file (path shown in error message)
-2. Navigate to MOS Titles portal: `https://titles.prod.mos.microsoft.com`
-3. Go to Packages section
-4. Upload the manifest.zip file
-5. Follow the portal workflow to complete publishing
-
-For detailed MOS upload instructions, see the [MOS Titles Documentation](https://aka.ms/mos-titles-docs).
-
-**MOS Token Authentication:**
-
-The publish command uses **custom client app** authentication to acquire MOS (Microsoft Office Store) tokens:
-
-- **MosTokenService**: Native C# service using MSAL.NET for interactive authentication
-- **Custom Client App**: Uses the client app ID configured during `a365 config init` (not hardcoded Microsoft IDs)
-- **Tenant-Specific Authorities**: Uses `https://login.microsoftonline.com/{tenantId}` for single-tenant app support (not `/common` endpoint)
-- **Token Caching**: Caches tokens locally in `.mos-token-cache.json` to reduce auth prompts
-- **MOS Environments**: Supports prod, sdf, test, gccm, gcch, and dod environments
-- **Redirect URI**: Uses `http://localhost:8400/` for OAuth callback (aligns with custom client app configuration)
-
-**Important:** Single-tenant apps (created after October 15, 2018) cannot use the `/common` endpoint due to Azure policy. The CLI automatically uses tenant-specific authority URLs built from the `TenantId` in your configuration to ensure compatibility.
-
-**MOS Prerequisites (Auto-Configured):**
-
-On first run, `a365 publish` automatically configures MOS API access:
-
-1. **Service Principal Creation**: Creates service principals for MOS resource apps in your tenant:
-   - `6ec511af-06dc-4fe2-b493-63a37bc397b1` (TPS AppServices 3p App - MOS publishing)
-   - `8578e004-a5c6-46e7-913e-12f58912df43` (Power Platform API - MOS token acquisition)
-   - `e8be65d6-d430-4289-a665-51bf2a194bda` (MOS Titles API - titles.prod.mos.microsoft.com access)
-
-2. **Idempotency Check**: Skips setup if MOS permissions already exist in custom client app
-
-3. **Admin Consent Detection**: Checks OAuth2 permission grants and prompts user to grant admin consent if missing
-
-4. **Fail-Fast on Privilege Errors**: If you lack Application Administrator/Cloud Application Administrator/Global Administrator role, the CLI shows manual service principal creation commands:
-   ```bash
-   az ad sp create --id 6ec511af-06dc-4fe2-b493-63a37bc397b1
-   az ad sp create --id 8578e004-a5c6-46e7-913e-12f58912df43
-   az ad sp create --id e8be65d6-d430-4289-a665-51bf2a194bda
-   ```
+1. Locate the generated `manifest.zip` file (path shown in output)
+2. Go to [Microsoft 365 Admin Center](https://admin.microsoft.com) > Settings > Integrated apps
+3. Upload the `manifest.zip` file
+4. Follow the portal workflow to complete publishing
 
 **Architecture Details:**
 
-- **MosConstants.cs**: Centralized constants for MOS resource app IDs, environment scopes, authorities, redirect URI
-- **MosTokenService.cs**: Handles token acquisition using MSAL.NET PublicClientApplication with tenant-specific authorities:
-  - Validates both `ClientAppId` and `TenantId` from configuration
-  - Builds authority URL dynamically: `https://login.microsoftonline.com/{tenantId}`
-  - Government cloud: `https://login.microsoftonline.us/{tenantId}`
-  - Returns null if TenantId is missing (fail-fast validation)
-- **PublishHelpers.EnsureMosPrerequisitesAsync**: Just-in-time provisioning of MOS prerequisites with idempotency and error handling
-- **ManifestTemplateService**: Handles embedded resource extraction and manifest customization
+- **ManifestTemplateService**: Handles embedded resource extraction and manifest ID updates
 - **Embedded Resources**: 4 files embedded at build time:
-  - `manifest.json` - Base Teams app manifest
-  - `agenticUserTemplateManifest.json` - Agent identity blueprint manifest
-  - `color.png` - Color icon (192x192)
-  - `outline.png` - Outline icon (32x32)
-- **Temporary Working Directory**: Templates extracted to temp directory, customized, then zipped
-- **Automatic Cleanup**: Temp directory removed after successful publish
+  - `manifest.json` — Base Teams app manifest
+  - `agenticUserTemplateManifest.json` — Agent identity blueprint manifest
+  - `color.png` — Color icon (192x192)
+  - `outline.png` — Outline icon (32x32)
+- **Temporary Working Directory**: Templates extracted to temp directory, IDs updated, then zipped
+- **Automatic Cleanup**: Temp directory removed after successful packaging
 
 **Error Handling:**
 
-- **AADSTS650052 (Missing Service Principal/Admin Consent)**: Shows Portal URL for admin consent or prompts interactive consent
-- **AADSTS50194 (Single-Tenant App / Multi-Tenant Endpoint)**: Fixed by using tenant-specific authority URLs instead of `/common` endpoint
-- **MOS Prerequisites Failure**: Displays manual `az ad sp create` commands for all three MOS resource apps if automatic creation fails
-- **401 Unauthorized / 403 Forbidden**: Graceful fallback with manual upload instructions
 - **Missing Blueprint ID**: Clear error message directing user to run `a365 setup`
-- **Missing TenantId**: MosTokenService returns null if TenantId is not configured (fail-fast validation)
 - **Invalid Manifest**: JSON validation errors with specific field information
-- **Network Errors**: Detailed HTTP status codes and response bodies for troubleshooting
-- **Consistent Error Codes**: Uses `ErrorCodes.MosTokenAcquisitionFailed`, `ErrorCodes.MosPrerequisitesFailed`, `ErrorCodes.MosAdminConsentRequired`
-- **Centralized Messages**: Error guidance from `ErrorMessages.GetMosServicePrincipalMitigation()` and `ErrorMessages.GetMosAdminConsentMitigation()`
 
 ## Permissions Architecture
 
@@ -833,32 +754,30 @@ Follow Semantic Versioning: `MAJOR.MINOR.PATCH[-PRERELEASE]`
 
 ### Create Release
 
-1. Update version in `Microsoft.Agents.A365.DevTools.Cli.csproj`:
-   ```xml
-   <Version>1.0.0-beta.2</Version>
-   ```
+Version is managed automatically by [Nerdbank.GitVersioning](https://github.com/dotnet/Nerdbank.GitVersioning) via `src/version.json`. The NuGet publish process is fully automated through GitHub Actions.
 
-2. Build and pack:
-   ```bash
-   dotnet clean
-   dotnet build -c Release
-   dotnet pack -c Release
-   ```
+**Steps to release:**
 
-3. Test locally:
-   ```bash
-   dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli
-   dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli \
-     --add-source ./bin/Release \
-     --prerelease
-   ```
+1. **Update CHANGELOG.md** — move items from `[Unreleased]` to a new version section (e.g., `[1.2.0] - YYYY-MM`). Update the comparison links at the bottom.
 
-4. Publish to NuGet (when ready):
-   ```bash
-   dotnet nuget push ./bin/Release/Microsoft.Agents.A365.DevTools.Cli.1.0.0-beta.2.nupkg \
-     --source https://api.nuget.org/v3/index.json \
-     --api-key YOUR_API_KEY
-   ```
+2. **Merge to main** — CI runs automatically: builds, tests, and uploads the NuGet package as a build artifact.
+
+3. **Publish the GitHub release draft** — release-drafter auto-creates a draft release from merged PR titles and labels. Go to [GitHub Releases](https://github.com/microsoft/Agent365-devTools/releases), review the draft, set the correct version tag (e.g., `v1.2.0`), and click **Publish release**.
+
+4. **NuGet publish runs automatically** — the `release.yml` workflow triggers on `release: published` and pushes the package to NuGet.org using the `NUGET_API_KEY` repository secret.
+
+**Test locally before releasing:**
+```bash
+cd src
+dotnet build dirs.proj -c Release
+dotnet pack dirs.proj -c Release --output ../NuGetPackages
+
+dotnet tool uninstall -g Microsoft.Agents.A365.DevTools.Cli
+dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli \
+  --add-source ../NuGetPackages \
+  --prerelease
+a365 --version
+```
 
 ---
 
@@ -951,6 +870,7 @@ Then run: `source ~/.bashrc` (or `source ~/.zshrc`)
 - [ ] No breaking changes (or documented)
 - [ ] Error handling implemented
 - [ ] Logging added
+- [ ] CHANGELOG.md updated in `[Unreleased]` (required for user-facing changes: features, bug fixes, behavioral changes)
 
 ---
 

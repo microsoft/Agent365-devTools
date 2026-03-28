@@ -6,8 +6,8 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
-using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -21,21 +21,20 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// </summary>
 public class SubcommandValidationTests
 {
-    private readonly IAzureValidator _mockAzureValidator;
-    private readonly IClientAppValidator _mockClientAppValidator;
+    private readonly ILogger _mockLogger;
 
     public SubcommandValidationTests()
     {
-        _mockAzureValidator = Substitute.For<IAzureValidator>();
-        _mockClientAppValidator = Substitute.For<IClientAppValidator>();
+        _mockLogger = Substitute.For<ILogger>();
     }
 
-    #region InfrastructureSubcommand Validation Tests
+    #region InfrastructureRequirementCheck Validation Tests
 
     [Fact]
     public async Task InfrastructureSubcommand_WithValidConfig_PassesValidation()
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = true,
@@ -44,20 +43,21 @@ public class SubcommandValidationTests
             AppServicePlanName = "test-plan",
             WebAppName = "test-webapp",
             Location = "westus",
-            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
+            AppServicePlanSku = "F1"
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        errors.Should().BeEmpty();
+        result.Passed.Should().BeTrue();
     }
 
     [Fact]
     public async Task InfrastructureSubcommand_WithMissingSubscriptionId_FailsValidation()
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = true,
@@ -66,21 +66,22 @@ public class SubcommandValidationTests
             AppServicePlanName = "test-plan",
             WebAppName = "test-webapp",
             Location = "westus",
-            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
+            AppServicePlanSku = "F1"
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        errors.Should().ContainSingle()
-            .Which.Should().Contain("subscriptionId");
+        result.Passed.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("subscriptionId");
     }
 
     [Fact]
     public async Task InfrastructureSubcommand_WithMissingResourceGroup_FailsValidation()
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = true,
@@ -89,21 +90,22 @@ public class SubcommandValidationTests
             AppServicePlanName = "test-plan",
             WebAppName = "test-webapp",
             Location = "westus",
-            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
+            AppServicePlanSku = "F1"
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        errors.Should().ContainSingle()
-            .Which.Should().Contain("resourceGroup");
+        result.Passed.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("resourceGroup");
     }
 
     [Fact]
     public async Task InfrastructureSubcommand_WithMultipleMissingFields_ReturnsAllErrors()
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = true,
@@ -112,23 +114,24 @@ public class SubcommandValidationTests
             AppServicePlanName = "",
             WebAppName = "test-webapp",
             Location = "westus",
-            AppServicePlanSku = "F1" // Use F1 to avoid B1 quota warning
+            AppServicePlanSku = "F1"
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        errors.Should().HaveCount(3);
-        errors.Should().Contain(e => e.Contains("subscriptionId"));
-        errors.Should().Contain(e => e.Contains("resourceGroup"));
-        errors.Should().Contain(e => e.Contains("appServicePlanName"));
+        result.Passed.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("subscriptionId");
+        result.ErrorMessage.Should().Contain("resourceGroup");
+        result.ErrorMessage.Should().Contain("appServicePlanName");
     }
 
     [Fact]
     public async Task InfrastructureSubcommand_WhenNeedDeploymentFalse_SkipsValidation()
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = false,
@@ -140,16 +143,17 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        errors.Should().BeEmpty();
+        result.Passed.Should().BeTrue();
     }
 
     [Fact]
     public async Task InfrastructureSubcommand_WithInvalidSku_FailsValidation()
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = true,
@@ -162,17 +166,18 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        errors.Should().ContainSingle()
-            .Which.Should().Contain("Invalid appServicePlanSku");
+        result.Passed.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Invalid appServicePlanSku");
     }
 
     [Fact]
     public async Task InfrastructureSubcommand_WithB1Sku_PassesValidation()
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = true,
@@ -185,10 +190,10 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
-        // Assert - B1 quota warning is now logged at execution time, not during validation
-        errors.Should().BeEmpty();
+        // Assert
+        result.Passed.Should().BeTrue();
     }
 
     [Theory]
@@ -201,6 +206,7 @@ public class SubcommandValidationTests
     public async Task InfrastructureSubcommand_WithValidSku_PassesValidationOrWarning(string sku)
     {
         // Arrange
+        var check = new InfrastructureRequirementCheck();
         var config = new Agent365Config
         {
             NeedDeployment = true,
@@ -213,48 +219,10 @@ public class SubcommandValidationTests
         };
 
         // Act
-        var errors = await InfrastructureSubcommand.ValidateAsync(config, _mockAzureValidator);
-
-        // Assert - All valid SKUs pass validation (B1 quota warning is logged at execution time)
-        errors.Should().BeEmpty();
-    }
-
-    #endregion
-
-    #region BlueprintSubcommand Validation Tests
-
-    [Fact]
-    public async Task BlueprintSubcommand_WithValidConfig_PassesValidation()
-    {
-        // Arrange
-        var config = new Agent365Config
-        {
-            ClientAppId = "12345678-1234-1234-1234-123456789012"
-        };
-
-        // Act
-        var errors = await BlueprintSubcommand.ValidateAsync(config, _mockAzureValidator, _mockClientAppValidator);
+        var result = await check.CheckAsync(config, _mockLogger);
 
         // Assert
-        errors.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task BlueprintSubcommand_WithMissingClientAppId_FailsValidation()
-    {
-        // Arrange
-        var config = new Agent365Config
-        {
-            ClientAppId = ""
-        };
-
-        // Act
-        var errors = await BlueprintSubcommand.ValidateAsync(config, _mockAzureValidator, _mockClientAppValidator);
-
-        // Assert
-        errors.Should().HaveCountGreaterThan(0);
-        errors.Should().Contain(e => e.Contains("clientAppId"));
-        errors.Should().Contain(e => e.Contains("learn.microsoft.com"));
+        result.Passed.Should().BeTrue();
     }
 
     #endregion

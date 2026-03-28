@@ -49,6 +49,7 @@ public sealed class DelegatedConsentService
         try
         {
             _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app");
+            _logger.LogInformation("");
             _logger.LogInformation("    Client App ID: {AppId}", callingAppId);
             _logger.LogInformation("    Tenant ID: {TenantId}", tenantId);
             _logger.LogInformation("    Required Scope: {Scope}", TargetScope);
@@ -68,7 +69,7 @@ public sealed class DelegatedConsentService
 
             // Get Graph access token with required scopes
             _logger.LogInformation("Acquiring Graph API access token...");
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, cancellationToken);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token");
@@ -171,7 +172,7 @@ public sealed class DelegatedConsentService
 
             // Create new service principal
             _logger.LogInformation("Creating service principal for app {AppId}", appId);
-            var createSpUrl = "https://graph.microsoft.com/v1.0/servicePrincipals";
+            var createSpUrl = $"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals";
             var createBody = new
             {
                 appId = appId
@@ -273,24 +274,18 @@ public sealed class DelegatedConsentService
                 _logger.LogError("Fresh login failed");
                 return null;
             }
-            
+
             _logger.LogInformation("    Acquiring fresh Graph API token...");
-            
-            // Get fresh token
-            var tokenResult = await executor.ExecuteAsync(
-                "az",
-                $"account get-access-token --resource https://graph.microsoft.com/ --tenant {tenantId} --query accessToken -o tsv",
-                captureOutput: true,
-                cancellationToken: cancellationToken);
-            
-            if (tokenResult.Success && !string.IsNullOrWhiteSpace(tokenResult.StandardOutput))
+
+            var token = await _graphService.GetGraphAccessTokenAsync(tenantId);
+
+            if (!string.IsNullOrWhiteSpace(token))
             {
-                var token = tokenResult.StandardOutput.Trim();
                 _logger.LogInformation("    Fresh token acquired successfully");
                 return token;
             }
-            
-            _logger.LogError("Failed to acquire fresh token: {Error}", tokenResult.StandardError);
+
+            _logger.LogError("Failed to acquire fresh token after re-authentication");
             return null;
         }
         catch (Exception ex)
@@ -335,8 +330,8 @@ public sealed class DelegatedConsentService
     {
         try
         {
-            var url = $"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
-            var response = await httpClient.GetAsync(url, cancellationToken);
+            var url = $"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
+            using var response = await httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -376,9 +371,9 @@ public sealed class DelegatedConsentService
         try
         {
             var filter = $"clientId eq '{clientId}' and resourceId eq '{resourceId}' and consentType eq '{AllPrincipalsConsentType}'";
-            var url = $"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}";
+            var url = $"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}";
 
-            var response = await httpClient.GetAsync(url, cancellationToken);
+            using var response = await httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -443,13 +438,13 @@ public sealed class DelegatedConsentService
             _logger.LogInformation("    Updating grant {GrantId} to include scope: {Scope}", grantId, scopeToAdd);
 
             // Update the grant
-            var updateUrl = $"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/{grantId}";
+            var updateUrl = $"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants/{grantId}";
             var updateBody = new
             {
                 scope = newScope
             };
 
-            var updateResponse = await httpClient.PatchAsync(
+            using var updateResponse = await httpClient.PatchAsync(
                 updateUrl,
                 new StringContent(
                     JsonSerializer.Serialize(updateBody),
@@ -490,7 +485,7 @@ public sealed class DelegatedConsentService
     {
         try
         {
-            var createUrl = "https://graph.microsoft.com/v1.0/oauth2PermissionGrants";
+            var createUrl = $"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants";
             var createBody = new
             {
                 clientId = clientId,
@@ -499,7 +494,7 @@ public sealed class DelegatedConsentService
                 scope = scope
             };
 
-            var createResponse = await httpClient.PostAsync(
+            using var createResponse = await httpClient.PostAsync(
                 createUrl,
                 new StringContent(
                     JsonSerializer.Serialize(createBody),
@@ -515,8 +510,8 @@ public sealed class DelegatedConsentService
             }
 
             var responseJson = await createResponse.Content.ReadAsStringAsync(cancellationToken);
-            var response = JsonDocument.Parse(responseJson);
-            var grantId = response.RootElement.GetProperty("id").GetString();
+            using var responseDoc = JsonDocument.Parse(responseJson);
+            var grantId = responseDoc.RootElement.GetProperty("id").GetString();
 
             _logger.LogInformation("    Permission grant created successfully (ID: {GrantId})", grantId);
             return true;

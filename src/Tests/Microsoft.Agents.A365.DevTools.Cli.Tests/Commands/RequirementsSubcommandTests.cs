@@ -6,8 +6,10 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -149,6 +151,50 @@ public class RequirementsSubcommandTests
         result.Should().NotBeNull();
         result.Passed.Should().BeFalse();
         result.Details.Should().BeNull();
+    }
+
+    #endregion
+
+    #region GetRequirementChecks Composition Tests
+
+    [Fact]
+    public void GetRequirementChecks_ContainsAllExpectedCheckTypes()
+    {
+        // GetRequirementChecks is now derived from GetSystemRequirementChecks + GetConfigRequirementChecks.
+        // This test guards against a check being accidentally added to one sub-list but not propagated.
+        var mockExecutor = Substitute.ForPartsOf<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
+        var mockValidator = Substitute.For<IClientAppValidator>();
+
+        var checks = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
+
+        checks.Should().HaveCount(5, "system (2) + config (3) checks");
+        checks.Should().ContainSingle(c => c is FrontierPreviewRequirementCheck);
+        checks.Should().ContainSingle(c => c is PowerShellModulesRequirementCheck);
+        checks.Should().ContainSingle(c => c is AzureAuthRequirementCheck);
+        checks.Should().ContainSingle(c => c is LocationRequirementCheck);
+        checks.Should().ContainSingle(c => c is ClientAppRequirementCheck);
+    }
+
+    [Fact]
+    public void GetRequirementChecks_SystemChecksRunBeforeConfigChecks()
+    {
+        // GetRequirementChecks returns system checks (FrontierPreview, PowerShellModules)
+        // before config checks (AzureAuth, Location, ClientApp).
+        var mockExecutor = Substitute.ForPartsOf<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
+        var mockValidator = Substitute.For<IClientAppValidator>();
+
+        var all = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
+
+        // System checks come first
+        var types = all.Select(c => c.GetType()).ToList();
+        types.IndexOf(typeof(FrontierPreviewRequirementCheck))
+            .Should().BeLessThan(types.IndexOf(typeof(AzureAuthRequirementCheck)),
+                "system checks should run before config checks");
+        types.IndexOf(typeof(PowerShellModulesRequirementCheck))
+            .Should().BeLessThan(types.IndexOf(typeof(LocationRequirementCheck)),
+                "system checks should run before config checks");
     }
 
     #endregion

@@ -174,7 +174,7 @@ a365 deploy mcp                     # Update MCP only
 
 ### Publish
 ```bash
-a365 publish                        # Publish to MOS
+a365 publish                        # Package manifest for upload to Microsoft 365 Admin Center
 a365 publish --dry-run              # Show publish plan
 ```
 
@@ -472,7 +472,6 @@ $env:AGENT365_TEST_MANAGER_EMAIL
 
 # CLI configuration (optional)
 $env:AGENT365_CONFIG_PATH           # Override default config location
-$env:MOS_TITLES_URL                 # Override MOS endpoint (testing)
 ```
 
 ---

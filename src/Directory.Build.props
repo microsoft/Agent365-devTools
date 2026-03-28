@@ -31,6 +31,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <PackageReleaseNotes>See https://github.com/microsoft/Agent365-devTools/blob/main/CHANGELOG.md for release notes.</PackageReleaseNotes>
 
     <!-- Version is managed by Nerdbank.GitVersioning (nbgv) via version.json -->
     <!-- PackageVersion and Version properties are set automatically by nbgv -->

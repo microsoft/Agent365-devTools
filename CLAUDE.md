@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Microsoft Agent 365 DevTools CLI (`a365`) - A .NET 8.0 CLI tool for deploying and managing Microsoft Agent 365 applications on Azure. Supports .NET, Node.js, and Python applications with auto-detection.
+Microsoft Agent 365 DevTools CLI (`a365`) - A .NET CLI tool built on .NET 8.0 with support for running on .NET 8.0 or higher (e.g., .NET 9, 10). Used for deploying and managing Microsoft Agent 365 applications on Azure. Supports .NET, Node.js, and Python applications with auto-detection.
 
 ## Build Commands
 
@@ -134,9 +134,9 @@ Central NuGet package management in `src/Directory.Packages.props`. Key dependen
 
 ## Key Documentation
 
-- `Readme-Usage.md` - CLI usage guide with examples
+- [Agent 365 CLI reference](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/) - CLI usage guide with examples
 - `.github/copilot-instructions.md` - Code standards and review rules
-- `docs/commands/` - Individual command documentation
+- `docs/commands/` - Index/pointers to CLI command documentation on Microsoft Learn
 
 ## Code Review Checklist
 

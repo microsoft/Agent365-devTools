@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -94,9 +95,9 @@ public class VersionCheckServiceTests
     [InlineData("1.1.0-preview.100", "1.1.0-preview.50", false)] // Current preview is newer
     public void ParseVersion_ComparesVersionsCorrectly(string current, string latest, bool expectedNewerAvailable)
     {
-        // Act - ParseVersion is internal, accessible to test assembly
-        var currentVersion = _versionCheckService.ParseVersion(current);
-        var latestVersion = _versionCheckService.ParseVersion(latest);
+        // Act - ParseVersion moved to VersionCheckHelper (internal, accessible to test assembly)
+        var currentVersion = VersionCheckHelper.ParseVersion(current);
+        var latestVersion = VersionCheckHelper.ParseVersion(latest);
 
         var isNewer = latestVersion > currentVersion;
 

@@ -6,6 +6,7 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -13,6 +14,15 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
 public class AgentBlueprintServiceVerifyInheritablePermissionsTests
 {
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
+    }
+
     [Fact]
     public async Task VerifyInheritablePermissionsAsync_PermissionsExist_ReturnsScopes()
     {
@@ -34,7 +44,7 @@ public class AgentBlueprintServiceVerifyInheritablePermissionsTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         var response = new
@@ -97,7 +107,7 @@ public class AgentBlueprintServiceVerifyInheritablePermissionsTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         var response = new
@@ -157,7 +167,7 @@ public class AgentBlueprintServiceVerifyInheritablePermissionsTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(graphLogger, executor, handler);
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(blueprintLogger, graphService);
 
         // Simulate 404 Not Found to trigger API failure path

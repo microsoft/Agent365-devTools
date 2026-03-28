@@ -15,7 +15,6 @@ This folder contains centralized constant definitions used throughout the CLI. C
 | **AuthenticationConstants.cs** | OAuth scopes, redirect URIs, authority URLs | Authentication services |
 | **ConfigConstants.cs** | Configuration-related constants, environment URLs | ConfigService, endpoint resolution |
 | **McpConstants.cs** | MCP (Model Context Protocol) constants | Agent 365 Tools App IDs, MCP endpoints |
-| **MosConstants.cs** | MOS (Microsoft Online Services) Titles constants | PublishCommand, MosTokenService |
 | **GraphApiConstants.cs** | Microsoft Graph API constants | GraphApiService, permission configuration |
 | **CommandNames.cs** | CLI command name strings | Command registration, help text |
 
@@ -57,11 +56,6 @@ public static class ErrorMessages
     public static string ConfigFileNotFound(string path)
         => $"Configuration file not found: {path}";
 
-    public static string GetMosServicePrincipalMitigation()
-        => "Run the following commands to create required service principals:...";
-
-    public static string GetMosAdminConsentMitigation(string clientAppId)
-        => $"Admin consent required. Visit: https://login.microsoftonline.com/...";
 }
 ```
 
@@ -113,30 +107,6 @@ public static class McpConstants
     // Resource identifiers
     public const string MessagingBotApiResourceId = "...";
     public const string ObservabilityApiResourceId = "...";
-}
-```
-
----
-
-## MosConstants
-
-MOS Titles service constants:
-
-```csharp
-public static class MosConstants
-{
-    // MOS Resource App IDs (for service principal creation - see source for actual values)
-    public const string TpsAppServicesAppId = "...";
-    public const string PowerPlatformApiAppId = "...";
-    public const string MosTitlesApiAppId = "...";
-
-    // Environment-specific scopes
-    public static string GetMosScope(string environment) => environment switch
-    {
-        "prod" => "api://...",
-        "sdf" => "api://...",
-        _ => "api://..."
-    };
 }
 ```
 

@@ -1,6 +1,6 @@
 [
   {
-    "name": "AddDraftAttachmentsAsync",
+    "name": "AddDraftAttachments",
     "description": "Add attachments (URI) to an existing draft message.",
     "inputSchema": {
       "type": "object",
@@ -29,7 +29,7 @@
     "enabled": true
   },
   {
-    "name": "UpdateDraftAsync",
+    "name": "UpdateDraft",
     "description": "Update a draft's recipients, subject, body, and attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
     "inputSchema": {
       "type": "object",
@@ -112,7 +112,7 @@
     "enabled": true
   },
   {
-    "name": "SendEmailWithAttachmentsAsync",
+    "name": "SendEmailWithAttachments",
     "description": "Create and send an email with optional attachments. Supports both file URIs (OneDrive/SharePoint) and direct file uploads (base64-encoded). IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
     "inputSchema": {
       "type": "object",
@@ -189,7 +189,7 @@
     "enabled": true
   },
   {
-    "name": "CreateDraftMessageAsync",
+    "name": "CreateDraftMessage",
     "description": "Create a draft email in the signed-in user's mailbox without sending it. IMPORTANT: If recipient names are provided instead of email addresses, you MUST first search for users to find their email addresses.",
     "inputSchema": {
       "type": "object",
@@ -237,7 +237,7 @@
     "enabled": true
   },
   {
-    "name": "GetMessageAsync",
+    "name": "GetMessage",
     "description": "Get a message by ID from the signed-in user's mailbox.",
     "inputSchema": {
       "type": "object",
@@ -249,6 +249,10 @@
         "preferHtml": {
           "type": "boolean",
           "description": "If true, request HTML body format"
+        },
+        "bodyPreviewOnly": {
+          "type": "boolean",
+          "description": "If true, returns only the body preview (~255 chars) instead of the full body. Useful for reducing payload size."
         }
       },
       "required": [
@@ -262,7 +266,7 @@
     "enabled": true
   },
   {
-    "name": "UpdateMessageAsync",
+    "name": "UpdateMessage",
     "description": "Update a message's mutable properties (subject, body, categories, importance).",
     "inputSchema": {
       "type": "object",
@@ -306,7 +310,37 @@
     "enabled": true
   },
   {
-    "name": "DeleteMessageAsync",
+    "name": "FlagEmail",
+    "description": "Update the flag status on an email message. Supports flagging, completing, or clearing a flag.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Id of the email to be flagged."
+        },
+        "flagStatus": {
+          "type": "string",
+          "description": "Flag status to set: NotFlagged, Complete, or Flagged."
+        },
+        "mailboxAddress": {
+          "type": "string",
+          "description": "Address of the shared mailbox to update mail."
+        }
+      },
+      "required": [
+        "messageId",
+        "flagStatus"
+      ]
+    },
+    "responseTemplate": "Message '{{messageId}}' flag status updated to '{{flagStatus}}' (mock).",
+    "delayMs": 250,
+    "errorRate": 0,
+    "statusCode": 200,
+    "enabled": true
+  },
+  {
+    "name": "DeleteMessage",
     "description": "Delete a message from the signed-in user's mailbox.",
     "inputSchema": {
       "type": "object",
@@ -327,7 +361,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyToMessageAsync",
+    "name": "ReplyToMessage",
     "description": "Send a reply to an existing message.",
     "inputSchema": {
       "type": "object",
@@ -377,7 +411,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyAllToMessageAsync",
+    "name": "ReplyAllToMessage",
     "description": "Send a reply-all to an existing message.",
     "inputSchema": {
       "type": "object",
@@ -427,7 +461,7 @@
     "enabled": true
   },
   {
-    "name": "SendDraftMessageAsync",
+    "name": "SendDraftMessage",
     "description": "Send an existing draft message by ID.",
     "inputSchema": {
       "type": "object",
@@ -448,42 +482,32 @@
     "enabled": true
   },
   {
-    "name": "SearchMessagesAsync",
-    "description": "Search Outlook messages using Microsoft Graph Search API with KQL-style queries.",
+    "name": "SearchMessages",
+    "description": "Search for email messages using natural language queries powered by Microsoft 365 Copilot. This tool searches across your mailbox to find relevant emails. Use natural language to describe what you're looking for (e.g., 'emails from Sarah about the budget', 'unread messages from this week', 'messages with attachments about the project'). The search focuses specifically on email content and metadata.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "queryString": {
+        "message": {
           "type": "string",
-          "description": "KQL-style search string (e.g., 'contoso OR from:user@example.com')"
+          "description": "Natural language search query for finding emails (e.g., 'emails from John about the project', 'unread messages from last week')"
         },
-        "from": {
-          "type": "integer",
-          "description": "Zero-based offset of the first result"
-        },
-        "size": {
-          "type": "integer",
-          "description": "Page size (1-50)"
-        },
-        "enableTopResults": {
-          "type": "boolean",
-          "description": "If true, returns top results with relevance boosting"
-        },
-        "includeBody": {
-          "type": "boolean",
-          "description": "If true, include full body HTML content for each message (larger payload). BodyLength and BodyTruncated metadata returned."
+        "conversationId": {
+          "type": "string",
+          "description": "Existing conversation id (GUID). Auto-created if missing."
         }
       },
-      "required": []
+      "required": [
+        "message"
+      ]
     },
-    "responseTemplate": "Message search completed with query '{{queryString}}' (mock).",
+    "responseTemplate": "Message search completed for '{{message}}' (mock).",
     "delayMs": 250,
     "errorRate": 0,
     "statusCode": 200,
     "enabled": true
   },
   {
-    "name": "GetAttachmentsAsync",
+    "name": "GetAttachments",
     "description": "Get all attachments from a message, returning attachment metadata (ID, name, size, type).",
     "inputSchema": {
       "type": "object",
@@ -504,7 +528,7 @@
     "enabled": true
   },
   {
-    "name": "DownloadAttachmentAsync",
+    "name": "DownloadAttachment",
     "description": "Download attachment content from a message. Returns the content as base64-encoded string.",
     "inputSchema": {
       "type": "object",
@@ -530,7 +554,7 @@
     "enabled": true
   },
   {
-    "name": "UploadAttachmentAsync",
+    "name": "UploadAttachment",
     "description": "Upload a small file attachment (less than 3 MB) to a message. File content must be base64-encoded.",
     "inputSchema": {
       "type": "object",
@@ -565,7 +589,7 @@
     "enabled": true
   },
   {
-    "name": "UploadLargeAttachmentAsync",
+    "name": "UploadLargeAttachment",
     "description": "Upload a large file attachment (3-150 MB) to a message using chunked upload. File content must be base64-encoded.",
     "inputSchema": {
       "type": "object",
@@ -600,7 +624,7 @@
     "enabled": true
   },
   {
-    "name": "DeleteAttachmentAsync",
+    "name": "DeleteAttachment",
     "description": "Delete an attachment from a message.",
     "inputSchema": {
       "type": "object",
@@ -626,7 +650,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyWithFullThreadAsync",
+    "name": "ReplyWithFullThread",
     "description": "Reply (or reply-all) adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
     "inputSchema": {
       "type": "object",
@@ -684,7 +708,7 @@
     "enabled": true
   },
   {
-    "name": "ReplyAllWithFullThreadAsync",
+    "name": "ReplyAllWithFullThread",
     "description": "Reply-all adding new recipients while preserving full quoted thread and optionally re-attaching original files.",
     "inputSchema": {
       "type": "object",
@@ -738,7 +762,7 @@
     "enabled": true
   },
   {
-    "name": "ForwardMessageWithFullThreadAsync",
+    "name": "ForwardMessageWithFullThread",
     "description": "Forward a message adding new recipients and an optional intro comment while preserving full quoted thread; returns sensitivity label.",
     "inputSchema": {
       "type": "object",
@@ -792,7 +816,7 @@
     "enabled": true
   },
   {
-    "name": "ForwardMessageAsync",
+    "name": "ForwardMessage",
     "description": "Forward an existing message, optionally adding a comment, recipients, and new attachments while preserving the quoted thread.",
     "inputSchema": {
       "type": "object",

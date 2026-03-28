@@ -107,6 +107,30 @@ public sealed class ClientAppValidationException : Agent365Exception
     }
 
     /// <summary>
+    /// Creates exception for when the Azure token was revoked by a security event (CAE).
+    /// </summary>
+    public static ClientAppValidationException TokenRevoked(string clientAppId)
+    {
+        return new ClientAppValidationException(
+            issueDescription: "Azure authentication token revoked — re-authentication required",
+            errorDetails: new List<string>
+            {
+                "Your Azure CLI token has been revoked due to a security event (Continuous Access Evaluation).",
+                "This occurs when a password is changed, MFA is updated, or a conditional access policy fires."
+            },
+            mitigationSteps: new List<string>
+            {
+                "Run: az logout",
+                "Run: az login",
+                "Then retry the command."
+            },
+            context: new Dictionary<string, string>
+            {
+                ["clientAppId"] = clientAppId
+            });
+    }
+
+    /// <summary>
     /// Creates exception for general validation failures with custom details.
     /// </summary>
     public static ClientAppValidationException ValidationFailed(

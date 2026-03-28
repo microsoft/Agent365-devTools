@@ -160,9 +160,9 @@ public class RetryHelperTests
             },
             result => callCount < 4,
             maxRetries: 4,
-            baseDelaySeconds: 2);
+            baseDelaySeconds: 0);
 
-        // Assert - verify exponential backoff: 2, 4, 8 seconds
+        // Assert - verify retry count (baseDelaySeconds=0 so no real waits; backoff timing not tested here)
         callCount.Should().Be(4);
     }
 
@@ -172,7 +172,7 @@ public class RetryHelperTests
         // Arrange
         var callCount = 0;
 
-        // Act - use small base delay to test retry logic quickly
+        // Act - use zero base delay to test retry logic without real waits
         await _retryHelper.ExecuteWithRetryAsync(
             ct =>
             {
@@ -181,7 +181,7 @@ public class RetryHelperTests
             },
             result => callCount < 3,
             maxRetries: 3,
-            baseDelaySeconds: 1);
+            baseDelaySeconds: 0);
 
         // Assert - should complete all attempts
         callCount.Should().Be(3);

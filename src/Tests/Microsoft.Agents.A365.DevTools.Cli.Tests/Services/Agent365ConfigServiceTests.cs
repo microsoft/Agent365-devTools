@@ -3,6 +3,7 @@
 
 using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Xunit;
@@ -13,6 +14,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// Unit tests for ConfigService class with the new Agent365Config two-file model.
 /// Tests LoadAsync (merge), SaveStateAsync (split), validation, and file operations.
 /// </summary>
+[Collection("ConfigTests")]
 public class Agent365ConfigServiceTests : IDisposable
 {
     private readonly string _testDirectory;
@@ -42,7 +44,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var configPath = Path.Combine(_testDirectory, "nonexistent.json");
 
         // Act & Assert
-        await Assert.ThrowsAsync<FileNotFoundException>(
+        await Assert.ThrowsAsync<ConfigFileNotFoundException>(
             () => _service.LoadAsync(configPath));
     }
 

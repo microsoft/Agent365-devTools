@@ -24,7 +24,7 @@ public interface IClientAppValidator
     /// Automatically adds missing redirect URIs if needed.
     /// </summary>
     /// <param name="clientAppId">The client app ID</param>
-    /// <param name="graphToken">Microsoft Graph access token</param>
+    /// <param name="tenantId">The tenant ID</param>
     /// <param name="ct">Cancellation token</param>
-    Task EnsureRedirectUrisAsync(string clientAppId, string graphToken, CancellationToken ct = default);
+    Task EnsureRedirectUrisAsync(string clientAppId, string tenantId, CancellationToken ct = default);
 }

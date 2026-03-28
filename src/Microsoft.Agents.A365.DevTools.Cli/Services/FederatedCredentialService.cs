@@ -2,8 +2,9 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -48,24 +49,27 @@ public class FederatedCredentialService
             _logger.LogDebug("Retrieving federated credentials for blueprint: {ObjectId}", blueprintObjectId);
 
             // Try standard endpoint first
-            var doc = await _graphApiService.GraphGetAsync(
+            var primaryDoc = await _graphApiService.GraphGetAsync(
                 tenantId,
                 $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
-                cancellationToken);
+                cancellationToken,
+                scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
 
-            // If standard endpoint returns data with credentials, use it
-            if (doc != null && doc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
+            JsonDocument? doc;
+            if (primaryDoc != null && primaryDoc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
             {
                 _logger.LogDebug("Standard endpoint returned {Count} credential(s)", valueCheck.GetArrayLength());
+                doc = primaryDoc;
             }
-            // If standard endpoint returns empty or null, try Agent Blueprint-specific endpoint
             else
             {
+                primaryDoc?.Dispose();
                 _logger.LogDebug("Standard endpoint returned no credentials or failed, trying Agent Blueprint fallback endpoint");
                 doc = await _graphApiService.GraphGetAsync(
                     tenantId,
                     $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials",
-                    cancellationToken);
+                    cancellationToken,
+                    scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
             }
 
             if (doc == null)
@@ -74,80 +78,83 @@ public class FederatedCredentialService
                 return new List<FederatedCredentialInfo>();
             }
 
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("value", out var valueElement))
+            using (doc)
             {
-                return new List<FederatedCredentialInfo>();
-            }
-
-            var credentials = new List<FederatedCredentialInfo>();
-            foreach (var item in valueElement.EnumerateArray())
-            {
-                try
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("value", out var valueElement))
                 {
-                    // Use TryGetProperty to handle missing fields gracefully
-                    if (!item.TryGetProperty("id", out var idElement) || string.IsNullOrWhiteSpace(idElement.GetString()))
-                    {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'id' field");
-                        continue;
-                    }
+                    return new List<FederatedCredentialInfo>();
+                }
 
-                    if (!item.TryGetProperty("name", out var nameElement) || string.IsNullOrWhiteSpace(nameElement.GetString()))
+                var credentials = new List<FederatedCredentialInfo>();
+                foreach (var item in valueElement.EnumerateArray())
+                {
+                    try
                     {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'name' field");
-                        continue;
-                    }
-
-                    if (!item.TryGetProperty("issuer", out var issuerElement) || string.IsNullOrWhiteSpace(issuerElement.GetString()))
-                    {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'issuer' field");
-                        continue;
-                    }
-
-                    if (!item.TryGetProperty("subject", out var subjectElement) || string.IsNullOrWhiteSpace(subjectElement.GetString()))
-                    {
-                        _logger.LogWarning("Skipping federated credential with missing or empty 'subject' field");
-                        continue;
-                    }
-
-                    var id = idElement.GetString();
-                    var name = nameElement.GetString();
-                    var issuer = issuerElement.GetString();
-                    var subject = subjectElement.GetString();
-                    
-                    var audiences = new List<string>();
-                    if (item.TryGetProperty("audiences", out var audiencesElement))
-                    {
-                        foreach (var audience in audiencesElement.EnumerateArray())
+                        // Use TryGetProperty to handle missing fields gracefully
+                        if (!item.TryGetProperty("id", out var idElement) || string.IsNullOrWhiteSpace(idElement.GetString()))
                         {
-                            var audienceValue = audience.GetString();
-                            if (!string.IsNullOrWhiteSpace(audienceValue))
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'id' field");
+                            continue;
+                        }
+
+                        if (!item.TryGetProperty("name", out var nameElement) || string.IsNullOrWhiteSpace(nameElement.GetString()))
+                        {
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'name' field");
+                            continue;
+                        }
+
+                        if (!item.TryGetProperty("issuer", out var issuerElement) || string.IsNullOrWhiteSpace(issuerElement.GetString()))
+                        {
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'issuer' field");
+                            continue;
+                        }
+
+                        if (!item.TryGetProperty("subject", out var subjectElement) || string.IsNullOrWhiteSpace(subjectElement.GetString()))
+                        {
+                            _logger.LogWarning("Skipping federated credential with missing or empty 'subject' field");
+                            continue;
+                        }
+
+                        var id = idElement.GetString();
+                        var name = nameElement.GetString();
+                        var issuer = issuerElement.GetString();
+                        var subject = subjectElement.GetString();
+
+                        var audiences = new List<string>();
+                        if (item.TryGetProperty("audiences", out var audiencesElement))
+                        {
+                            foreach (var audience in audiencesElement.EnumerateArray())
                             {
-                                audiences.Add(audienceValue);
+                                var audienceValue = audience.GetString();
+                                if (!string.IsNullOrWhiteSpace(audienceValue))
+                                {
+                                    audiences.Add(audienceValue);
+                                }
                             }
                         }
+
+                        credentials.Add(new FederatedCredentialInfo
+                        {
+                            Id = id,
+                            Name = name,
+                            Issuer = issuer,
+                            Subject = subject,
+                            Audiences = audiences
+                        });
                     }
-
-                    credentials.Add(new FederatedCredentialInfo
+                    catch (Exception itemEx)
                     {
-                        Id = id,
-                        Name = name,
-                        Issuer = issuer,
-                        Subject = subject,
-                        Audiences = audiences
-                    });
+                        // Log individual credential parsing errors but continue processing remaining credentials
+                        _logger.LogWarning(itemEx, "Failed to parse federated credential entry, skipping");
+                    }
                 }
-                catch (Exception itemEx)
-                {
-                    // Log individual credential parsing errors but continue processing remaining credentials
-                    _logger.LogWarning(itemEx, "Failed to parse federated credential entry, skipping");
-                }
-            }
 
-            _logger.LogDebug("Found {Count} federated credential(s) for blueprint: {ObjectId}", 
-                credentials.Count, blueprintObjectId);
+                _logger.LogDebug("Found {Count} federated credential(s) for blueprint: {ObjectId}",
+                    credentials.Count, blueprintObjectId);
 
-            return credentials;
+                return credentials;
+            } // end using (doc)
         }
         catch (Exception ex)
         {
@@ -259,7 +266,8 @@ public class FederatedCredentialService
                     tenantId,
                     endpoint,
                     payload,
-                    cancellationToken);
+                    cancellationToken,
+                    scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
 
                 if (response.IsSuccess)
                 {
@@ -309,25 +317,50 @@ public class FederatedCredentialService
                     };
                 }
 
-                // For other errors on first endpoint, try second endpoint
-                if (endpoint == endpoints[0])
+                // For non-403 errors on first endpoint, try second endpoint
+                if (response.StatusCode != 403 && endpoint == endpoints[0])
                 {
                     _logger.LogDebug("First endpoint failed with HTTP {StatusCode}, trying second endpoint...", response.StatusCode);
                     continue;
                 }
 
-                // Both endpoints failed
-                _logger.LogError("Failed to create federated credential: HTTP {StatusCode} {ReasonPhrase}", response.StatusCode, response.ReasonPhrase);
-                if (!string.IsNullOrWhiteSpace(response.Body))
+                // For 403 on first endpoint, try second endpoint (different identity path may succeed)
+                if (response.StatusCode == 403 && endpoint == endpoints[0])
                 {
-                    _logger.LogError("Error details: {Body}", response.Body);
+                    _logger.LogDebug("First endpoint returned HTTP 403, trying alternative endpoint...");
+                    continue;
                 }
 
-                _logger.LogError("Failed to create federated credential: {Name}", name);
+                // Both endpoints failed or single endpoint returned a non-retriable error
+                var graphError = TryExtractGraphErrorMessage(response.Body);
+
+                // 403 on second endpoint is a deterministic auth failure — do not retry
+                if (response.StatusCode == 403)
+                {
+                    var errorDetail = graphError ?? "Insufficient privileges to complete the operation";
+                    _logger.LogError("Failed to create federated credential '{Name}': {ErrorMessage}", name, errorDetail);
+                    _logger.LogError("The authenticated account does not have sufficient privileges for this operation.");
+                    _logger.LogError("Ensure the account has Application Administrator or Cloud App Administrator role,");
+                    _logger.LogError("or that the user is an owner of the blueprint application in Entra ID.");
+                    _logger.LogDebug("Federated credential error response body: {Body}", response.Body);
+                    return new FederatedCredentialCreateResult
+                    {
+                        Success = false,
+                        ErrorMessage = errorDetail,
+                        ShouldRetry = false
+                    };
+                }
+
+                if (graphError != null)
+                    _logger.LogError("Failed to create federated credential '{Name}': {ErrorMessage}", name, graphError);
+                else
+                    _logger.LogError("Failed to create federated credential '{Name}': HTTP {StatusCode} {ReasonPhrase}", name, response.StatusCode, response.ReasonPhrase);
+                _logger.LogDebug("Federated credential error response body: {Body}", response.Body);
                 return new FederatedCredentialCreateResult
                 {
                     Success = false,
-                    ErrorMessage = $"HTTP {response.StatusCode}: {response.ReasonPhrase}"
+                    ErrorMessage = $"HTTP {response.StatusCode}: {response.ReasonPhrase}",
+                    ShouldRetry = false
                 };
             }
 
@@ -368,14 +401,20 @@ public class FederatedCredentialService
             _logger.LogDebug("Deleting federated credential: {CredentialId} from blueprint: {ObjectId}", 
                 credentialId, blueprintObjectId);
 
+            // Application.ReadWrite.All is the currently functional scope for FIC deletion.
+            // AddRemoveCreds.All is specified in the permissions reference but is not yet validated;
+            // restoring Application.ReadWrite.All to match the previously working state.
+            var ficScope = AuthenticationConstants.ApplicationReadWriteAllScope;
+
             // Try the standard endpoint first
             var endpoint = $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";
-            
+
             var success = await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 endpoint,
                 cancellationToken,
-                treatNotFoundAsSuccess: true);
+                treatNotFoundAsSuccess: true,
+                scopes: [ficScope]);
 
             if (success)
             {
@@ -386,12 +425,13 @@ public class FederatedCredentialService
             // Try fallback endpoint for agent blueprint
             _logger.LogDebug("Standard endpoint failed, trying fallback endpoint for agent blueprint");
             endpoint = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";
-            
+
             success = await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 endpoint,
                 cancellationToken,
-                treatNotFoundAsSuccess: true);
+                treatNotFoundAsSuccess: true,
+                scopes: [ficScope]);
 
             if (success)
             {
@@ -400,6 +440,8 @@ public class FederatedCredentialService
             }
 
             _logger.LogWarning("Failed to delete federated credential using both endpoints: {CredentialId}", credentialId);
+            _logger.LogWarning("Federated credential deletion failed. This typically means the signed-in user is not the owner of the blueprint application.");
+            _logger.LogWarning("If you own the blueprint, re-run 'a365 cleanup'. Otherwise, remove it manually via Entra portal > App registrations > (blueprint app) > Certificates and secrets > Federated credentials.");
             return false;
         }
         catch (Exception ex)
@@ -470,5 +512,21 @@ public class FederatedCredentialService
             _logger.LogError(ex, "Exception deleting federated credentials from blueprint: {ObjectId}", blueprintObjectId);
             return false;
         }
+    }
+
+    private static string? TryExtractGraphErrorMessage(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error) &&
+                error.TryGetProperty("message", out var msg))
+            {
+                return msg.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
     }
 }

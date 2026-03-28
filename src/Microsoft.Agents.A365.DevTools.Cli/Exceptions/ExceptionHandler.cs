@@ -64,15 +64,18 @@ public static class ExceptionHandler
     }
 
     /// <summary>
-    /// Exits the application with proper cleanup: flushes console output and resets colors.
-    /// Use this instead of Environment.Exit to ensure logger output is visible.
+    /// Signals a clean, intentional exit with the given exit code.
+    /// Throws CleanExitException instead of calling Environment.Exit() directly,
+    /// which avoids deadlocks on all platforms when System.CommandLine's
+    /// CancelOnProcessTermination middleware is active.
     /// </summary>
     /// <param name="exitCode">The exit code to return (0 for success, non-zero for errors)</param>
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     public static void ExitWithCleanup(int exitCode)
     {
         Console.Out.Flush();
         Console.Error.Flush();
         Console.ResetColor();
-        Environment.Exit(exitCode);
+        throw new CleanExitException(exitCode);
     }
 }

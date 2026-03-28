@@ -244,19 +244,18 @@ public class BlueprintLookupService
     public async Task<ServicePrincipalLookupResult> GetServicePrincipalByAppIdAsync(
         string tenantId,
         string appId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IEnumerable<string>? scopes = null)
     {
         try
         {
             _logger.LogDebug("Looking up service principal by appId: {AppId}", appId);
 
-            var filter = $"appId eq '{appId}'";
-            var doc = await _graphApiService.GraphGetAsync(
-                tenantId,
-                $"/v1.0/servicePrincipals?$filter={Uri.EscapeDataString(filter)}",
-                cancellationToken);
+            // Pass scopes so the caller can opt-in to a MSAL token with Application.Read.All.
+            // Without Application.Read.All the az CLI token causes Graph to return an empty array silently.
+            var objectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, appId, cancellationToken, scopes);
 
-            if (doc == null)
+            if (objectId == null)
             {
                 _logger.LogDebug("No service principal found with appId: {AppId}", appId);
                 return new ServicePrincipalLookupResult
@@ -266,30 +265,14 @@ public class BlueprintLookupService
                 };
             }
 
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("value", out var valueElement) || valueElement.GetArrayLength() == 0)
-            {
-                _logger.LogDebug("No service principal found with appId: {AppId}", appId);
-                return new ServicePrincipalLookupResult
-                {
-                    Found = false,
-                    LookupMethod = "appId"
-                };
-            }
+            _logger.LogDebug("Found service principal (ObjectId: {ObjectId}, AppId: {AppId})", objectId, appId);
 
-            var firstMatch = valueElement[0];
-            var objectId = firstMatch.GetProperty("id").GetString();
-            var displayName = firstMatch.GetProperty("displayName").GetString();
-
-            _logger.LogDebug("Found service principal: {DisplayName} (ObjectId: {ObjectId}, AppId: {AppId})", 
-                displayName, objectId, appId);
-
+            // Note: DisplayName is not queried in this lookup path ($select=id only) — callers must not rely on it being populated.
             return new ServicePrincipalLookupResult
             {
                 Found = true,
                 ObjectId = objectId,
                 AppId = appId,
-                DisplayName = displayName,
                 LookupMethod = "appId",
                 RequiresPersistence = true
             };

@@ -125,7 +125,7 @@ public class GraphApiException : Agent365Exception
                     "Ensure you have the required Graph API permissions",
                     "You need Application.ReadWrite.All permission for agent blueprint creation",
                     "Contact your tenant administrator to grant permissions",
-                    "See documentation: https://aka.ms/agent365-permissions"
+                    $"See documentation: {ConfigConstants.CustomClientAppRegistrationUrl}"
                 }
                 : new List<string>
                 {

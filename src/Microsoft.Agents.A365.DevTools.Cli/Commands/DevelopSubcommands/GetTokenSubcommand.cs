@@ -311,13 +311,15 @@ internal static class GetTokenSubcommand
             logger.LogInformation("");
 
             // Use GetAccessTokenWithScopesAsync for explicit scope control
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var token = await authService.GetAccessTokenWithScopesAsync(
                 resourceAppId,
                 requestedScopes,
                 tenantId,
                 forceRefresh,
                 clientAppId,
-                useInteractiveBrowser: true);
+                useInteractiveBrowser: true,
+                userId: loginHint);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -392,7 +394,7 @@ internal static class GetTokenSubcommand
         return keyword.ToLowerInvariant() switch
         {
             "mcp" => (ConfigConstants.GetAgent365ToolsResourceAppId(environment), "Agent 365 Tools (MCP)", ConfigConstants.GetDiscoverEndpointUrl(environment)),
-            "powerplatform" => (MosConstants.PowerPlatformApiResourceAppId, "Power Platform API", null),
+            "powerplatform" => (PowerPlatformConstants.PowerPlatformApiResourceAppId, "Power Platform API", null),
             _ => null
         };
     }

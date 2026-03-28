@@ -165,24 +165,14 @@ public class BlueprintLookupServiceTests
     {
         // Arrange
         var spObjectId = "22222222-2222-2222-2222-222222222222";
-        var jsonResponse = $@"{{
-            ""value"": [
-                {{
-                    ""id"": ""{spObjectId}"",
-                    ""appId"": ""{TestAppId}"",
-                    ""displayName"": ""Test SP""
-                }}
-            ]
-        }}";
-        var jsonDoc = JsonDocument.Parse(jsonResponse);
 
-        // The filter will be URL-escaped: "appId eq '...'" becomes "appId%20eq%20%27...%27"
-        _graphApiService.GraphGetAsync(
+        // LookupServicePrincipalByAppIdAsync handles ConsistencyLevel header internally
+        _graphApiService.LookupServicePrincipalByAppIdAsync(
             TestTenantId,
-            Arg.Is<string>(s => s.Contains($"appId%20eq%20%27{TestAppId}%27")),
+            TestAppId,
             Arg.Any<CancellationToken>(),
-            null)
-            .Returns(jsonDoc);
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(spObjectId);
 
         // Act
         var result = await _service.GetServicePrincipalByAppIdAsync(TestTenantId, TestAppId);

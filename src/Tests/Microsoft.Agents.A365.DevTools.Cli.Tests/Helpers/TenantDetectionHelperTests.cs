@@ -4,6 +4,7 @@
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using static Microsoft.Agents.A365.DevTools.Cli.Tests.TestConstants;
@@ -92,8 +93,13 @@ public class TenantDetectionHelperTests
     [Fact]
     public async Task DetectTenantIdAsync_WithNullConfig_LogsAttemptToDetectFromAzureCli()
     {
+        // Arrange — inject a mock executor so no real az process is spawned
+        var mockExecutor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = string.Empty }));
+
         // Act
-        await TenantDetectionHelper.DetectTenantIdAsync(null, _mockLogger);
+        await TenantDetectionHelper.DetectTenantIdAsync(null, _mockLogger, mockExecutor);
 
         // Assert
         _mockLogger.Received(1).Log(
@@ -197,8 +203,9 @@ public class TenantDetectionHelperTests
     }
 
     [Fact]
-    public async Task DetectTenantIdAsync_WithValidTenantId_TrimsWhitespace()
+    public async Task DetectTenantIdAsync_ReturnsConfigTenantId_Verbatim()
     {
+        // DetectTenantIdAsync returns the TenantId from config as-is (no trimming).
         // Arrange
         var config = new Agent365Config
         {
@@ -211,35 +218,7 @@ public class TenantDetectionHelperTests
         var result = await TenantDetectionHelper.DetectTenantIdAsync(config, _mockLogger);
 
         // Assert
-        // Note: The config TenantId itself should be trimmed, but we test the behavior
         result.Should().Be("  tenant-with-spaces  ");
-    }
-
-    #endregion
-
-    #region Null-Coalescing Pattern Tests
-
-    [Fact]
-    public void DetectTenantIdAsync_NullResult_CanBeCoalescedToEmptyString()
-    {
-        // Arrange & Act
-        string? nullableResult = null;
-        string nonNullableResult = nullableResult ?? string.Empty;
-
-        // Assert
-        nonNullableResult.Should().Be(string.Empty);
-        nonNullableResult.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void DetectTenantIdAsync_NonNullResult_PreservesValue()
-    {
-        // Arrange & Act
-        string? nullableResult = "tenant-123";
-        string nonNullableResult = nullableResult ?? string.Empty;
-
-        // Assert
-        nonNullableResult.Should().Be("tenant-123");
     }
 
     #endregion

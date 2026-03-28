@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
@@ -19,6 +20,7 @@ internal static class RequirementsSubcommand
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
+        AzureAuthValidator authValidator,
         IClientAppValidator clientAppValidator)
     {
         var command = new Command("requirements", 
@@ -57,12 +59,13 @@ internal static class RequirementsSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                var requirementChecks = GetRequirementChecks(clientAppValidator);
+                var requirementChecks = GetRequirementChecks(authValidator, clientAppValidator);
                 await RunRequirementChecksAsync(requirementChecks, setupConfig, logger, category);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Requirements check failed: {Message}", ex.Message);
+                logger.LogError("Requirements check failed: {Message}", ex.Message);
+                logger.LogDebug(ex, "Requirements check failed exception details");
             }
         }, configOption, verboseOption, categoryOption);
 
@@ -101,14 +104,13 @@ internal static class RequirementsSubcommand
         var warningChecks = 0;
         var failedChecks = 0;
 
+        logger.LogInformation("Checking requirements...");
+
         // Execute all checks (grouped by category but headers not shown)
         foreach (var categoryGroup in checksByCategory)
         {
             foreach (var check in categoryGroup)
             {
-                // Add spacing before each check for readability
-                Console.WriteLine();
-
                 var result = await check.CheckAsync(setupConfig, logger, ct);
 
                 if (result.Passed)
@@ -129,50 +131,73 @@ internal static class RequirementsSubcommand
             }
         }
 
-        // Display summary
-        logger.LogInformation("Requirements Check Summary");
-        logger.LogInformation(new string('=', 50));
-        logger.LogInformation("Total checks: {Total}", totalChecks);
-        logger.LogInformation("Passed: {Passed}", passedChecks);
-        logger.LogInformation("Warning: {Warning}", warningChecks);
-        logger.LogInformation("Failed: {Failed}", failedChecks);
         Console.WriteLine();
-
-        if (failedChecks > 0)
-        {
-            logger.LogError("Some requirements failed. Please address the issues above before running setup.");
-            logger.LogInformation("Use the resolution guidance provided for each failed check.");
-        }
-        else if (warningChecks > 0)
-        {
-            logger.LogWarning("All automated checks passed, but {WarningCount} requirement(s) require manual verification.", warningChecks);
-            logger.LogInformation("Please review the warnings above and ensure all requirements are met before running setup.");
-        }
-        else
-        {
-            logger.LogInformation("All requirements passed! You're ready to run Agent 365 setup.");
-        }
+        logger.LogInformation("Requirements: {Passed} passed, {Warning} warnings, {Failed} failed",
+            passedChecks, warningChecks, failedChecks);
 
         return failedChecks == 0;
     }
 
     /// <summary>
-    /// Gets all available requirement checks
+    /// Runs checks with formatted [PASS]/[FAIL] output and exits if any fail.
+    /// Use this instead of RunRequirementChecksAsync when failure should abort the command.
     /// </summary>
-    public static List<IRequirementCheck> GetRequirementChecks(IClientAppValidator clientAppValidator)
+    public static async Task RunChecksOrExitAsync(
+        List<IRequirementCheck> checks,
+        Agent365Config config,
+        ILogger logger,
+        CancellationToken cancellationToken = default)
+    {
+        var passed = await RunRequirementChecksAsync(checks, config, logger, category: null, cancellationToken);
+        if (!passed)
+        {
+            logger.LogError("Operation cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
+            ExceptionHandler.ExitWithCleanup(1);
+        }
+    }
+
+    /// <summary>
+    /// Gets all available requirement checks.
+    /// Derived from the union of system and config checks to keep a single source of truth.
+    /// </summary>
+    public static List<IRequirementCheck> GetRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
+    {
+        return GetSystemRequirementChecks()
+            .Concat(GetConfigRequirementChecks(authValidator, clientAppValidator))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Gets system-level requirement checks that do not depend on configuration.
+    /// These can be run before the configuration wizard to surface blockers early.
+    /// </summary>
+    private static List<IRequirementCheck> GetSystemRequirementChecks()
     {
         return new List<IRequirementCheck>
         {
             // Frontier Preview Program enrollment check
             new FrontierPreviewRequirementCheck(),
 
-            // Client app configuration validation
-            new ClientAppRequirementCheck(clientAppValidator),
-
             // PowerShell modules required for Microsoft Graph operations
             new PowerShellModulesRequirementCheck(),
+        };
+    }
 
-            // Additional checks can be added here
+    /// <summary>
+    /// Gets configuration-dependent requirement checks that must run after the configuration is loaded.
+    /// </summary>
+    private static List<IRequirementCheck> GetConfigRequirementChecks(AzureAuthValidator authValidator, IClientAppValidator clientAppValidator)
+    {
+        return new List<IRequirementCheck>
+        {
+            // Azure CLI authentication — required before any Azure operation
+            new AzureAuthRequirementCheck(authValidator),
+
+            // Location configuration — required for endpoint registration
+            new LocationRequirementCheck(),
+
+            // Client app configuration validation (checks all required Graph permissions incl. UpdateAuthProperties.All)
+            new ClientAppRequirementCheck(clientAppValidator),
         };
     }
 }

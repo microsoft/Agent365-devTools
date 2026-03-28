@@ -145,7 +145,10 @@ public static class DevelopCommand
 
                 logger.LogInformation("Environment: {Environment}, Audience: {Audience}", config.Environment, audience);
 
-                authToken = await authService.GetAccessTokenAsync(audience);
+                // Resolve az CLI login hint so WAM targets the correct account instead of
+                // defaulting to the first cached MSAL account (which may be stale).
+                var loginHint = await Services.Helpers.AzCliHelper.ResolveLoginHintAsync();
+                authToken = await authService.GetAccessTokenAsync(audience, userId: loginHint);
 
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
@@ -165,7 +168,7 @@ public static class DevelopCommand
             // Call the endpoint directly (no environment ID needed in URL or query)
             logger.LogInformation("Making GET request to: {RequestUrl}", discoverEndpointUrl);
 
-            var response = await httpClient.GetAsync(discoverEndpointUrl);
+            using var response = await httpClient.GetAsync(discoverEndpointUrl);
 
             if (!response.IsSuccessStatusCode)
             {

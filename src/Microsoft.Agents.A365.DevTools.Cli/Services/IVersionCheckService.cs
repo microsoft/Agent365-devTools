@@ -6,7 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Service for checking if newer versions of the CLI are available.
+/// Service for checking if a newer version of the CLI is available on NuGet.
 /// </summary>
 public interface IVersionCheckService
 {

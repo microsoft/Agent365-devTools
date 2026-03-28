@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -203,7 +204,12 @@ public class ConfigService : IConfigService
     {
         PropertyNameCaseInsensitive = true,
         WriteIndented = true,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        // Use relaxed encoder so URL-valued fields (e.g. consentUrl) keep literal '&' instead
+        // of being escaped to '\u0026', which would break copy-paste into a browser.
+        // This applies globally to all config serialization; only URL-typed string values
+        // meaningfully benefit from or require the setting — all other scalar values are unaffected.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public ConfigService(ILogger<ConfigService>? logger = null)
@@ -240,8 +246,7 @@ public class ConfigService : IConfigService
         // Validate static config file exists
         if (!File.Exists(resolvedConfigPath))
         {
-            _logger?.LogError("Static configuration file not found: {ConfigPath}", resolvedConfigPath);
-            throw new FileNotFoundException($"{ErrorMessages.ConfigFileNotFound} (Path: {resolvedConfigPath})");
+            throw new ConfigFileNotFoundException(resolvedConfigPath);
         }
 
         // Load static configuration (required)
@@ -614,6 +619,16 @@ public class ConfigService : IConfigService
                     _logger?.LogWarning(ex, "Failed to set property {PropertyName}", prop.Name);
                 }
             }
+        }
+
+        // Migrate legacy key: generated configs written by older CLI versions use "botMessagingEndpoint".
+        // If the new key "messagingEndpoint" was not found (BotMessagingEndpoint is still null),
+        // fall back to the legacy key so existing setups continue to work without re-running setup.
+        if (config.BotMessagingEndpoint == null &&
+            stateData.TryGetProperty("botMessagingEndpoint", out var legacyEndpoint) &&
+            legacyEndpoint.ValueKind == JsonValueKind.String)
+        {
+            config.BotMessagingEndpoint = legacyEndpoint.GetString();
         }
     }
 

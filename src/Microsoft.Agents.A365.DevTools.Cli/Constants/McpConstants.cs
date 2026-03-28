@@ -13,6 +13,11 @@ public static class McpConstants
     public const string Agent365ToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
 
     /// <summary>
+    /// Agent 365 Tools identifier URI (used for admin consent URL construction).
+    /// </summary>
+    public const string Agent365ToolsIdentifierUri = "https://agent365.svc.cloud.microsoft";
+
+    /// <summary>
     /// Name of the tooling manifest file
     /// </summary>
     public const string ToolingManifestFileName = "ToolingManifest.json";

@@ -21,18 +21,16 @@ public class CreateInstanceCommandTests
     private readonly CommandExecutor _mockExecutor;
     private readonly IBotConfigurator _mockBotConfigurator;
     private readonly GraphApiService _mockGraphApiService;
-    private readonly IAzureValidator _mockAzureValidator;
 
     public CreateInstanceCommandTests()
     {
         _mockLogger = Substitute.For<ILogger<CreateInstanceCommand>>();
-        
+
         // Use NullLogger instead of console logger to avoid I/O bottleneck
         _mockConfigService = Substitute.ForPartsOf<ConfigService>(NullLogger<ConfigService>.Instance);
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(NullLogger<CommandExecutor>.Instance);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(NullLogger<GraphApiService>.Instance, _mockExecutor);
-        _mockAzureValidator = Substitute.For<IAzureValidator>();
     }
 
     [Fact]
@@ -44,8 +42,7 @@ public class CreateInstanceCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockBotConfigurator,
-            _mockGraphApiService,
-            _mockAzureValidator);
+            _mockGraphApiService);
 
         // Act
         var identitySubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "identity");
@@ -63,8 +60,7 @@ public class CreateInstanceCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockBotConfigurator,
-            _mockGraphApiService,
-            _mockAzureValidator);
+            _mockGraphApiService);
 
         // Act
         var licensesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "licenses");
@@ -82,8 +78,7 @@ public class CreateInstanceCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockBotConfigurator,
-            _mockGraphApiService,
-            _mockAzureValidator);
+            _mockGraphApiService);
 
         // Act & Assert - Main command should have handler for running all steps
         Assert.NotNull(command.Handler);
@@ -98,8 +93,7 @@ public class CreateInstanceCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockBotConfigurator,
-            _mockGraphApiService,
-            _mockAzureValidator);
+            _mockGraphApiService);
 
         // Act - Command should be created successfully
         // Assert - Command structure is valid

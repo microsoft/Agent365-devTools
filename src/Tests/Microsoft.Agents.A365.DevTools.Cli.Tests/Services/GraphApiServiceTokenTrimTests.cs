@@ -6,6 +6,7 @@ using System.Net.Http;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -17,6 +18,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// </summary>
 public class GraphApiServiceTokenTrimTests
 {
+    public GraphApiServiceTokenTrimTests()
+    {
+    }
+
     [Theory]
     [InlineData("fake-token\n")]
     [InlineData("fake-token\r\n")]
@@ -44,7 +49,11 @@ public class GraphApiServiceTokenTrimTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var mockAuth = Substitute.For<IAuthenticationService>();
+        mockAuth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult(tokenWithWhitespace));
+        var service = new GraphApiService(logger, executor, mockAuth, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful GET response
         using var response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -75,10 +84,11 @@ public class GraphApiServiceTokenTrimTests
             Arg.Any<IEnumerable<string>>(),
             Arg.Any<bool>(),
             Arg.Any<string?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns("fake-token\n");
 
-        var service = new GraphApiService(logger, executor, handler, tokenProvider);
+        var service = new GraphApiService(logger, executor, Substitute.For<IAuthenticationService>(), handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful GET response
         using var response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -114,7 +124,11 @@ public class GraphApiServiceTokenTrimTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler);
+        var mockAuth = Substitute.For<IAuthenticationService>();
+        mockAuth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token\r\n"));
+        var service = new GraphApiService(logger, executor, mockAuth, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful response for directory roles
         using var response = new HttpResponseMessage(HttpStatusCode.OK)

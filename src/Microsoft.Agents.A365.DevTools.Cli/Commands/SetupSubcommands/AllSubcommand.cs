@@ -1,10 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 
@@ -20,19 +24,42 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class AllSubcommand
 {
+    /// <summary>
+    /// Returns the requirement checks for <c>setup all</c>.
+    /// Composes SetupCommand base checks + Location + ClientApp + optional Infrastructure.
+    /// </summary>
+    public static List<Services.Requirements.IRequirementCheck> GetChecks(
+        AzureAuthValidator auth,
+        IClientAppValidator clientAppValidator,
+        bool includeInfrastructure)
+    {
+        var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
+        {
+            new LocationRequirementCheck(),
+            new ClientAppRequirementCheck(clientAppValidator),
+        };
+
+        if (includeInfrastructure)
+        {
+            checks.Add(new InfrastructureRequirementCheck());
+        }
+
+        return checks;
+    }
+
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
         IBotConfigurator botConfigurator,
-        IAzureValidator azureValidator,
-        AzureWebAppCreator webAppCreator,
+        AzureAuthValidator authValidator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
         IClientAppValidator clientAppValidator,
         BlueprintLookupService blueprintLookupService,
-        FederatedCredentialService federatedCredentialService)
+        FederatedCredentialService federatedCredentialService,
+        ArmApiService? armApiService = null)
     {
         var command = new Command("all", 
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -71,18 +98,24 @@ internal static class AllSubcommand
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
 
-        command.SetHandler(async (config, verbose, dryRun, skipInfrastructure, skipRequirements) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
+            var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
+            var ct = context.GetCancellationToken();
+
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
-            logger.LogInformation("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
+            logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
                 logger.LogInformation("This would execute the following operations:");
                 logger.LogInformation("");
-                
+
                 if (!skipRequirements)
                 {
                     logger.LogInformation("  0. Validate prerequisites (PowerShell modules, etc.)");
@@ -109,20 +142,6 @@ internal static class AllSubcommand
                 return;
             }
 
-            logger.LogInformation("Agent 365 Setup");
-            logger.LogInformation("Running all setup steps...");
-            
-            if (skipRequirements)
-            {
-                logger.LogInformation("NOTE: Skipping requirements validation (--skip-requirements flag used)");
-            }
-            
-            if (skipInfrastructure)
-            {
-                logger.LogInformation("NOTE: Skipping infrastructure creation (--skip-infrastructure flag used)");
-            }
-            
-            logger.LogInformation("");
 
             var setupResults = new SetupResults();
 
@@ -130,7 +149,7 @@ internal static class AllSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                
+
                 // Configure GraphApiService with custom client app ID if available
                 // This ensures inheritable permissions operations use the validated custom app
                 if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
@@ -138,101 +157,33 @@ internal static class AllSubcommand
                     graphApiService.CustomClientAppId = setupConfig.ClientAppId;
                 }
 
-                // PHASE 0: CHECK REQUIREMENTS (if not skipped)
+                // Validate all prerequisites in one pass
                 if (!skipRequirements)
                 {
-                    logger.LogDebug("Validating system prerequisites...");
+                    var includeInfra = !skipInfrastructure && setupConfig.NeedDeployment;
+                    var checks = AllSubcommand.GetChecks(authValidator, clientAppValidator, includeInfra);
 
                     try
                     {
-                        var result = await RequirementsSubcommand.RunRequirementChecksAsync(
-                            RequirementsSubcommand.GetRequirementChecks(clientAppValidator),
-                            setupConfig,
-                            logger,
-                            category: null,
-                            CancellationToken.None);
-
-                        if (!result)
-                        {
-                            logger.LogError("");
-                            logger.LogError("Setup cannot proceed due to the failed requirement checks above. Please fix the issues above and then try again.");
-                            ExceptionHandler.ExitWithCleanup(1);
-                            return;
-                        }
+                        await RequirementsSubcommand.RunChecksOrExitAsync(
+                            checks, setupConfig, logger, ct);
                     }
-                    catch (Exception reqEx)
+                    catch (Exception reqEx) when (reqEx is not OperationCanceledException)
                     {
-                        logger.LogWarning(reqEx, "Requirements check encountered an error: {Message}", reqEx.Message);
-                        logger.LogWarning("Continuing with setup, but some prerequisites may be missing.");
-                        logger.LogWarning("");
+                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
+                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                        ExceptionHandler.ExitWithCleanup(1);
                     }
-                }
-                else
-                {
-                    logger.LogDebug("Skipping requirements validation (--skip-requirements flag used)");
-                }
-
-                // PHASE 1: VALIDATE ALL PREREQUISITES UPFRONT
-                logger.LogDebug("Validating all prerequisites...");
-
-                var allErrors = new List<string>();
-
-                // Validate Azure CLI authentication first
-                logger.LogDebug("Validating Azure CLI authentication...");
-                if (!await azureValidator.ValidateAllAsync(setupConfig.SubscriptionId))
-                {
-                    allErrors.Add("Azure CLI authentication failed or subscription not set correctly");
-                    logger.LogError("Azure CLI authentication validation failed");
-                }
-                else
-                {
-                    logger.LogDebug("Azure CLI authentication: OK");
-                }
-
-                // Validate Infrastructure prerequisites
-                if (!skipInfrastructure && setupConfig.NeedDeployment)
-                {
-                    logger.LogDebug("Validating Infrastructure prerequisites...");
-                    var infraErrors = await InfrastructureSubcommand.ValidateAsync(setupConfig, azureValidator, CancellationToken.None);
-                    if (infraErrors.Count > 0)
-                    {
-                        allErrors.AddRange(infraErrors.Select(e => $"Infrastructure: {e}"));
-                    }
-                    else
-                    {
-                        logger.LogDebug("Infrastructure prerequisites: OK");
-                    }
-                }
-
-                // Validate Blueprint prerequisites
-                logger.LogDebug("Validating Blueprint prerequisites...");
-                var blueprintErrors = await BlueprintSubcommand.ValidateAsync(setupConfig, azureValidator, clientAppValidator, CancellationToken.None);
-                if (blueprintErrors.Count > 0)
-                {
-                    allErrors.AddRange(blueprintErrors.Select(e => $"Blueprint: {e}"));
-                }
-                else
-                {
-                    logger.LogDebug("Blueprint prerequisites: OK");
-                }
-
-                // Stop if any validation failed
-                if (allErrors.Count > 0)
-                {
-                    logger.LogError("");
-                    logger.LogError("Setup cannot proceed due to validation failures:");
-                    foreach (var error in allErrors)
-                    {
-                        logger.LogError("  - {Error}", error);
-                    }
-                    logger.LogError("");
-                    logger.LogError("Please fix the errors above and try again");
-                    setupResults.Errors.AddRange(allErrors);
-                    ExceptionHandler.ExitWithCleanup(1);
-                    return;
                 }
 
                 logger.LogDebug("All validations passed. Starting setup execution...");
+
+                logger.LogInformation("Running all setup steps... (TraceId: {TraceId})", correlationId);
+                if (skipRequirements)
+                    logger.LogInformation("NOTE: Requirements validation skipped (--skip-requirements flag used)");
+                if (skipInfrastructure)
+                    logger.LogInformation("NOTE: Infrastructure creation skipped (--skip-infrastructure flag used)");
+                logger.LogInformation("");
 
                 var generatedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -250,7 +201,9 @@ internal static class AllSubcommand
                         platformDetector,
                         setupConfig.NeedDeployment,
                         skipInfrastructure,
-                        CancellationToken.None);
+                        ct,
+                        armApiService,
+                        graphApiService);
 
                     setupResults.InfrastructureCreated = skipInfrastructure ? false : setupInfra;
                     setupResults.InfrastructureAlreadyExisted = infraAlreadyExisted;
@@ -276,7 +229,7 @@ internal static class AllSubcommand
                         setupConfig,
                         config,
                         executor,
-                        azureValidator,
+                        authValidator,
                         logger,
                         skipInfrastructure,
                         true,
@@ -287,38 +240,33 @@ internal static class AllSubcommand
                         blueprintService,
                         blueprintLookupService,
                         federatedCredentialService,
-                        skipEndpointRegistration: false,
-                        correlationId: correlationId
-                        );
+                        skipEndpointRegistration: true,
+                        correlationId: correlationId,
+                        options: new BlueprintCreationOptions(DeferConsent: true));
 
                     setupResults.BlueprintCreated = result.BlueprintCreated;
                     setupResults.BlueprintAlreadyExisted = result.BlueprintAlreadyExisted;
-                    setupResults.MessagingEndpointRegistered = result.EndpointRegistered;
-                    setupResults.EndpointAlreadyExisted = result.EndpointAlreadyExisted;
-                    
-                    if (result.EndpointAlreadyExisted)
-                    {
-                        setupResults.Warnings.Add("Messaging endpoint already exists (not newly created)");
-                    }
+                    setupResults.ClientSecretManualActionRequired = result.ClientSecretManualActionRequired;
 
-                    // If endpoint registration was attempted but failed, add to errors
-                    // Do NOT add error if registration was skipped (--no-endpoint or missing config)
-                    if (result.EndpointRegistrationAttempted && !result.EndpointRegistered)
-                    {
-                        setupResults.Errors.Add("Messaging endpoint registration failed");
-                    }
-
-                    // Track Graph permissions status - critical for agent token exchange
-                    setupResults.GraphPermissionsConfigured = result.GraphPermissionsConfigured;
+                    // Graph permissions and admin consent are deferred to the batch orchestrator
+                    // (DeferConsent: true above). Flags are updated in Step 4 after the orchestrator runs.
                     if (result.GraphInheritablePermissionsFailed)
                     {
-                        setupResults.GraphInheritablePermissionsError = result.GraphInheritablePermissionsError 
+                        setupResults.GraphInheritablePermissionsError = result.GraphInheritablePermissionsError
                             ?? "Microsoft Graph inheritable permissions failed to configure";
                         setupResults.Warnings.Add($"Microsoft Graph inheritable permissions: {setupResults.GraphInheritablePermissionsError}");
                     }
                     else
                     {
                         setupResults.GraphInheritablePermissionsConfigured = true;
+                    }
+
+                    // Track Federated Identity Credential status
+                    setupResults.FederatedCredentialConfigured = result.FederatedCredentialConfigured;
+                    if (!result.FederatedCredentialConfigured && !string.IsNullOrWhiteSpace(result.FederatedCredentialError))
+                    {
+                        setupResults.FederatedCredentialError = result.FederatedCredentialError;
+                        setupResults.Warnings.Add($"Federated Identity Credential: {result.FederatedCredentialError}");
                     }
 
                     if (!result.BlueprintCreated)
@@ -331,8 +279,8 @@ internal static class AllSubcommand
 
                     // CRITICAL: Wait for file system to ensure config file is fully written
                     // Blueprint creation writes directly to disk and may not be immediately readable
-                    logger.LogInformation("Ensuring configuration file is synchronized...");
-                    await Task.Delay(2000); // 2 second delay to ensure file write is complete
+                    logger.LogDebug("Waiting for config file write to complete...");
+                    await Task.Delay(2000, ct);
 
                     // Reload config to get blueprint ID
                     // Use full path to ensure we're reading from the correct location
@@ -346,6 +294,18 @@ internal static class AllSubcommand
                         throw new SetupValidationException(
                             "Blueprint creation completed but AgentBlueprintId was not saved to configuration. " +
                             "This is required for the next steps (MCP permissions and Bot permissions).");
+                    }
+
+                    // Warn when service principal creation failed (SP object ID missing after blueprint creation).
+                    // Setup continues because inheritable permissions use the blueprint objectId, not the SP.
+                    // However, agent token exchange will not work until the SP exists.
+                    if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintServicePrincipalObjectId))
+                    {
+                        var spWarning = "Agent blueprint service principal was not created. " +
+                            "Inheritable permissions and FIC may not function correctly. " +
+                            "Run 'a365 setup blueprint' to retry SP creation.";
+                        setupResults.Warnings.Add(spWarning);
+                        logger.LogWarning(spWarning);
                     }
                 }
                 catch (Agent365Exception blueprintEx)
@@ -364,61 +324,115 @@ internal static class AllSubcommand
                     throw;
                 }
 
-                // Step 3: MCP Permissions
+                // Step 3: Configure all permissions (Graph + MCP + Bot x3 + Custom) in a single batch.
+                // Phase 1 — update blueprint requiredResourceAccess + resolve SPs once (non-admin).
+                // Phase 2 — create OAuth2 grants and inheritable permissions (non-admin).
+                // Phase 3 — single admin consent browser or one consolidated URL for non-admins.
                 try
                 {
-                    bool mcpPermissionSetup = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        executor,
-                        graphApiService,
-                        blueprintService,
-                        setupConfig,
-                        true,
-                        setupResults);
+                    // Pre-step: remove stale custom permissions before building the spec list.
+                    var desiredCustomIds = new HashSet<string>(
+                        (setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+                            .Select(p => p.ResourceAppId),
+                        StringComparer.OrdinalIgnoreCase);
+                    await PermissionsSubcommand.RemoveStaleCustomPermissionsAsync(
+                        logger, graphApiService, blueprintService, setupConfig, desiredCustomIds, ct);
 
-                    setupResults.McpPermissionsConfigured = mcpPermissionSetup;
-                    if (mcpPermissionSetup)
+                    // Build combined spec list.
+                    var mcpManifestPath = Path.Combine(
+                        setupConfig.DeploymentProjectPath ?? string.Empty,
+                        McpConstants.ToolingManifestFileName);
+                    var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
+                    var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+
+                    var specs = new List<ResourcePermissionSpec>
                     {
-                        setupResults.InheritablePermissionsConfigured = setupConfig.IsInheritanceConfigured();
+                        new ResourcePermissionSpec(
+                            AuthenticationConstants.MicrosoftGraphResourceAppId,
+                            "Microsoft Graph",
+                            setupConfig.AgentApplicationScopes.ToArray(),
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            mcpResourceAppId,
+                            "Agent 365 Tools",
+                            mcpScopes,
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            ConfigConstants.MessagingBotApiAppId,
+                            "Messaging Bot API",
+                            new[] { "Authorization.ReadWrite", "user_impersonation" },
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            ConfigConstants.ObservabilityApiAppId,
+                            "Observability API",
+                            new[] { "user_impersonation" },
+                            SetInheritable: true),
+                        new ResourcePermissionSpec(
+                            PowerPlatformConstants.PowerPlatformApiResourceAppId,
+                            "Power Platform API",
+                            new[] { "Connectivity.Connections.Read" },
+                            SetInheritable: true),
+                    };
+
+                    foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+                    {
+                        var (isValid, _) = customPerm.Validate();
+                        if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+                        {
+                            var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                                ? customPerm.ResourceAppId
+                                : customPerm.ResourceName;
+                            specs.Add(new ResourcePermissionSpec(
+                                customPerm.ResourceAppId,
+                                resourceName,
+                                customPerm.Scopes.ToArray(),
+                                SetInheritable: true));
+                        }
+                    }
+
+                    var (blueprintPermissionsUpdated, inheritedPermissionsConfigured, consentGranted, adminConsentUrl) =
+                        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                            graphApiService, blueprintService, setupConfig,
+                            setupConfig.AgentBlueprintId!, setupConfig.TenantId,
+                            specs, logger, setupResults, ct,
+                            knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+
+                    setupResults.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
+                    setupResults.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
+                    setupResults.AdminConsentGranted = consentGranted;
+                    setupResults.AdminConsentUrl = adminConsentUrl;
+
+                    List<string>? consentResourceNames = null;
+                    if (!consentGranted && !string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+                    {
+                        consentResourceNames = SetupHelpers.PopulateAdminConsentUrls(setupConfig, mcpResourceAppId, mcpScopes);
+                    }
+
+                    await configService.SaveStateAsync(setupConfig);
+
+                    // Only advertise the path after the save has succeeded — the file must exist
+                    // before we tell the caller where to find the consent URLs.
+                    if (consentResourceNames is not null)
+                    {
+                        setupResults.ConsentUrlsSavedToPath = generatedConfigPath;
+                        setupResults.ConsentResourceNames.AddRange(consentResourceNames);
+                        setupResults.CombinedConsentUrl = SetupHelpers.BuildCombinedConsentUrl(
+                            setupConfig.TenantId!, setupConfig.AgentBlueprintId!,
+                            setupConfig.AgentApplicationScopes, mcpScopes);
                     }
                 }
-                catch (Exception mcpPermEx)
+                catch (Exception permEx)
                 {
-                    setupResults.McpPermissionsConfigured = false;
-                    setupResults.Errors.Add($"MCP Permissions: {mcpPermEx.Message}");
-                    logger.LogWarning("MCP permissions failed: {Message}. Setup will continue, but MCP server permissions must be configured manually", mcpPermEx.Message);
+                    setupResults.BatchPermissionsPhase2Completed = false;
+                    setupResults.AdminConsentGranted = false;
+                    setupResults.Errors.Add($"Permissions: {permEx.Message}");
+                    logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
                 }
 
-                // Step 4: Bot API Permissions
-                try
-                {
-                    bool botPermissionSetup = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
-                        config.FullName,
-                        logger,
-                        configService,
-                        executor,
-                        setupConfig,
-                        graphApiService,
-                        blueprintService,
-                        true,
-                        setupResults);
+                // Step 4: Messaging endpoint registration is temporarily disabled.
 
-                    setupResults.BotApiPermissionsConfigured = botPermissionSetup;
-                    if (botPermissionSetup)
-                    {
-                        setupResults.BotInheritablePermissionsConfigured = setupConfig.IsBotInheritanceConfigured();
-                    }
-                }
-                catch (Exception botPermEx)
-                {
-                    setupResults.BotApiPermissionsConfigured = false;
-                    setupResults.Errors.Add($"Bot API Permissions: {botPermEx.Message}");
-                    logger.LogWarning("Bot permissions failed: {Message}. Setup will continue, but Bot API permissions must be configured manually", botPermEx.Message);
-                }
-
-                // Display setup summary
+                // Display verification URLs and setup summary
+                await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
                 logger.LogInformation("");
                 SetupHelpers.DisplaySetupSummary(setupResults, logger);
             }
@@ -426,14 +440,23 @@ internal static class AllSubcommand
             {
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
-                Environment.Exit(1);
+                ExceptionHandler.ExitWithCleanup(1);
+            }
+            catch (FileNotFoundException fnfEx)
+            {
+                logger.LogError("Setup failed: {Message}", fnfEx.Message);
+                ExceptionHandler.ExitWithCleanup(1);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption, skipInfrastructureOption, skipRequirementsOption);
+        });
 
         return command;
     }

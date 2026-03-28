@@ -86,7 +86,18 @@ public class CommandExecutor
             process.BeginErrorReadLine();
         }
 
-        await process.WaitForExitAsync(cancellationToken);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // User pressed Ctrl+C — kill the child immediately so stdin is
+            // released and the console is not stuck on a zombie subprocess.
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch (Exception killEx) { _logger.LogDebug(killEx, "Failed to kill process after cancellation"); }
+            throw;
+        }
 
         var result = new CommandResult
         {
@@ -114,6 +125,8 @@ public class CommandExecutor
         string? workingDirectory = null,
         string outputPrefix = "",
         bool interactive = false,
+        Func<string, string?>? outputTransform = null,
+        bool suppressErrorLogging = false,
         CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("Executing with streaming: {Command} {Arguments} (Interactive={Interactive})", command, arguments, interactive);
@@ -156,7 +169,12 @@ public class CommandExecutor
                 // Don't print JWT tokens to console (security)
                 if (!IsJwtToken(args.Data))
                 {
-                    Console.WriteLine($"{outputPrefix}{args.Data}");
+                    var display = outputTransform?.Invoke(args.Data) ?? args.Data;
+                    if (display != null)
+                    {
+                        // outputPrefix is prepended only to the first line; callers must not return multi-line strings from outputTransform.
+                        Console.WriteLine($"{outputPrefix}{display}");
+                    }
                 }
                 else
                 {
@@ -170,12 +188,17 @@ public class CommandExecutor
             if (args.Data != null)
             {
                 errorBuilder.AppendLine(args.Data);
-                // Azure CLI writes informational messages to stderr with "WARNING:" prefix
-                // Strip it for cleaner output
-                var cleanData = IsAzureCliCommand(command) 
-                    ? StripAzureWarningPrefix(args.Data) 
+                // Azure CLI writes informational messages to stderr with "WARNING:" prefix.
+                // Strip it for cleaner output.
+                var cleanData = IsAzureCliCommand(command)
+                    ? StripAzureWarningPrefix(args.Data)
                     : args.Data;
-                Console.WriteLine($"{outputPrefix}{cleanData}");
+                // Suppress blank lines and known non-actionable Python / az-CLI
+                // diagnostic lines that leak onto stderr even on successful calls.
+                if (!string.IsNullOrWhiteSpace(cleanData) && !IsNonActionableStderrLine(cleanData))
+                {
+                    Console.WriteLine($"{outputPrefix}{cleanData}");
+                }
             }
         };
 
@@ -185,7 +208,18 @@ public class CommandExecutor
 
         // If not interactive and we redirected stdin we could implement scripted input later.
 
-        await process.WaitForExitAsync(cancellationToken);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // User pressed Ctrl+C — kill the child immediately so stdin is
+            // released and the console is not stuck on a zombie subprocess.
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch (Exception killEx) { _logger.LogDebug(killEx, "Failed to kill process after cancellation"); }
+            throw;
+        }
 
         var result = new CommandResult
         {
@@ -194,7 +228,7 @@ public class CommandExecutor
             StandardError = errorBuilder.ToString()
         };
 
-        if (result.ExitCode != 0)
+        if (result.ExitCode != 0 && !suppressErrorLogging)
         {
             _logger.LogError("Command failed with exit code {ExitCode}", result.ExitCode);
         }
@@ -232,6 +266,37 @@ public class CommandExecutor
             return trimmed.Substring(8).TrimStart(); // Remove "WARNING:" and trim
         }
         return message;
+    }
+
+    /// <summary>
+    /// Returns true for well-known non-actionable stderr lines that should be suppressed
+    /// from the console entirely. These originate from the Python interpreter bundled
+    /// inside the Azure CLI and appear on stderr even during fully successful calls:
+    ///
+    /// 1. Python 32-bit-on-64-bit UserWarning — emitted by the cryptography package
+    ///    (e.g. "UserWarning: You are using cryptography on a 32-bit Python...").
+    ///    Cannot be silenced via az CLI flags; it is purely informational.
+    ///
+    /// 2. Azure SDK "Readonly attribute name will be ignored" reflection warning —
+    ///    appears after StripAzureWarningPrefix() has removed the "WARNING:" prefix.
+    ///    It is an internal SDK model issue, not actionable by end-users.
+    ///
+    /// Both classes of message are captured in StandardError for diagnostic purposes
+    /// (visible in the log file) but must not surface on the console as fake ERRORs.
+    /// </summary>
+    private static bool IsNonActionableStderrLine(string line)
+    {
+        var trimmed = line.AsSpan().TrimStart();
+        // Python warnings module: "UserWarning: ..."
+        if (trimmed.StartsWith("UserWarning:", StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Azure SDK model reflection warning (\"WARNING:\" prefix already stripped).
+        if (trimmed.StartsWith("Readonly attribute name will be ignored", StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Python warnings module call site line that follows a UserWarning line.
+        if (trimmed.StartsWith("warnings.warn(", StringComparison.Ordinal))
+            return true;
+        return false;
     }
 
     private const string JwtTokenPrefix = "eyJ";

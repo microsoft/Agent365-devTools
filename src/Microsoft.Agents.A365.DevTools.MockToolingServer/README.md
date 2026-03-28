@@ -8,9 +8,10 @@ The following mock server definitions are included out of the box:
 
 | Server | File | Description |
 |--------|------|-------------|
-| `mcp_CalendarTools` | `mocks/mcp_CalendarTools.json` | Calendar operations (createEvent, listEvents, getSchedule, findMeetingTimes, etc.) |
-| `mcp_MailTools` | `mocks/mcp_MailTools.json` | Email operations (SendEmail, SendEmailWithAttachments, etc.) |
-| `mcp_MeServer` | `mocks/mcp_MeServer.json` | User/directory operations (listUsers, getMyProfile, getManager, etc.) |
+| `mcp_CalendarTools` | `mocks/mcp_CalendarTools.json` | Calendar operations (ListEvents, CreateEvent, FindMeetingTimes, AcceptEvent, etc.) |
+| `mcp_MailTools` | `mocks/mcp_MailTools.json` | Email operations (SendEmailWithAttachments, SearchMessages, FlagEmail, ReplyToMessage, etc.) |
+| `mcp_MeServer` | `mocks/mcp_MeServer.json` | User/directory operations (GetMyDetails, GetUserDetails, GetManagerDetails, etc.) |
+| `mcp_KnowledgeTools` | `mocks/mcp_KnowledgeTools.json` | Federated knowledge operations (configure_federated_knowledge, query_federated_knowledge, etc.) |
 
 ### mcp_MeServer Tools
 
@@ -31,6 +32,75 @@ Tools for calendar and scheduling operations including `createEvent`, `listEvent
 ### mcp_MailTools Tools
 
 Tools for email operations including `SendEmail`, `SendEmailWithAttachments`, and related mail functionality.
+
+---
+
+## Fidelity Contract
+
+### What the mock guarantees
+
+Every tool exposed by a real M365 MCP server is present in the corresponding mock with the same name, same casing, same required input fields, and the same set of input property names. This ensures that agents developed against the mock will not encounter missing-tool or schema-mismatch errors when switched to a real server.
+
+The fidelity contract is CI-enforced: `MockToolFidelityTests` compares each mock tool's `inputSchema` (required fields and property names) against the corresponding snapshot.
+
+### What the mock does not guarantee
+
+The mock does **not** provide real data, real authentication, or real side effects. Responses are rendered from templates and are not backed by Microsoft Graph or any live service.
+
+### Snapshot-based verification
+
+The `snapshots/` directory contains authoritative tool catalogs captured from real M365 MCP servers. Each snapshot file records the tool names, descriptions, and input schemas as they exist on the real server at the time of capture.
+
+To verify that mock definitions match the real server contracts locally:
+
+```bash
+dotnet test --filter "FullyQualifiedName~MockToolFidelityTests"
+```
+
+To refresh snapshots when real servers change (requires M365 credentials):
+
+```bash
+$env:MCP_BEARER_TOKEN = a365 develop get-token --output raw
+MCP_UPDATE_SNAPSHOTS=true dotnet test --filter "FullyQualifiedName~MockToolSnapshotCaptureTests"
+```
+
+---
+
+## Keeping Mocks Current
+
+### When to update snapshots
+
+- When real M365 MCP servers add, rename, or remove tools
+- Before a release, to confirm mocks still match production
+- When agent tests pass locally against mocks but fail against a real environment
+
+### How to update
+
+1. Obtain a bearer token using the CLI:
+
+   ```pwsh
+   # With an agent project present:
+   $env:MCP_BEARER_TOKEN = a365 develop get-token --output raw
+
+   # Without an agent project — pass app ID and explicit scopes:
+   $env:MCP_BEARER_TOKEN = a365 develop get-token --app-id <your-app-id> --scopes McpServers.Mail.All McpServers.Calendar.All McpServers.Me.All McpServers.Knowledge.All --output raw
+   ```
+
+2. Run the snapshot capture tests. This refreshes both the snapshot files **and** the mock files in one step:
+
+   ```bash
+   MCP_UPDATE_SNAPSHOTS=true dotnet test --filter "FullyQualifiedName~MockToolSnapshotCaptureTests"
+   ```
+
+   The mock auto-merge preserves existing `responseTemplate` / `delayMs` / `errorRate` values for unchanged tools, adds new tools with sensible defaults, and marks removed tools as `enabled=false` for review.
+
+3. Review the diff — no manual schema editing is required. Check `responseTemplate` for any newly added tools and customise if your agent tests need specific data shapes.
+
+4. Run fidelity tests to confirm coverage:
+
+   ```bash
+   dotnet test --filter "FullyQualifiedName~MockToolFidelityTests"
+   ```
 
 ---
 

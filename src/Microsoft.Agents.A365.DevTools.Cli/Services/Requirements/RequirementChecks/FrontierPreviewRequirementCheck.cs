@@ -24,21 +24,10 @@ public class FrontierPreviewRequirementCheck : RequirementCheck
     /// <inheritdoc />
     public override Task<RequirementCheckResult> CheckAsync(Agent365Config config, ILogger logger, CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("Requirement: {Name}", Name);
-
-        Console.WriteLine();
-        logger.LogWarning("While Microsoft Agent 365 is in preview, Frontier Preview Program enrollment is required.");
-        Console.WriteLine("  - Enrollment cannot be verified automatically.");
-        Console.WriteLine("  - Please confirm your tenant is enrolled before continuing.");
-        Console.WriteLine();
-        Console.WriteLine("Documentation:");
-        Console.WriteLine("  - https://learn.microsoft.com/microsoft-agent-365/developer/");
-        Console.WriteLine("  - https://adoption.microsoft.com/copilot/frontier-program/");
-
-        // Return warning without using base class logging (already logged above)
-        return Task.FromResult(RequirementCheckResult.Warning(
-            message: "Cannot automatically verify Frontier Preview Program enrollment",
-            details: "Tenant must be enrolled in Frontier Preview Program during Agent 365 preview. Check documentation to verify if this requirement still applies."
-        ));
+        return ExecuteCheckWithLoggingAsync(config, logger, (_, __, ___) => Task.FromResult(
+            RequirementCheckResult.Warning(
+                message: "Tenant enrollment cannot be verified automatically",
+                details: "Ensure your tenant is enrolled before proceeding. See: https://adoption.microsoft.com/copilot/frontier-program/"
+            )), cancellationToken);
     }
 }

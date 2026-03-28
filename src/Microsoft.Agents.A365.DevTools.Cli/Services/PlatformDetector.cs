@@ -29,7 +29,7 @@ public class PlatformDetector
             return Models.ProjectPlatform.Unknown;
         }
 
-        _logger.LogInformation("Detecting platform in: {Path}", projectPath);
+        _logger.LogDebug("Detecting platform in: {Path}", projectPath);
 
         // Check for .NET project files
         var dotnetFiles = Directory.GetFiles(projectPath, "*.csproj", SearchOption.TopDirectoryOnly)
@@ -39,7 +39,7 @@ public class PlatformDetector
 
         if (dotnetFiles.Length > 0)
         {
-            _logger.LogInformation("Detected .NET project (found {Count} project file(s))", dotnetFiles.Length);
+            _logger.LogDebug("Detected .NET project (found {Count} project file(s))", dotnetFiles.Length);
             return Models.ProjectPlatform.DotNet;
         }
 
@@ -50,7 +50,7 @@ public class PlatformDetector
 
         if (File.Exists(packageJsonPath) || jsFiles || tsFiles)
         {
-            _logger.LogInformation("Detected Node.js project");
+            _logger.LogDebug("Detected Node.js project");
             return Models.ProjectPlatform.NodeJs;
         }
 
@@ -62,7 +62,7 @@ public class PlatformDetector
 
         if (File.Exists(requirementsPath) || File.Exists(setupPyPath) || File.Exists(pyprojectPath) || pythonFiles.Length > 0)
         {
-            _logger.LogInformation("Detected Python project");
+            _logger.LogDebug("Detected Python project");
             return Models.ProjectPlatform.Python;
         }
 

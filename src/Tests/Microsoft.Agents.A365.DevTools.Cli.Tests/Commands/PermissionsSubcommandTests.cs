@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.CommandLine;
 using Xunit;
@@ -19,6 +20,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 public class PermissionsSubcommandTests
 {
     private readonly ILogger _mockLogger;
+    private readonly AzureAuthValidator _mockAuthValidator;
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _mockGraphApiService;
@@ -30,6 +32,7 @@ public class PermissionsSubcommandTests
         _mockConfigService = Substitute.For<IConfigService>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
+        _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
     }
@@ -42,6 +45,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -57,6 +61,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -72,6 +77,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -86,14 +92,16 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(3);
+        command.Subcommands.Should().HaveCount(4);
         command.Subcommands.Should().Contain(s => s.Name == "mcp");
         command.Subcommands.Should().Contain(s => s.Name == "bot");
+        command.Subcommands.Should().Contain(s => s.Name == "custom");
         command.Subcommands.Should().Contain(s => s.Name == "copilotstudio");
     }
 
@@ -103,6 +111,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -110,7 +119,7 @@ public class PermissionsSubcommandTests
         // Assert
         command.Should().NotBeNull();
         command.Name.Should().Be("permissions");
-        command.Subcommands.Should().HaveCount(3);
+        command.Subcommands.Should().HaveCount(4);
     }
 
     #endregion
@@ -123,6 +132,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -139,6 +149,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -158,6 +169,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -177,6 +189,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -195,6 +208,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -216,6 +230,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -232,6 +247,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -251,6 +267,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -270,6 +287,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -288,6 +306,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -304,6 +323,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -440,8 +460,8 @@ public class PermissionsSubcommandTests
             config,
             false);
 
-        // Assert - Should handle missing manifest gracefully
-        result.Should().BeFalse();
+        result.Should().BeTrue(
+            because: "McpServersMetadata.Read.All is always included even when the ToolingManifest is missing, so the method proceeds to configure permissions and returns true (pending admin consent)");
     }
 
     #endregion
@@ -500,6 +520,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -520,6 +541,7 @@ public class PermissionsSubcommandTests
         // Act
         var command = PermissionsSubcommand.CreateCommand(
             _mockLogger,
+            _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
             _mockGraphApiService, _mockBlueprintService);
@@ -533,6 +555,80 @@ public class PermissionsSubcommandTests
         botSubcommand.Description.Should().Contain("MCP permissions",
             "MCP permissions should be configured before bot permissions");
     }
+
+    #endregion
+
+    #region ConfigureCustomPermissionsAsync Tests
+
+    [Fact]
+    public async Task ConfigureCustomPermissionsAsync_WithNoCustomPermissions_SkipsGracefully()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            CustomBlueprintPermissions = null
+        };
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
+            "test-config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            config,
+            false);
+
+        // Assert
+        result.Should().BeTrue("no custom permissions should result in success");
+    }
+
+    [Fact]
+    public async Task ConfigureCustomPermissionsAsync_WithEmptyList_SkipsGracefully()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            CustomBlueprintPermissions = new List<CustomResourcePermission>()
+        };
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureCustomPermissionsAsync(
+            "test-config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            config,
+            false);
+
+        // Assert
+        result.Should().BeTrue("empty custom permissions list should result in success");
+    }
+
+    // NOTE: Integration tests for ConfigureCustomPermissionsAsync auto-lookup behavior
+    // are not included as unit tests because they require extensive mocking of
+    // SetupHelpers.EnsureResourcePermissionsAsync (static method) and other services.
+    //
+    // These behaviors should be tested via:
+    // 1. Manual testing: See MANUAL_TEST_COMMANDS.md (Test 6)
+    // 2. Integration tests: See docs/ai-workflows/integration-test-workflow.md (Test 4.5)
+    // 3. Real Azure environment testing
+    //
+    // Expected behaviors documented for integration testing:
+    // - Auto-lookup succeeds and populates ResourceName
+    // - Auto-lookup fails and uses fallback name (Custom-{first8chars})
+    // - Auto-lookup throws exception and uses fallback name
+    // - ResourceName already provided, no lookup performed
+    // - Multiple permissions with mixed lookup results
+    // - Invalid permission validation
+    // - SetupResults tracking for custom permissions
 
     #endregion
 }

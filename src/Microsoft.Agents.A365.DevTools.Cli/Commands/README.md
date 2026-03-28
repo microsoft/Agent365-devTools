@@ -15,7 +15,7 @@ This folder contains CLI command implementations. Each command inherits from `As
 | **create-instance** | `CreateInstanceCommand.cs` | Agent identity, licenses, and notifications setup |
 | **deploy** | `DeployCommand.cs` | Multiplatform deployment to Azure App Service |
 | **cleanup** | `CleanupCommand.cs` | Delete agent resources (blueprint, instance, Azure) |
-| **publish** | `PublishCommand.cs` | Publish agent manifest to MOS Titles service |
+| **publish** | `PublishCommand.cs` | Package agent manifest for upload to Microsoft 365 Admin Center |
 | **query-entra** | `QueryEntraCommand.cs` | Query Entra ID scopes for blueprints and instances |
 | **develop** | `DevelopCommand.cs` | Development utilities (tokens, permissions, mock server) |
 | **develop-mcp** | `DevelopMcpCommand.cs` | MCP server management in Dataverse environments |
