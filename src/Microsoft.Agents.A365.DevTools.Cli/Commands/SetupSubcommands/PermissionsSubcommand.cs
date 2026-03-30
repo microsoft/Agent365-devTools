@@ -11,6 +11,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using System.Linq;
 using System.Threading;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
@@ -88,11 +89,17 @@ internal static class PermissionsSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
+        var removeLegacyScopesOption = new Option<bool>(
+            "--remove-legacy-scopes",
+            description: "Remove shared ATG audience scopes from the blueprint.\n" +
+                         "Only use after V2 SDK is confirmed live — agents on V1 SDK will lose tool access.");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
+        command.AddOption(removeLegacyScopesOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (config, verbose, dryRun, removeLegacyScopes) =>
         {
             var setupConfig = await configService.LoadAsync(config.FullName);
 
@@ -117,17 +124,34 @@ internal static class PermissionsSubcommand
                 await RequirementsSubcommand.RunChecksOrExitAsync(mcpChecks, setupConfig, logger, CancellationToken.None);
             }
 
+            // Confirmation gate for --remove-legacy-scopes — requires explicit opt-in
+            if (removeLegacyScopes && !dryRun)
+            {
+                logger.LogWarning("--remove-legacy-scopes will remove the shared ATG audience ({AtgAppId}) " +
+                                  "from the blueprint. Agents still on V1 SDK will lose tool access. " +
+                                  "Only proceed after V2 SDK is confirmed deployed.",
+                                  McpConstants.Agent365ToolsProdAppId);
+                Console.Write("Continue? [y/N]: ");
+                var confirm = Console.ReadLine()?.Trim();
+                if (!string.Equals(confirm, "y", StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogInformation("Aborted.");
+                    return;
+                }
+            }
+
             if (dryRun)
             {
-                // Read scopes from ToolingManifest.json
                 var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
-                var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+                var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(
+                    manifestPath, excludeLegacyAtg: removeLegacyScopes);
 
                 logger.LogInformation("DRY RUN: Configure MCP Permissions");
                 logger.LogInformation("Would configure OAuth2 grants and inheritable permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Resource: Agent 365 Tools ({Environment})", setupConfig.Environment);
-                logger.LogInformation("  - Scopes: {Scopes}", string.Join(", ", toolingScopes));
+                foreach (var (audience, scopes) in scopesByAudience)
+                    logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
+                        audience, string.Join(", ", scopes));
                 return;
             }
 
@@ -139,9 +163,10 @@ internal static class PermissionsSubcommand
                 graphApiService,
                 blueprintService,
                 setupConfig,
-                false);
+                false,
+                removeLegacyAtgScopes: removeLegacyScopes);
 
-        }, configOption, verboseOption, dryRunOption);
+        }, configOption, verboseOption, dryRunOption, removeLegacyScopesOption);
 
         return command;
     }
@@ -354,7 +379,8 @@ internal static class PermissionsSubcommand
         Models.Agent365Config setupConfig,
         bool iSetupAll,
         SetupResults? setupResults = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool removeLegacyAtgScopes = false)
     {
         logger.LogInformation("");
         logger.LogInformation("Configuring MCP server permissions...");
@@ -363,14 +389,25 @@ internal static class PermissionsSubcommand
         try
         {
             var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
-            var toolingScopes = await ReadMcpScopesAsync(manifestPath, logger);
 
-            var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+            var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(
+                manifestPath, excludeLegacyAtg: removeLegacyAtgScopes);
 
-            var specs = new List<ResourcePermissionSpec>
+            if (scopesByAudience.Count == 0)
             {
-                new ResourcePermissionSpec(resourceAppId, "Agent 365 Tools", toolingScopes, SetInheritable: true),
-            };
+                logger.LogInformation("No MCP permissions to configure — manifest is empty or not found.");
+                return true;
+            }
+
+            var specs = scopesByAudience
+                .Select(kvp => new ResourcePermissionSpec(
+                    kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: true))
+                .ToList();
+
+            logger.LogInformation("Configuring permissions for {Count} resource(s):", specs.Count);
+            foreach (var spec in specs)
+                logger.LogInformation("  {AppId} — {Scopes}",
+                    spec.ResourceAppId, string.Join(", ", spec.Scopes));
 
             var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 graphApiService, blueprintService, setupConfig,

@@ -258,4 +258,97 @@ public static class ManifestHelper
             foreach (var p in parts) set.Add(p);
         }
     }
+
+    /// <summary>
+    /// Reads ToolingManifest.json and returns scopes grouped by their audience (resourceAppId).
+    /// Supports V1 (shared ATG AppId), V2 (per-server AppId), and mixed manifests.
+    /// Fallback rules when audience is missing or in legacy api:// format:
+    ///   → falls back to <see cref="McpConstants.Agent365ToolsProdAppId"/> (ATG AppId).
+    /// </summary>
+    /// <param name="manifestPath">Path to ToolingManifest.json</param>
+    /// <param name="excludeLegacyAtg">
+    /// When true, omits all entries whose resolved audience is the shared ATG AppId.
+    /// Only pass true when V2 SDK is confirmed live (--remove-legacy-scopes flag).
+    /// </param>
+    /// <returns>Dictionary of resourceAppId → ordered scopes array</returns>
+    public static async Task<Dictionary<string, string[]>> GetScopesByAudienceAsync(
+        string manifestPath,
+        bool excludeLegacyAtg = false)
+    {
+        var atgAppId = McpConstants.Agent365ToolsProdAppId;
+        var scopesByAudience = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        // McpServersMetadata.Read.All is always required and belongs to the ATG AppId
+        if (!excludeLegacyAtg)
+        {
+            scopesByAudience[atgAppId] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "McpServersMetadata.Read.All"
+            };
+        }
+
+        var parsed = await ReadManifestAsync(manifestPath);
+        if (parsed is null)
+            return ToDictionary(scopesByAudience);
+
+        var (servers, _) = parsed.Value;
+
+        foreach (var element in servers)
+        {
+            // Resolve scope — prefer manifest field, fall back to static mapping
+            string? scope = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Scope, out var scopeEl) &&
+                scopeEl.ValueKind == JsonValueKind.String)
+            {
+                scope = scopeEl.GetString();
+            }
+            if (string.IsNullOrWhiteSpace(scope))
+            {
+                var serverName = ExtractServerName(element);
+                if (!string.IsNullOrWhiteSpace(serverName))
+                {
+                    var (mappedScope, _) = McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName);
+                    scope = mappedScope;
+                }
+            }
+            if (string.IsNullOrWhiteSpace(scope)) continue;
+
+            // Resolve audience — fall back to ATG AppId when missing or old api:// format
+            string? audience = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
+                audience = audienceEl.GetString();
+
+            if (string.IsNullOrWhiteSpace(audience) ||
+                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase))
+            {
+                audience = atgAppId;
+            }
+
+            if (excludeLegacyAtg &&
+                string.Equals(audience, atgAppId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!scopesByAudience.TryGetValue(audience, out var scopeSet))
+            {
+                scopeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                scopesByAudience[audience] = scopeSet;
+            }
+
+            foreach (var s in scope.Split(' ',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                scopeSet.Add(s);
+            }
+        }
+
+        return ToDictionary(scopesByAudience);
+
+        static Dictionary<string, string[]> ToDictionary(Dictionary<string, HashSet<string>> src) =>
+            src.ToDictionary(
+                k => k.Key,
+                v => v.Value.OrderBy(s => s).ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+    }
 }
