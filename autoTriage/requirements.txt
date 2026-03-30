@@ -19,7 +19,7 @@ azure-functions==1.21.3
 
 # FastAPI (local development)
 fastapi==0.115.6
-uvicorn==0.32.1
+uvicorn==0.42.0
 python-dotenv==1.0.1
 
 # GitHub API
