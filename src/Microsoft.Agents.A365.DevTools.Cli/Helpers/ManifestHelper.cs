@@ -78,8 +78,9 @@ public static class ManifestHelper
     /// <param name="url">Server URL (optional)</param>
     /// <param name="scope">Required Entra scope</param>
     /// <param name="audience">Token audience for this server</param>
+    /// <param name="publisher">Publisher of the server (e.g. "Microsoft")</param>
     /// <returns>Anonymous object representing the complete server configuration</returns>
-    public static object CreateCompleteServerObject(string serverName, string? uniqueName = null, string? url = null, string? scope = null, string? audience = null)
+    public static object CreateCompleteServerObject(string serverName, string? uniqueName = null, string? url = null, string? scope = null, string? audience = null, string? publisher = null)
     {
         var serverObj = new Dictionary<string, object>
         {
@@ -100,6 +101,11 @@ public static class ManifestHelper
         if (!string.IsNullOrWhiteSpace(audience))
         {
             serverObj[McpConstants.ManifestProperties.Audience] = audience;
+        }
+
+        if (!string.IsNullOrWhiteSpace(publisher))
+        {
+            serverObj[McpConstants.ManifestProperties.Publisher] = publisher;
         }
 
         return serverObj;
@@ -197,7 +203,13 @@ public static class ManifestHelper
                     audience = audienceElement.GetString();
                 }
 
-                servers.Add(CreateCompleteServerObject(serverName, uniqueName, url, scope, audience));
+                string? publisher = null;
+                if (element.TryGetProperty(McpConstants.ManifestProperties.Publisher, out var publisherElement))
+                {
+                    publisher = publisherElement.GetString();
+                }
+
+                servers.Add(CreateCompleteServerObject(serverName, uniqueName, url, scope, audience, publisher));
             }
         }
         

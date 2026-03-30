@@ -387,6 +387,10 @@ public static class DevelopCommand
                         if (string.IsNullOrWhiteSpace(audience)) audience = mappedAudience ?? "";
                     }
 
+                    var publisher = serverElement.TryGetProperty(McpConstants.ManifestProperties.Publisher, out var publisherElement)
+                        ? publisherElement.GetString() ?? ""
+                        : "";
+
                     // Derive protocol version from scope
                     var version = McpConstants.IsV1Scope(scope) ? "V1"
                         : string.Equals(scope, McpConstants.V2ScopeValue, StringComparison.OrdinalIgnoreCase) ? "V2"
@@ -412,6 +416,11 @@ public static class DevelopCommand
                     else
                     {
                         logger.LogInformation("     Audience: Not specified");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(publisher))
+                    {
+                        logger.LogInformation("     Publisher: {Publisher}", publisher);
                     }
 
                     logger.LogInformation(""); // Empty line for readability
@@ -781,8 +790,9 @@ public static class DevelopCommand
                         var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
                         var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
                         var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
+                        var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
-                        var updatedServerObject = ManifestHelper.CreateCompleteServerObject(existingServerName, existingServerName, url, scope, audience);
+                        var updatedServerObject = ManifestHelper.CreateCompleteServerObject(existingServerName, existingServerName, url, scope, audience, publisher);
                         updatedServers.Add(updatedServerObject);
                         updatedCount++;
                         logger.LogInformation("Updated existing server: {Server}", existingServerName);
@@ -852,8 +862,9 @@ public static class DevelopCommand
             var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
             var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
             var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
+            var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
-            var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience);
+            var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience, publisher);
             updatedServers.Add(serverObject);
 
             // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
