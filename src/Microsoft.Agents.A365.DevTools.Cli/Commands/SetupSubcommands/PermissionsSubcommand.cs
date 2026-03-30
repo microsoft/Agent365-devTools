@@ -399,6 +399,23 @@ internal static class PermissionsSubcommand
                 return true;
             }
 
+            // Validate all scopes are known: V1 pattern, V2 value, or metadata scope
+            var unknownScopes = scopesByAudience.Values
+                .SelectMany(s => s)
+                .Where(s =>
+                    !McpConstants.IsV1Scope(s) &&
+                    !string.Equals(s, McpConstants.V2ScopeValue, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(s, "McpServersMetadata.Read.All", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (unknownScopes.Count > 0)
+            {
+                foreach (var unknownScope in unknownScopes)
+                    logger.LogError("Unknown scope '{Scope}'. Re-run: a365 develop add-mcp-servers.", unknownScope);
+                return false;
+            }
+
             var specs = scopesByAudience
                 .Select(kvp => new ResourcePermissionSpec(
                     kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: true))

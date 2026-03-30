@@ -387,7 +387,13 @@ public static class DevelopCommand
                         if (string.IsNullOrWhiteSpace(audience)) audience = mappedAudience ?? "";
                     }
 
+                    // Derive protocol version from scope
+                    var version = McpConstants.IsV1Scope(scope) ? "V1"
+                        : string.Equals(scope, McpConstants.V2ScopeValue, StringComparison.OrdinalIgnoreCase) ? "V2"
+                        : "Unknown";
+
                     logger.LogInformation("  {Name}", serverName);
+                    logger.LogInformation("     Version: {Version}", version);
                     logger.LogInformation("     URL: {Url}", serverUrl);
 
                     if (!string.IsNullOrWhiteSpace(scope))
@@ -780,6 +786,16 @@ public static class DevelopCommand
                         updatedServers.Add(updatedServerObject);
                         updatedCount++;
                         logger.LogInformation("Updated existing server: {Server}", existingServerName);
+
+                        // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
+                        var resolvedAudience = string.IsNullOrWhiteSpace(audience) ||
+                            audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase)
+                            ? McpConstants.Agent365ToolsProdAppId
+                            : audience;
+                        if (string.Equals(resolvedAudience, McpConstants.Agent365ToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            logger.LogWarning("{Server} uses legacy ATG audience. Re-run add-mcp-servers after V2 endpoint is live.", existingServerName);
+                        }
                     }
                     else
                     {
@@ -839,6 +855,16 @@ public static class DevelopCommand
 
             var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience);
             updatedServers.Add(serverObject);
+
+            // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
+            var resolvedAudienceForNew = string.IsNullOrWhiteSpace(audience) ||
+                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase)
+                ? McpConstants.Agent365ToolsProdAppId
+                : audience;
+            if (string.Equals(resolvedAudienceForNew, McpConstants.Agent365ToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("{Server} uses legacy ATG audience. Re-run add-mcp-servers after V2 endpoint is live.", serverName);
+            }
         }
 
         return (updatedServers, addedCount, updatedCount);
