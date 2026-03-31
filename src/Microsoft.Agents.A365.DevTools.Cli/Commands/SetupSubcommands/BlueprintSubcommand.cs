@@ -226,7 +226,7 @@ internal static class BlueprintSubcommand
                     await RequirementsSubcommand.RunChecksOrExitAsync(
                         checks, setupConfig, logger, ct);
                 }
-                catch (Exception reqEx) when (reqEx is not OperationCanceledException)
+                catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                 {
                     logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
                     logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
@@ -386,6 +386,7 @@ internal static class BlueprintSubcommand
             new GraphApiService(
                 cleanLoggerFactory.CreateLogger<GraphApiService>(),
                 executor,
+                new AuthenticationService(cleanLoggerFactory.CreateLogger<AuthenticationService>()),
                 graphBaseUrl: setupConfig.GraphBaseUrl));
 
         // Use DI-provided GraphApiService which already has MicrosoftGraphTokenProvider configured
@@ -763,7 +764,7 @@ internal static class BlueprintSubcommand
                 existingServicePrincipalId = null;
                 // SP missing for an existing app — attempt creation so downstream steps have a valid SP.
                 logger.LogInformation("Service principal not found for existing blueprint — attempting to create it...");
-                var spToken = await graphApiService.GetGraphAccessTokenAsync(tenantId, ct);
+                var spToken = await graphApiService.GetGraphAccessTokenAsync(tenantId, ct: ct);
                 if (!string.IsNullOrWhiteSpace(spToken))
                 {
                     using var spHttpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(spToken);
@@ -1062,12 +1063,17 @@ internal static class BlueprintSubcommand
                 var spPropagated = await retryHelper.ExecuteWithRetryAsync(
                     async ct =>
                     {
-                        // Probe oauth2PermissionGrants directly — a 200 (even empty list) confirms
-                        // the SP's clientId is visible to the grants API replication layer.
-                        // GET /servicePrincipals resolves too fast and gives false confidence.
-                        using var checkResp = await httpClient.GetAsync(
-                            $"{Constants.GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{servicePrincipalId}'", ct);
-                        return checkResp.IsSuccessStatusCode;
+                        // Probe oauth2PermissionGrants via GraphApiService with explicit delegated
+                        // scopes (DelegatedPermissionGrant.ReadWrite.All). A non-null response —
+                        // even an empty list — confirms the SP's clientId is visible to the grants
+                        // API replication layer. Using the raw httpClient here (Application.ReadWrite.All
+                        // scope only) caused 403s on every probe, wasting 8+ minutes of retries.
+                        using var checkDoc = await graphApiService.GraphGetAsync(
+                            setupConfig.TenantId!,
+                            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{servicePrincipalId}'",
+                            ct,
+                            scopes: AuthenticationConstants.RequiredPermissionGrantScopes);
+                        return checkDoc != null;
                     },
                     result => !result,
                     maxRetries: 12,

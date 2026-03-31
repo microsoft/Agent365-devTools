@@ -171,7 +171,62 @@ By default the CLI targets the commercial Microsoft Graph endpoint. For sovereig
 
 This field is optional. When omitted, `https://graph.microsoft.com` is used.
 
-The value is read from `Agent365Config.GraphBaseUrl` and forwarded to `GraphApiService` via its `GraphBaseUrl` property after config is loaded. This controls both the HTTP endpoint used for all Graph API calls and the token resource identifier passed to `az account get-access-token`.
+The value is read from `Agent365Config.GraphBaseUrl` and forwarded to `GraphApiService` via its `GraphBaseUrl` property after config is loaded. This controls both the HTTP endpoint used for all Graph API calls and the token resource identifier passed to `AuthenticationService.GetAccessTokenAsync`.
+
+---
+
+## Authentication Architecture
+
+All token acquisition goes through **MSAL.NET via `AuthenticationService`**. No az CLI subprocess is used for tokens.
+
+### Token Acquisition Flow
+
+```
+All callers (GraphApiService, ArmApiService, BotConfigurator, ...)
+        |
+        v
+AuthenticationService.GetAccessTokenAsync(resource, tenantId)
+        |
+        +-- Check persistent disk cache (%LocalAppData%\Agent365\token-cache.json)
+        |       Cache key: {resource}[:tenant:{tenantId}][:user:{userId}]
+        |
+        +-- Cache hit + not expiring: return token immediately (0 prompts)
+        |
+        +-- Cache miss / expired: MsalBrowserCredential.GetTokenAsync(scopes)
+                |
+                +-- Windows:  WAM broker (no browser, SSO, CAP-compliant)
+                +-- macOS:    System browser → device code fallback if restricted
+                +-- Linux:    Device code flow
+```
+
+### Two Auth Paths
+
+| Path | When used | Scopes | Client app |
+|---|---|---|---|
+| **Default (MSAL)** | ARM, Graph `.default` calls | `{resource}/.default` | PowerShell client ID |
+| **Delegated scopes (MSAL)** | Graph calls needing specific permissions (e.g. `AgentInstance.ReadWrite.All`) | Explicit scope list | `clientAppId` from config |
+
+### Login Hint Resolution
+
+To prevent WAM from selecting a stale or wrong account, a login hint (UPN) is resolved before interactive auth:
+1. `AzCliHelper.ResolveLoginHintAsync()` — reads `az account show` if az CLI is present
+2. `AuthenticationService.ResolveLoginHintFromCacheAsync()` — decodes `upn`/`preferred_username` from a cached JWT if az CLI is unavailable
+
+### IAuthenticationService Interface
+
+`IAuthenticationService` is defined in the same file as `AuthenticationService` (`AuthenticationService.cs`). This is intentional — the interface is narrow (two methods), tightly coupled to its single implementation, and co-location follows the **related-interfaces convention** in the copilot instructions. It exists solely to enable test substitution in `ArmApiService` and `GraphApiService` without triggering real MSAL/WAM prompts.
+
+Only `GetAccessTokenAsync` and `ResolveLoginHintFromCacheAsync` are on the interface. Other methods (`GetAccessTokenWithScopesAsync`, `GetAccessTokenForMcpAsync`, `ClearCache`) stay on the concrete class and are used by commands that take `AuthenticationService` directly.
+
+### Token Caching
+
+- **Persistent cache** (`AuthenticationService`): survives across CLI invocations, keyed by resource + tenant + user
+- **Process-level login hint cache** (`AzCliHelper`): caches the result of `az account show` for the process lifetime — invalidated after `az login` operations
+
+### Platform Notes
+
+- **Windows**: WAM handles token acquisition at the OS level — no browser popup, no Python subprocess, corporate proxy not involved
+- **macOS/Linux**: Browser redirect or device code — falls back to device code automatically if browser auth is blocked by tenant policy (e.g., corp-managed macOS)
 
 ---
 

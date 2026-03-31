@@ -263,7 +263,7 @@ internal static class AllSubcommand
                         await RequirementsSubcommand.RunChecksOrExitAsync(
                             checks, setupConfig, logger, ct);
                     }
-                    catch (Exception reqEx) when (reqEx is not OperationCanceledException)
+                    catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                     {
                         logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
                         logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");

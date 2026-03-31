@@ -35,15 +35,18 @@ public static class ConfigCommand
         {
             new Option<string?>(new[] { "-c", "--configfile" }, "Path to an existing config file to import"),
             new Option<bool>(new[] { "--global", "-g" }, "Create config in global directory (AppData) instead of current directory"),
+            new Option<bool>(new[] { "--yes", "-y" }, "Skip confirmation prompts and apply any required app registration changes automatically"),
         };
 
         cmd.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             var configFileOption = cmd.Options.OfType<Option<string?>>().First(opt => opt.HasAlias("-c"));
             var globalOption = cmd.Options.OfType<Option<bool>>().First(opt => opt.HasAlias("--global"));
+            var yesOption = cmd.Options.OfType<Option<bool>>().First(opt => opt.HasAlias("--yes"));
 
             string? configFile = context.ParseResult.GetValueForOption(configFileOption);
             bool useGlobal = context.ParseResult.GetValueForOption(globalOption);
+            bool yes = context.ParseResult.GetValueForOption(yesOption);
 
             // Determine config path
             string configPath = useGlobal
@@ -95,7 +98,8 @@ public static class ConfigCommand
                             await clientAppValidator.EnsureValidClientAppAsync(
                                 importedConfig.ClientAppId,
                                 importedConfig.TenantId,
-                                context.GetCancellationToken());
+                                skipConfirmation: yes,
+                                ct: context.GetCancellationToken());
                         }
                         catch (ClientAppValidationException ex)
                         {
@@ -108,9 +112,10 @@ public static class ConfigCommand
                             }
                             if (ex.MitigationSteps.Count > 0)
                             {
+                                logger.LogInformation("");
                                 foreach (var step in ex.MitigationSteps)
                                 {
-                                    logger.LogError(step);
+                                    logger.LogInformation("  {Step}", step.TrimEnd());
                                 }
                             }
                             logger.LogError("");

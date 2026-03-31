@@ -63,7 +63,7 @@ public class CleanupCommandTests
         // Pass a TestHttpMessageHandler (returns 404 when queue empty) instead of null to avoid
         // real HTTPS calls to graph.microsoft.com — the handler returns immediately, no network needed.
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
-        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, new TestHttpMessageHandler(), _mockTokenProvider,
+        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), new TestHttpMessageHandler(), _mockTokenProvider,
             loginHintResolver: () => Task.FromResult<string?>(null));
         
         // Create AgentBlueprintService wrapping GraphApiService

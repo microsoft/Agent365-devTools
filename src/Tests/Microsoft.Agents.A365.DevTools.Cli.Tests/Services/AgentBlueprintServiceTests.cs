@@ -7,8 +7,8 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -30,7 +30,6 @@ public class AgentBlueprintServiceTests
         // instead of falling through to the real implementation and spawning actual az processes.
         _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
-        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tid", "fake-graph-token");
     }
 
     [Fact]
@@ -63,7 +62,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // ResolveBlueprintObjectIdAsync: First GET to check if blueprintAppId is objectId (returns 404 NotFound)
@@ -123,7 +122,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // Existing entry with one scope
@@ -232,7 +231,7 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         using var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, tokenProvider: null);
+        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), handler, tokenProvider: null);
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
@@ -441,6 +440,15 @@ public class AgentBlueprintServiceTests
         }
     }
 
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
+    }
+
     private (AgentBlueprintService service, FakeHttpMessageHandler handler) CreateServiceWithFakeHandler()
     {
         var handler = new FakeHttpMessageHandler();
@@ -456,7 +464,7 @@ public class AgentBlueprintServiceTests
         // Pass a no-op login hint resolver to skip the real 'az account show' process spawned by
         // AzCliHelper.ResolveLoginHintAsync — that static call bypasses the mocked CommandExecutor
         // and causes each test to wait several seconds for the real az CLI.
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider,
+        var graphService = new GraphApiService(_mockGraphLogger, executor, Substitute.For<IAuthenticationService>(), handler, _mockTokenProvider,
             loginHintResolver: () => Task.FromResult<string?>(null));
         return (new AgentBlueprintService(_mockLogger, graphService), handler);
     }

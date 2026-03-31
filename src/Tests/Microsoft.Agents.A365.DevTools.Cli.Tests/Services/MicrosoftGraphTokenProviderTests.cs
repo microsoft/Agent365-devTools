@@ -348,4 +348,38 @@ public class MicrosoftGraphTokenProviderTests
         // Assert
         token.Should().Be(expectedToken);
     }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WithForceRefresh_BypassesCache()
+    {
+        // Arrange
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "AgentIdentityBlueprint.DeleteRestore.All" };
+        var clientAppId = "87654321-4321-4321-4321-cba987654321";
+        // Valid JWT with a future exp claim (year 2099)
+        var msalToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWxsYWsiLCJleHAiOjQwNzA5MDg4MDB9.signature";
+        var callCount = 0;
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) =>
+            {
+                callCount++;
+                return Task.FromResult<string?>(msalToken);
+            }
+        };
+
+        // Prime the cache with a first call
+        await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+        callCount.Should().Be(1);
+
+        // Act — second call with forceRefresh: true should bypass the cache
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId, forceRefresh: true);
+
+        // Assert
+        token.Should().Be(msalToken);
+        callCount.Should().Be(2,
+            because: "forceRefresh: true must evict the cached token and re-invoke MSAL, " +
+                     "ensuring a stale CAE-revoked token is not reused");
+    }
 }

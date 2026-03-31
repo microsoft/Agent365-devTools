@@ -148,7 +148,7 @@ internal static class AdminSubcommand
                         await RequirementsSubcommand.RunChecksOrExitAsync(
                             checks, setupConfig, logger, ct);
                     }
-                    catch (Exception reqEx) when (reqEx is not OperationCanceledException)
+                    catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                     {
                         logger.LogError(reqEx, "Requirements check failed: {Message}", reqEx.Message);
                         logger.LogError("Rerun with --skip-requirements to bypass.");

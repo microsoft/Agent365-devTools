@@ -23,5 +23,6 @@ public interface IMicrosoftGraphTokenProvider
         bool useDeviceCode = false,
         string? clientAppId = null,
         CancellationToken ct = default,
-        string? loginHint = null);
+        string? loginHint = null,
+        bool forceRefresh = false);
 }

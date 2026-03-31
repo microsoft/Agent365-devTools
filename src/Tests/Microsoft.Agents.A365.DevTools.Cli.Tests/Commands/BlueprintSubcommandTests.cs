@@ -51,12 +51,8 @@ public class BlueprintSubcommandTests
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
         _mockBotConfigurator = Substitute.For<IBotConfigurator>();
-        // Pass a no-op loginHintResolver to prevent AzCliHelper.ResolveLoginHintAsync from spawning
-        // a real "az account show" process on every test that touches GraphApiService.
-        Func<Task<string?>> noOpLoginHint = () => Task.FromResult<string?>(null);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
-            Substitute.For<ILogger<GraphApiService>>(), _mockExecutor,
-            (HttpMessageHandler?)null, (IMicrosoftGraphTokenProvider?)null, noOpLoginHint, (string?)null);
+            Substitute.For<ILogger<GraphApiService>>(), _mockExecutor, (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockClientAppValidator = Substitute.For<IClientAppValidator>();
         _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);

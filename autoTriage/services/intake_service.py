@@ -10,33 +10,61 @@ Implements FR10-FR24 from requirements (Issue Intake Agent).
 import json
 import logging
 import os
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Tuple
+from urllib.parse import urlparse
 
 from services.github_service import GitHubService, MAX_CONFIG_FILES
 from services.llm_service import LlmService
+from utils.sanitise import MAX_ISSUE_BODY_LENGTH, sanitise_exception as _sanitise_exception, sanitise_user_content as _sanitise_user_content
 from services.config_parser import ConfigParser
 from services.teams_service import TeamsService
 from services.copilot_service import CopilotService
 from models.issue_classification import IssueClassification, TriageRationale
 
 
-def _parse_issue_url(issue_url: str) -> Tuple[str, str, int] | None:
+def _parse_issue_url(issue_url: str) -> Optional[Tuple[str, str, int]]:
     """
-    Parse a GitHub issue URL to extract owner, repo, and issue number.
+    Parse a GitHub or GitHub Enterprise issue URL to extract owner, repo,
+    and issue number.
+
+    Supports both github.com and GitHub Enterprise Server URLs of the form:
+        https://<host>/<owner>/<repo>/issues/<number>
+
+    URL parsing is used deliberately instead of a hardcoded domain check so
+    that any enterprise hostname is accepted without code changes.
 
     Args:
-        issue_url: URL like https://github.com/owner/repo/issues/123
+        issue_url: A GitHub issue URL, e.g.
+            https://github.com/owner/repo/issues/123
+            https://github.example.com/owner/repo/issues/123
 
     Returns:
-        Tuple of (owner, repo, issue_number) or None if parsing fails
+        Tuple of (owner, repo, issue_number) or None if parsing fails.
     """
-    pattern = r'https?://github\.com/([^/]+)/([^/]+)/issues/(\d+)'
-    match = re.match(pattern, issue_url)
-    if match:
-        return match.group(1), match.group(2), int(match.group(3))
-    return None
+    try:
+        parsed = urlparse(issue_url)
+    except Exception:
+        return None
+
+    # Path must match /<owner>/<repo>/issues/<number>
+    # Strip leading slash and split; expect exactly 4 non-empty segments.
+    segments = [s for s in parsed.path.split('/') if s]
+    if len(segments) != 4:
+        return None
+
+    owner, repo, issues_literal, number_str = segments
+    if issues_literal != 'issues':
+        return None
+
+    if not number_str.isdigit():
+        return None
+
+    # Require a non-empty network location (scheme + host) so bare paths are rejected.
+    if not parsed.netloc:
+        return None
+
+    return owner, repo, int(number_str)
 
 
 def _map_to_repository_labels(
@@ -121,7 +149,7 @@ def _find_matching_labels(repo_labels: dict, search_terms: List[str]) -> List[st
 
 def _select_human_assignee(
     llm_service: LlmService,
-    config,
+    config: Any,
     issue_title: str,
     issue_body: str,
     issue_type: str,
@@ -217,7 +245,7 @@ def _validate_classification(
             classification.suggested_assignee = classification.suggested_assignee[1:]
 
     except Exception as e:
-        validation_result["errors"].append(f"Validation error: {str(e)}")
+        validation_result["errors"].append(f"Validation error: {_sanitise_exception(e)}")
         validation_result["valid"] = False
 
     return validation_result
@@ -284,7 +312,7 @@ def _generate_tool_calls(owner: str, repo: str, classification: IssueClassificat
 
     reasoning_text = "\n".join(reasoning_parts) if reasoning_parts else classification.reason
 
-    comment = f"""## 🤖 Team Assistant Triage
+    comment = f"""## [AUTO-TRIAGE] Team Assistant Triage
 
 This issue has been automatically analyzed and triaged.
 
@@ -343,32 +371,33 @@ This issue has been automatically analyzed and triaged.
         # Instead, we'll invoke the Copilot coding agent
         assignee_to_apply = classification.suggested_assignee
         copilot_result = None
-        
+
         if assignee_to_apply and assignee_to_apply.lower() == 'copilot':
             assignee_to_apply = None  # Don't try to assign to 'copilot' via normal assignment
             logging.info(f"Issue #{classification.issue_number} is marked for Copilot auto-fix")
-            
+
             # Try to invoke Copilot coding agent
             try:
                 copilot_service = CopilotService()
-                
+
                 # Check if Copilot is enabled for this repo
                 if copilot_service.is_copilot_enabled(owner, repo):
                     # Fetch the actual issue to get title and body for Copilot context
                     issue = github_service.get_issue(owner, repo, classification.issue_number)
                     issue_title = issue.title if issue else f"Issue #{classification.issue_number}"
-                    # Truncate body to avoid excessively long instructions (max 2000 chars)
+                    # Sanitise and truncate body before passing to Copilot instructions
+                    # to prevent prompt injection via malicious issue content.
                     issue_body = ""
                     if issue and issue.body:
-                        issue_body = issue.body[:2000] + "..." if len(issue.body) > 2000 else issue.body
-                    
+                        issue_body = _sanitise_user_content(issue.body, max_length=MAX_ISSUE_BODY_LENGTH)
+
                     # Generate custom instructions from fix suggestions
                     custom_instructions = copilot_service.get_fix_instructions(
                         issue_title=issue_title,
                         issue_body=issue_body,
                         fix_suggestions=classification.fix_suggestions or []
                     )
-                    
+
                     # Assign the issue to Copilot coding agent
                     copilot_result = copilot_service.assign_to_copilot(
                         owner=owner,
@@ -376,7 +405,7 @@ This issue has been automatically analyzed and triaged.
                         issue_number=classification.issue_number,
                         custom_instructions=custom_instructions
                     )
-                    
+
                     if copilot_result.get("success"):
                         logging.info(f"Successfully assigned issue #{classification.issue_number} to Copilot coding agent")
                         # Update comment to reflect Copilot assignment
@@ -395,7 +424,11 @@ This issue has been automatically analyzed and triaged.
                 else:
                     logging.info(f"Copilot coding agent is not enabled for {owner}/{repo}")
             except Exception as e:
-                logging.error(f"Error invoking Copilot for issue #{classification.issue_number}: {e}")
+                logging.error(
+                    "Error invoking Copilot for issue #%d: %s",
+                    classification.issue_number,
+                    _sanitise_exception(e),
+                )
 
         # Apply changes with proper error handling
         results = github_service.apply_triage_result(
@@ -411,8 +444,13 @@ This issue has been automatically analyzed and triaged.
         return results
 
     except Exception as e:
-        logging.error(f"Error applying triage to issue #{classification.issue_number}: {str(e)}")
-        return {"labels": False, "assignee": False, "comment": False, "error": str(e)}
+        safe_err = _sanitise_exception(e)
+        logging.error(
+            "Error applying triage to issue #%d: %s",
+            classification.issue_number,
+            safe_err,
+        )
+        return {"labels": False, "assignee": False, "comment": False, "error": safe_err}
 
 
 def _write_reasoning_log(
@@ -421,7 +459,7 @@ def _write_reasoning_log(
     repo: str,
     results: List[dict],
     applied_changes: bool
-):
+) -> None:
     """Write human-readable decision reasoning to markdown file."""
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write("# Triage Reasoning Log\n\n")
@@ -486,23 +524,338 @@ def _write_reasoning_log(
                 app_result = result.get("application_result")
                 f.write("### Application Status\n\n")
                 if applied and app_result:
-                    f.write("✅ **Applied Successfully**\n")
+                    f.write("[OK] **Applied Successfully**\n")
                     if isinstance(app_result, dict):
                         for action, success in app_result.items():
                             if action != "error":
-                                status = "✅" if success else "❌"
+                                status = "[OK]" if success else "[FAILED]"
                                 f.write(f"   - {action.title()}: {status}\n")
                         if app_result.get("error"):
                             f.write(f"   - Error: {app_result['error']}\n")
                 elif not validation.get("valid", True):
-                    f.write("⚠️ **Skipped due to validation issues**\n")
+                    f.write("[WARNING] **Skipped due to validation issues**\n")
                 else:
-                    f.write("❌ **Failed to apply changes**\n")
+                    f.write("[FAILED] **Failed to apply changes**\n")
             else:
                 f.write("### Status\n\n")
-                f.write("📝 **Dry run - no changes applied**\n")
+                f.write("[INFO] **Dry run - no changes applied**\n")
 
             f.write("\n---\n\n")
+
+
+# ---------------------------------------------------------------------------
+# triage_issues orchestrator helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_issues_to_triage(
+    github_service: GitHubService,
+    owner: str,
+    repo: str,
+    since_hours: int,
+    issue_url: Optional[str],
+    issue_numbers: Optional[List[int]],
+) -> Tuple[List[Any], Optional[datetime], str, str, Optional[int], str]:
+    """
+    Resolve which issues should be triaged based on the caller's inputs.
+
+    Handles three modes:
+    - Single-issue URL: parse URL, fetch that one issue.
+    - Explicit issue numbers: fetch each by number.
+    - Time-window: fetch all untriaged issues created since `since_hours` ago.
+
+    Args:
+        github_service: Initialised GitHubService.
+        owner: GitHub repository owner (may be overridden when issue_url is given).
+        repo: GitHub repository name (may be overridden when issue_url is given).
+        since_hours: Hours to look back when no explicit issues are specified.
+        issue_url: Optional single-issue URL that overrides owner/repo.
+        issue_numbers: Optional explicit list of issue numbers to triage.
+
+    Returns:
+        Tuple of:
+        - untriaged_issues: list of GitHub issue objects to process.
+        - since_time: the datetime used as the lower bound (or None when not applicable).
+        - owner: resolved repository owner.
+        - repo: resolved repository name.
+        - target_issue_number: the single issue number when in URL mode, else None.
+        - github_host: hostname extracted from issue_url (e.g. "github.com" or a
+          GitHub Enterprise hostname). Defaults to "github.com" when no URL was given.
+
+    Raises:
+        ValueError: When issue_url cannot be parsed, or when both issue_url
+            and issue_numbers are provided (they are mutually exclusive).
+    """
+    if issue_url and issue_numbers:
+        raise ValueError(
+            "issue_url and issue_numbers are mutually exclusive. "
+            "Provide one or the other, not both."
+        )
+
+    target_issue_number: Optional[int] = None
+    since_time: Optional[datetime] = None
+    github_host: str = "github.com"
+
+    if issue_url:
+        parsed = _parse_issue_url(issue_url)
+        if not parsed:
+            raise ValueError(
+                "Invalid issue URL format. "
+                "Expected: https://<host>/owner/repo/issues/123"
+            )
+        owner, repo, target_issue_number = parsed
+        # Preserve the host for GHE deployments so issue_url in
+        # IssueClassification points at the correct server.
+        try:
+            github_host = urlparse(issue_url).netloc or "github.com"
+        except Exception:
+            github_host = "github.com"
+        # Look back a full year so the issue is always included regardless of age.
+        since_hours = 8760
+        logging.info(f"Single issue mode: {owner}/{repo}#{target_issue_number}")
+
+    if issue_numbers and len(issue_numbers) > 0:
+        logging.info(f"Selected issues mode: triaging {len(issue_numbers)} issues")
+        untriaged_issues: List[Any] = []
+        for issue_num in issue_numbers:
+            single_issue = github_service.get_issue(owner, repo, issue_num)
+            if single_issue:
+                untriaged_issues.append(single_issue)
+                logging.info(f"Fetched issue #{issue_num}")
+            else:
+                logging.warning(f"Issue #{issue_num} not found")
+    else:
+        since_time = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        untriaged_issues = github_service.get_new_untriaged_issues(owner, repo, since_time)
+
+        if target_issue_number is not None:
+            untriaged_issues = [
+                issue for issue in untriaged_issues
+                if issue.number == target_issue_number
+            ]
+            if not untriaged_issues:
+                single_issue = github_service.get_issue(owner, repo, target_issue_number)
+                if single_issue:
+                    untriaged_issues = [single_issue]
+                    logging.info(f"Fetched single issue #{target_issue_number} directly")
+
+    return untriaged_issues, since_time, owner, repo, target_issue_number, github_host
+
+
+def _classify_single_issue(
+    issue: Any,
+    owner: str,
+    repo: str,
+    github_service: GitHubService,
+    llm_service: LlmService,
+    config: Any,
+    repo_context: Dict[str, Any],
+    github_host: str = "github.com",
+) -> IssueClassification:
+    """
+    Run the full classification pipeline for a single GitHub issue.
+
+    Orchestrates:
+    1. LLM type/priority classification.
+    2. Security detection and priority elevation.
+    3. Copilot-fixability assessment.
+    4. Fix suggestion generation.
+    5. File-contributor lookup for assignee context.
+    6. Assignee selection.
+    7. Label mapping.
+    8. IssueClassification assembly.
+
+    Args:
+        issue: GitHub issue object.
+        owner: Repository owner.
+        repo: Repository name.
+        github_service: Initialised GitHubService.
+        llm_service: Initialised LlmService.
+        config: Parsed team configuration.
+        repo_context: Pre-fetched repository context dict (languages, structure, etc.).
+
+    Returns:
+        Fully populated IssueClassification instance.
+    """
+    security_config = getattr(config, 'security', None)
+    security_keywords: List[str] = security_config.keywords if security_config else []
+    security_assignee: Optional[str] = security_config.assignee if security_config else None
+    security_default_priority: str = security_config.default_priority if security_config else 'P1'
+
+    # --- Step 1: Type and priority classification ---
+    classification = llm_service.classify_issue(
+        title=issue.title,
+        body=issue.body or "",
+        rules=config.priority_rules
+    )
+
+    # --- Step 2: Security detection ---
+    is_security_issue = False
+    security_reasoning = ""
+    if security_keywords:
+        security_result = llm_service.is_security_issue(
+            title=issue.title,
+            body=issue.body or "",
+            security_keywords=security_keywords
+        )
+        is_security_issue = security_result.get("is_security", False)
+        security_reasoning = security_result.get("reasoning", "")
+        if is_security_issue:
+            logging.info(f"Security issue detected for #{issue.number}: {security_reasoning}")
+            priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4}
+            current_rank = priority_order.get(classification["priority"], 4)
+            security_rank = priority_order.get(security_default_priority, 1)
+
+            if security_rank < current_rank:
+                classification["priority"] = security_default_priority
+                classification["priority_rationale"] = (
+                    f"Elevated to {security_default_priority} due to security concern: {security_reasoning}"
+                )
+            else:
+                classification["priority_rationale"] = (
+                    f"{classification.get('priority_rationale', '')} "
+                    f"[Security issue detected: {security_reasoning}]"
+                )
+
+    # --- Step 3: Copilot-fixability ---
+    # Security issues must never be auto-fixed by Copilot.
+    if is_security_issue:
+        is_copilot_fixable = False
+        copilot_reasoning = "Security issues require human review and should not be auto-fixed"
+    else:
+        copilot_result = llm_service.is_copilot_fixable(
+            title=issue.title,
+            body=issue.body or "",
+            config=config.copilot_fixable,
+            issue_type=classification["type"],
+            priority=classification["priority"]
+        )
+        is_copilot_fixable = copilot_result["is_copilot_fixable"]
+        copilot_reasoning = copilot_result.get("reasoning", "")
+
+    # --- Step 4: Fix suggestions ---
+    fix_suggestions = llm_service.generate_fix_suggestions(
+        title=issue.title,
+        body=issue.body or "",
+        issue_type=classification["type"],
+        priority=classification["priority"],
+        repo_context=repo_context
+    )
+
+    # --- Step 5: File-contributor lookup ---
+    file_contributors = github_service.get_contributors_for_issue(
+        owner=owner,
+        repo=repo,
+        issue_title=issue.title,
+        issue_body=issue.body or ""
+    )
+    if file_contributors:
+        logging.info(
+            f"Found contributor history for {len(file_contributors)} files "
+            f"mentioned in issue #{issue.number}"
+        )
+
+    # --- Step 6: Assignee selection ---
+    assignment_rationale = ""
+    if is_security_issue and security_assignee:
+        suggested_assignee = security_assignee
+        assignment_rationale = f"Security issue assigned to security lead. {security_reasoning}"
+        logging.info(f"Security issue #{issue.number} assigned to security lead: {security_assignee}")
+    elif is_copilot_fixable:
+        suggested_assignee = "copilot"
+        assignment_rationale = f"Issue is suitable for Copilot automated fix. {copilot_reasoning}"
+    else:
+        logging.info(
+            f"Calling _select_human_assignee for issue #{issue.number}, "
+            f"type={classification['type']}, priority={classification['priority']}"
+        )
+        human_assignee, assignment_rationale = _select_human_assignee(
+            llm_service=llm_service,
+            config=config,
+            issue_title=issue.title,
+            issue_body=issue.body or "",
+            issue_type=classification["type"],
+            priority=classification["priority"],
+            file_contributors=file_contributors
+        )
+        logging.info(
+            f"_select_human_assignee returned: assignee={human_assignee}, "
+            f"rationale={assignment_rationale[:100] if assignment_rationale else None}"
+        )
+        suggested_assignee = human_assignee
+
+    # --- Step 7: Label mapping ---
+    suggested_labels = _map_to_repository_labels(
+        github_service, owner, repo, classification["type"], classification["priority"]
+    )
+    if is_security_issue:
+        suggested_labels.append("security")
+        logging.info(f"Added 'security' label for issue #{issue.number}")
+
+    # --- Step 8: Assemble IssueClassification ---
+    triage_rationale = TriageRationale(
+        type_rationale=classification.get(
+            "type_rationale",
+            f"Classified as '{classification['type']}' based on issue content"
+        ),
+        priority_rationale=classification.get(
+            "priority_rationale",
+            f"Assigned {classification['priority']} based on keywords and impact"
+        ),
+        copilot_rationale=copilot_reasoning or (
+            "Suitable for Copilot fix" if is_copilot_fixable else "Requires human expertise"
+        ),
+        assignment_rationale=assignment_rationale,
+        labels_rationale=(
+            f"Applied labels {', '.join(suggested_labels)} based on issue type and priority"
+        )
+    )
+
+    combined_reason = triage_rationale.to_summary()
+
+    return IssueClassification(
+        issue_url=f"https://{github_host}/{owner}/{repo}/issues/{issue.number}",
+        issue_number=issue.number,
+        issue_type=classification["type"],
+        priority=classification["priority"],
+        suggested_labels=suggested_labels,
+        suggested_assignee=suggested_assignee,
+        is_copilot_fixable=is_copilot_fixable,
+        reason=combined_reason,
+        confidence=classification.get("confidence", 0.8),
+        rationale=triage_rationale,
+        fix_suggestions=fix_suggestions
+    )
+
+
+def _apply_triage_labels(
+    github_service: GitHubService,
+    owner: str,
+    repo: str,
+    issue_classification: IssueClassification,
+    apply_changes: bool,
+    validation_result: dict,
+) -> Optional[dict]:
+    """
+    Conditionally apply triage changes to the GitHub issue.
+
+    Changes are only sent to the API when both `apply_changes` is True and
+    the validation passed (i.e. `validation_result["valid"]` is True).
+
+    Args:
+        github_service: Initialised GitHubService.
+        owner: Repository owner.
+        repo: Repository name.
+        issue_classification: Populated classification for the issue.
+        apply_changes: Whether the caller requested changes to be written.
+        validation_result: Result from `_validate_classification`.
+
+    Returns:
+        The raw application result dict from GitHubService, or None when
+        changes were not applied.
+    """
+    if apply_changes and validation_result["valid"]:
+        return _apply_triage_changes(github_service, owner, repo, issue_classification)
+    return None
 
 
 def triage_issues(
@@ -539,57 +892,38 @@ def triage_issues(
     Returns:
         Dict with triage results
     """
-    # Initialize services if not injected
+    # Initialize services if not injected.
+    # Extract the GitHub host from issue_url now (before _fetch_issues_to_triage)
+    # so GitHubService can be pointed at the correct GHE endpoint if needed.
     if github_service is None:
-        github_service = GitHubService()
+        _initial_host = "github.com"
+        if issue_url:
+            try:
+                from urllib.parse import urlparse as _urlparse
+                _initial_host = _urlparse(issue_url).netloc or "github.com"
+            except Exception:
+                pass
+        github_service = GitHubService(github_host=_initial_host)
     if llm_service is None:
         llm_service = LlmService()
     if config_parser is None:
         config_parser = ConfigParser()
     # Note: teams_service is lazily created below only when post_to_teams is True
 
-    # Check for single issue mode via issueUrl
-    target_issue_number = None
-
-    if issue_url:
-        # Single issue mode - parse URL to get owner, repo, issue number
-        parsed = _parse_issue_url(issue_url)
-        if not parsed:
-            raise ValueError("Invalid issue URL format. Expected: https://github.com/owner/repo/issues/123")
-        owner, repo, target_issue_number = parsed
-        since_hours = 8760  # Look back 1 year for single issue mode
-        logging.info(f"Single issue mode: {owner}/{repo}#{target_issue_number}")
-
     # Load config
     config = config_parser.get_default_config()
 
-    # Handle issue_numbers mode (triage specific selected issues)
-    if issue_numbers and len(issue_numbers) > 0:
-        logging.info(f"Selected issues mode: triaging {len(issue_numbers)} issues")
-        untriaged_issues = []
-        for issue_num in issue_numbers:
-            single_issue = github_service.get_issue(owner, repo, issue_num)
-            if single_issue:
-                untriaged_issues.append(single_issue)
-                logging.info(f"Fetched issue #{issue_num}")
-            else:
-                logging.warning(f"Issue #{issue_num} not found")
-    else:
-        # Get untriaged issues
-        since_time = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-        untriaged_issues = github_service.get_new_untriaged_issues(owner, repo, since_time)
+    # --- Fetch issues ---
+    untriaged_issues, since_time, owner, repo, _target_number, github_host = _fetch_issues_to_triage(
+        github_service=github_service,
+        owner=owner,
+        repo=repo,
+        since_hours=since_hours,
+        issue_url=issue_url,
+        issue_numbers=issue_numbers,
+    )
 
-        # Filter to specific issue if in single issue mode
-        if target_issue_number is not None:
-            untriaged_issues = [issue for issue in untriaged_issues if issue.number == target_issue_number]
-            if not untriaged_issues:
-                # Issue not found in untriaged list - try to fetch it directly
-                single_issue = github_service.get_issue(owner, repo, target_issue_number)
-                if single_issue:
-                    untriaged_issues = [single_issue]
-                    logging.info(f"Fetched single issue #{target_issue_number} directly")
-
-    # Handle no issues found
+    # --- Handle no issues found ---
     if not untriaged_issues:
         teams_message_sent = False
         if post_to_teams:
@@ -597,8 +931,9 @@ def triage_issues(
                 teams_service = TeamsService()
             teams_message_sent = teams_service.post_intake_results(owner, repo, [], apply_changes)
 
-        result = {
-            "message": f"No untriaged issues found in {owner}/{repo} since {since_time.isoformat()}",
+        no_issue_since = since_time.isoformat() if since_time else "N/A"
+        result: Dict[str, Any] = {
+            "message": f"No untriaged issues found in {owner}/{repo} since {no_issue_since}",
             "processed_count": 0,
             "applied_changes": apply_changes,
             "total_tool_calls": 0,
@@ -628,7 +963,7 @@ def triage_issues(
                 f.write("# Triage Reasoning Log\n\n")
                 f.write(f"**Repository:** {owner}/{repo}\n")
                 f.write(f"**Timestamp:** {datetime.now(timezone.utc).isoformat()}\n")
-                f.write(f"**Since:** {since_time.isoformat()}\n\n")
+                f.write(f"**Since:** {no_issue_since}\n\n")
                 f.write("## Result\n\nNo untriaged issues found.\n")
 
             result["output_files"] = {
@@ -640,180 +975,59 @@ def triage_issues(
 
     logging.info(f"Found {len(untriaged_issues)} untriaged issues to process")
 
-    # Get repository labels once for efficient mapping
+    # --- Fetch repository-wide context once (shared across all issues) ---
     repo_labels = github_service.get_repository_labels(owner, repo)
     logging.info(f"Retrieved {len(repo_labels)} labels from repository {owner}/{repo}")
 
-    # Get repository context once for better fix suggestions
     repo_context = github_service.get_repository_context(owner, repo)
-    logging.info(f"Retrieved repository context: {repo_context.get('primary_language', 'Unknown')} project with {len(repo_context.get('languages', []))} languages")
+    logging.info(
+        f"Retrieved repository context: "
+        f"{repo_context.get('primary_language', 'Unknown')} project "
+        f"with {len(repo_context.get('languages', []))} languages"
+    )
 
-    # Get repository structure for project layout understanding
     repo_structure = github_service.get_repository_structure(owner, repo)
-    logging.info(f"Retrieved repository structure: {len(repo_structure.get('top_level_directories', []))} top-level directories, {len(repo_structure.get('config_files', []))} config files")
+    logging.info(
+        f"Retrieved repository structure: "
+        f"{len(repo_structure.get('top_level_directories', []))} top-level directories, "
+        f"{len(repo_structure.get('config_files', []))} config files"
+    )
 
     # Fetch key config files for dependency/tech stack info
-    config_contents = {}
-    for config_file in repo_structure.get('config_files', [])[:MAX_CONFIG_FILES]:  # Limit config files to fetch
+    config_contents: Dict[str, str] = {}
+    for config_file in repo_structure.get('config_files', [])[:MAX_CONFIG_FILES]:
         content = github_service.get_file_content(owner, repo, config_file)
         if content:
-            config_contents[config_file] = content[:2000]  # Limit to first 2000 chars
+            config_contents[config_file] = content[:MAX_ISSUE_BODY_LENGTH]
             logging.info(f"Fetched config file: {config_file} ({len(content)} bytes)")
 
-    # Merge structure and config into repo_context
     repo_context['structure'] = repo_structure
     repo_context['config_files_content'] = config_contents
 
-    # Get security config if available
-    security_config = getattr(config, 'security', None)
-    security_keywords = security_config.keywords if security_config else []
-    security_assignee = security_config.assignee if security_config else None
-    security_default_priority = security_config.default_priority if security_config else 'P1'
-
-    # Process each issue
-    results = []
+    # --- Process each issue ---
+    results: List[dict] = []
     for issue in untriaged_issues:
-        # Classify the issue
-        classification = llm_service.classify_issue(
-            title=issue.title,
-            body=issue.body or "",
-            rules=config.priority_rules
-        )
-
-        # Check if this is a security issue
-        is_security_issue = False
-        security_reasoning = ""
-        if security_keywords:
-            security_result = llm_service.is_security_issue(
-                title=issue.title,
-                body=issue.body or "",
-                security_keywords=security_keywords
-            )
-            is_security_issue = security_result.get("is_security", False)
-            security_reasoning = security_result.get("reasoning", "")
-            if is_security_issue:
-                logging.info(f"Security issue detected for #{issue.number}: {security_reasoning}")
-                # Elevate priority for security issues (never downgrade)
-                # Priority order: P0 > P1 > P2 > P3 > P4
-                priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4}
-                current_priority = classification["priority"]
-                current_rank = priority_order.get(current_priority, 4)
-                security_rank = priority_order.get(security_default_priority, 1)
-                
-                # Only elevate if security priority is higher (lower rank number)
-                if security_rank < current_rank:
-                    classification["priority"] = security_default_priority
-                    classification["priority_rationale"] = f"Elevated to {security_default_priority} due to security concern: {security_reasoning}"
-                else:
-                    # Already at or above security priority, just add note
-                    classification["priority_rationale"] = f"{classification.get('priority_rationale', '')} [Security issue detected: {security_reasoning}]"
-
-        # Check if Copilot-fixable using LLM-based assessment
-        # Security issues should NOT be auto-fixed by Copilot
-        if is_security_issue:
-            is_copilot_fixable = False
-            copilot_reasoning = "Security issues require human review and should not be auto-fixed"
-        else:
-            copilot_result = llm_service.is_copilot_fixable(
-                title=issue.title,
-                body=issue.body or "",
-                config=config.copilot_fixable,
-                issue_type=classification["type"],
-                priority=classification["priority"]
-            )
-            is_copilot_fixable = copilot_result["is_copilot_fixable"]
-            copilot_reasoning = copilot_result.get("reasoning", "")
-
-        # Generate fix suggestions with repository context
-        fix_suggestions = llm_service.generate_fix_suggestions(
-            title=issue.title,
-            body=issue.body or "",
-            issue_type=classification["type"],
-            priority=classification["priority"],
-            repo_context=repo_context
-        )
-
-        # Get file contributors for issues that mention specific files
-        file_contributors = github_service.get_contributors_for_issue(
+        issue_classification = _classify_single_issue(
+            issue=issue,
             owner=owner,
             repo=repo,
-            issue_title=issue.title,
-            issue_body=issue.body or ""
-        )
-        if file_contributors:
-            logging.info(f"Found contributor history for {len(file_contributors)} files mentioned in issue #{issue.number}")
-
-        # Determine assignee based on security status, then Copilot-fixable status
-        assignment_rationale = ""
-        if is_security_issue and security_assignee:
-            # Security issues always go to the designated security lead
-            suggested_assignee = security_assignee
-            assignment_rationale = f"Security issue assigned to security lead. {security_reasoning}"
-            logging.info(f"Security issue #{issue.number} assigned to security lead: {security_assignee}")
-        elif is_copilot_fixable:
-            suggested_assignee = "copilot"
-            assignment_rationale = f"Issue is suitable for Copilot automated fix. {copilot_reasoning}"
-        else:
-            # Use LLM to select best human engineer based on expertise and commit history
-            logging.info(f"Calling _select_human_assignee for issue #{issue.number}, type={classification['type']}, priority={classification['priority']}")
-            human_assignee, assignment_rationale = _select_human_assignee(
-                llm_service=llm_service,
-                config=config,
-                issue_title=issue.title,
-                issue_body=issue.body or "",
-                issue_type=classification["type"],
-                priority=classification["priority"],
-                file_contributors=file_contributors
-            )
-            logging.info(f"_select_human_assignee returned: assignee={human_assignee}, rationale={assignment_rationale[:100] if assignment_rationale else None}")
-            suggested_assignee = human_assignee
-
-        # Map classification results to actual repository labels
-        suggested_labels = _map_to_repository_labels(
-            github_service, owner, repo, classification["type"], classification["priority"]
+            github_service=github_service,
+            llm_service=llm_service,
+            config=config,
+            repo_context=repo_context,
+            github_host=github_host,
         )
 
-        # Add security label if this is a security issue
-        if is_security_issue:
-            suggested_labels.append("security")
-            logging.info(f"Added 'security' label for issue #{issue.number}")
-
-        # Build structured rationale for each decision
-        triage_rationale = TriageRationale(
-            type_rationale=classification.get("type_rationale", f"Classified as '{classification['type']}' based on issue content"),
-            priority_rationale=classification.get("priority_rationale", f"Assigned {classification['priority']} based on keywords and impact"),
-            copilot_rationale=copilot_reasoning or ("Suitable for Copilot fix" if is_copilot_fixable else "Requires human expertise"),
-            assignment_rationale=assignment_rationale,
-            labels_rationale=f"Applied labels {', '.join(suggested_labels)} based on issue type and priority"
-        )
-
-        # Build legacy combined reason for backwards compatibility
-        combined_reason = triage_rationale.to_summary()
-
-        issue_classification = IssueClassification(
-            issue_url=f"https://github.com/{owner}/{repo}/issues/{issue.number}",
-            issue_number=issue.number,
-            issue_type=classification["type"],
-            priority=classification["priority"],
-            suggested_labels=suggested_labels,
-            suggested_assignee=suggested_assignee,
-            is_copilot_fixable=is_copilot_fixable,
-            reason=combined_reason,
-            confidence=classification.get("confidence", 0.8),
-            rationale=triage_rationale,
-            fix_suggestions=fix_suggestions
-        )
-
-        # Validate the LLM's choices
         validation_result = _validate_classification(github_service, owner, repo, issue_classification)
-
-        # Generate JSON tool calls for proposed changes
         tool_calls = _generate_tool_calls(owner, repo, issue_classification)
-
-        # Apply changes if requested and valid
-        application_result = None
-        if apply_changes and validation_result["valid"]:
-            application_result = _apply_triage_changes(github_service, owner, repo, issue_classification)
+        application_result = _apply_triage_labels(
+            github_service=github_service,
+            owner=owner,
+            repo=repo,
+            issue_classification=issue_classification,
+            apply_changes=apply_changes,
+            validation_result=validation_result,
+        )
 
         results.append({
             "issue": issue_classification.to_dict(),
@@ -823,13 +1037,14 @@ def triage_issues(
             "application_result": application_result
         })
 
-    # Write results to files if enabled
+    # --- Write output logs if requested ---
+    decisions_file: Optional[str] = None
+    reasoning_file: Optional[str] = None
     if output_logs:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         output_dir = "output"
         os.makedirs(output_dir, exist_ok=True)
 
-        # Write triage-decisions.json
         decisions_file = os.path.join(output_dir, f"triage-decisions_{owner}_{repo}_{timestamp}.json")
         with open(decisions_file, 'w', encoding='utf-8') as f:
             json.dump({
@@ -840,18 +1055,17 @@ def triage_issues(
                 "results": results
             }, f, indent=2)
 
-        # Write reasoning-log.md
         reasoning_file = os.path.join(output_dir, f"reasoning-log_{owner}_{repo}_{timestamp}.md")
         _write_reasoning_log(reasoning_file, owner, repo, results, apply_changes)
 
-    # Post to Teams if requested
+    # --- Post to Teams if requested ---
     teams_message_sent = False
     if post_to_teams:
         if teams_service is None:
             teams_service = TeamsService()
         teams_message_sent = teams_service.post_intake_results(owner, repo, results, apply_changes)
 
-    result = {
+    final_result: Dict[str, Any] = {
         "message": f"Processed {len(results)} issues from {owner}/{repo}",
         "processed_count": len(results),
         "applied_changes": apply_changes,
@@ -860,9 +1074,9 @@ def triage_issues(
     }
 
     if output_logs:
-        result["output_files"] = {
+        final_result["output_files"] = {
             "triage_decisions": decisions_file,
             "reasoning_log": reasoning_file
         }
 
-    return result
+    return final_result

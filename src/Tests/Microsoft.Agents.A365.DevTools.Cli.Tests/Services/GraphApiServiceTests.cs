@@ -9,12 +9,12 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
-[Collection("AzCliTokenCache")]
 public class GraphApiServiceTests
 {
     private readonly ILogger<GraphApiService> _mockLogger;
@@ -27,9 +27,6 @@ public class GraphApiServiceTests
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
-        AzCliHelper.ResetAzCliTokenCacheForTesting();
-        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "fake-graph-token");
-        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tid", "fake-graph-token");
     }
 
 
@@ -53,7 +50,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful POST with JSON body
         var bodyObj = new { result = "ok" };
@@ -94,7 +91,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue failing POST with JSON error body
         var errorBody = new { error = new { code = "Authorization_RequestDenied", message = "Insufficient privileges" } };
@@ -162,7 +159,7 @@ public class GraphApiServiceTests
             });
 
         // Create GraphApiService with our capturing handler
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response for service principal lookup
         var spResponse = new { value = new[] { new { id = "sp-object-id-123", appId = "blueprint-456" } } };
@@ -244,7 +241,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -293,7 +290,7 @@ public class GraphApiServiceTests
             Arg.Any<string?>())
             .Returns("token-from-provider\r\nwith-embedded-newlines\n");
 
-        var service = new GraphApiService(logger, executor, handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -318,15 +315,9 @@ public class GraphApiServiceTests
     [Fact]
     public async Task CheckServicePrincipalCreationPrivilegesAsync_SanitizesTokenWithNewlines()
     {
-        // This test verifies that CheckServicePrincipalCreationPrivilegesAsync also
-        // sanitizes tokens with newlines. This method has its own token handling code
-        // separate from EnsureGraphHeadersAsync.
-
-        // Overwrite the "fake-graph-token" warmed in the constructor with a token that has
-        // embedded newlines. GetGraphAccessTokenAsync returns it from the process-level cache;
-        // CheckServicePrincipalCreationPrivilegesAsync must trim it before using it in the
-        // Authorization header. Warming directly avoids spawning a real az subprocess.
-        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "privileges-check-token\r\n\n");
+        // This test verifies that CheckServicePrincipalCreationPrivilegesAsync sanitizes
+        // tokens with embedded whitespace before setting the Authorization header.
+        // Token acquisition now goes through IAuthenticationService (MSAL), not az CLI.
 
         // Arrange
         HttpRequestMessage? capturedRequest = null;
@@ -334,38 +325,13 @@ public class GraphApiServiceTests
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
-        // Mock az CLI to return a token WITH newline characters
-        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo =>
-            {
-                var cmd = callInfo.ArgAt<string>(0);
-                var args = callInfo.ArgAt<string>(1);
+        // Auth service returns a token WITH embedded newlines — simulates a whitespace-padded token.
+        var authWithNewlines = Substitute.For<IAuthenticationService>();
+        authWithNewlines.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("privileges-check-token\r\n\n"));
 
-                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
-                {
-                    return Task.FromResult(new CommandResult
-                    {
-                        ExitCode = 0,
-                        StandardOutput = "{}",
-                        StandardError = string.Empty
-                    });
-                }
-
-                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Return token WITH embedded newlines
-                    return Task.FromResult(new CommandResult
-                    {
-                        ExitCode = 0,
-                        StandardOutput = "privileges-check-token\r\n\n",
-                        StandardError = string.Empty
-                    });
-                }
-
-                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
-            });
-
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, authWithNewlines, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue a successful response for the directory roles query
         using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -415,7 +381,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue successful response with Microsoft Graph service principal
         var spResponse = new { value = new[] { new { displayName = "Microsoft Graph" } } };
@@ -451,7 +417,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response with empty array (service principal not found)
         var spResponse = new { value = Array.Empty<object>() };
@@ -487,7 +453,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue error response (simulating network error or Graph API error)
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError)
@@ -522,7 +488,7 @@ public class GraphApiServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var service = new GraphApiService(logger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response with malformed object (missing displayName)
         var spResponse = new { value = new[] { new { id = "sp-id-123", appId = "00000003-0000-0000-c000-000000000000" } } };
@@ -608,6 +574,15 @@ public class GraphApiServiceTests
 
     #region IsCurrentUserAgentIdAdminAsync
 
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
+    }
+
     private static GraphApiService CreateServiceWithTokenProvider(TestHttpMessageHandler handler)
     {
         var logger = Substitute.For<ILogger<GraphApiService>>();
@@ -617,7 +592,7 @@ public class GraphApiServiceTests
                 Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
                 Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns("fake-token");
-        return new GraphApiService(logger, executor, handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
+        return new GraphApiService(logger, executor, FakeAuth(), handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null), retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
     }
 
     [Fact]

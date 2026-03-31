@@ -15,9 +15,11 @@ public interface IClientAppValidator
     /// </summary>
     /// <param name="clientAppId">The client app ID to validate</param>
     /// <param name="tenantId">The tenant ID where the app should exist</param>
+    /// <param name="skipConfirmation">When true, applies any required app registration fixes without prompting the user.
+    /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="Exceptions.ClientAppValidationException">Thrown when validation fails</exception>
-    Task EnsureValidClientAppAsync(string clientAppId, string tenantId, CancellationToken ct = default);
+    Task EnsureValidClientAppAsync(string clientAppId, string tenantId, bool skipConfirmation = false, CancellationToken ct = default);
 
     /// <summary>
     /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.

@@ -481,7 +481,7 @@ public sealed class A365CreateInstanceRunner
             try
             {
                 // Use Azure CLI token to get current user (this requires delegated context)
-                var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
+                var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: ct);
                 if (!string.IsNullOrWhiteSpace(delegatedToken))
                 {
                     using var delegatedClient = HttpClientFactory.CreateAuthenticatedClient(delegatedToken, correlationId: correlationId);
@@ -678,7 +678,7 @@ public sealed class A365CreateInstanceRunner
             _logger.LogInformation("  - Agent Identity ID: {Id}", agenticAppId);
 
             // Get Graph access token
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: ct);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token");
@@ -938,7 +938,7 @@ public sealed class A365CreateInstanceRunner
             _logger.LogInformation("Assigning licenses to user {UserId} using Graph API (CorrelationId: {CorrelationId})", userId, correlationId);
 
             // Get Graph access token
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, cancellationToken);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogError("Failed to acquire Graph API access token for license assignment");
@@ -1149,7 +1149,7 @@ public sealed class A365CreateInstanceRunner
         try
         {
             // Use Graph API to check if service principal exists
-            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct);
+            var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: ct);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
                 _logger.LogWarning("Failed to acquire Graph token for service principal verification");

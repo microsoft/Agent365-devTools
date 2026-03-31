@@ -7,6 +7,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
@@ -14,10 +15,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// <summary>
 /// Unit tests for ArmApiService.
 /// Uses TestHttpMessageHandler (defined in GraphApiServiceTests.cs, same assembly)
-/// to inject fake HTTP responses. The AzCliHelper process-level token cache is
-/// pre-warmed in the constructor so no real az subprocess is spawned.
+/// to inject fake HTTP responses.
 /// </summary>
-[Collection("AzCliTokenCache")]
 public class ArmApiServiceTests
 {
     private const string TenantId = "tid";
@@ -27,14 +26,17 @@ public class ArmApiServiceTests
     private const string WebAppName = "webapp-test";
     private const string UserObjectId = "user-obj-id";
 
-    public ArmApiServiceTests()
+    private static IAuthenticationService FakeAuth()
     {
-        AzCliHelper.ResetAzCliTokenCacheForTesting();
-        AzCliHelper.WarmAzCliTokenCache(ArmApiService.ArmResource, TenantId, "fake-arm-token");
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-arm-token"));
+        return mock;
     }
 
     private static ArmApiService CreateService(HttpMessageHandler handler) =>
-        new ArmApiService(NullLogger<ArmApiService>.Instance, handler);
+        new ArmApiService(NullLogger<ArmApiService>.Instance, FakeAuth(), handler, retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
 
     // ──────────────────────────── ResourceGroupExistsAsync ────────────────────────────
 

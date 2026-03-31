@@ -13,6 +13,25 @@ using System.Text.Json;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
+/// Abstraction over MSAL token acquisition used by ArmApiService and GraphApiService.
+/// Enables test substitution without triggering real interactive authentication.
+/// Co-located with AuthenticationService per the related-interfaces convention.
+/// </summary>
+public interface IAuthenticationService
+{
+    Task<string> GetAccessTokenAsync(
+        string resourceUrl,
+        string? tenantId = null,
+        bool forceRefresh = false,
+        string? clientId = null,
+        IEnumerable<string>? scopes = null,
+        bool useInteractiveBrowser = true,
+        string? userId = null);
+
+    Task<string?> ResolveLoginHintFromCacheAsync();
+}
+
+/// <summary>
 /// Service for handling authentication to Agent 365 Tools and Microsoft Graph API.
 ///
 /// AUTHENTICATION STRATEGY:
@@ -37,7 +56,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// - Subsequent commands: 0 prompts (uses cached tokens)
 /// - Token refresh: Automatic when within 5 minutes of expiration
 /// </summary>
-public class AuthenticationService
+public class AuthenticationService : IAuthenticationService
 {
     private readonly ILogger<AuthenticationService> _logger;
     private readonly string _tokenCachePath;
@@ -105,14 +124,14 @@ public class AuthenticationService
                         }
                         else
                         {
-                            _logger.LogInformation("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                            _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
                                 resourceUrl, tenantId);
                             return cachedToken.AccessToken;
                         }
                     }
                     else
                     {
-                        _logger.LogInformation("Using cached authentication token for {ResourceUrl}", resourceUrl);
+                        _logger.LogDebug("Using cached authentication token for {ResourceUrl}", resourceUrl);
                         return cachedToken.AccessToken;
                     }
                 }
@@ -168,8 +187,8 @@ public class AuthenticationService
                 // This creates the format required by Azure AD for the TokenRequestContext: {resourceAppId}/{scope}
                 // Example: "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All"
                 scopes = explicitScopes.Select(s => $"{resourceUrl}/{s}").ToArray();
-                _logger.LogInformation("Using explicit scopes for authentication: {Scopes}", string.Join(", ", explicitScopes));
-                _logger.LogInformation("Formatted as: {FormattedScopes}", string.Join(", ", scopes));
+                _logger.LogDebug("Using explicit scopes for authentication: {Scopes}", string.Join(", ", explicitScopes));
+                _logger.LogDebug("Formatted as: {FormattedScopes}", string.Join(", ", scopes));
             }
             else
             {
@@ -206,13 +225,13 @@ public class AuthenticationService
                     scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                         ? resourceUrl
                         : $"{resourceUrl}/.default";
-                    _logger.LogInformation("Using custom resource for authentication: {Resource}", resourceUrl);
+                    _logger.LogDebug("Using custom resource for authentication: {Resource}", resourceUrl);
                 }
                 scopes = [scope];
-                _logger.LogInformation($"Token scope: {scope}");
+                _logger.LogDebug("Token scope: {Scope}", scope);
             }
 
-            _logger.LogInformation("Authenticating for tenant: {TenantId}", effectiveTenantId);
+            _logger.LogDebug("Authenticating for tenant: {TenantId}", effectiveTenantId);
 
             // Use provided client ID or default to PowerShell client ID
             effectiveClientId = string.IsNullOrWhiteSpace(clientId) 
@@ -557,6 +576,57 @@ public class AuthenticationService
                 return Task.CompletedTask;
             }
         });
+    }
+
+    /// <summary>
+    /// Resolves the login hint (UPN) from the persistent token cache by decoding a cached JWT.
+    /// Used to pre-select the correct account for WAM/MSAL when az CLI is not available.
+    /// Returns null if no cached token exists or the UPN claim cannot be read.
+    /// </summary>
+    public async Task<string?> ResolveLoginHintFromCacheAsync()
+    {
+        if (!File.Exists(_tokenCachePath))
+            return null;
+        try
+        {
+            var json = await File.ReadAllTextAsync(_tokenCachePath);
+            var cache = JsonSerializer.Deserialize<TokenCache>(json);
+            if (cache?.Tokens == null) return null;
+            foreach (var entry in cache.Tokens.Values)
+            {
+                var upn = TryExtractUpnFromJwt(entry.AccessToken);
+                if (!string.IsNullOrWhiteSpace(upn))
+                    return upn;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve login hint from token cache");
+        }
+        return null;
+    }
+
+    private static string? TryExtractUpnFromJwt(string? jwt)
+    {
+        if (string.IsNullOrWhiteSpace(jwt)) return null;
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return null;
+            var payload = parts[1];
+            // JWT uses Base64Url encoding: replace URL-safe chars before standard Base64 decode.
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            // Restore Base64 padding stripped by JWT encoding.
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var bytes = Convert.FromBase64String(payload);
+            using var doc = JsonDocument.Parse(bytes);
+            if (doc.RootElement.TryGetProperty("upn", out var upn) && !string.IsNullOrWhiteSpace(upn.GetString()))
+                return upn.GetString();
+            if (doc.RootElement.TryGetProperty("preferred_username", out var pref) && !string.IsNullOrWhiteSpace(pref.GetString()))
+                return pref.GetString();
+        }
+        catch { } // Static helper — no logger access. Caller logs via ResolveLoginHintFromCacheAsync.
+        return null;
     }
 
     /// <summary>

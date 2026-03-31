@@ -11,7 +11,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Set, Tuple, Any
 from github import Github, GithubException
 from difflib import get_close_matches
-from functools import lru_cache
+
+# Shared constants — defined once and imported here to avoid duplication.
+from constants import MAX_CONTRIBUTORS_TO_SHOW
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ TRIAGE_BOT_USERS = ['github-actions[bot]', 'dependabot[bot]']
 # In-memory cache with TTL
 _cache: Dict[str, Tuple[Any, datetime]] = {}
 CACHE_TTL_SECONDS = 900  # 15 minutes - good for demos
+CACHE_MAX_ENTRIES = 100  # Maximum number of entries before eviction
 
 # API request limits
 MAX_ITEMS_PER_REQUEST = 100  # Maximum items to fetch per API request
@@ -34,7 +37,6 @@ MAX_SCAN_DEPTH = 3  # Maximum directory depth to scan
 MAX_CONFIG_FILES = 3  # Maximum config files to fetch content for
 MAX_FILE_CONTENT_SIZE = 10000  # Maximum file size in bytes to fetch
 MAX_FILE_PATHS_TO_EXTRACT = 5  # Maximum file paths to extract from issue text
-MAX_CONTRIBUTORS_TO_SHOW = 3  # Maximum contributors to show per file
 
 
 def _get_cached(key: str):
@@ -48,8 +50,31 @@ def _get_cached(key: str):
     return None
 
 
+def _evict_old_entries() -> None:
+    """Remove expired entries; if still over limit, drop the oldest by expiry.
+
+    This keeps the module-level cache from growing without bound when many
+    distinct repositories or files are processed in a single run.
+    """
+    now = datetime.now(timezone.utc)
+    # First pass: remove all expired entries.
+    expired_keys = [k for k, (_, expiry) in _cache.items() if now >= expiry]
+    for k in expired_keys:
+        del _cache[k]
+
+    # Second pass: if still over the cap, evict the entries with the earliest
+    # expiry time (i.e. the ones that will expire soonest).
+    if len(_cache) >= CACHE_MAX_ENTRIES:
+        overflow = len(_cache) - CACHE_MAX_ENTRIES + 1  # +1 to make room for new entry
+        oldest_keys = sorted(_cache, key=lambda k: _cache[k][1])[:overflow]
+        for k in oldest_keys:
+            del _cache[k]
+        logger.debug("Cache evicted %d entries to stay under %d limit", overflow, CACHE_MAX_ENTRIES)
+
+
 def _set_cached(key: str, value: Any, ttl: int = CACHE_TTL_SECONDS):
-    """Set cached value with TTL."""
+    """Set cached value with TTL, evicting stale/excess entries first."""
+    _evict_old_entries()
     _cache[key] = (value, datetime.now(timezone.utc) + timedelta(seconds=ttl))
 
 
@@ -62,17 +87,38 @@ def clear_cache():
 class GitHubService:
     """Service for interacting with GitHub API with caching and rate limit handling."""
 
-    def __init__(self):
+    def __init__(self, github_host: str = "github.com"):
         token = os.environ.get("GITHUB_TOKEN", "")
         if not token:
             logger.warning("GITHUB_TOKEN not set - using unauthenticated requests (60/hour limit)")
-        self.client = Github(token, per_page=DEFAULT_PER_PAGE) if token else Github(per_page=DEFAULT_PER_PAGE)
+
+        kwargs: Dict[str, Any] = {"per_page": DEFAULT_PER_PAGE}
+        if github_host and github_host != "github.com":
+            # PyGithub accepts a base_url for GitHub Enterprise Server deployments.
+            # The GHE REST API is served at https://<host>/api/v3.
+            kwargs["base_url"] = f"https://{github_host}/api/v3"
+            logger.info("Connecting to GitHub Enterprise Server at %s", github_host)
+
+        self.client = Github(token, **kwargs) if token else Github(**kwargs)
         self._repo_cache: Dict[str, Any] = {}
 
     def _get_repo(self, owner: str, repo: str):
-        """Get repository with caching."""
+        """Get repository with caching.
+
+        Evicts the oldest entry (insertion order) when the cache reaches
+        CACHE_MAX_ENTRIES to prevent unbounded memory growth across long-running
+        processes that touch many repositories.
+        """
         cache_key = f"{owner}/{repo}"
         if cache_key not in self._repo_cache:
+            if len(self._repo_cache) >= CACHE_MAX_ENTRIES:
+                oldest_key = next(iter(self._repo_cache))
+                del self._repo_cache[oldest_key]
+                logger.debug(
+                    "Evicted oldest _repo_cache entry %r to stay under %d limit",
+                    oldest_key,
+                    CACHE_MAX_ENTRIES,
+                )
             self._repo_cache[cache_key] = self.client.get_repo(cache_key)
         return self._repo_cache[cache_key]
 
@@ -432,17 +478,25 @@ class GitHubService:
 
         return results
 
-    @lru_cache(maxsize=100)
     def get_repository_labels(self, owner: str, repo: str) -> Dict[str, dict]:
         """Get all labels from a repository with caching.
 
         Returns:
             Dict mapping label names to label info (name, color, description)
         """
+        # Use the module-level TTL cache so results are shared across service
+        # instances and automatically expire — @lru_cache on an instance method
+        # is effectively unbounded (self is always the same object) yet never
+        # benefits from cross-instance sharing.
+        cache_key = f"repo_labels:{owner}/{repo}"
+        cached = _get_cached(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             repository = self._get_repo(owner, repo)
             labels = repository.get_labels()
-            return {
+            result = {
                 label.name: {
                     'name': label.name,
                     'color': label.color,
@@ -450,10 +504,11 @@ class GitHubService:
                 }
                 for label in labels
             }
+            _set_cached(cache_key, result)
+            return result
         except GithubException:
             return {}
 
-    @lru_cache(maxsize=50)
     def get_repository_context(self, owner: str, repo: str) -> Dict[str, Any]:
         """Get repository context for better AI suggestions.
 
@@ -524,7 +579,6 @@ class GitHubService:
                 "default_branch": "main"
             }
 
-    @lru_cache(maxsize=50)
     def get_repository_structure(self, owner: str, repo: str, max_depth: int = MAX_SCAN_DEPTH) -> Dict[str, Any]:
         """Get repository directory structure for understanding project layout.
 
@@ -607,7 +661,6 @@ class GitHubService:
                 "has_docs": False
             }
 
-    @lru_cache(maxsize=200)
     def get_file_content(self, owner: str, repo: str, file_path: str, max_size: int = MAX_FILE_CONTENT_SIZE) -> Optional[str]:
         """Get content of a specific file from the repository.
 
@@ -829,7 +882,6 @@ class GitHubService:
         except GithubException:
             return []
 
-    @lru_cache(maxsize=200)
     def get_file_contributors(
         self,
         owner: str,

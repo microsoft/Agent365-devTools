@@ -68,7 +68,7 @@ public class CleanupCommandBotEndpointTests
             .Returns("test-token");
         
         var mockGraphLogger = Substitute.For<ILogger<GraphApiService>>();
-        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, null, _mockTokenProvider);
+        _graphApiService = new GraphApiService(mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), null, _mockTokenProvider);
         
         var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
         _agentBlueprintService = new AgentBlueprintService(mockBlueprintLogger, _graphApiService);
