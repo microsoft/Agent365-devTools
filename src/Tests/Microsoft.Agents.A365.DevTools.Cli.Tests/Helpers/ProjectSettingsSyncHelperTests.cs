@@ -596,6 +596,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal("My Agent Identity", obs["AgentName"]!.GetValue<string>());
         Assert.Equal("An agent for testing", obs["AgentDescription"]!.GetValue<string>());
         Assert.Equal("tenant-obs-id", obs["TenantId"]!.GetValue<string>());
+        Assert.Equal("blueprint-app-id", obs["AgentBlueprintId"]!.GetValue<string>());
         Assert.Equal("blueprint-app-id", obs["ClientId"]!.GetValue<string>());
         Assert.Equal("obs-secret", obs["ClientSecret"]!.GetValue<string>());
     }
@@ -631,6 +632,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         // DW must fall back to Blueprint app ID when AgenticAppId is absent
         Assert.Equal("blueprint-dw-id", obs["AgentId"]!.GetValue<string>());
         Assert.Equal("tenant-dw-id", obs["TenantId"]!.GetValue<string>());
+        Assert.Equal("blueprint-dw-id", obs["AgentBlueprintId"]!.GetValue<string>());
         Assert.Equal("blueprint-dw-id", obs["ClientId"]!.GetValue<string>());
     }
 
@@ -673,6 +675,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal("Py-Agent", Val("AGENT365OBSERVABILITY__AGENTNAME"));
         Assert.Equal("Python-test-agent", Val("AGENT365OBSERVABILITY__AGENTDESCRIPTION"));
         Assert.Equal("tenant-py-id", Val("AGENT365OBSERVABILITY__TENANTID"));
+        Assert.Equal("blueprint-py-id", Val("AGENT365OBSERVABILITY__AGENTBLUEPRINTID"));
         Assert.Equal("blueprint-py-id", Val("AGENT365OBSERVABILITY__CLIENTID"));
         Assert.Equal("py-secret", Val("AGENT365OBSERVABILITY__CLIENTSECRET"));
     }
@@ -716,6 +719,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal("Node Agent", Val("agent365Observability__agentName"));
         Assert.Equal("Node test agent", Val("agent365Observability__agentDescription"));
         Assert.Equal("tenant-node-id", Val("agent365Observability__tenantId"));
+        Assert.Equal("blueprint-node-id", Val("agent365Observability__agentBlueprintId"));
         Assert.Equal("blueprint-node-id", Val("agent365Observability__clientId"));
         Assert.Equal("node-secret", Val("agent365Observability__clientSecret"));
     }

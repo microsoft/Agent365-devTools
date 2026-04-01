@@ -473,7 +473,10 @@ public static class ProjectSettingsSyncHelper
             if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
                 obs["TenantId"] = pkgConfig.TenantId;
             if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
+            {
+                obs["AgentBlueprintId"] = pkgConfig.AgentBlueprintId;
                 obs["ClientId"] = pkgConfig.AgentBlueprintId;
+            }
             if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
             {
                 var obsSecret = SecretProtectionHelper.UnprotectSecret(
@@ -542,6 +545,7 @@ public static class ProjectSettingsSyncHelper
         Set("AGENT365OBSERVABILITY__AGENTNAME", pkgConfig.AgentIdentityDisplayName);
         Set("AGENT365OBSERVABILITY__AGENTDESCRIPTION", pkgConfig.AgentDescription);
         Set("AGENT365OBSERVABILITY__TENANTID", pkgConfig.TenantId);
+        Set("AGENT365OBSERVABILITY__AGENTBLUEPRINTID", pkgConfig.AgentBlueprintId);
         Set("AGENT365OBSERVABILITY__CLIENTID", pkgConfig.AgentBlueprintId);
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
         {
@@ -609,6 +613,7 @@ public static class ProjectSettingsSyncHelper
         Set("agent365Observability__agentName", pkgConfig.AgentIdentityDisplayName);
         Set("agent365Observability__agentDescription", pkgConfig.AgentDescription);
         Set("agent365Observability__tenantId", pkgConfig.TenantId);
+        Set("agent365Observability__agentBlueprintId", pkgConfig.AgentBlueprintId);
         Set("agent365Observability__clientId", pkgConfig.AgentBlueprintId);
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
         {
