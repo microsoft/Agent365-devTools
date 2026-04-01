@@ -302,7 +302,7 @@ public class GraphApiService
         }
     }
 
-    public virtual async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<JsonDocument?> GraphPostAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool logWarningOnFailure = true)
     {
         if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
@@ -314,10 +314,20 @@ public class GraphApiService
             if (!resp.IsSuccessStatusCode)
             {
                 var errorMessage = TryExtractGraphErrorMessage(body);
-                if (errorMessage != null)
-                    _logger.LogWarning("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
+                if (logWarningOnFailure)
+                {
+                    if (errorMessage != null)
+                        _logger.LogWarning("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
+                    else
+                        _logger.LogWarning("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                }
                 else
-                    _logger.LogWarning("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                {
+                    if (errorMessage != null)
+                        _logger.LogDebug("Graph POST {Url} failed: {ErrorMessage}", url, errorMessage);
+                    else
+                        _logger.LogDebug("Graph POST {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                }
                 _logger.LogDebug("Graph POST response body: {Body}", body);
                 return null;
             }
@@ -503,21 +513,24 @@ public class GraphApiService
     /// <summary>
     /// Ensures a service principal exists for the given application ID.
     /// Creates the service principal if it doesn't already exist.
+    /// Returns null if the SP could not be found or created (e.g. insufficient privileges).
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<string> EnsureServicePrincipalForAppIdAsync(
-        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<string?> EnsureServicePrincipalForAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null,
+        bool logWarningOnCreateFailure = true)
     {
         // Try existing
         var spId = await LookupServicePrincipalByAppIdAsync(tenantId, appId, ct, scopes);
-        if (!string.IsNullOrWhiteSpace(spId)) return spId!;
+        if (!string.IsNullOrWhiteSpace(spId)) return spId;
 
-        // Create SP for this application
-        var created = await GraphPostAsync(tenantId, "/v1.0/servicePrincipals", new { appId }, ct, scopes);
+        // Create SP for this application (suppresses warning log when logWarningOnCreateFailure is false)
+        var created = await GraphPostAsync(tenantId, "/v1.0/servicePrincipals", new { appId }, ct, scopes,
+            logWarningOnFailure: logWarningOnCreateFailure);
         if (created == null || !created.RootElement.TryGetProperty("id", out var idProp))
-            throw new InvalidOperationException($"Failed to create servicePrincipal for appId {appId}");
+            return null;
 
-        return idProp.GetString()!;
+        return idProp.GetString();
     }
 
     public async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
@@ -1023,8 +1036,11 @@ public class GraphApiService
         if (string.IsNullOrWhiteSpace(token))
         {
             var loginHint2 = await ResolveLoginHintAsync();
+            // AgentX resource does not support WAM broker (IncorrectConfiguration error).
+            // Use device code / non-interactive path to avoid WAM entirely.
             token = await _authService.GetAccessTokenAsync(
-                Constants.AuthenticationConstants.AgentXResource, tenantId, userId: loginHint2);
+                Constants.AuthenticationConstants.AgentXResource, tenantId, userId: loginHint2,
+                useInteractiveBrowser: false);
         }
 
         if (string.IsNullOrWhiteSpace(token))
@@ -1058,7 +1074,7 @@ public class GraphApiService
         // managedBy must be the AgentX service app ID, not the CLI client app ID.
         // Using the CLI client app ID causes 424 "You do not have permission to create
         // an agent registration managed by another AppId."
-        payload["managedBy"] = "59eca866-2f46-40b8-96ff-63f663121ef9";
+        payload["managedBy"] = Constants.AuthenticationConstants.AgentXAppId;
 
         var json = JsonSerializer.Serialize(payload);
         var url = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration";
@@ -1141,6 +1157,8 @@ public class GraphApiService
             }
 
             _logger.LogError("AgentX agent registration failed with HTTP {StatusCode}. Body: {Body}", (int)response.StatusCode, body);
+            if ((int)response.StatusCode == 403)
+                _logger.LogError("AgentX returned 403 Forbidden. This is a backend service issue — no role or permission change on your side will resolve it.");
             return null;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
@@ -1174,8 +1192,11 @@ public class GraphApiService
         if (string.IsNullOrWhiteSpace(token))
         {
             var loginHint2 = await ResolveLoginHintAsync();
+            // AgentX resource does not support WAM broker (IncorrectConfiguration error).
+            // Use device code / non-interactive path to avoid WAM entirely.
             token = await _authService.GetAccessTokenAsync(
-                Constants.AuthenticationConstants.AgentXResource, tenantId, userId: loginHint2);
+                Constants.AuthenticationConstants.AgentXResource, tenantId, userId: loginHint2,
+                useInteractiveBrowser: false);
         }
 
         if (string.IsNullOrWhiteSpace(token))

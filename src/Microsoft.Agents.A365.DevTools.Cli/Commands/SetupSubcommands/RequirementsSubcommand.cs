@@ -151,7 +151,6 @@ internal static class RequirementsSubcommand
         var passed = await RunRequirementChecksAsync(checks, config, logger, category: null, cancellationToken);
         if (!passed)
         {
-            logger.LogError("Operation cannot proceed due to failed requirement checks above. Please fix the issues and retry.");
             ExceptionHandler.ExitWithCleanup(1);
         }
     }

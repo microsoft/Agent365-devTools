@@ -129,10 +129,11 @@ public class ClientAppValidationExceptionTests
         exception.Should().NotBeNull();
         exception.ErrorCode.Should().Be(ErrorCodes.ClientAppValidationFailed);
         exception.IssueDescription.Should().Be("Admin consent not granted for client app");
-        exception.ErrorDetails.Should().HaveCount(2);
+        exception.ErrorDetails.Should().HaveCount(3, because: "MissingAdminConsent includes: (1) permissions-configured check, (2) per-user consent warning, (3) Global Administrator requirement");
         exception.ErrorDetails[0].Should().Contain("permissions are configured");
-        exception.ErrorDetails[1].Should().Contain("Global Administrator");
-        exception.MitigationSteps.Should().HaveCount(6);
+        exception.ErrorDetails[1].Should().Contain("per-user consent");
+        exception.ErrorDetails[2].Should().Contain("Global Administrator");
+        exception.MitigationSteps.Should().HaveCount(4, because: "MissingAdminConsent provides 4 mitigation steps: run setup requirements, run setup admin, share consent URL, and contact IT admin");
         exception.Context.Should().ContainKey("clientAppId");
         exception.Context["clientAppId"].Should().Be(TestClientAppId);
     }
@@ -145,7 +146,6 @@ public class ClientAppValidationExceptionTests
 
         // Assert
         exception.MitigationSteps.Should().Contain(s => s.Contains("Grant admin consent"));
-        exception.MitigationSteps.Should().Contain(s => s.Contains("Confirm the consent dialog"));
         exception.MitigationSteps.Should().Contain(s => 
             s.Contains(ConfigConstants.Agent365CliDocumentationUrl));
     }

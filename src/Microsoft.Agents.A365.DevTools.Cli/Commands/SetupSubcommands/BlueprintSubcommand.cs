@@ -228,8 +228,9 @@ internal static class BlueprintSubcommand
                 }
                 catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                 {
-                    logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
-                    logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                    logger.LogError("Requirements check failed: {Message}", reqEx.Message);
+                    logger.LogDebug(reqEx, "Requirements check exception details");
+                    logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
                     ExceptionHandler.ExitWithCleanup(1);
                 }
             }
@@ -584,17 +585,8 @@ internal static class BlueprintSubcommand
         if (!isSetupAll)
         {
             logger.LogInformation("Next steps:");
-            if (!endpointRegistered)
-            {
-                logger.LogInformation("  1. Register endpoint: a365 setup blueprint --endpoint-only");
-                logger.LogInformation("  2. Run 'a365 setup permissions mcp' to configure MCP permissions");
-                logger.LogInformation("  3. Run 'a365 setup permissions bot' to configure Bot API permissions");
-            }
-            else
-            {
-                logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
-                logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
-            }
+            logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
+            logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
         }
 
         return new BlueprintCreationResult
@@ -1799,6 +1791,7 @@ internal static class BlueprintSubcommand
 
             var addPasswordUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{blueprintObjectId}/addPassword";
             var secretBodyJson = secretBody.ToJsonString();
+
             // Retry on 404 (blueprint not yet visible on all replicas) and transient 403 (owner
             // propagation lag — the blueprint was just created with owners@odata.bind, and Entra
             // may not yet recognize the caller as owner when addPassword is called immediately after

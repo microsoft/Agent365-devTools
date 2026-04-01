@@ -46,19 +46,18 @@ public abstract class RequirementCheck : IRequirementCheck
     /// </summary>
     protected virtual void LogCheckFailure(ILogger logger, string errorMessage, string resolutionGuidance)
     {
-        // Name logged at Error level (red) — formatter already prefixes ERROR:
-        logger.LogError("[FAIL] {Name}", Name);
+        // Single red line — AZ CLI convention: one ERROR line per failure, not per detail
+        logger.LogError("Fail: {Name}", Name);
 
-        // Error details in red (split multi-line messages into separate lines)
+        // Error details and resolution guidance in white — they describe and guide, not error
         foreach (var line in errorMessage.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            logger.LogError("  {Line}", line.TrimEnd());
+            logger.LogInformation("  {Line}", line.TrimEnd());
 
-        // Resolution guidance in white (not red) — it is helpful guidance, not an error
         if (!string.IsNullOrWhiteSpace(resolutionGuidance))
         {
             logger.LogInformation("");
             foreach (var step in resolutionGuidance.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                logger.LogInformation("  {Step}", step.TrimEnd());
+                logger.LogInformation("{Step}", step.TrimEnd());
         }
     }
 

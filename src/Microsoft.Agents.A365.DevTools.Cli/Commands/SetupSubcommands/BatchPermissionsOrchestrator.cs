@@ -257,8 +257,11 @@ internal static class BatchPermissionsOrchestrator
         {
             try
             {
+                // Suppress Graph POST warning: non-admin users cannot create SPs and that is expected.
+                // Phase 2 grants will be skipped for any resource whose SP cannot be resolved.
                 var resourceSpId = await graph.EnsureServicePrincipalForAppIdAsync(
-                    tenantId, spec.ResourceAppId, ct, permScopes);
+                    tenantId, spec.ResourceAppId, ct, permScopes,
+                    logWarningOnCreateFailure: false);
 
                 if (!string.IsNullOrWhiteSpace(resourceSpId))
                 {
@@ -267,7 +270,7 @@ internal static class BatchPermissionsOrchestrator
                 }
                 else
                 {
-                    logger.LogWarning(
+                    logger.LogDebug(
                         "   - Service principal not found for {ResourceName} ({ResourceAppId}). " +
                         "Phase 2 grants will be skipped for this resource.",
                         spec.ResourceName, spec.ResourceAppId);
@@ -275,7 +278,7 @@ internal static class BatchPermissionsOrchestrator
             }
             catch (Exception ex)
             {
-                logger.LogWarning(
+                logger.LogDebug(
                     "   - Failed to resolve service principal for {ResourceName}: {Message}. " +
                     "Phase 2 grants will be skipped for this resource.",
                     spec.ResourceName, ex.Message);

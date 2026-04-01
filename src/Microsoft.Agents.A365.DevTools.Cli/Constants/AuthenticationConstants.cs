@@ -209,6 +209,7 @@ public static class AuthenticationConstants
         "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
         "AgentIdentity.ReadWrite.All",  // Required for general agent identity operations
         "AgentIdentity.Create.All",  // Required for POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity; not in v1.0 oauth2PermissionScopes so ClientAppValidator provisions it via consent grant patch (no GUID needed)
+        "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment
         // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
         // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
         // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded
@@ -254,10 +255,15 @@ public static class AuthenticationConstants
     public const string BearerTokenEnvironmentVariable = "BEARER_TOKEN";
 
     /// <summary>
+    /// Application ID of the AgentX service (private preview Agent Registration API V2).
+    /// </summary>
+    public const string AgentXAppId = "59eca866-2f46-40b8-96ff-63f663121ef9";
+
+    /// <summary>
     /// Resource URI for the AgentX service (private preview Agent Registration API V2).
     /// Used with 'az account get-access-token --resource' to acquire a bearer token.
     /// </summary>
-    public const string AgentXResource = "api://59eca866-2f46-40b8-96ff-63f663121ef9";
+    public const string AgentXResource = $"api://{AgentXAppId}";
 
     /// <summary>
     /// Base URL for the AgentX service (private preview Agent Registration API V2 endpoint).
@@ -268,7 +274,7 @@ public static class AuthenticationConstants
     /// Delegated scope for the AgentX Agent Registration API V2.
     /// This scope must be consented on the custom client app to use the V2 registration endpoint.
     /// </summary>
-    public const string AgentXAccessScope = "api://59eca866-2f46-40b8-96ff-63f663121ef9/AgentX.Access";
+    public const string AgentXAccessScope = $"api://{AgentXAppId}/AgentX.Access";
 
     /// <summary>
     /// AADSTS53003: Access blocked by Conditional Access Policy.
@@ -284,4 +290,20 @@ public static class AuthenticationConstants
     /// Device code flow may succeed depending on your tenant's Conditional Access Policy configuration.
     /// </summary>
     public const string DeviceCompliancePolicyBlockedError = "AADSTS53000";
+
+    /// <summary>
+    /// Windows Account Manager (WAM) error prefix for authentication failures.
+    /// WAM errors (e.g. 0xcaa90019) surface when Conditional Access Policy or device compliance
+    /// policies block the WAM broker flow. Device code flow bypasses the WAM broker and may succeed.
+    /// </summary>
+    public const string WamErrorPrefix = "0xcaa";
+
+    /// <summary>
+    /// WAM error code for "Need admin approval" (admin consent not granted).
+    /// This error means the client app's oauth2PermissionGrant is per-user (Principal) only,
+    /// not tenant-wide (AllPrincipals). Do NOT fall back to device code for this error —
+    /// device code will show the same browser page and hang if the user returns without consenting.
+    /// Instead, print the admin consent URL and exit cleanly.
+    /// </summary>
+    public const string WamConsentRequiredError = "0xcaa90019";
 }

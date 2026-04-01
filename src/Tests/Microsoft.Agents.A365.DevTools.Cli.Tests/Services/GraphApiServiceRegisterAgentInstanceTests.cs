@@ -36,12 +36,25 @@ public class GraphApiServiceRegisterAgentInstanceTests
     }
 
     private static GraphApiService BuildService(HttpMessageHandler handler)
-        => new(
+    {
+        var authService = Substitute.For<IAuthenticationService>();
+        authService.GetAccessTokenAsync(
+            Arg.Any<string>(),
+            Arg.Any<string?>(),
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>(),
+            Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-graph-token"));
+        return new GraphApiService(
             Substitute.For<ILogger<GraphApiService>>(),
             BuildMockExecutor(),
+            authService,
             handler,
             tokenProvider: null,
             loginHintResolver: () => Task.FromResult<string?>(null));
+    }
 
     [Fact]
     public async Task RegisterAgentInstanceAsync_ReturnsInstanceId_OnSuccess()

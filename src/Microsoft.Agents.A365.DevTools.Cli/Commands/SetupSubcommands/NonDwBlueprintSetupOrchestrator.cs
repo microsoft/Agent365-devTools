@@ -173,10 +173,11 @@ internal static class NonDwBlueprintSetupOrchestrator
                 {
                     await RequirementsSubcommand.RunChecksOrExitAsync(checks, ctx.Config, ctx.Logger, ctx.CancellationToken);
                 }
-                catch (Exception reqEx) when (reqEx is not OperationCanceledException)
+                catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                 {
-                    ctx.Logger.LogError(reqEx, "Requirements check failed: {Message}", reqEx.Message);
-                    ctx.Logger.LogError("If you want to bypass requirement validation, rerun with --skip-requirements.");
+                    ctx.Logger.LogError("Requirements check failed: {Message}", reqEx.Message);
+                    ctx.Logger.LogDebug(reqEx, "Requirements check exception details");
+                    ctx.Logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
                     return 1;
                 }
             }
@@ -309,12 +310,8 @@ internal static class NonDwBlueprintSetupOrchestrator
                 }
                 else
                 {
-                    ctx.Results.Errors.Add(
-                        "Agent registration failed via AgentX V2 API. " +
-                        "Ensure 'az login' is completed and the account has access to the AgentX resource.");
-                    ctx.Logger.LogError(
-                        "Agent registration failed via AgentX V2 API. " +
-                        "Ensure 'az login' is completed and the account has access to the AgentX resource.");
+                    ctx.Results.Errors.Add("Agent registration failed via AgentX V2 API. See log output above for the HTTP response.");
+                    ctx.Logger.LogError("Agent registration failed via AgentX V2 API. See log output above for the HTTP response.");
                 }
             }
         }
@@ -322,20 +319,20 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             var logFilePath = Services.ConfigService.GetCommandLogPath(Constants.CommandNames.Setup);
             Exceptions.ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
-            return 1;
+            ctx.Results.Errors.Add(ex.Message);
         }
         catch (FileNotFoundException fnfEx)
         {
             ctx.Logger.LogError("Setup failed: {Message}", fnfEx.Message);
-            return 1;
+            ctx.Results.Errors.Add(fnfEx.Message);
         }
         catch (Exception ex)
         {
             ctx.Logger.LogError(ex, "Setup failed: {Message}", ex.Message);
-            return 1;
+            ctx.Results.Errors.Add(ex.Message);
         }
 
-        // Display summary
+        // Display summary — always, even when errors occurred above
         ctx.Logger.LogInformation("");
         SetupHelpers.DisplaySetupSummary(ctx.Results, ctx.Logger);
 

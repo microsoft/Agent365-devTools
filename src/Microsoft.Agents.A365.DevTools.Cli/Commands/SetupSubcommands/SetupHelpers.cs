@@ -84,48 +84,66 @@ internal static class SetupHelpers
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
 
-        // Completed steps — [OK] only
+        // Completed steps
         logger.LogInformation("Completed Steps:");
         if (results.InfrastructureCreated)
         {
             var status = results.InfrastructureAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Infrastructure {Status}", status);
+            logger.LogInformation("  Infrastructure {Status}", status);
         }
         if (results.BlueprintCreated)
         {
             var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
+            logger.LogInformation("  Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
         }
         if (results.BatchPermissionsPhase2Completed)
         {
-            logger.LogInformation("  [OK] Inheritable permissions configured and verified");
+            logger.LogInformation("  Inheritable permissions configured and verified");
             if (results.AdminConsentGranted)
-                logger.LogInformation("  [OK] OAuth2 grants and admin consent configured");
+                logger.LogInformation("  OAuth2 grants and admin consent configured");
         }
         if (results.MessagingEndpointRegistered)
         {
             var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
+            logger.LogInformation("  Messaging endpoint {Status}", status);
         }
         if (results.AgentIdentityCreated)
         {
-            logger.LogInformation("  [OK] Agent identity: created (ID: {AgentId})", results.AgentIdentityId ?? "unknown");
+            logger.LogInformation("  Agent identity: created (ID: {AgentId})", results.AgentIdentityId ?? "unknown");
         }
         if (results.AgentInstanceRegistered)
         {
-            logger.LogInformation("  [OK] Agent registration: registered (ID: {InstanceId})", results.AgentInstanceId ?? "unknown");
+            logger.LogInformation("  Agent registration: registered (ID: {InstanceId})", results.AgentInstanceId ?? "unknown");
         }
 
-        // Action required — shown as its own section so it isn't conflated with completed work
+        // Action required — items that block progress but need user/admin action (not errors per se)
         var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
         if (hasActionRequired)
         {
             logger.LogInformation("");
             logger.LogInformation("Action Required:");
+            int actionCount = 0;
             if (results.ClientSecretManualActionRequired)
-                logger.LogInformation("  Client secret - must be created manually in Entra ID and added to a365.generated.config.json (see instructions above)");
+            {
+                actionCount++;
+                logger.LogInformation("  {N}. Client secret: create manually in the Entra portal for app {AppId}.", actionCount, results.BlueprintId ?? "<blueprint-app-id>");
+                logger.LogInformation("     Add it to a365.generated.config.json as 'agentBlueprintClientSecret', then re-run setup.");
+                logger.LogInformation("     See: https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials");
+            }
             if (pendingAdminAction)
-                logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
+            {
+                actionCount++;
+                logger.LogInformation("  {N}. OAuth2 grants: a Global Administrator must run:", actionCount);
+                logger.LogInformation("     a365 setup admin --config-dir \"<path-to-config-folder>\"");
+                var consentUrl = !string.IsNullOrWhiteSpace(results.CombinedConsentUrl)
+                    ? results.CombinedConsentUrl
+                    : results.AdminConsentUrl;
+                if (!string.IsNullOrWhiteSpace(consentUrl))
+                {
+                    logger.LogInformation("     Or share this URL with the administrator to grant consent via browser:");
+                    logger.LogInformation("       {ConsentUrl}", consentUrl);
+                }
+            }
         }
 
         // Failed steps
@@ -134,7 +152,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
         // Warnings
@@ -143,87 +161,53 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogWarning("  {Warning}", warning);
         }
 
         logger.LogInformation("");
 
-        // Overall status
-
+        // Overall status line
         if (results.HasErrors)
-        {
             logger.LogWarning("Setup completed with errors");
-            logger.LogInformation("");
-            logger.LogInformation("Recovery Actions:");
+        else if (hasActionRequired)
+            logger.LogWarning("Setup completed — action required before proceeding");
+        else if (results.HasWarnings)
+            logger.LogInformation("Setup completed successfully with warnings");
+        else
+            logger.LogInformation("Setup completed successfully");
 
-            if (!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction))
-            {
-                logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
-            }
+        // Next steps — one hint per actionable item, AZ CLI style (no verbose Option A/B blocks)
+        var hasNextSteps = results.HasErrors
+            || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
+            || !string.IsNullOrEmpty(results.FederatedCredentialError);
 
-            if (results.IsNonDwBlueprintFlow && !results.AgentInstanceRegistered)
-            {
-                logger.LogInformation("  - Agent Instance registration requires 'Agent Registry Administrator' role:");
-                logger.LogInformation("    Option A — Request the role from a tenant admin, then run:");
-                logger.LogInformation("      a365 setup all --aiteammate false --agent-instance-only");
-                logger.LogInformation("      (wait 5-15 min after role assignment for propagation)");
-                logger.LogInformation("    Option B — If you cannot get the role, share the config folder");
-                logger.LogInformation("      with an admin who has both Global Administrator and");
-                logger.LogInformation("      'Agent Registry Administrator', and ask them to run:");
-                logger.LogInformation("      a365 setup admin --config-dir \"<path-to-config-folder>\"");
-            }
-            else if (!results.IsNonDwBlueprintFlow && !results.MessagingEndpointRegistered)
-            {
-                logger.LogInformation("  - Messaging Endpoint: Run 'a365 setup blueprint --endpoint-only' to retry");
-                logger.LogInformation("    If there's a conflicting endpoint, delete it first: a365 cleanup blueprint --endpoint-only");
-            }
-        }
-
-        if (pendingAdminAction)
+        if (hasNextSteps)
         {
-            logger.LogInformation("");
-            logger.LogInformation("Next Steps — Global Administrator action required:");
-            logger.LogInformation("  OAuth2 permission grants require a Global Administrator.");
-            logger.LogInformation("  Option 1 — Run the CLI as a Global Administrator:");
-            logger.LogInformation("    a365 setup admin --config-dir \"<path-to-config-folder>\"");
-            if (!string.IsNullOrWhiteSpace(results.CombinedConsentUrl))
-            {
-                logger.LogInformation("  Option 2 — Share a single consent URL with your Global Administrator:");
-                logger.LogInformation("    {ConsentUrl}", results.CombinedConsentUrl);
-            }
-            else if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
-            {
-                logger.LogInformation("  Alternatively, a Global Administrator can grant Graph consent at:");
-                logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
-            }
-        }
+            var nextStepLines = new List<Action>();
 
-        if (!results.HasErrors && !hasActionRequired)
-        {
-            if (results.HasWarnings)
+            if ((!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
             {
-                logger.LogInformation("Setup completed successfully with warnings");
-                logger.LogInformation("");
-                logger.LogInformation("Recovery Actions:");
+                nextStepLines.Add(() => logger.LogInformation("  To retry permissions: a365 setup all"));
+            }
 
-                if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
+            if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
+                nextStepLines.Add(() => logger.LogInformation("  To retry Graph inheritable permissions: a365 setup blueprint"));
+
+            if (!string.IsNullOrEmpty(results.FederatedCredentialError))
+            {
+                nextStepLines.Add(() =>
                 {
-                    logger.LogInformation("  - Graph Inheritable Permissions: Run 'a365 setup blueprint' to retry");
-                }
-
-                if (!string.IsNullOrEmpty(results.FederatedCredentialError))
-                {
-                    logger.LogInformation("  - Federated Identity Credential: Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' consented,");
-                    logger.LogInformation("    then run 'a365 setup blueprint' to retry");
-                }
-
-                logger.LogInformation("");
-                logger.LogInformation("Review warnings above and take action if needed");
+                    logger.LogInformation("  Ensure 'AgentIdentityBlueprint.UpdateAuthProperties.All' is consented, then:");
+                    logger.LogInformation("    a365 setup blueprint");
+                });
             }
-            else
+
+            if (nextStepLines.Count > 0)
             {
-                logger.LogInformation("Setup completed successfully");
-                logger.LogInformation("All components configured correctly");
+                logger.LogInformation("");
+                logger.LogInformation("Next steps:");
+                foreach (var line in nextStepLines)
+                    line();
             }
         }
     }
@@ -382,7 +366,7 @@ internal static class SetupHelpers
 
         if (results.AdminConsentGranted)
         {
-            logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
+            logger.LogInformation("  OAuth2 grants configured (tenant-wide)");
         }
 
         if (results.Errors.Count > 0)
@@ -390,7 +374,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Failed Steps:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
         if (results.Warnings.Count > 0)
@@ -398,7 +382,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogWarning("  {Warning}", warning);
         }
 
         logger.LogInformation("");

@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -63,10 +64,12 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         var graphApiService = Substitute.ForPartsOf<GraphApiService>(
             Substitute.For<ILogger<GraphApiService>>(),
             mockExecutor,
+            Substitute.For<IAuthenticationService>(),
             (System.Net.Http.HttpMessageHandler?)null,
             (IMicrosoftGraphTokenProvider?)null,
             noOpLoginHint,
-            (string?)null);
+            (string?)null,
+            (RetryHelper?)null);
 
         var blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
             Substitute.For<ILogger<AgentBlueprintService>>(),

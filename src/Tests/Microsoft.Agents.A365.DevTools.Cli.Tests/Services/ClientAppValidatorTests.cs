@@ -41,6 +41,7 @@ public class ClientAppValidatorTests
     private const string DirectoryReadAllId = "aaaa0006-0000-0000-0000-000000000000";
     private const string AgentInstanceReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
     private const string AgentIdentityReadWriteAllId = "aaaa0008-0000-0000-0000-000000000000";
+    private const string UserReadId = "aaaa0009-0000-0000-0000-000000000000";
 
     // Separate SP object ID used only by the consent-grant path (GetConsentedPermissionsAsync)
     // so it does not conflict with SetupAdminConsentSp / SetupAdminConsentGrantsEmpty.
@@ -347,7 +348,10 @@ public class ClientAppValidatorTests
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"}
+                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
+                    {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentIdentityReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -387,7 +391,10 @@ public class ClientAppValidatorTests
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
-                    {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"}
+                    {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
+                    {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
+                    {"id": "{{AgentIdentityReadWriteAllId}}", "value": "AgentIdentity.ReadWrite.All"},
+                    {"id": "{{UserReadId}}", "value": "User.Read"}
                 ]
             }]
         }
@@ -456,6 +463,9 @@ public class ClientAppValidatorTests
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(permJson)));
 
+        graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+
         var validator = new ClientAppValidator(_logger, graphApiService, confirmationProvider);
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
@@ -502,6 +512,8 @@ public class ClientAppValidatorTests
         // Build a fresh validator wired to _graphApiService so the redirect URI mock is reachable
         SetupAppInfoWithAllPermissions(ValidClientAppId);
         SetupPermissionResolution();
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
         var validatorWithSharedGraph = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
@@ -524,6 +536,8 @@ public class ClientAppValidatorTests
         SetupAppInfoWithAllPermissions(ValidClientAppId);
         SetupPermissionResolution();
         SetupPublicClientFlowsGet(enabled: false);
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
 
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
@@ -564,6 +578,9 @@ public class ClientAppValidatorTests
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(redirectUriJson)));
 
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
@@ -588,6 +605,8 @@ public class ClientAppValidatorTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult(true));
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
 
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
@@ -822,7 +841,8 @@ public class ClientAppValidatorTests
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
                     {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{AgentIdentityReadWriteAllId}}", "type": "Scope"}
+                    {"id": "{{AgentIdentityReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -851,7 +871,8 @@ public class ClientAppValidatorTests
                         {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
                         {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
                         {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
-                        {"id": "{{AgentIdentityReadWriteAllId}}", "value": "AgentIdentity.ReadWrite.All"}
+                        {"id": "{{AgentIdentityReadWriteAllId}}", "value": "AgentIdentity.ReadWrite.All"},
+                        {"id": "{{UserReadId}}", "value": "User.Read"}
                     ]
                 }
             ]

@@ -265,8 +265,9 @@ internal static class AllSubcommand
                     }
                     catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                     {
-                        logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
-                        logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                        logger.LogError("Requirements check failed: {Message}", reqEx.Message);
+                        logger.LogDebug(reqEx, "Requirements check exception details");
+                        logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
                         ExceptionHandler.ExitWithCleanup(1);
                     }
                 }
@@ -332,16 +333,25 @@ internal static class AllSubcommand
             {
                 var logFilePath = ConfigService.GetCommandLogPath(CommandNames.Setup);
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
-                Environment.Exit(1);
+                setupResults.Errors.Add(ex.Message);
+                logger.LogInformation("");
+                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                ExceptionHandler.ExitWithCleanup(1);
             }
             catch (FileNotFoundException fnfEx)
             {
                 logger.LogError("Setup failed: {Message}", fnfEx.Message);
+                setupResults.Errors.Add(fnfEx.Message);
+                logger.LogInformation("");
+                SetupHelpers.DisplaySetupSummary(setupResults, logger);
                 ExceptionHandler.ExitWithCleanup(1);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
+                setupResults.Errors.Add(ex.Message);
+                logger.LogInformation("");
+                SetupHelpers.DisplaySetupSummary(setupResults, logger);
                 throw;
             }
         });
@@ -409,6 +419,9 @@ internal static class AllSubcommand
                 ctx.Results.FederatedCredentialError = result.FederatedCredentialError;
                 ctx.Results.Warnings.Add($"Federated Identity Credential: {result.FederatedCredentialError}");
             }
+
+            if (result.ClientSecretManualActionRequired)
+                ctx.Results.ClientSecretManualActionRequired = true;
 
             if (!result.BlueprintCreated)
             {

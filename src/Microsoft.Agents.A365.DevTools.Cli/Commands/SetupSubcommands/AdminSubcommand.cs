@@ -150,8 +150,9 @@ internal static class AdminSubcommand
                     }
                     catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                     {
-                        logger.LogError(reqEx, "Requirements check failed: {Message}", reqEx.Message);
-                        logger.LogError("Rerun with --skip-requirements to bypass.");
+                        logger.LogError("Requirements check failed: {Message}", reqEx.Message);
+                        logger.LogDebug(reqEx, "Requirements check exception details");
+                        logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
                         ExceptionHandler.ExitWithCleanup(1);
                     }
                 }

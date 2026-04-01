@@ -100,6 +100,7 @@ Required **delegated** Microsoft Graph permissions (all must have **admin consen
 | `Application.ReadWrite.All` | Create and manage Azure AD applications |
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
 | `Directory.Read.All` | Read directory data |
+| `User.Read` | Read signed-in user profile (required for blueprint owner assignment) |
 
 If the app does not exist, permissions are missing, or admin consent has not been granted, see "What to do if validation fails" below.
 
