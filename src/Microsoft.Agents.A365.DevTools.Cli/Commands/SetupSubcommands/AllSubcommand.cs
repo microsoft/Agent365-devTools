@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
@@ -323,6 +324,11 @@ internal static class AllSubcommand
                 SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
+
+                // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
+                await ProjectSettingsSyncHelper.ExecuteAsync(
+                    ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
+                    ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);

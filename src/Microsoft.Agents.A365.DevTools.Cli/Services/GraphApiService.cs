@@ -1156,9 +1156,11 @@ public class GraphApiService
                 return registrationId;
             }
 
-            _logger.LogError("AgentX agent registration failed with HTTP {StatusCode}. Body: {Body}", (int)response.StatusCode, body);
+            _logger.LogDebug("AgentX agent registration failed with HTTP {StatusCode}. Body: {Body}", (int)response.StatusCode, body);
             if ((int)response.StatusCode == 403)
-                _logger.LogError("AgentX returned 403 Forbidden. This is a backend service issue — no role or permission change on your side will resolve it.");
+                _logger.LogError("AgentX agent registration failed (403 Forbidden). This is a backend service issue — no role or permission change on your side will resolve it.");
+            else
+                _logger.LogError("AgentX agent registration failed with HTTP {StatusCode}.", (int)response.StatusCode);
             return null;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)

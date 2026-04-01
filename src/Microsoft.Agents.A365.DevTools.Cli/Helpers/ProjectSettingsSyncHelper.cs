@@ -99,7 +99,7 @@ public static class ProjectSettingsSyncHelper
             }
         }
 
-        logger.LogInformation("Stamped TenantId, ServiceConnection, and AgentBluePrint settings into {ProjectPath}", project);
+        logger.LogInformation("Stamped TenantId, ServiceConnection, AgentBlueprint, and Agent365Observability settings into {ProjectPath}", project);
     }
 
     /// <summary>
@@ -459,6 +459,31 @@ public static class ProjectSettingsSyncHelper
         };
         root["ConnectionsMap"] = connectionsMap;
 
+        // -- Agent365Observability --
+        var obsAgentId = ResolveObservabilityAgentId(pkgConfig);
+        if (!string.IsNullOrWhiteSpace(obsAgentId) || !string.IsNullOrWhiteSpace(pkgConfig.TenantId))
+        {
+            var obs = RequireObj(root, "Agent365Observability");
+            if (!string.IsNullOrWhiteSpace(obsAgentId))
+                obs["AgentId"] = obsAgentId;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentIdentityDisplayName))
+                obs["AgentName"] = pkgConfig.AgentIdentityDisplayName;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentDescription))
+                obs["AgentDescription"] = pkgConfig.AgentDescription;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
+                obs["TenantId"] = pkgConfig.TenantId;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
+                obs["ClientId"] = pkgConfig.AgentBlueprintId;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
+            {
+                var obsSecret = SecretProtectionHelper.UnprotectSecret(
+                    pkgConfig.AgentBlueprintClientSecret,
+                    pkgConfig.AgentBlueprintClientSecretProtected,
+                    logger);
+                obs["ClientSecret"] = obsSecret;
+            }
+        }
+
         var updated = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(appsettingsPath, updated, new UTF8Encoding(false));
     }
@@ -512,6 +537,21 @@ public static class ProjectSettingsSyncHelper
         Set("CONNECTIONSMAP__0__SERVICEURL", "*");
         Set("CONNECTIONSMAP__0__CONNECTION", "SERVICE_CONNECTION");
 
+        // --- Agent365Observability ---
+        Set("AGENT365OBSERVABILITY__AGENTID", ResolveObservabilityAgentId(pkgConfig));
+        Set("AGENT365OBSERVABILITY__AGENTNAME", pkgConfig.AgentIdentityDisplayName);
+        Set("AGENT365OBSERVABILITY__AGENTDESCRIPTION", pkgConfig.AgentDescription);
+        Set("AGENT365OBSERVABILITY__TENANTID", pkgConfig.TenantId);
+        Set("AGENT365OBSERVABILITY__CLIENTID", pkgConfig.AgentBlueprintId);
+        if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
+        {
+            var obsSecretPy = SecretProtectionHelper.UnprotectSecret(
+                pkgConfig.AgentBlueprintClientSecret,
+                pkgConfig.AgentBlueprintClientSecretProtected,
+                logger);
+            Set("AGENT365OBSERVABILITY__CLIENTSECRET", obsSecretPy);
+        }
+
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }
 
@@ -564,8 +604,32 @@ public static class ProjectSettingsSyncHelper
         Set("agentic_scopes", DEFAULT_USER_AUTHORIZATION_SCOPE);
         Set("agentic_connectionName", "AgenticAuthConnection");
 
+        // --- Agent365Observability ---
+        Set("agent365Observability__agentId", ResolveObservabilityAgentId(pkgConfig));
+        Set("agent365Observability__agentName", pkgConfig.AgentIdentityDisplayName);
+        Set("agent365Observability__agentDescription", pkgConfig.AgentDescription);
+        Set("agent365Observability__tenantId", pkgConfig.TenantId);
+        Set("agent365Observability__clientId", pkgConfig.AgentBlueprintId);
+        if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
+        {
+            var obsSecretNode = SecretProtectionHelper.UnprotectSecret(
+                pkgConfig.AgentBlueprintClientSecret,
+                pkgConfig.AgentBlueprintClientSecretProtected,
+                logger);
+            Set("agent365Observability__clientSecret", obsSecretNode);
+        }
+
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }
+
+    /// <summary>
+    /// Returns the Agent Identity app ID (non-DW) or the Blueprint app ID (DW) for use
+    /// as the <c>AgentId</c> field in the <c>Agent365Observability</c> config section.
+    /// </summary>
+    private static string? ResolveObservabilityAgentId(Agent365Config pkgConfig) =>
+        !string.IsNullOrWhiteSpace(pkgConfig.AgenticAppId)
+            ? pkgConfig.AgenticAppId
+            : pkgConfig.AgentBlueprintId;
 
     private static string EscapeEnv(string value)
     {

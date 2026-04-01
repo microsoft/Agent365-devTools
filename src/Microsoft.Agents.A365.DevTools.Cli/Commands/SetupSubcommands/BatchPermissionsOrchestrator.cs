@@ -174,7 +174,7 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogInformation("");
                 if (grantsOk)
                 {
-                    logger.LogInformation("Admin consent granted (tenant-wide grants configured in Phase 2).");
+                    logger.LogInformation("Admin consent granted.");
                     UpdateResourceConsents(config, specs, inheritedResults);
                     return (blueprintPermissionsUpdated, inheritedPermissionsConfigured, true, null);
                 }
