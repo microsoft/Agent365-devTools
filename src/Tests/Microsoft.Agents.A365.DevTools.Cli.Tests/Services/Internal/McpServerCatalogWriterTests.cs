@@ -73,96 +73,6 @@ public class McpServerCatalogWriterTests
         Assert.Equal("Microsoft", server.GetProperty("publisher").GetString());
     }
 
-    [Fact]
-    public void WriteHardcodedV2Catalog_WritesValidJsonWithFiveEntries()
-    {
-        // Act
-        var path = McpServerCatalogWriter.WriteHardcodedV2Catalog();
-
-        // Assert
-        Assert.True(File.Exists(path));
-        var written = File.ReadAllText(path);
-        using var doc = JsonDocument.Parse(written);
-        Assert.True(doc.RootElement.TryGetProperty("mcpServers", out var servers));
-        Assert.Equal(5, servers.GetArrayLength());
-    }
-
-    [Fact]
-    public void WriteHardcodedV2Catalog_AllEntriesHaveRequiredV2Fields()
-    {
-        // Act
-        McpServerCatalogWriter.WriteHardcodedV2Catalog();
-        var path = McpServerCatalogWriter.GetCatalogPath();
-        var written = File.ReadAllText(path);
-
-        // Assert — every entry has the full V2 field set
-        using var doc = JsonDocument.Parse(written);
-        foreach (var server in doc.RootElement.GetProperty("mcpServers").EnumerateArray())
-        {
-            Assert.True(server.TryGetProperty("mcpServerName", out var name));
-            Assert.False(string.IsNullOrEmpty(name.GetString()), "mcpServerName must not be empty");
-
-            Assert.True(server.TryGetProperty("id", out var id));
-            Assert.False(string.IsNullOrEmpty(id.GetString()), "id must not be empty");
-
-            Assert.True(server.TryGetProperty("url", out var url));
-            Assert.False(string.IsNullOrEmpty(url.GetString()), "url must not be empty");
-
-            Assert.True(server.TryGetProperty("scope", out var scope));
-            Assert.False(string.IsNullOrEmpty(scope.GetString()), "scope must not be empty");
-
-            Assert.True(server.TryGetProperty("audience", out var audience));
-            Assert.False(string.IsNullOrEmpty(audience.GetString()), "audience must not be empty");
-
-            Assert.True(server.TryGetProperty("publisher", out var publisher));
-            Assert.Equal("Microsoft", publisher.GetString());
-        }
-    }
-
-    [Fact]
-    public void WriteHardcodedV2Catalog_ServerNamesMatchExpectedCatalog()
-    {
-        // Arrange
-        var expectedNames = new[]
-        {
-            "mcp_ODSPRemoteServer",
-            "mcp_TeamsServer",
-            "mcp_WordServer",
-            "mcp_MailTools",
-            "mcp_CalendarTools"
-        };
-
-        // Act
-        McpServerCatalogWriter.WriteHardcodedV2Catalog();
-        var path = McpServerCatalogWriter.GetCatalogPath();
-        var written = File.ReadAllText(path);
-
-        // Assert
-        using var doc = JsonDocument.Parse(written);
-        var actualNames = doc.RootElement
-            .GetProperty("mcpServers")
-            .EnumerateArray()
-            .Select(s => s.GetProperty("mcpServerName").GetString())
-            .ToArray();
-
-        Assert.Equal(expectedNames, actualNames);
-    }
-
-    [Fact]
-    public void WriteHardcodedV2Catalog_ContentMatchesV2CatalogConstant()
-    {
-        // Act
-        var path = McpServerCatalogWriter.WriteHardcodedV2Catalog();
-        var written = File.ReadAllText(path);
-
-        // Assert — written file is semantically identical to the constant
-        using var expected = JsonDocument.Parse(McpConstants.V2Catalog.WrappedJson);
-        using var actual = JsonDocument.Parse(written);
-        Assert.Equal(
-            expected.RootElement.GetProperty("mcpServers").GetArrayLength(),
-            actual.RootElement.GetProperty("mcpServers").GetArrayLength());
-    }
-
     [Theory]
     [InlineData("McpServers.Mail.All", true)]
     [InlineData("McpServers.Calendar.All", true)]
@@ -181,11 +91,4 @@ public class McpServerCatalogWriterTests
         Assert.Equal("Tools.ListInvoke.All", McpConstants.V2ScopeValue);
     }
 
-    [Fact]
-    public void McpConstants_V2CatalogWrappedJson_IsValidJson()
-    {
-        // Assert — the constant itself is parseable JSON (catches typos at build time)
-        var ex = Record.Exception(() => JsonDocument.Parse(McpConstants.V2Catalog.WrappedJson));
-        Assert.Null(ex);
-    }
 }

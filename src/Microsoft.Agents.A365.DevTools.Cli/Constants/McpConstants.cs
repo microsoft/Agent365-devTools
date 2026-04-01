@@ -161,59 +161,6 @@ public static class McpConstants
         }
     }
 
-    // Hardcoded V2 server catalog — temporary until discoverToolServers?api-version=2 is live (Q1 open question).
-    // Wrapped in the { "mcpServers": [...] } envelope that McpServerCatalogWriter and add-mcp-servers expect.
-    // Remove WrappedJson and WriteHardcodedV2Catalog once the live V2 endpoint is confirmed.
-    public static class V2Catalog
-    {
-        public const string WrappedJson = """
-            {
-              "mcpServers": [
-                {
-                  "mcpServerName": "mcp_ODSPRemoteServer",
-                  "id": "b87204eb-e6cb-491d-a9b5-84cdfd9ad3af",
-                  "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_ODSPRemoteServer",
-                  "scope": "McpServers.OneDriveSharepoint.All",
-                  "audience": "05879165-0320-489e-b644-f72b33f3edf0",
-                  "publisher": "Microsoft"
-                },
-                {
-                  "mcpServerName": "mcp_TeamsServer",
-                  "id": "3fa2b1d9-6e2c-52b9-be4f-95148edff98e",
-                  "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_TeamsServer",
-                  "scope": "Tools.ListInvoke.All",
-                  "audience": "2cc60bb0-1024-48c8-95f0-1fce211a04d8",
-                  "publisher": "Microsoft"
-                },
-                {
-                  "mcpServerName": "mcp_WordServer",
-                  "id": "bc3e6ae5-37ef-4949-9a1d-29828b068b8b",
-                  "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_WordServer",
-                  "scope": "Tools.ListInvoke.All",
-                  "audience": "ee0064db-2cb5-4174-aa2a-bd3dd879a7d7",
-                  "publisher": "Microsoft"
-                },
-                {
-                  "mcpServerName": "mcp_MailTools",
-                  "id": "3fb34f44-7f4e-4e9e-855f-072404166824",
-                  "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_MailTools",
-                  "scope": "McpServers.Mail.All",
-                  "audience": "05879165-0320-489e-b644-f72b33f3edf0",
-                  "publisher": "Microsoft"
-                },
-                {
-                  "mcpServerName": "mcp_CalendarTools",
-                  "id": "87dc802d-1067-427e-97c2-ebf07f8799a4",
-                  "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_CalendarTools",
-                  "scope": "McpServers.Calendar.All",
-                  "audience": "05879165-0320-489e-b644-f72b33f3edf0",
-                  "publisher": "Microsoft"
-                }
-              ]
-            }
-            """;
-    }
-
     // PackageMCPServer constants
     public static class PackageMCPServer
     {
