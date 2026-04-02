@@ -13,7 +13,6 @@ using System.Text.Json.Nodes;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// C# implementation fully equivalent to a365-createinstance.ps1.
 /// Supports all phases: Identity/User creation and License assignment.
 /// MCP permissions are configured via inheritable permissions during setup phase.
 /// </summary>
@@ -24,7 +23,7 @@ public sealed class A365CreateInstanceRunner
     private readonly GraphApiService _graphService;
 
     // License SKU IDs
-    private const string SkuTeamsEntNew = "7e31c0d9-9551-471d-836f-32ee72be4a01"; // Microsoft_Teams_Enterprise_New
+    private const string SkuAgent365Tier3 = "304b93a3-b1f1-427f-aa02-da21e7c7d675"; // Microsoft_Agent_365_Tier_3
     private const string SkuE5NoTeams = "18a4bd3f-0b5b-4887-b04f-61dd0ee15f5e"; // Microsoft_365_E5_(no_Teams)
 
     public A365CreateInstanceRunner(
@@ -49,25 +48,6 @@ public sealed class A365CreateInstanceRunner
         string step = "all",
         CancellationToken cancellationToken = default)
     {
-        // DEPRECATED: This service bypasses the standard agent registration workflow
-        _logger.LogError("===============================================================================");
-        _logger.LogError("WARNING: A365CreateInstanceRunner bypasses the standard agent registration workflow");
-        _logger.LogError("===============================================================================");
-        _logger.LogError("");
-        _logger.LogError("This service uses Graph API directly and skips the standard agent registration");
-        _logger.LogError("workflow. Agents provisioned this way will NOT:");
-        _logger.LogError("  - Be properly registered with Microsoft 365 partners");
-        _logger.LogError("  - Receive OnHire events");
-        _logger.LogError("  - Work correctly with messaging and event propagation");
-        _logger.LogError("");
-        _logger.LogError("Use 'a365 publish' followed by Teams-based hiring instead.");
-        _logger.LogError("See: https://learn.microsoft.com/microsoft-agent-365/onboard");
-        _logger.LogError("");
-        return false;
-
-        // Unreachable code below - preserved for local development use cases
-        #pragma warning disable CS0162 // Unreachable code detected
-
         // Validate inputs
         if (!File.Exists(configPath))
         {
@@ -478,7 +458,7 @@ public sealed class A365CreateInstanceRunner
 
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(accessToken, correlationId: correlationId);
 
-            // Get current user for sponsor (optional - use delegated token for this)
+            // Get current user for sponsor (REQUIRED by Graph API)
             string? currentUserId = null;
             try
             {
@@ -500,7 +480,19 @@ public sealed class A365CreateInstanceRunner
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to get current user ID for sponsor, will create without sponsor");
+                _logger.LogWarning(ex, "Failed to get current user ID for sponsor");
+            }
+
+            if (string.IsNullOrWhiteSpace(currentUserId))
+            {
+                _logger.LogError("A sponsor is required to create an agent identity.");
+                _logger.LogError("Could not determine the current user ID via Graph API.");
+                _logger.LogError("");
+                _logger.LogError("RECOMMENDED ACTIONS:");
+                _logger.LogError("  1. Ensure you are logged in via Azure CLI: az login");
+                _logger.LogError("  2. Verify your account has access to Microsoft Graph");
+                _logger.LogError("  3. Re-run the command");
+                return (false, null);
             }
 
             // Create agent identity via service principal endpoint
@@ -508,17 +500,12 @@ public sealed class A365CreateInstanceRunner
             var identityBody = new JsonObject
             {
                 ["displayName"] = displayName,
-                ["agentAppId"] = agentBlueprintId
-            };
-
-            // Add sponsor if we have current user ID
-            if (!string.IsNullOrWhiteSpace(currentUserId))
-            {
-                identityBody["sponsors@odata.bind"] = new JsonArray
+                ["agentAppId"] = agentBlueprintId,
+                ["sponsors@odata.bind"] = new JsonArray
                 {
                     $"{GraphApiConstants.BaseUrl}/v1.0/users/{currentUserId}"
-                };
-            }
+                }
+            };
 
             _logger.LogInformation("  - Sending request to create agent identity...");
             var identityResponse = await httpClient.PostAsync(
@@ -526,7 +513,7 @@ public sealed class A365CreateInstanceRunner
                 new StringContent(identityBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
                 ct);
 
-            // Handle case where sponsor is not supported (fallback without sponsor)
+            // Handle error responses
             if (!identityResponse.IsSuccessStatusCode)
             {
                 var errorContent = await identityResponse.Content.ReadAsStringAsync(ct);
@@ -543,25 +530,6 @@ public sealed class A365CreateInstanceRunner
                     _logger.LogError("  - AgentIdentity.Create.OwnedBy (Application permission)");
                     _logger.LogError("");
                     return (false, null);
-                }
-                
-                if (identityResponse.StatusCode == System.Net.HttpStatusCode.BadRequest &&
-                    !string.IsNullOrWhiteSpace(currentUserId))
-                {
-                    _logger.LogWarning("Agent Identity creation with sponsor failed, retrying without sponsor...");
-                    
-                    // Remove sponsor and try again
-                    identityBody.Remove("sponsors@odata.bind");
-                    
-                    identityResponse = await httpClient.PostAsync(
-                        createIdentityUrl,
-                        new StringContent(identityBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                        ct);
-                    
-                    if (!identityResponse.IsSuccessStatusCode)
-                    {
-                        errorContent = await identityResponse.Content.ReadAsStringAsync(ct);
-                    }
                 }
             }
 
@@ -978,8 +946,7 @@ public sealed class A365CreateInstanceRunner
             {
                 ["addLicenses"] = new JsonArray
                 {
-                    new JsonObject { ["skuId"] = SkuTeamsEntNew },
-                    new JsonObject { ["skuId"] = SkuE5NoTeams }
+                    new JsonObject { ["skuId"] = SkuAgent365Tier3 }
                 },
                 ["removeLicenses"] = new JsonArray()
             };
