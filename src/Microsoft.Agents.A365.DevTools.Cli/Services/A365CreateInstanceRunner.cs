@@ -24,7 +24,6 @@ public sealed class A365CreateInstanceRunner
 
     // License SKU IDs
     private const string SkuAgent365Tier3 = "304b93a3-b1f1-427f-aa02-da21e7c7d675"; // Microsoft_Agent_365_Tier_3
-    private const string SkuE5NoTeams = "18a4bd3f-0b5b-4887-b04f-61dd0ee15f5e"; // Microsoft_365_E5_(no_Teams)
 
     public A365CreateInstanceRunner(
         ILogger<A365CreateInstanceRunner> logger,
