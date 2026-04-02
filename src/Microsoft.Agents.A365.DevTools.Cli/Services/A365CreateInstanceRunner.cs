@@ -959,8 +959,7 @@ public sealed class A365CreateInstanceRunner
             if (licenseResponse.IsSuccessStatusCode)
             {
                 _logger.LogInformation("Licenses assigned successfully");
-                _logger.LogInformation("  - Microsoft Teams Enterprise");
-                _logger.LogInformation("  - Microsoft 365 E5 (no Teams)");
+                _logger.LogInformation("  - Microsoft Agent 365 Tier 3");
             }
             else
             {
