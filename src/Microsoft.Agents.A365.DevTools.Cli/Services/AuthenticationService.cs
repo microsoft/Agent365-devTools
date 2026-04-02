@@ -166,7 +166,7 @@ public class AuthenticationService : IAuthenticationService
         }
 
         // Authenticate interactively with specific tenant and scopes
-        _logger.LogInformation("Authentication required for Agent 365 Tools");
+        _logger.LogDebug("Authentication required for Agent 365 Tools");
         var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
 
         // Validate the token identity before caching: if a userId was requested,
@@ -286,9 +286,7 @@ public class AuthenticationService : IAuthenticationService
             if (useInteractiveBrowser)
             {
                 // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
-                _logger.LogInformation("Using interactive authentication...");
-                _logger.LogInformation("Please sign in with your Microsoft account and grant consent for the requested permissions.");
-                _logger.LogInformation("");
+                _logger.LogDebug("Using interactive authentication (browser/WAM)...");
 
                 credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint);
             }

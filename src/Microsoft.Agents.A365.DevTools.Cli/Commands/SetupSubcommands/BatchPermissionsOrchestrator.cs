@@ -99,10 +99,6 @@ internal static class BatchPermissionsOrchestrator
 
         var permScopes = AuthenticationConstants.RequiredPermissionGrantScopes;
 
-        // --- Resolve service principals ---
-        logger.LogInformation("");
-        logger.LogInformation("Resolving service principals...");
-
         BlueprintPermissionsResult? phase1Result = null;
         var blueprintPermissionsUpdated = false;
         try
@@ -129,8 +125,7 @@ internal static class BatchPermissionsOrchestrator
 
         // --- Phase 2a: Inheritable permissions (Agent ID Admin or GA) ---
         // --- Phase 2b: OAuth2 grants (Global Administrator only) ---
-        logger.LogInformation("");
-        logger.LogInformation("Configuring inheritable permissions and OAuth2 grants...");
+        logger.LogInformation("Configuring inheritable permissions...");
 
         var inheritedPermissionsConfigured = false;
         Dictionary<string, (bool configured, bool alreadyExisted)> inheritedResults =
@@ -148,9 +143,12 @@ internal static class BatchPermissionsOrchestrator
             // emitted and remaining specs are skipped.
             try
             {
-                inheritedResults = await ConfigureInheritedPermissionsAsync(
-                    graph, blueprintService, blueprintAppId, tenantId, specs,
-                    phase1Result, permScopes, logger, setupResults, ct);
+                using (logger.Indent())
+                {
+                    inheritedResults = await ConfigureInheritedPermissionsAsync(
+                        graph, blueprintService, blueprintAppId, tenantId, specs,
+                        phase1Result, permScopes, logger, setupResults, ct);
+                }
 
                 var inheritableSpecs = specs.Where(s => s.SetInheritable).ToList();
                 inheritedPermissionsConfigured = inheritableSpecs.Count == 0 ||
@@ -348,13 +346,13 @@ internal static class BatchPermissionsOrchestrator
                 {
                     inheritedResults[spec.ResourceAppId] = (configured: true, alreadyExisted: alreadyExists);
                     var verb = alreadyExists ? "already configured" : "configured";
-                    logger.LogInformation("   - {ResourceName}: inheritable permissions {Verb}", spec.ResourceName, verb);
+                    logger.LogInformation("{ResourceName}: inheritable permissions {Verb}", spec.ResourceName, verb);
                 }
                 else
                 {
                     inheritedResults[spec.ResourceAppId] = (configured: false, alreadyExisted: false);
                     logger.LogWarning(
-                        "   - Inheritable permissions set for {ResourceName} but verification read-back failed: {Error}",
+                        "Inheritable permissions set for {ResourceName} but verification read-back failed: {Error}",
                         spec.ResourceName, verifyErr ?? "not found in read-back");
                     setupResults?.Warnings.Add(
                         $"Inheritable permissions for {spec.ResourceName} could not be verified after setting.");
@@ -700,7 +698,7 @@ internal static class BatchPermissionsOrchestrator
 
         // Phase 1: resolve SPs
         logger.LogInformation("");
-        logger.LogInformation("Resolving service principals...");
+        logger.LogInformation("Resolving service principals for permission configuration...");
 
         BlueprintPermissionsResult? phase1Result = null;
         try

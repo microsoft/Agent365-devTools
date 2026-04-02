@@ -81,6 +81,7 @@ internal static class SetupHelpers
     {
         logger.LogInformation("");
         logger.LogInformation("Setup Summary");
+        logger.LogInformation("");
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
 

@@ -347,8 +347,7 @@ internal static class BlueprintSubcommand
         Func<Task<string?>>? loginHintResolver = null)
     {
         logger.LogInformation("");
-        logger.LogInformation("==> Creating Agent Blueprint");
-        logger.LogInformation("");
+        logger.LogInformation("Creating agent blueprint...");
 
         var generatedConfigPath = Path.Combine(
             config.DirectoryName ?? Environment.CurrentDirectory,
@@ -377,13 +376,16 @@ internal static class BlueprintSubcommand
         }
         else
         {
-            logger.LogInformation("No existing configuration found - blueprint will be created without managed identity");
+            logger.LogDebug("No existing configuration found - blueprint will be created without managed identity");
         }
 
-        // Create required services
+        using var blueprintOuterScope = logger.Indent();
+
+        // Create required services.
+        // Pass the caller's logger so consent messages appear in the correct indent scope.
         var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
         var delegatedConsentService = new DelegatedConsentService(
-            cleanLoggerFactory.CreateLogger<DelegatedConsentService>(),
+            logger,
             new GraphApiService(
                 cleanLoggerFactory.CreateLogger<GraphApiService>(),
                 executor,
@@ -541,17 +543,9 @@ internal static class BlueprintSubcommand
             clientSecretManualActionRequired = !secretCreated;
         }
 
+        blueprintOuterScope.Dispose();
         logger.LogInformation("");
-        if (blueprintAlreadyExisted)
-        {
-            logger.LogInformation("Agent blueprint configured successfully");
-        }
-        else
-        {
-            logger.LogInformation("Agent blueprint created successfully");
-        }
-        logger.LogInformation("Generated config saved: {Path}", generatedConfigPath);
-        logger.LogInformation("");
+        logger.LogDebug("Generated config saved: {Path}", generatedConfigPath);
 
         // Endpoint registration is temporarily disabled pending a backend fix.
         // Re-enable by restoring the registration block here and in the --endpoint-only / --update-endpoint
@@ -843,7 +837,8 @@ internal static class BlueprintSubcommand
         // ========================================================================
         try
         {
-            logger.LogInformation("Creating Agent Blueprint using Microsoft Graph SDK...");
+            logger.LogInformation("Creating blueprint application...");
+            using var blueprintAppScope = logger.Indent();
 
             using GraphServiceClient graphClient = await GetAuthenticatedGraphClientAsync(logger, setupConfig, tenantId, ct);
 
@@ -909,11 +904,10 @@ internal static class BlueprintSubcommand
 
             var createAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/beta/applications";
 
-            logger.LogInformation("Creating Agent Blueprint application...");
-            logger.LogInformation("  - Display Name: {DisplayName}", displayName);
+            logger.LogInformation("Display Name: {DisplayName}", displayName);
             if (!string.IsNullOrEmpty(sponsorUserId))
             {
-                logger.LogInformation("  - Sponsor and Owner: User ID {UserId}", sponsorUserId);
+                logger.LogInformation("Sponsor and Owner: User ID {UserId}", sponsorUserId);
             }
 
             var appResponse = await httpClient.PostAsync(
@@ -987,9 +981,13 @@ internal static class BlueprintSubcommand
             var appId = app["appId"]!.GetValue<string>();
             var objectId = app["id"]!.GetValue<string>();
 
-            logger.LogInformation("Application created successfully");
-            logger.LogInformation("  Blueprint ID: {AppId}", appId);
-            logger.LogDebug("  Object ID: {ObjectId}", objectId);
+            blueprintAppScope.Dispose();
+            logger.LogInformation("Blueprint application created successfully");
+            using (logger.Indent())
+            {
+                logger.LogInformation("Blueprint ID: {AppId}", appId);
+                logger.LogDebug("Object ID: {ObjectId}", objectId);
+            }
 
             // Wait for application propagation using RetryHelper
             var retryHelper = new RetryHelper(logger);
@@ -1041,17 +1039,23 @@ internal static class BlueprintSubcommand
             // Retry on 400 NoBackingApplicationObject: Agent Blueprint apps may not yet be indexed
             // by appId in all Graph API replicas even after the application object is visible by
             // objectId. Retry with backoff until the appId index is replicated.
-            logger.LogInformation("Creating service principal...");
+            logger.LogInformation("");
+            logger.LogInformation("Creating blueprint service principal...");
             string? servicePrincipalId = await CreateServicePrincipalAsync(appId, httpClient, retryHelper, logger, ct);
             if (string.IsNullOrWhiteSpace(servicePrincipalId))
             {
                 logger.LogError("Service principal creation failed after retries");
             }
+            else
+            {
+                using (logger.Indent())
+                    logger.LogInformation("Blueprint service principal ID: {SpId}", servicePrincipalId);
+            }
 
             // Wait for service principal propagation using RetryHelper
             if (!string.IsNullOrWhiteSpace(servicePrincipalId))
             {
-                logger.LogInformation("Verifying service principal propagation in directory...");
+                logger.LogDebug("Verifying blueprint service principal...");
                 var spPropagated = await retryHelper.ExecuteWithRetryAsync(
                     async ct =>
                     {
@@ -1705,22 +1709,17 @@ internal static class BlueprintSubcommand
     /// </summary>
     private async static Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(ILogger logger, Models.Agent365Config setupConfig, string tenantId, CancellationToken ct)
     {
-        logger.LogInformation("Authenticating to Microsoft Graph using interactive browser authentication...");
-        logger.LogInformation("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
-        logger.LogInformation("This will open a browser window for interactive authentication.");
-        logger.LogInformation("Please sign in with your Microsoft account.");
-        logger.LogInformation("");
+        logger.LogInformation("Sign in to Microsoft Graph to continue...");
 
-        // Use InteractiveGraphAuthService to get proper authentication
-        using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+        // Use InteractiveGraphAuthService to get proper authentication.
+        // Pass the caller's logger so messages appear in the correct indent scope.
         var interactiveAuth = new InteractiveGraphAuthService(
-            cleanLoggerFactory.CreateLogger<InteractiveGraphAuthService>(),
+            logger,
             setupConfig.ClientAppId);
 
         try
         {
             var graphClient = await interactiveAuth.GetAuthenticatedGraphClientAsync(tenantId, ct);
-            logger.LogInformation("Successfully authenticated to Microsoft Graph");
             return graphClient;
         }
         catch (Exception ex)
@@ -1751,10 +1750,11 @@ internal static class BlueprintSubcommand
         CancellationToken ct = default,
         Func<Task<string?>>? loginHintResolver = null)
     {
+        logger.LogInformation("");
+        logger.LogInformation("Creating blueprint client secret...");
+        using var clientSecretScope = logger.Indent();
         try
         {
-            logger.LogInformation("Creating client secret for Agent Blueprint using Graph API...");
-
             // Resolve login hint so WAM targets the az-logged-in user, not the OS default account.
             // Without this, WAM may return a cached token for a different user who is not the owner.
             var loginHint = loginHintResolver != null
@@ -1864,7 +1864,8 @@ internal static class BlueprintSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to create client secret automatically: {Message}", ex.Message);
+            logger.LogDebug(ex, "Failed to create blueprint client secret (detail)");
+            logger.LogWarning("Insufficient privileges to create blueprint client secret automatically. You must create it manually.");
             logger.LogWarning("Create the client secret manually for blueprint app {AppId} and add it to a365.generated.config.json, then re-run: a365 setup all", blueprintAppId);
             logger.LogWarning("See: https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials");
             return false;

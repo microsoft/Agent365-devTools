@@ -1079,8 +1079,8 @@ public class GraphApiService
         var json = JsonSerializer.Serialize(payload);
         var url = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration";
 
-        _logger.LogInformation("POST {Url} (AgentX V2)", url);
-        _logger.LogInformation("Body: {Body}", json);
+        _logger.LogDebug("POST {Url} (AgentX V2)", url);
+        _logger.LogDebug("Body: {Body}", json);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
@@ -1091,7 +1091,7 @@ public class GraphApiService
             using var response = await _httpClient.SendAsync(request, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
 
-            _logger.LogInformation("AgentX V2 response: {StatusCode} {Reason}", (int)response.StatusCode, response.ReasonPhrase);
+            _logger.LogDebug("AgentX V2 response: {StatusCode} {Reason}", (int)response.StatusCode, response.ReasonPhrase);
 
             if ((int)response.StatusCode == 202 || response.IsSuccessStatusCode)
             {
@@ -1124,16 +1124,16 @@ public class GraphApiService
                     {
                         try
                         {
-                            _logger.LogInformation("GET {Url} (status check {Attempt}/{Max})", getUrl, attempt, maxAttempts);
+                            _logger.LogDebug("GET {Url} (status check {Attempt}/{Max})", getUrl, attempt, maxAttempts);
                             using var getRequest = new HttpRequestMessage(HttpMethod.Get, getUrl);
                             getRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                             using var getResponse = await _httpClient.SendAsync(getRequest, ct);
-                            _logger.LogInformation("AgentX GET response: {StatusCode} {Reason}", (int)getResponse.StatusCode, getResponse.ReasonPhrase);
+                            _logger.LogDebug("AgentX GET response: {StatusCode} {Reason}", (int)getResponse.StatusCode, getResponse.ReasonPhrase);
 
                             if (getResponse.IsSuccessStatusCode)
                             {
                                 confirmed = true;
-                                _logger.LogInformation("Agent registration confirmed visible (attempt {Attempt})", attempt);
+                                _logger.LogDebug("Agent registration confirmed visible (attempt {Attempt})", attempt);
                             }
                             else if (attempt < maxAttempts)
                             {
@@ -1379,8 +1379,8 @@ public class GraphApiService
                 {
                     var scp = TryDecodeTokenClaim(previewToken, "scp");
                     var upn = TryDecodeTokenClaim(previewToken, "upn") ?? TryDecodeTokenClaim(previewToken, "unique_name");
-                    _logger.LogInformation("Agent identity token scp : {Scp}", scp ?? "(missing)");
-                    _logger.LogInformation("Agent identity token upn : {Upn}", upn ?? "(missing)");
+                    _logger.LogDebug("Agent identity token scp : {Scp}", scp ?? "(missing)");
+                    _logger.LogDebug("Agent identity token upn : {Upn}", upn ?? "(missing)");
                 }
             }
             catch (Exception ex)
@@ -1409,8 +1409,8 @@ public class GraphApiService
                 };
             }
 
-            _logger.LogInformation("POST https://graph.microsoft.com/beta/servicePrincipals/Microsoft.Graph.AgentIdentity (delegated)");
-            _logger.LogInformation("Body: {Body}", body.ToJsonString());
+            _logger.LogDebug("POST https://graph.microsoft.com/beta/servicePrincipals/Microsoft.Graph.AgentIdentity (delegated)");
+            _logger.LogDebug("Body: {Body}", body.ToJsonString());
 
             // Use GraphPostWithResponseAsync so we can log the full error body on failure.
             var postResult = await GraphPostWithResponseAsync(
@@ -1438,7 +1438,7 @@ public class GraphApiService
             using var doc = postResult.Json;
 
             var id = doc.RootElement.GetProperty("id").GetString();
-            _logger.LogInformation("Agent identity created via delegated flow (ID: {Id})", id);
+            _logger.LogDebug("Agent identity created via delegated flow (ID: {Id})", id);
             return id;
         }
         catch (Exception ex)

@@ -510,6 +510,10 @@ internal static class AllSubcommand
             ctx.Results.AdminConsentGranted = consentGranted;
             ctx.Results.AdminConsentUrl = adminConsentUrl;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception permEx)
         {
             ctx.Results.BatchPermissionsPhase2Completed = false;

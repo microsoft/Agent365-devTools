@@ -24,7 +24,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// </summary>
 public sealed class InteractiveGraphAuthService
 {
-    private readonly ILogger<InteractiveGraphAuthService> _logger;
+    private readonly ILogger _logger;
     private readonly string _clientAppId;
     private readonly Func<string, string, TokenCredential>? _credentialFactory;
     private readonly Func<Task<string?>> _loginHintResolver;
@@ -41,7 +41,7 @@ public sealed class InteractiveGraphAuthService
     };
 
     public InteractiveGraphAuthService(
-        ILogger<InteractiveGraphAuthService> logger,
+        ILogger logger,
         string clientAppId,
         Func<string, string, TokenCredential>? credentialFactory = null,
         Func<Task<string?>>? loginHintResolver = null)
@@ -141,7 +141,6 @@ public sealed class InteractiveGraphAuthService
         // MsalBrowserCredential caches the MSAL account, so subsequent GetTokenAsync calls
         // from GraphServiceClient will hit the silent cache without re-prompting.
         _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
-        _logger.LogInformation("");
 
         var graphClient = new GraphServiceClient(credential!, RequiredScopes);
         _cachedClient = graphClient;

@@ -822,10 +822,10 @@ public class ClientAppValidatorTests
     }
 
     /// <summary>
-    /// Sets up the app info GET with all required permissions (8 with GUIDs + AgentIdentity.Create.All
-    /// via consent grant). The permission GUIDs match those returned by SetupPermissionResolution so
-    /// validation passes. Also sets up the consent grant mock for AgentIdentity.Create.All (no GUID
-    /// in v1.0 oauth2PermissionScopes — resolved via GetConsentedPermissionsAsync fallback).
+    /// Sets up the app info GET with all required permissions (9 with GUIDs + AgentIdentity.Create.All,
+    /// AgentIdentityBlueprint.DeleteRestore.All, and AgentIdentity.DeleteRestore.All via consent grant).
+    /// The permission GUIDs match those returned by SetupPermissionResolution so validation passes.
+    /// The three no-GUID scopes are resolved via GetConsentedPermissionsAsync fallback.
     /// </summary>
     private void SetupAppInfoWithAllPermissions(string appId)
     {
@@ -905,8 +905,8 @@ public class ClientAppValidatorTests
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(spJson)));
 
-        // Grants for ConsentSpObjId — contains AgentIdentity.Create.All so it is removed from missingPermissions.
-        var grantsJson = """{"value": [{"scope": "AgentIdentity.Create.All"}]}""";
+        // Grants for ConsentSpObjId — contains all three no-GUID scopes so they are removed from missingPermissions.
+        var grantsJson = """{"value": [{"scope": "AgentIdentity.Create.All AgentIdentityBlueprint.DeleteRestore.All AgentIdentity.DeleteRestore.All"}]}""";
         _graphApiService.GraphGetAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),

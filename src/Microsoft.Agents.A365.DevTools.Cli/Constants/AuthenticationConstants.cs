@@ -209,11 +209,10 @@ public static class AuthenticationConstants
         "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
         "AgentIdentity.ReadWrite.All",  // Required for general agent identity operations
         "AgentIdentity.Create.All",  // Required for POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity; not in v1.0 oauth2PermissionScopes so ClientAppValidator provisions it via consent grant patch (no GUID needed)
+        "AgentIdentityBlueprint.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Blueprint application
+        "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
         "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment
-        // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
-        // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
-        // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded
-        // because Directory.Read.All already covers the needed read operations.
+        // Note: RoleManagementReadDirectoryScope is excluded because Directory.Read.All covers the needed read operations.
     };
 
     /// <summary>

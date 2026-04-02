@@ -5,6 +5,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Extensions.Logging;
 
@@ -113,6 +114,8 @@ internal static class NonDwBlueprintSetupOrchestrator
         Console.Write("Grant admin consent for these permissions now? [y/N]: ");
         var answer = Console.ReadLine();
 
+        ctx.CancellationToken.ThrowIfCancellationRequested();
+
         if (!string.Equals(answer?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
         {
             ctx.Logger.LogWarning("Admin consent not granted. Setup may fail if these permissions are required.");
@@ -143,7 +146,8 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
-        ctx.Logger.LogInformation("Running non-DW blueprint setup... (TraceId: {TraceId})", ctx.CorrelationId);
+        ctx.Logger.LogInformation("Running \"a365 {Args}\"...", string.Join(" ", Environment.GetCommandLineArgs().Skip(1)));
+        ctx.Logger.LogDebug("TraceId: {TraceId}", ctx.CorrelationId);
         ctx.Logger.LogInformation("");
 
         List<ResourcePermissionSpec> specs = [];
@@ -185,7 +189,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
             else
             {
-                ctx.Logger.LogInformation("NOTE: Requirements validation skipped (--skip-requirements flag used)");
+                ctx.Logger.LogInformation("Requirements validation skipped (--skip-requirements flag used)");
             }
 
             // Step 1.5: Consent check — detect missing consent for required permissions and prompt.
@@ -262,7 +266,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                     await ctx.ConfigService.SaveStateAsync(ctx.Config);
                     ctx.Results.AgentIdentityCreated = true;
                     ctx.Results.AgentIdentityId = agentId;
-                    ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
+                    using (ctx.Logger.Indent())
+                        ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
+                    ctx.Logger.LogInformation("");
                 }
                 else
                 {
@@ -275,22 +281,26 @@ internal static class NonDwBlueprintSetupOrchestrator
                 }
             }
 
-            // Step 5a: Grant all blueprint permissions to the Agent Identity SP.
-            // The Agent Identity (ServiceIdentity type) needs explicit oauth2PermissionGrants for the same
-            // resources the blueprint has — inheritable permissions do not automatically create app-only
-            // grants for the agent identity in all environments (e.g. Observability API user_impersonation).
-            if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
-            {
-                ctx.Logger.LogInformation("");
-                await GrantAgentIdentityPermissionsAsync(ctx, specs);
-            }
+            // Step 5a: (Disabled) Grant blueprint permissions to the Agent Identity SP.
+            // After admin consent is granted tenant-wide (AllPrincipals), the agent identity inherits
+            // the blueprint's permission grants automatically. Explicit oauth2PermissionGrant calls
+            // fail for non-admin developers (403) and are redundant for admins. Keeping code for reference.
+            // TODO: Remove once confirmed unnecessary across all environments.
+            //
+            // if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
+            // {
+            //     ctx.Logger.LogInformation("");
+            //     await GrantAgentIdentityPermissionsAsync(ctx, specs);
+            // }
 
             // Step 6: Register Agent via AgentX Agent Registration API V2.
-            ctx.Logger.LogInformation("");
 
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
             {
-                ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", ctx.Config.AgentRegistrationId);
+                ctx.Logger.LogInformation("Registering agent...");
+                using (ctx.Logger.Indent())
+                    ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", ctx.Config.AgentRegistrationId);
+                ctx.Logger.LogInformation("");
                 ctx.Results.AgentInstanceRegistered = true;
                 ctx.Results.AgentInstanceId = ctx.Config.AgentRegistrationId;
             }
@@ -321,7 +331,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                     await ctx.ConfigService.SaveStateAsync(ctx.Config);
                     ctx.Results.AgentInstanceRegistered = true;
                     ctx.Results.AgentInstanceId = registrationId;
-                    ctx.Logger.LogInformation("Agent registered (ID: {RegistrationId})", registrationId);
+                    using (ctx.Logger.Indent())
+                        ctx.Logger.LogInformation("Agent registered (ID: {RegistrationId})", registrationId);
+                    ctx.Logger.LogInformation("");
                 }
                 else
                 {
@@ -331,9 +343,13 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
 
             // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
-            await ProjectSettingsSyncHelper.ExecuteAsync(
-                ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
-                ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
+            ctx.Logger.LogInformation("Updating project settings...");
+            using (ctx.Logger.Indent())
+            {
+                await ProjectSettingsSyncHelper.ExecuteAsync(
+                    ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
+                    ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
+            }
         }
         catch (Agent365Exception ex)
         {
@@ -345,6 +361,12 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             ctx.Logger.LogError("Setup failed: {Message}", fnfEx.Message);
             ctx.Results.Errors.Add(fnfEx.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            ctx.Logger.LogInformation("");
+            ctx.Logger.LogInformation("Setup cancelled.");
+            return 1;
         }
         catch (Exception ex)
         {

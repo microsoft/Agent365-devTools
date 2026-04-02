@@ -213,31 +213,31 @@ public static class InfrastructureSubcommand
         }
         logger.LogInformation("");
 
-        logger.LogInformation("Agent 365 Setup Infrastructure - Starting...");
-        logger.LogInformation("Subscription: {Sub}", subscriptionId);
-        logger.LogInformation("Resource Group: {RG}", resourceGroup);
-        logger.LogInformation("App Service Plan: {Plan}", planName);
-        logger.LogInformation("Web App: {App}", webAppName);
-        logger.LogInformation("Location: {Loc}", location);
-        logger.LogInformation("");
-
         if (!skipInfra)
         {
+            logger.LogInformation("Agent 365 Setup Infrastructure - Starting...");
+            using (logger.Indent())
+            {
+                logger.LogInformation("Subscription: {Sub}", subscriptionId);
+                logger.LogInformation("Resource Group: {RG}", resourceGroup);
+                if (!string.IsNullOrWhiteSpace(planName))
+                    logger.LogInformation("App Service Plan: {Plan}", planName);
+                if (!string.IsNullOrWhiteSpace(webAppName))
+                    logger.LogInformation("Web App: {App}", webAppName);
+                logger.LogInformation("Location: {Loc}", location);
+            }
+            logger.LogInformation("");
+
             bool isValidated = await ValidateAzureCliAuthenticationAsync(
-            commandExecutor,
-            tenantId,
-            logger,
-            cancellationToken);
+                commandExecutor,
+                tenantId,
+                logger,
+                cancellationToken);
 
             if (!isValidated)
             {
                 return (false, false);
             }
-        }
-        else
-        {
-            logger.LogInformation("==> Skipping Azure management authentication (--skipInfrastructure or External hosting)");
-            logger.LogInformation("");
         }
 
         var (principalId, anyAlreadyExisted) = await CreateInfrastructureAsync(
@@ -272,8 +272,7 @@ public static class InfrastructureSubcommand
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("==> Verifying Azure CLI authentication");
-        logger.LogInformation("");
+        logger.LogInformation("Verifying Azure CLI authentication...");
 
         // Use cached login hint from AzCliHelper (populated by requirements check).
         // Falls back to spawning 'az account show' only on first call in this process.
@@ -339,11 +338,8 @@ public static class InfrastructureSubcommand
 
         if (skipInfra)
         {
-            var modeMessage = "External hosting (non-Azure)";
-
-            logger.LogInformation("==> Skipping Azure infrastructure ({Mode})", modeMessage);
-            logger.LogInformation("");
-            logger.LogInformation("Loading existing configuration...");
+            logger.LogInformation("Skipping infrastructure setup (external hosting (non-Azure)).");
+            logger.LogDebug("Loading existing configuration...");
 
             // Load existing generated config if available
             if (File.Exists(generatedConfigPath))
@@ -373,18 +369,12 @@ public static class InfrastructureSubcommand
                     logger.LogWarning("Could not load existing config: {Message}. Starting fresh.", ex.Message);
                 }
             }
-            else
-            {
-                logger.LogInformation("No existing configuration found - blueprint will be created without managed identity");
-            }
-
             logger.LogInformation("");
             return (principalId, false); // Skip infra means nothing was created/modified
         }
         else
         {
-            logger.LogInformation("==> Deploying App Service + enabling Managed Identity");
-            logger.LogInformation("");
+            logger.LogInformation("Deploying App Service and enabling Managed Identity...");
 
             // Resource group
             // Use ArmApiService for a direct HTTP check (~0.5s) instead of az subprocess (~15-20s).
