@@ -242,7 +242,8 @@ public static class ManifestHelper
                 scopeEl.ValueKind == JsonValueKind.String)
             {
                 var s = scopeEl.GetString();
-                if (!string.IsNullOrWhiteSpace(s))
+                if (!string.IsNullOrWhiteSpace(s) &&
+                    !string.Equals(s, "null", StringComparison.OrdinalIgnoreCase))
                 {
                     AddScopeString(scopes, s);
                     continue;
@@ -312,7 +313,9 @@ public static class ManifestHelper
             if (element.TryGetProperty(McpConstants.ManifestProperties.Scope, out var scopeEl) &&
                 scopeEl.ValueKind == JsonValueKind.String)
             {
-                scope = scopeEl.GetString();
+                var raw = scopeEl.GetString();
+                if (!string.Equals(raw, "null", StringComparison.OrdinalIgnoreCase))
+                    scope = raw;
             }
             if (string.IsNullOrWhiteSpace(scope))
             {

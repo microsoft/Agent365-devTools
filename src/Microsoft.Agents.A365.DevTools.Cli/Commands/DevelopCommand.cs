@@ -217,7 +217,8 @@ public static class DevelopCommand
                         if (server.TryGetProperty("scope", out var scopeElement))
                         {
                             var scope = scopeElement.GetString();
-                            if (!string.IsNullOrWhiteSpace(scope))
+                            if (!string.IsNullOrWhiteSpace(scope) &&
+                                !string.Equals(scope, "null", StringComparison.OrdinalIgnoreCase))
                             {
                                 Console.WriteLine($"     Required Scope: {scope}");
                             }
@@ -783,7 +784,8 @@ public static class DevelopCommand
                     if (catalogEntry.ValueKind != JsonValueKind.Undefined)
                     {
                         var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
-                        var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+                        var scopeRaw = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+                        var scope = string.Equals(scopeRaw, "null", StringComparison.OrdinalIgnoreCase) ? null : scopeRaw;
                         var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
                         var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
@@ -855,7 +857,8 @@ public static class DevelopCommand
             }
 
             var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
-            var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+            var scopeRaw = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+            var scope = string.Equals(scopeRaw, "null", StringComparison.OrdinalIgnoreCase) ? null : scopeRaw;
             var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
             var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
