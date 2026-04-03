@@ -29,7 +29,7 @@ PyGithub==2.5.0
 azure-devops==7.1.0b4
 
 # LLM / OpenAI
-openai==1.59.4
+openai==2.30.0
 
 # HTTP requests
 requests==2.33.0
