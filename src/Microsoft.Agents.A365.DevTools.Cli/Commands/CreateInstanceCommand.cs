@@ -175,7 +175,7 @@ public class CreateInstanceCommand
                     instanceConfig.TenantId,
                     agenticAppSpObjectId,
                     observabilityApiResourceSpObjectId,
-                    new[] { "user_impersonation" });
+                    new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope });
 
                 if (!observabilityApiGrantOk)
                     logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Observability API.");

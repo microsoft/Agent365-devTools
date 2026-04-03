@@ -357,22 +357,8 @@ internal static class AllSubcommand
                             "Agent 365 Tools",
                             mcpScopes,
                             SetInheritable: true),
-                        new ResourcePermissionSpec(
-                            ConfigConstants.MessagingBotApiAppId,
-                            "Messaging Bot API",
-                            new[] { "Authorization.ReadWrite", "user_impersonation" },
-                            SetInheritable: true),
-                        new ResourcePermissionSpec(
-                            ConfigConstants.ObservabilityApiAppId,
-                            "Observability API",
-                            new[] { "user_impersonation" },
-                            SetInheritable: true),
-                        new ResourcePermissionSpec(
-                            PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                            "Power Platform API",
-                            new[] { "Connectivity.Connections.Read" },
-                            SetInheritable: true),
                     };
+                    specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
 
                     foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
                     {
