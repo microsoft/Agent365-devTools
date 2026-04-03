@@ -7,7 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+<<<<<<< users/gwharris7/create-instance
 - Re-enabled `a365 create-instance` command (previously deprecated) — creates agent identity, agent user, assigns licenses, and grants admin consent for Graph/MCP/Bot Framework scopes in a single command
+=======
+- `Agent365.Observability.OtelWrite` scope now granted to all provisioned agent identities on the Observability API alongside `user_impersonation`, enabling agents to write OpenTelemetry data to the Agent 365 observability service
+- `ChannelMessage.Read.All` and `ChannelMessage.Send` added to default blueprint Microsoft Graph delegated scopes (`agentIdentityScopes`)
+- `Files.ReadWrite.All`, `ChannelMessage.Read.All`, and `ChannelMessage.Send` added to default blueprint Microsoft Graph application scopes (`agentApplicationScopes`)
+>>>>>>> main
 - Server-driven notice system: security advisories and critical upgrade prompts are displayed at startup when a maintainer updates `notices.json`. Notices are suppressed once the user upgrades past the specified `minimumVersion`. Results are cached locally for 4 hours to avoid network calls on every invocation.
 - `a365 cleanup azure --dry-run` — preview resources that would be deleted without making any changes or requiring Azure authentication
 - `AppServiceAuthRequirementCheck` — validates App Service deployment token before `a365 deploy` begins, catching revoked grants (AADSTS50173) early
