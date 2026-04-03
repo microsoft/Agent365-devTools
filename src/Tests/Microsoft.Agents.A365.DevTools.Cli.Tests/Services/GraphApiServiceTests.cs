@@ -572,6 +572,114 @@ public class GraphApiServiceTests
 
     #endregion
 
+    #region FindApplicationByDisplayNameAsync
+
+    [Fact]
+    public async Task FindApplicationByDisplayNameAsync_WhenAppFound_ReturnsAppId()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithHandler(handler);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[{\"appId\":\"f2d098d5-09d2-40e1-a7b0-d9fff1ace230\"}]}")
+        });
+
+        var result = await service.FindApplicationByDisplayNameAsync("tenant-id", "Agent 365 CLI");
+
+        result.Should().Be("f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            because: "the first matching app's appId should be returned when Graph returns a non-empty value array");
+    }
+
+    [Fact]
+    public async Task FindApplicationByDisplayNameAsync_WhenNotFound_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithHandler(handler);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[]}")
+        });
+
+        var result = await service.FindApplicationByDisplayNameAsync("tenant-id", "Unknown App");
+
+        result.Should().BeNull(
+            because: "an empty value array means no app with that display name exists in the tenant");
+    }
+
+    [Fact]
+    public async Task FindApplicationByDisplayNameAsync_WhenApiFails_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = CreateServiceWithHandler(handler);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
+        });
+
+        var result = await service.FindApplicationByDisplayNameAsync("tenant-id", "Agent 365 CLI");
+
+        result.Should().BeNull(
+            because: "a non-success HTTP response should be treated as app-not-found to allow the caller to surface a clear error");
+    }
+
+    [Fact]
+    public async Task FindApplicationByDisplayNameAsync_SendsConsistencyLevelHeader()
+    {
+        // Graph requires 'ConsistencyLevel: eventual' for advanced filter queries (displayName eq).
+        // Missing this header causes HTTP 400 in some tenants.
+        HttpRequestMessage? capturedRequest = null;
+        var handler = new CapturingHttpMessageHandler(req => capturedRequest = req);
+        var service = CreateServiceWithHandler(handler);
+
+        var result = await service.FindApplicationByDisplayNameAsync("tenant-id", "Agent 365 CLI");
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Headers.Contains("ConsistencyLevel").Should().BeTrue(
+            because: "Graph advanced query filters (displayName eq) require 'ConsistencyLevel: eventual'");
+        capturedRequest.Headers.GetValues("ConsistencyLevel").Should().Contain("eventual",
+            because: "the exact value 'eventual' is required by the Graph API spec for advanced queries");
+    }
+
+    [Fact]
+    public async Task FindApplicationByDisplayNameAsync_EscapesSingleQuotesInDisplayName()
+    {
+        // OData string literal escaping: ' must be doubled to ''
+        // Without this, a name like "O'Brien" would break the filter URL.
+        HttpRequestMessage? capturedRequest = null;
+        var handler = new CapturingHttpMessageHandler(req => capturedRequest = req);
+        var service = CreateServiceWithHandler(handler);
+
+        await service.FindApplicationByDisplayNameAsync("tenant-id", "O'Brien's App");
+
+        capturedRequest.Should().NotBeNull();
+        // The URI may URL-encode spaces (%20) but must preserve '' as the OData escape for '
+        var decodedQuery = Uri.UnescapeDataString(capturedRequest!.RequestUri!.Query);
+        decodedQuery.Should().Contain("O''Brien''s App",
+            because: "OData requires single quotes in string literals to be escaped by doubling: ' → ''");
+    }
+
+    private static GraphApiService CreateServiceWithHandler(HttpMessageHandler handler)
+    {
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
+            });
+        return new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+    }
+
+    #endregion
+
     #region IsCurrentUserAgentIdAdminAsync
 
     private static IAuthenticationService FakeAuth()

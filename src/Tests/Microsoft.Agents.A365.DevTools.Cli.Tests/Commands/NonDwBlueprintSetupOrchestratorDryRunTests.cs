@@ -56,7 +56,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Create blueprint") && o.ToString()!.Contains("multi-tenant")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Creating agent blueprint") && o.ToString()!.Contains("multi-tenant")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -66,10 +66,19 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(blueprintId: "existing-bp-id"), _logger);
 
+        // Header line: blueprint already exists
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Reuse blueprint") && o.ToString()!.Contains("existing-bp-id")),
+            Arg.Is<object>(o => o.ToString()!.Contains("already exists")),
+            null,
+            Arg.Any<Func<object, Exception?, string>>());
+
+        // Indented line: shows the blueprint ID
+        _logger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("existing-bp-id")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -95,7 +104,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("User.Read")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Microsoft Graph")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }

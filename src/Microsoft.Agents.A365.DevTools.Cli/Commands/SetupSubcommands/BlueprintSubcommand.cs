@@ -366,7 +366,7 @@ internal static class BlueprintSubcommand
                 if (generatedConfig.TryGetPropertyValue("managedIdentityPrincipalId", out var existingPrincipalId))
                 {
                     principalId = existingPrincipalId?.GetValue<string>();
-                    logger.LogInformation("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
+                    logger.LogDebug("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
                 }
             }
             catch (Exception ex)

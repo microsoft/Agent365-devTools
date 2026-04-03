@@ -1147,4 +1147,105 @@ public class Agent365ConfigTests
     }
 
     #endregion
+
+    #region ValidateNonDwMinimal Tests
+
+    [Fact]
+    public void ValidateNonDwMinimal_ValidMinimalConfig_ReturnsNoErrors()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().BeEmpty(
+            because: "a config with valid tenantId, clientAppId (GUID), and agentIdentityDisplayName meets the minimal bootstrap requirements");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingTenantId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*tenantId*",
+            because: "tenantId is required for the bootstrap path to acquire tokens");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingClientAppId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*clientAppId*",
+            because: "clientAppId is required to authenticate against Graph and ARM; an empty value means the well-known app lookup failed");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_NonGuidClientAppId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "not-a-guid",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().NotBeEmpty(
+            because: "clientAppId must be a valid GUID for MSAL to accept it as an application ID");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingAgentIdentityDisplayName_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = ""
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*agentIdentityDisplayName*",
+            because: "agentIdentityDisplayName is required to name the Entra app registration created for the agent identity");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_DoesNotRequireSubscriptionId()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+            // SubscriptionId, ResourceGroup, DeploymentProjectPath intentionally omitted
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().BeEmpty(
+            because: "bootstrap (--agent-name) path uses external hosting — no Azure subscription or deployment path is required");
+    }
+
+    #endregion
 }

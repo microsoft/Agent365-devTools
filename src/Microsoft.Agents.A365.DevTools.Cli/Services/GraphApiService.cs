@@ -511,6 +511,51 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Finds an application's appId by its display name using a Graph advanced query.
+    /// Uses ConsistencyLevel: eventual (required for string filter on displayName).
+    /// Returns null if not found or on error. Does not require CustomClientAppId — uses the
+    /// default auth token path so it can be called before the client app is resolved.
+    /// </summary>
+    public virtual async Task<string?> FindApplicationByDisplayNameAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct)) return null;
+
+        // OData requires single quotes to be escaped by doubling them: ' → ''
+        var escaped = displayName.Replace("'", "''", StringComparison.Ordinal);
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl,
+            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$top=1&$count=true");
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            // Copy auth header set by EnsureGraphHeadersAsync onto the shared _httpClient
+            if (_httpClient.DefaultRequestHeaders.Authorization is { } auth)
+                request.Headers.Authorization = auth;
+            // Required for advanced query filters (displayName eq)
+            request.Headers.TryAddWithoutValidation("ConsistencyLevel", "eventual");
+
+            using var resp = await _httpClient.SendAsync(request, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("FindApplicationByDisplayName {Name} failed {Code}", displayName, (int)resp.StatusCode);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0)
+                return null;
+
+            return value[0].TryGetProperty("appId", out var appId) ? appId.GetString() : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Failed to find application by display name {Name}", displayName);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Ensures a service principal exists for the given application ID.
     /// Creates the service principal if it doesn't already exist.
     /// Returns null if the SP could not be found or created (e.g. insufficient privileges).

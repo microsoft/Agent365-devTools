@@ -72,6 +72,13 @@ public static class AuthenticationConstants
     }
 
     /// <summary>
+    /// Well-known display name for the Agent 365 CLI client app registration in the tenant.
+    /// Used to resolve the clientAppId automatically when --agent-name is provided without a config file.
+    /// Tenants must register an Entra app with this exact display name and grant it the required permissions.
+    /// </summary>
+    public const string WellKnownClientAppDisplayName = "Agent 365 CLI";
+
+    /// <summary>
     /// Application name for cache directory
     /// </summary>
     public const string ApplicationName = "Microsoft.Agents.A365.DevTools.Cli";

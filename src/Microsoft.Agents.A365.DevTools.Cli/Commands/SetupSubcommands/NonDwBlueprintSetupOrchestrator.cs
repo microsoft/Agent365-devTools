@@ -30,51 +30,100 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null)
     {
-        var displayName = config.AgentIdentityDisplayName;
-        var existingBlueprint = !string.IsNullOrWhiteSpace(config.AgentBlueprintId);
-        var existingAgentId = !string.IsNullOrWhiteSpace(config.AgenticAppId);
-        var existingInstance = !string.IsNullOrWhiteSpace(config.AgentRegistrationId);
-
-        logger.LogInformation("Non-DW Blueprint Setup Plan (dry run — no changes will be made)");
+        // Use explicitly-passed tokens when available; fall back to a known-correct default.
+        // Environment.GetCommandLineArgs() is unreliable in dotnet tool / test hosting scenarios.
+        var cmdArgs = rawArgs is { Length: > 0 } ? string.Join(" ", rawArgs) : "setup all";
+        logger.LogInformation("Running \"a365 {Args}\" (dry run -- no changes will be made)", cmdArgs);
         logger.LogInformation("");
 
-        // Step 1: Infrastructure
+        // Infrastructure
         if (config.NeedDeployment)
-            logger.LogInformation("  1. Create Azure infrastructure");
+        {
+            logger.LogInformation("Creating Azure infrastructure...");
+        }
         else
-            logger.LogInformation("  1. Skip: Azure infrastructure (needDeployment=false)");
-
-        // Step 2: Blueprint
-        if (existingBlueprint)
-            logger.LogInformation("  2. Reuse blueprint: \"{DisplayName}\"  id: {BlueprintId}",
-                displayName, config.AgentBlueprintId);
-        else
-            logger.LogInformation("  2. Create blueprint: \"{DisplayName}\"  (multi-tenant)", displayName);
-
-        // Step 3: Permissions
-        logger.LogInformation("  3. Configure permissions:");
-        logger.LogInformation("       Microsoft Graph: {GraphScopes}", string.Join(", ", config.AgentApplicationScopes));
-        logger.LogInformation("       Agent 365 Tools: (read from mcpToolingManifest.json)");
-        logger.LogInformation("       Messaging Bot API, Observability API, Power Platform API");
-        if (config.CustomBlueprintPermissions?.Count > 0)
-            logger.LogInformation("       Custom: {Custom}", string.Join(", ", config.CustomBlueprintPermissions.Select(p => p.ResourceName ?? p.ResourceAppId)));
-
-        // Step 4: Agent Identity
-        if (existingAgentId)
-            logger.LogInformation("  4. Reuse agent identity: id={AgentId}", config.AgenticAppId);
-        else
-            logger.LogInformation("  4. Create agent identity: tenant={TenantId}", config.TenantId);
-
-        // Step 5: Agent Registration
-        if (existingInstance)
-            logger.LogInformation("  5. Reuse agent registration: id={RegistrationId}", config.AgentRegistrationId);
-        else
-            logger.LogInformation("  5. Register agent via AgentX Agent Registration API V2");
-
+        {
+            logger.LogInformation("Skipping infrastructure setup (external hosting (non-Azure)).");
+        }
         logger.LogInformation("");
-        logger.LogInformation("Run without --dry-run to execute these steps.");
+
+        // Blueprint
+        var blueprintDisplayName = config.AgentBlueprintDisplayName ?? config.AgentIdentityDisplayName ?? "Agent Blueprint";
+        if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
+        {
+            logger.LogInformation("Agent blueprint already exists. Skipping.");
+            using (logger.Indent())
+                logger.LogInformation("Blueprint ID: {BlueprintId}", config.AgentBlueprintId);
+        }
+        else
+        {
+            logger.LogInformation("Creating agent blueprint (multi-tenant)...");
+            using (logger.Indent())
+            {
+                logger.LogInformation("Display Name: {BlueprintDisplayName}", blueprintDisplayName);
+                logger.LogInformation("Tenant: {TenantId}", config.TenantId);
+            }
+        }
+        logger.LogInformation("");
+
+        // Permissions
+        logger.LogInformation("Configuring inheritable permissions...");
+        using (logger.Indent())
+        {
+            logger.LogInformation("Microsoft Graph");
+            logger.LogInformation("Agent 365 Tools (scopes from mcpToolingManifest.json)");
+            logger.LogInformation("Messaging Bot API");
+            logger.LogInformation("Observability API");
+            logger.LogInformation("Power Platform API");
+            if (config.CustomBlueprintPermissions?.Count > 0)
+            {
+                foreach (var custom in config.CustomBlueprintPermissions)
+                    logger.LogInformation("{ResourceName}", custom.ResourceName ?? custom.ResourceAppId);
+            }
+        }
+        logger.LogInformation("");
+
+        // Agent Identity
+        var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
+        if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
+        {
+            logger.LogInformation("Agent identity already created. Skipping.");
+            using (logger.Indent())
+                logger.LogInformation("ID: {AgentId}", config.AgenticAppId);
+        }
+        else
+        {
+            logger.LogInformation("Creating agent identity (delegated flow)...");
+            using (logger.Indent())
+                logger.LogInformation("Display Name: {IdentityDisplayName}", identityDisplayName);
+        }
+        logger.LogInformation("");
+
+        // Agent Registration
+        if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+        {
+            logger.LogInformation("Agent already registered. Skipping.");
+            using (logger.Indent())
+                logger.LogInformation("ID: {RegistrationId}", config.AgentRegistrationId);
+        }
+        else
+        {
+            logger.LogInformation("Registering agent via AgentX Agent Registration API V2...");
+        }
+        logger.LogInformation("");
+
+        // Project settings
+        if (!isBootstrap)
+        {
+            logger.LogInformation("Updating project settings...");
+            using (logger.Indent())
+                logger.LogInformation("appsettings.json");
+            logger.LogInformation("");
+        }
+
+        logger.LogInformation("No changes will be made. Run without --dry-run to execute.");
     }
 
     /// <summary>

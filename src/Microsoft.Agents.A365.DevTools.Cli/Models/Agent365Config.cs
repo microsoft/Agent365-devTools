@@ -84,6 +84,25 @@ public class Agent365Config
     }
 
     /// <summary>
+    /// Minimal validation for the config-free non-DW bootstrap path (--agent-name flow).
+    /// Only requires TenantId, ClientAppId, and AgentIdentityDisplayName.
+    /// SubscriptionId, ResourceGroup, DeploymentProjectPath, and MessagingEndpoint are not required.
+    /// </summary>
+    public List<string> ValidateNonDwMinimal()
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
+        if (string.IsNullOrWhiteSpace(ClientAppId))
+            errors.Add($"clientAppId could not be resolved. Ensure an Entra app named \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" exists in your tenant.");
+        else
+            ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
+        if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+
+        return errors;
+    }
+
+    /// <summary>
     /// Helper method to validate GUID format
     /// </summary>
     private static void ValidateGuid(string value, string fieldName, List<string> errors)

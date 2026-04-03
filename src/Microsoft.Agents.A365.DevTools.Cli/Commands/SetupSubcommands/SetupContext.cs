@@ -45,6 +45,13 @@ internal sealed class SetupContext
     public bool AgentInstanceOnly { get; }
 
     /// <summary>
+    /// When true, config was built from --agent-name (no config file). Infrastructure step is
+    /// always skipped, ValidateNonDwMinimal() is used instead of Validate(), and config is not
+    /// persisted back to disk.
+    /// </summary>
+    public bool IsBootstrap { get; }
+
+    /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
     /// Null in production — injected as a no-op in tests to avoid spawning 'az account show'.
     /// </summary>
@@ -85,6 +92,7 @@ internal sealed class SetupContext
         FederatedCredentialService federatedCredentialService,
         IClientAppValidator clientAppValidator,
         bool agentInstanceOnly = false,
+        bool isBootstrap = false,
         Func<Task<string?>>? loginHintResolver = null)
     {
         Config = config;
@@ -97,6 +105,7 @@ internal sealed class SetupContext
         SkipRequirements = skipRequirements;
         CancellationToken = cancellationToken;
         AgentInstanceOnly = agentInstanceOnly;
+        IsBootstrap = isBootstrap;
         ConfigService = configService;
         Executor = executor;
         BotConfigurator = botConfigurator;

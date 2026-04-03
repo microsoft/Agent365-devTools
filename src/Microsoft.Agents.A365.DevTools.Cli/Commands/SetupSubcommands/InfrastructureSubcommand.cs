@@ -352,7 +352,7 @@ public static class InfrastructureSubcommand
                     {
                         // Only reuse MSI in blueprint-only mode
                         principalId = existingPrincipalId?.GetValue<string>();
-                        logger.LogInformation("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
+                        logger.LogDebug("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
                     }
                     else if (externalHosting)
                     {
@@ -362,7 +362,7 @@ public static class InfrastructureSubcommand
                         principalId = null;
                     }
 
-                    logger.LogInformation("Existing configuration loaded successfully");
+                    logger.LogDebug("Existing configuration loaded successfully");
                 }
                 catch (Exception ex)
                 {

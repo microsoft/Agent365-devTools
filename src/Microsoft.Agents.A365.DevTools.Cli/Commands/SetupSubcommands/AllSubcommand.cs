@@ -7,11 +7,14 @@ using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using System.Linq;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
@@ -118,12 +121,23 @@ internal static class AllSubcommand
 
         var aiTeammateOption = new Option<bool?>(
             "--aiteammate",
-            description: "true = AI Teammate / Digital Worker (default), false = non-AI Teammate agent (blueprint)\n" +
+            description: "true = AI Teammate / Digital Worker, false = non-AI Teammate agent (blueprint, default)\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
         var agentInstanceOnlyOption = new Option<bool>(
             "--agent-instance-only",
             description: "Skip all setup steps and only run agent instance registration (--aiteammate false only)");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name (e.g. \"MyAgent\"). When provided, no config file is required.\n" +
+                        "Derives AgentIdentityDisplayName=\"<name> Agent\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
+                        "TenantId is auto-detected from 'az account show' (override with --tenant-id).\n" +
+                        $"ClientAppId is resolved by looking up \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" in your tenant.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'.");
 
         command.AddOption(configOption);
         command.AddOption(verboseOption);
@@ -132,6 +146,8 @@ internal static class AllSubcommand
         command.AddOption(skipRequirementsOption);
         command.AddOption(aiTeammateOption);
         command.AddOption(agentInstanceOnlyOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -141,6 +157,8 @@ internal static class AllSubcommand
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
             var agentInstanceOnly = context.ParseResult.GetValueForOption(agentInstanceOnlyOption);
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var ct = context.GetCancellationToken();
 
             // Generate correlation ID at workflow entry point
@@ -148,28 +166,61 @@ internal static class AllSubcommand
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // CLI flag takes precedence over a365.config.json aiTeammate value.
-            // Config-level check is skipped during DW dry-run to preserve the existing
-            // zero-config dry-run experience for digital-worker users.
+            // Non-DW (blueprint) is the default. DW requires --aiteammate true explicitly.
             Agent365Config? nonDwConfig = null;
+            bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
-            if (aiTeammateFlag == false)
+            if (aiTeammateFlag != true)
             {
-                nonDwConfig = await configService.LoadAsync(config.FullName);
-            }
-            else if (!aiTeammateFlag.HasValue && !dryRun)
-            {
-                // Check config-level aiTeammate only on real (non-dry-run) execution
-                var cfgCheck = await configService.LoadAsync(config.FullName);
-                if (cfgCheck.IsNonAiTeammate)
-                    nonDwConfig = cfgCheck;
+                if (isBootstrap)
+                {
+                    if (dryRun)
+                    {
+                        // Dry-run: detect tenant only (no client app lookup needed for display)
+                        var dryRunTenantId = tenantIdFlag;
+                        if (string.IsNullOrWhiteSpace(dryRunTenantId))
+                            dryRunTenantId = await DetectTenantIdAsync(executor, logger, ct);
+                        nonDwConfig = new Agent365Config
+                        {
+                            TenantId = dryRunTenantId ?? "(unknown — run 'az login' or pass --tenant-id)",
+                            ClientAppId = string.Empty,
+                            AgentIdentityDisplayName = $"{agentName} Agent",
+                            AgentBlueprintDisplayName = $"{agentName} Blueprint",
+                            AgentDescription = agentName,
+                            NeedDeployment = false,
+                            AiTeammate = false,
+                            UseBlueprint = true,
+                        };
+                    }
+                    else
+                    {
+                        // Real run: resolve client app ID from Entra
+                        nonDwConfig = await BuildBootstrapConfigAsync(
+                            agentName!, tenantIdFlag, executor, graphApiService, logger, ct);
+                        if (nonDwConfig is null)
+                        {
+                            context.ExitCode = 1;
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    // Config file path: load from a365.config.json
+                    nonDwConfig = await configService.LoadAsync(config.FullName);
+                    // If aiTeammate was not explicitly set, respect what the config says
+                    // (allows existing DW configs to keep working without --aiteammate true)
+                    if (!aiTeammateFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
+                        nonDwConfig = null; // fall through to DW path
+                }
             }
 
             if (nonDwConfig is not null)
             {
                 if (dryRun)
                 {
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger);
+                    var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs);
                     return;
                 }
 
@@ -188,8 +239,8 @@ internal static class AllSubcommand
                     configFile: config,
                     generatedConfigPath: nonDwGeneratedConfigPath,
                     correlationId: correlationId,
-                    skipInfrastructure: skipInfrastructure,
-                    skipRequirements: skipRequirements,
+                    skipInfrastructure: skipInfrastructure || isBootstrap,
+                    skipRequirements: skipRequirements || isBootstrap,
                     cancellationToken: ct,
                     configService: configService,
                     executor: executor,
@@ -201,7 +252,8 @@ internal static class AllSubcommand
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
-                    agentInstanceOnly: agentInstanceOnly);
+                    agentInstanceOnly: agentInstanceOnly,
+                    isBootstrap: isBootstrap);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -591,6 +643,91 @@ internal static class AllSubcommand
         return (specs, mcpResourceAppId, mcpScopes);
     }
 
+    /// <summary>
+    /// Detects the current Azure tenant ID from <c>az account show</c>.
+    /// Returns <c>null</c> and logs guidance when not logged in.
+    /// </summary>
+    private static async Task<string?> DetectTenantIdAsync(
+        CommandExecutor executor, ILogger logger, CancellationToken ct)
+    {
+        var result = await executor.ExecuteAsync("az", "account show --output json", suppressErrorLogging: true);
+        if (result.Success && !string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            try
+            {
+                var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+                using var doc = JsonDocument.Parse(cleaned);
+                if (doc.RootElement.TryGetProperty("tenantId", out var tid))
+                    return tid.GetString();
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Failed to parse az account show output");
+            }
+        }
+
+        logger.LogError("Could not detect tenant. Sign in with 'az login' or pass --tenant-id.");
+        return null;
+    }
+
+    /// <summary>
+    /// Builds a minimal <see cref="Agent365Config"/> from <paramref name="agentName"/> without
+    /// requiring an <c>a365.config.json</c> file on disk.
+    /// <list type="bullet">
+    ///   <item>TenantId: from <paramref name="tenantIdFlag"/> or auto-detected via <c>az account show</c></item>
+    ///   <item>ClientAppId: resolved by searching Entra for <see cref="AuthenticationConstants.WellKnownClientAppDisplayName"/></item>
+    ///   <item>NeedDeployment: false (external hosting, no Azure infra)</item>
+    /// </list>
+    /// Returns <c>null</c> and logs errors if validation fails.
+    /// </summary>
+    private static async Task<Agent365Config?> BuildBootstrapConfigAsync(
+        string agentName,
+        string? tenantIdFlag,
+        CommandExecutor executor,
+        GraphApiService graphApiService,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        // Resolve tenant ID
+        string? tenantId = tenantIdFlag;
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            logger.LogInformation("Detecting tenant from 'az account show'...");
+            tenantId = await DetectTenantIdAsync(executor, logger, ct);
+            if (tenantId is null)
+                return null;
+        }
+
+        // Resolve ClientAppId from well-known display name
+        logger.LogInformation("Resolving client app by display name \"{Name}\"...",
+            AuthenticationConstants.WellKnownClientAppDisplayName);
+        var clientAppId = await graphApiService.FindApplicationByDisplayNameAsync(
+            tenantId, AuthenticationConstants.WellKnownClientAppDisplayName, ct);
+
+        // Build minimal config and validate
+        var config = new Agent365Config
+        {
+            TenantId = tenantId,
+            ClientAppId = clientAppId ?? string.Empty,
+            AgentIdentityDisplayName = $"{agentName} Agent",
+            AgentBlueprintDisplayName = $"{agentName} Blueprint",
+            AgentDescription = agentName,
+            NeedDeployment = false,
+            AiTeammate = false,
+            UseBlueprint = true,
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+        if (errors.Count > 0)
+        {
+            foreach (var err in errors)
+                logger.LogError("{Error}", err);
+            return null;
+        }
+
+        return config;
+    }
+
     /// <summary>Step 1 — Creates Azure infrastructure (optional, skippable via --skip-infrastructure).</summary>
     internal static async Task ExecuteInfrastructureStepAsync(SetupContext ctx)
     {
@@ -606,7 +743,7 @@ internal static class AllSubcommand
                 ctx.SkipInfrastructure,
                 ctx.CancellationToken);
 
-            ctx.Results.InfrastructureCreated = ctx.SkipInfrastructure ? false : setupInfra;
+            ctx.Results.InfrastructureCreated = (ctx.SkipInfrastructure || !ctx.Config.NeedDeployment) ? false : setupInfra;
             ctx.Results.InfrastructureAlreadyExisted = infraAlreadyExisted;
         }
         catch (Agent365Exception infraEx)

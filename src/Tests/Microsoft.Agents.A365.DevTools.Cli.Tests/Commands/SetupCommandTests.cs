@@ -107,8 +107,9 @@ public class SetupCommandTests
         // Assert
         Assert.Equal(0, result);
 
-        // Dry-run mode does not load config or call Azure/Bot services - it just displays what would be done
-        await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+        // Dry-run mode loads config to display the plan (real values, not placeholders)
+        await _mockConfigService.ReceivedWithAnyArgs(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+        // ...but must not call any Azure or Bot services
         await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!);
     }
 
@@ -116,33 +117,33 @@ public class SetupCommandTests
     public async Task SetupAllCommand_SkipInfrastructure_SkipsInfrastructureStep()
     {
         // Arrange
-        var config = new Agent365Config 
-        { 
-            TenantId = "tenant", 
-            SubscriptionId = "sub", 
-            ResourceGroup = "rg", 
-            Location = "eastus", 
-            AppServicePlanName = "plan", 
-            WebAppName = "web", 
-            AgentIdentityDisplayName = "agent", 
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            SubscriptionId = "sub",
+            ResourceGroup = "rg",
+            Location = "eastus",
+            AppServicePlanName = "plan",
+            WebAppName = "web",
+            AgentIdentityDisplayName = "agent",
             DeploymentProjectPath = ".",
             AgentBlueprintId = "blueprint-app-id",
             AgentBlueprintDisplayName = "TestBlueprint",
             Environment = "prod"
         };
-        
+
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
-        
+
         var command = SetupCommand.CreateCommand(
-            _mockLogger, 
-            _mockConfigService, 
-            _mockExecutor, 
-            _mockDeploymentService, 
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
             _mockBotConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
-        
+
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
@@ -151,9 +152,52 @@ public class SetupCommandTests
 
         // Assert
         Assert.Equal(0, result);
-        
-        // Dry-run mode does not load config - it just displays what would be done (with infrastructure skipped)
+
+        // Dry-run mode loads config to display the plan (real values, not placeholders)
+        await _mockConfigService.ReceivedWithAnyArgs(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+        // ...but must not call any Azure or Bot services
+        await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!);
+    }
+
+    [Fact]
+    public async Task SetupAllCommand_WithAgentName_DryRun_SucceedsWithoutConfigFile()
+    {
+        // Arrange — no config file stub needed; --agent-name bootstrap path skips LoadAsync
+        // and also skips the Graph lookup (dry-run only detects tenant)
+        _mockExecutor.ExecuteAsync(
+                Arg.Is<string>(s => s == "az"),
+                Arg.Is<string>(s => s.StartsWith("account show", StringComparison.OrdinalIgnoreCase)),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = "{\"tenantId\":\"dry-run-tenant-id\"}",
+                StandardError = string.Empty
+            }));
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockDeploymentService,
+            _mockBotConfigurator,
+            _mockAuthValidator,
+            _mockPlatformDetector,
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("all --agent-name MyAgent --dry-run", testConsole);
+
+        // Assert
+        Assert.Equal(0, result);
+
+        // Bootstrap dry-run must not load the config file or call any Azure services
         await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+        await _mockGraphApiService.DidNotReceiveWithAnyArgs().FindApplicationByDisplayNameAsync(default!, default!, default);
+        await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!);
     }
 
     [Fact]
