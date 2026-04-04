@@ -661,6 +661,33 @@ When a catch block, comment, or doc string covers multiple distinct error condit
 
 Do NOT silently omit this check. The rule exists because silent omission is how the regression in `da6f750` went undetected.
 
+### 22. Extractable Code Duplicated Across Sibling Files or Methods
+
+When a block of code — a method body, a collection initializer, a sequence of API calls, or a set of constant references — appears verbatim (or near-verbatim, differing only in a single parameter or flag) in two or more sibling classes or methods, it is a maintainability defect. Future changes must be applied to every copy; one copy will eventually be missed.
+
+- **Pattern to catch**:
+  - The same logical block (3+ lines, or any block constructing a data structure with domain constants) appears in two or more sibling files in the same namespace or folder
+  - The copies differ only in a single simple parameter: a boolean flag, an enum value, a string literal, or a single variable binding
+  - Common manifestations in this codebase:
+    - Identical `List<ResourcePermissionSpec>` or array initializers referencing the same `ConfigConstants.*` values across multiple `*Subcommand.cs` files
+    - The same sequence of `await service.DoX(); await service.DoY();` calls in parallel command handlers
+    - Repeated `if (dryRun) { logger.LogInformation(...) }` blocks with the same message template in multiple subcommands
+- **Severity**: `medium` — inconsistency risk on every future change to the duplicated logic; flag as `high` if the block contains security-sensitive data (auth scopes, app IDs)
+- **Check**: For each substantial block (3+ non-trivial lines) in the diff, use `Grep` to search for the same constant names, method call signatures, or string literals in sibling files. If the same pattern appears in two or more files, assess whether the differing part can be parameterized.
+- **Fix**: Extract the shared logic into a shared helper method, extension method, or factory, parameterizing the varying element:
+  ```csharp
+  // SetupHelpers.cs — single source of truth
+  internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) => [ ... ];
+
+  // AllSubcommand.cs
+  specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
+
+  // AdminSubcommand.cs
+  specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
+  ```
+
+**Real example (from `users/sellak/blueprintScopes`):** `AllSubcommand.cs`, `AdminSubcommand.cs`, and `PermissionsSubcommand.cs` each contained an identical three-entry block for Bot API, Observability API, and Power Platform API. When `Agent365.Observability.OtelWrite` was added, the new scope had to be written in three places — and would have been missed without manual cross-file inspection. Extracted to `SetupHelpers.GetFixedApiPermissionSpecs(bool setInheritable)`.
+
 ## Example Invocation
 
 When you receive a request like "Review PR #253", you should:

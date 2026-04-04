@@ -17,6 +17,30 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 internal static class SetupHelpers
 {
     /// <summary>
+    /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
+    /// agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
+    /// Callers control whether the specs set inheritable permissions on the blueprint.
+    /// </summary>
+    internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) =>
+    [
+        new ResourcePermissionSpec(
+            ConfigConstants.MessagingBotApiAppId,
+            "Messaging Bot API",
+            new[] { "Authorization.ReadWrite", "user_impersonation" },
+            setInheritable),
+        new ResourcePermissionSpec(
+            ConfigConstants.ObservabilityApiAppId,
+            "Observability API",
+            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
+            setInheritable),
+        new ResourcePermissionSpec(
+            PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            "Power Platform API",
+            new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead },
+            setInheritable),
+    ];
+
+    /// <summary>
     /// Display verification URLs after successful setup
     /// </summary>
     public static async Task DisplayVerificationInfoAsync(FileInfo setupConfigFile, ILogger logger)
