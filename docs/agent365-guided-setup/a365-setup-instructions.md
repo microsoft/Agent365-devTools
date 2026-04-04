@@ -89,7 +89,7 @@ Once the user provides the ID, replace `<CLIENT_APP_ID>` in the command below an
 az ad app show --id <CLIENT_APP_ID> --query "{appId:appId, displayName:displayName, requiredResourceAccess:requiredResourceAccess}" -o json && az ad app permission list-grants --id <CLIENT_APP_ID> --query "[].{resourceDisplayName:resourceDisplayName, scope:scope}" -o table
 ```
 
-From the output of the command above, verify these 5 permissions appear with admin consent. If any are missing or consent is not granted, see "What to do if validation fails" below.
+From the output of the command above, verify these 6 permissions appear with admin consent. If any are missing or consent is not granted, see "What to do if validation fails" below.
 
 Required **delegated** Microsoft Graph permissions (all must have **admin consent granted**):
 
@@ -100,6 +100,7 @@ Required **delegated** Microsoft Graph permissions (all must have **admin consen
 | `Application.ReadWrite.All` | Create and manage Azure AD applications |
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
 | `Directory.Read.All` | Read directory data |
+| `User.ReadWrite.All` | Create agent users, set usage location, and assign licenses |
 
 If the app does not exist, permissions are missing, or admin consent has not been granted, see "What to do if validation fails" below.
 
@@ -107,7 +108,7 @@ If the app does not exist, permissions are missing, or admin consent has not bee
 
 1. STOP — do not proceed to run any `a365` CLI commands.
 2. Inform the user the custom client app registration is missing or incomplete.
-3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all five permissions above, and have a Global Admin grant admin consent.
+3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all six permissions above, and have a Global Admin grant admin consent.
 4. Wait for the user to confirm the app is properly configured, then re-run the same validation command above.
 
 Save the `clientAppId` value — it will be used automatically in Step 3 (do NOT ask the user for it again).
