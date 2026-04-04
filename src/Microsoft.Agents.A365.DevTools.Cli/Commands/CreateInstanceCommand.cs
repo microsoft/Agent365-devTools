@@ -78,7 +78,7 @@ public class CreateInstanceCommand
                 logger.LogInformation("");
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
-                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
@@ -243,7 +243,7 @@ public class CreateInstanceCommand
                     generatedConfigPath = Path.Combine(
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
-                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    using var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                     var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -318,7 +318,7 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
-                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
@@ -346,7 +346,7 @@ public class CreateInstanceCommand
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
                     
-                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    using var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                     var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -420,7 +420,7 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
-                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),

@@ -507,7 +507,7 @@ public sealed class A365CreateInstanceRunner
             };
 
             _logger.LogInformation("  - Sending request to create agent identity...");
-            var identityResponse = await httpClient.PostAsync(
+            using var identityResponse = await httpClient.PostAsync(
                 createIdentityUrl,
                 new StringContent(identityBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
                 ct);
@@ -698,7 +698,7 @@ public sealed class A365CreateInstanceRunner
                 }
             };
 
-            var userResponse = await httpClient.PostAsync(
+            using var userResponse = await httpClient.PostAsync(
                 createUserUrl,
                 new StringContent(userBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
                 ct);
@@ -926,7 +926,7 @@ public sealed class A365CreateInstanceRunner
                     ["usageLocation"] = usageLocation
                 };
 
-                var updateResponse = await httpClient.PatchAsync(
+                using var updateResponse = await httpClient.PatchAsync(
                     updateUserUrl,
                     new StringContent(updateBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
                     cancellationToken);
@@ -950,7 +950,7 @@ public sealed class A365CreateInstanceRunner
                 ["removeLicenses"] = new JsonArray()
             };
 
-            var licenseResponse = await httpClient.PostAsync(
+            using var licenseResponse = await httpClient.PostAsync(
                 assignLicenseUrl,
                 new StringContent(licenseBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
                 cancellationToken);
