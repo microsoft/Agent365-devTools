@@ -39,6 +39,7 @@ public class ClientAppValidatorTests
     private const string AgentBlueprintAddRemoveCredsId = "aaaa0004-0000-0000-0000-000000000000";
     private const string DelegatedPermissionGrantReadWriteAllId = "aaaa0005-0000-0000-0000-000000000000";
     private const string DirectoryReadAllId = "aaaa0006-0000-0000-0000-000000000000";
+    private const string UserReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
 
     public ClientAppValidatorTests()
     {
@@ -797,7 +798,7 @@ public class ClientAppValidatorTests
     }
 
     /// <summary>
-    /// Sets up the app info GET with all 6 required permissions.
+    /// Sets up the app info GET with all 7 required permissions.
     /// The permission GUIDs match those returned by SetupPermissionResolution so validation passes.
     /// </summary>
     private void SetupAppInfoWithAllPermissions(string appId)
@@ -812,7 +813,8 @@ public class ClientAppValidatorTests
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"}
+                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -823,7 +825,7 @@ public class ClientAppValidatorTests
 
     /// <summary>
     /// Sets up the Microsoft Graph SP permission resolution GET (select includes oauth2PermissionScopes).
-    /// Returns the 6 required permissions with GUIDs matching the test constants.
+    /// Returns the 7 required permissions with GUIDs matching the test constants.
     /// </summary>
     private void SetupPermissionResolution()
     {
@@ -838,7 +840,8 @@ public class ClientAppValidatorTests
                         {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
                         {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
                         {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
-                        {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"}
+                        {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
+                        {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
                     ]
                 }
             ]

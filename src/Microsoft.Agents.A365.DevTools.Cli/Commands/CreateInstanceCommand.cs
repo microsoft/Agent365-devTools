@@ -19,7 +19,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public class CreateInstanceCommand
 {
     public static Command CreateCommand(ILogger<CreateInstanceCommand> logger, IConfigService configService, CommandExecutor executor,
-        IBotConfigurator botConfigurator, GraphApiService graphApiService)
+        GraphApiService graphApiService)
     {
         // Command description
         // Create and configure agent user identities with appropriate
@@ -57,7 +57,6 @@ public class CreateInstanceCommand
                 logger.LogInformation("This would execute the following operations:");
                 logger.LogInformation("  1. Create Agent Identity and Agent User");
                 logger.LogInformation("  2. Add licenses to Agent User");
-                logger.LogInformation("  3. Configure Bot Service");
                 logger.LogInformation("No actual changes will be made.");
                 return;
             }
@@ -78,7 +77,8 @@ public class CreateInstanceCommand
                 logger.LogInformation("");
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
-                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
@@ -327,7 +327,8 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
-                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
@@ -429,7 +430,8 @@ public class CreateInstanceCommand
                 if (instanceConfig == null) Environment.Exit(1);
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
-                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),

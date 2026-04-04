@@ -488,21 +488,22 @@ public sealed class A365CreateInstanceRunner
                 _logger.LogError("Could not determine the current user ID via Graph API.");
                 _logger.LogError("");
                 _logger.LogError("RECOMMENDED ACTIONS:");
-                _logger.LogError("  1. Ensure you are logged in via Azure CLI: az login");
-                _logger.LogError("  2. Verify your account has access to Microsoft Graph");
+                _logger.LogError("  1. Ensure you have completed MSAL sign-in (the CLI authenticates via browser or device code, not Azure CLI)");
+                _logger.LogError("  2. Verify your custom client app has the required delegated scopes (User.ReadWrite.All)");
                 _logger.LogError("  3. Re-run the command");
                 return (false, null);
             }
 
             // Create agent identity via service principal endpoint
-            var createIdentityUrl = $"{GraphApiConstants.BaseUrl}/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
+            var graphBaseUrl = _graphService.GraphBaseUrl;
+            var createIdentityUrl = $"{graphBaseUrl}/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
             var identityBody = new JsonObject
             {
                 ["displayName"] = displayName,
                 ["agentAppId"] = agentBlueprintId,
                 ["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"{GraphApiConstants.BaseUrl}/v1.0/users/{currentUserId}"
+                    $"{graphBaseUrl}/v1.0/users/{currentUserId}"
                 }
             };
 

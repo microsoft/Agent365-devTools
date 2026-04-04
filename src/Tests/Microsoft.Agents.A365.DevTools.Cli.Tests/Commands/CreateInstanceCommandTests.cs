@@ -19,7 +19,6 @@ public class CreateInstanceCommandTests
     private readonly ILogger<CreateInstanceCommand> _mockLogger;
     private readonly ConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
-    private readonly IBotConfigurator _mockBotConfigurator;
     private readonly GraphApiService _mockGraphApiService;
 
     public CreateInstanceCommandTests()
@@ -29,7 +28,6 @@ public class CreateInstanceCommandTests
         // Use NullLogger instead of console logger to avoid I/O bottleneck
         _mockConfigService = Substitute.ForPartsOf<ConfigService>(NullLogger<ConfigService>.Instance);
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(NullLogger<CommandExecutor>.Instance);
-        _mockBotConfigurator = Substitute.For<IBotConfigurator>();
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(NullLogger<GraphApiService>.Instance, _mockExecutor);
     }
 
@@ -41,7 +39,6 @@ public class CreateInstanceCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockBotConfigurator,
             _mockGraphApiService);
 
         // Act
@@ -59,7 +56,6 @@ public class CreateInstanceCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockBotConfigurator,
             _mockGraphApiService);
 
         // Act
@@ -77,7 +73,6 @@ public class CreateInstanceCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockBotConfigurator,
             _mockGraphApiService);
 
         // Act & Assert - Main command should have handler for running all steps
@@ -92,7 +87,6 @@ public class CreateInstanceCommandTests
             _mockLogger,
             _mockConfigService,
             _mockExecutor,
-            _mockBotConfigurator,
             _mockGraphApiService);
 
         // Act - Command should be created successfully
