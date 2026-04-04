@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Re-enabled `a365 create-instance` command (previously deprecated) — creates agent identity, agent user, assigns licenses, and grants admin consent for Graph/MCP/Bot Framework scopes in a single command
+- Re-enabled `a365 create-instance` command (previously deprecated) — creates agent identity, agent user, and assigns licenses in a single command. The custom client app now requires the `User.ReadWrite.All` delegated permission for user creation and license assignment; existing users may need to update admin consent on their client app.
 - `Agent365.Observability.OtelWrite` scope now granted to all provisioned agent identities on the Observability API alongside `user_impersonation`, enabling agents to write OpenTelemetry data to the Agent 365 observability service
 - `ChannelMessage.Read.All` and `ChannelMessage.Send` added to default blueprint Microsoft Graph delegated scopes (`agentIdentityScopes`)
 - `Files.ReadWrite.All`, `ChannelMessage.Read.All`, and `ChannelMessage.Send` added to default blueprint Microsoft Graph application scopes (`agentApplicationScopes`)
