@@ -690,7 +690,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
         return new ConfigDerivedNames
         {
             WebAppName = webAppName,
-            AgentIdentityDisplayName = $"{agentName} Agent",
+            AgentIdentityDisplayName = $"{agentName} Agent Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentUserPrincipalName = $"{cleanName}@{domain}",
             AgentUserDisplayName = $"{agentName} Agent User"

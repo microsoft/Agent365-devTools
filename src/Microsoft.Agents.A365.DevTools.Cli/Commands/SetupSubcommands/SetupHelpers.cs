@@ -30,7 +30,7 @@ internal static class SetupHelpers
     internal static void PrintDryRunBlueprintReuseRows(ILogger logger, string blueprintId)
     {
         var sub = new string(' ', DryRunValCol);
-        logger.LogInformation(DryRunRow("Blueprint") + "already present in config -- will be reused");
+        logger.LogInformation(DryRunRow("Blueprint") + "already present in config — will be reused");
         logger.LogInformation(sub + "ID: {BlueprintId}", blueprintId);
         logger.LogInformation(sub + "Service principal will be verified or created");
         logger.LogInformation(sub + "Client secret will be created (new secret)");
@@ -42,7 +42,7 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
-    /// agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
+    /// DW (AI Teammate) agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
     /// Callers control whether the specs set inheritable permissions on the blueprint.
     /// </summary>
     internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) =>
@@ -52,6 +52,28 @@ internal static class SetupHelpers
             "Messaging Bot API",
             new[] { "Authorization.ReadWrite", "user_impersonation" },
             setInheritable),
+        new ResourcePermissionSpec(
+            ConfigConstants.ObservabilityApiAppId,
+            "Observability API",
+            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
+            setInheritable),
+        new ResourcePermissionSpec(
+            PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            "Power Platform API",
+            new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead },
+            setInheritable),
+    ];
+
+    /// <summary>
+    /// Returns the fixed-scope ResourcePermissionSpecs for the non-DW (blueprint) path:
+    /// Observability API and Power Platform API only.
+    /// Messaging Bot API is DW-only. Microsoft Graph and Agent 365 Tools (MCP) are not
+    /// included — they are added by the DW flow via BuildPermissionSpecsAsync.
+    /// To enable MCP or Messaging Bot API for non-DW, add their specs here and update
+    /// the corresponding consent URL guards in BuildAdminConsentUrls / BuildCombinedConsentUrl.
+    /// </summary>
+    internal static ResourcePermissionSpec[] GetNonDwFixedApiPermissionSpecs(bool setInheritable) =>
+    [
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
@@ -158,11 +180,15 @@ internal static class SetupHelpers
         }
         if (results.AgentIdentityCreated)
         {
-            logger.LogInformation("  Agent identity: created (ID: {AgentId})", results.AgentIdentityId ?? "unknown");
+            logger.LogInformation("  Agent identity: created '{DisplayName}' (ID: {AgentId})",
+                results.AgentIdentityDisplayName ?? "unknown",
+                results.AgentIdentityId ?? "unknown");
         }
         if (results.AgentInstanceRegistered)
         {
-            logger.LogInformation("  Agent registration: registered (ID: {InstanceId})", results.AgentInstanceId ?? "unknown");
+            logger.LogInformation("  Agent registration: registered '{DisplayName}' (ID: {InstanceId})",
+                results.AgentRegistrationDisplayName ?? "unknown",
+                results.AgentInstanceId ?? "unknown");
         }
 
         // Action required — items that block progress but need user/admin action (not errors per se)
@@ -262,18 +288,21 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Populates <c>resourceConsents[*].consentUrl</c> in the generated config for all five required
+    /// Populates <c>resourceConsents[*].consentUrl</c> in the generated config for the required
     /// resources. Called when the current user lacks the Global Administrator role so that the URLs
     /// can be saved to <c>a365.generated.config.json</c> and shared with a tenant administrator.
+    /// When <paramref name="isDw"/> is false (non-DW blueprint path), only Observability API and
+    /// Power Platform API URLs are generated — Graph, MCP, and Messaging Bot API are excluded.
     /// </summary>
     /// <returns>Display names of the resources for which URLs were saved.</returns>
     internal static List<string> PopulateAdminConsentUrls(
         Agent365Config config,
         string mcpResourceAppId,
-        IEnumerable<string> mcpScopes)
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
     {
-        var graphScopes = config.AgentApplicationScopes;
-        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, graphScopes, mcpScopes);
+        var graphScopes = isDw ? config.AgentApplicationScopes : Enumerable.Empty<string>();
+        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, graphScopes, mcpScopes, isDw);
 
         // Map resource names to App IDs for upsert into ResourceConsents
         var appIdByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -325,30 +354,35 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Builds per-resource admin consent URLs for all five required resources.
-    /// Graph and MCP scopes are taken from config; Bot API, Observability, and Power Platform
-    /// use corrected scope names derived from querying the tenant service principals.
+    /// Builds per-resource admin consent URLs. DW path produces five resources (Graph, MCP,
+    /// Messaging Bot API, Observability API, Power Platform API). Non-DW path produces two
+    /// (Observability API and Power Platform API only) — controlled by <paramref name="isDw"/>.
     /// </summary>
     internal static List<(string ResourceName, string ConsentUrl)> BuildAdminConsentUrls(
         string tenantId,
         string blueprintClientId,
         IEnumerable<string> graphScopes,
-        IEnumerable<string> mcpScopes)
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
     {
         var urls = new List<(string, string)>();
 
         static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes)
             => BuildAdminConsentUrl(tenant, client, scopes.Select(s => $"{resourceUri}/{s}"));
 
-        var graphScopeList = graphScopes.ToList();
-        if (graphScopeList.Count > 0)
-            urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
+        if (isDw)
+        {
+            var graphScopeList = graphScopes.ToList();
+            if (graphScopeList.Count > 0)
+                urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
 
-        var mcpScopeList = mcpScopes.ToList();
-        if (mcpScopeList.Count > 0)
-            urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
+            var mcpScopeList = mcpScopes.ToList();
+            if (mcpScopeList.Count > 0)
+                urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
 
-        urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
+            urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
+        }
+
         urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
@@ -356,22 +390,28 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Builds a single combined /v2.0/adminconsent URL covering all five required resources.
-    /// All scope tokens from all resources are joined with %20 into one scope parameter,
+    /// Builds a single combined /v2.0/adminconsent URL. DW path covers all five required
+    /// resources (Graph, MCP, Messaging Bot API, Observability API, Power Platform API).
+    /// Non-DW path covers only Observability API and Power Platform API — controlled by
+    /// <paramref name="isDw"/>. All scope tokens are joined with %20 into one scope parameter,
     /// allowing a Global Administrator to grant consent with a single browser visit.
     /// </summary>
     internal static string BuildCombinedConsentUrl(
         string tenantId,
         string blueprintClientId,
         IEnumerable<string> graphScopes,
-        IEnumerable<string> mcpScopes)
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
     {
         var allScopes = new List<string>();
-        foreach (var s in graphScopes)
-            allScopes.Add($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
-        foreach (var s in mcpScopes)
-            allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
-        allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
+        if (isDw)
+        {
+            foreach (var s in graphScopes)
+                allScopes.Add($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
+            foreach (var s in mcpScopes)
+                allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
+            allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
+        }
         allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
@@ -381,23 +421,26 @@ internal static class SetupHelpers
     /// Populates per-resource consent URLs in config and sets <see cref="SetupResults.CombinedConsentUrl"/>
     /// when the running account is not a Global Administrator. Called by both DW and non-DW setup paths
     /// after the batch permissions step.
+    /// When <paramref name="isDw"/> is false, only Observability API and Power Platform API URLs are
+    /// generated — Graph, MCP, and Messaging Bot API are excluded.
     /// No-op if admin consent was already granted or blueprint ID is absent.
     /// </summary>
     internal static void ApplyConsentUrlsIfNeeded(
         SetupContext ctx,
         string mcpResourceAppId,
         IEnumerable<string> graphScopes,
-        IEnumerable<string> mcpScopes)
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
     {
         if (ctx.Results.AdminConsentGranted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
             return;
 
-        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes);
+        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isDw);
         ctx.Results.ConsentUrlsSavedToPath = ctx.GeneratedConfigPath;
         ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
         ctx.Results.CombinedConsentUrl = BuildCombinedConsentUrl(
             ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
-            graphScopes, mcpScopes);
+            graphScopes, mcpScopes, isDw);
     }
 
     /// <summary>
@@ -465,9 +508,9 @@ internal static class SetupHelpers
         var sub = new string(' ', DryRunValCol);
 
         var cmdArgs = string.Join(' ', rawArgs.Where(a => !a.Equals("--dry-run", StringComparison.OrdinalIgnoreCase)));
-        logger.LogInformation("Dry run: a365 {Args}", cmdArgs);
+        logger.LogInformation("Dry run: a365 {Args} --dry-run", cmdArgs);
         logger.LogInformation("");
-        logger.LogInformation("The following steps will be executed.");
+        logger.LogInformation("The following steps would be performed.");
         logger.LogInformation("");
 
         // Prerequisites
@@ -497,28 +540,42 @@ internal static class SetupHelpers
         }
 
         // Permissions
-        logger.LogInformation(DryRunRow("Blueprint Permissions") + "will be set for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Power Platform API");
+        logger.LogInformation(DryRunRow("Blueprint Permissions") + "will be granted access to Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Power Platform API");
 
         // Admin consent
-        logger.LogInformation(DryRunRow("Admin consent") + "will be configured (or URL printed for GA approval)");
+        logger.LogInformation(DryRunRow("Admin consent") + "will require Global Administrator approval — URL will be printed");
 
         // Agent identity — context-aware when config is available
         if (!string.IsNullOrWhiteSpace(config?.AgenticAppId))
-            logger.LogInformation(DryRunRow("Agent identity") + "already present in config -- will be reused (ID: {AgentId})", config.AgenticAppId);
+            logger.LogInformation(DryRunRow("Agent identity") + "already registered — will be reused (ID: {AgentId})", config.AgenticAppId);
         else
             logger.LogInformation(DryRunRow("Agent identity") + "will be created or reused if already exists");
 
         // Agent Registration — context-aware when config is available
         if (!string.IsNullOrWhiteSpace(config?.AgentRegistrationId))
-            logger.LogInformation(DryRunRow("Agent Registration") + "already registered -- will be reused (ID: {RegistrationId})", config.AgentRegistrationId);
+        {
+            logger.LogInformation(DryRunRow("Agent Registration") + "already registered — will be reused (ID: {RegistrationId})", config.AgentRegistrationId);
+        }
         else
-            logger.LogInformation(DryRunRow("Agent Registration") + "will be registered or reused if already exists");
+        {
+            var regDisplayName = config?.AgentIdentityDisplayName;
+            if (!string.IsNullOrWhiteSpace(regDisplayName))
+            {
+                if (regDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
+                    regDisplayName = regDisplayName[..^" Identity".Length] + " Agent";
+                logger.LogInformation(DryRunRow("Agent Registration") + "will be added to the Agent Registry: {DisplayName}", regDisplayName);
+            }
+            else
+            {
+                logger.LogInformation(DryRunRow("Agent Registration") + "will be added to the Agent Registry");
+            }
+        }
 
         // Project settings
         logger.LogInformation(DryRunRow("Project settings") + "ServiceConnection, TokenValidation, and Observability settings will be written to appsettings.json");
 
         logger.LogInformation("");
-        logger.LogInformation("No changes will be made. Run without --dry-run to execute.");
+        logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
     }
 
     /// <summary>

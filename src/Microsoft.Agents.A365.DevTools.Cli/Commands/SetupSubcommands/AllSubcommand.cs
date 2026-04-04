@@ -58,13 +58,18 @@ internal static class AllSubcommand
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
         AzureAuthValidator auth,
         IClientAppValidator clientAppValidator,
-        bool includeInfrastructure)
+        bool includeInfrastructure,
+        bool isBootstrap = false)
     {
-        var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
+        var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth));
+
+        // Location and client app checks require a static config file — not applicable in bootstrap
+        // mode where the client app is resolved dynamically via --agent-name.
+        if (!isBootstrap)
         {
-            new LocationRequirementCheck(),
-            new ClientAppRequirementCheck(clientAppValidator),
-        };
+            checks.Add(new LocationRequirementCheck());
+            checks.Add(new ClientAppRequirementCheck(clientAppValidator));
+        }
 
         if (includeInfrastructure)
         {
@@ -131,7 +136,7 @@ internal static class AllSubcommand
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name (e.g. \"MyAgent\"). When provided, no config file is required.\n" +
-                        "Derives AgentIdentityDisplayName=\"<name> Agent\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
+                        "Derives AgentIdentityDisplayName=\"<name> Agent Identity\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
                         "TenantId is auto-detected from 'az account show' (override with --tenant-id).\n" +
                         $"ClientAppId is resolved by looking up \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" in your tenant.");
 
@@ -184,7 +189,7 @@ internal static class AllSubcommand
                         {
                             TenantId = dryRunTenantId ?? "(unknown — run 'az login' or pass --tenant-id)",
                             ClientAppId = string.Empty,
-                            AgentIdentityDisplayName = $"{agentName} Agent",
+                            AgentIdentityDisplayName = $"{agentName} Agent Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",
                             AgentDescription = agentName,
                             NeedDeployment = false,
@@ -229,8 +234,11 @@ internal static class AllSubcommand
                 }
                 else
                 {
-                    // Config file path: load from a365.config.json
-                    nonDwConfig = await configService.LoadAsync(config.FullName);
+                    // Config file path: load from a365.config.json, merged with generated config when present.
+                    var nonDwGenPath = Path.Combine(config.DirectoryName ?? Environment.CurrentDirectory, "a365.generated.config.json");
+                    nonDwConfig = File.Exists(nonDwGenPath)
+                        ? await configService.LoadAsync(config.FullName, nonDwGenPath)
+                        : await configService.LoadAsync(config.FullName);
                     // If aiTeammate was not explicitly set, respect what the config says
                     // (allows existing DW configs to keep working without --aiteammate true)
                     if (!aiTeammateFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
@@ -263,7 +271,7 @@ internal static class AllSubcommand
                     generatedConfigPath: nonDwGeneratedConfigPath,
                     correlationId: correlationId,
                     skipInfrastructure: skipInfrastructure || isBootstrap,
-                    skipRequirements: skipRequirements || isBootstrap,
+                    skipRequirements: skipRequirements,
                     cancellationToken: ct,
                     configService: configService,
                     executor: executor,
@@ -287,7 +295,14 @@ internal static class AllSubcommand
             {
                 var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
                 Agent365Config? dwDryRunConfig = null;
-                try { dwDryRunConfig = await configService.LoadAsync(config.FullName); } catch { /* config is optional for dry-run display */ }
+                try
+                {
+                    var dwGenPath = Path.Combine(config.DirectoryName ?? Environment.CurrentDirectory, "a365.generated.config.json");
+                    dwDryRunConfig = File.Exists(dwGenPath)
+                        ? await configService.LoadAsync(config.FullName, dwGenPath)
+                        : await configService.LoadAsync(config.FullName);
+                }
+                catch { /* config is optional for dry-run display */ }
                 SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig);
                 return;
             }
@@ -587,7 +602,7 @@ internal static class AllSubcommand
     /// spec list from dynamic config values (AgentApplicationScopes, MCP manifest, CustomBlueprintPermissions).
     /// Shared by both DW and non-DW flows so permissions are always consistent.
     /// </summary>
-    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx)
+    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx, bool isDw = true)
     {
         var desiredCustomIds = new HashSet<string>(
             (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -602,20 +617,32 @@ internal static class AllSubcommand
         var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, ctx.Logger);
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
 
-        var specs = new List<ResourcePermissionSpec>
+        List<ResourcePermissionSpec> specs;
+        if (isDw)
         {
-            new ResourcePermissionSpec(
-                AuthenticationConstants.MicrosoftGraphResourceAppId,
-                "Microsoft Graph",
-                ctx.Config.AgentApplicationScopes.ToArray(),
-                SetInheritable: true),
-            new ResourcePermissionSpec(
-                mcpResourceAppId,
-                "Agent 365 Tools",
-                mcpScopes,
-                SetInheritable: true),
-        };
-        specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
+            specs =
+            [
+                new ResourcePermissionSpec(
+                    AuthenticationConstants.MicrosoftGraphResourceAppId,
+                    "Microsoft Graph",
+                    ctx.Config.AgentApplicationScopes.ToArray(),
+                    SetInheritable: true),
+                new ResourcePermissionSpec(
+                    mcpResourceAppId,
+                    "Agent 365 Tools",
+                    mcpScopes,
+                    SetInheritable: true),
+            ];
+            specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
+        }
+        else
+        {
+            // Non-DW (blueprint) path: only Observability API and Power Platform API.
+            // Microsoft Graph, Agent 365 Tools (MCP), and Messaging Bot API are DW-only.
+            // To enable MCP or Messaging Bot API for non-DW, add them here and update
+            // the isDw guards in BuildAdminConsentUrls / BuildCombinedConsentUrl.
+            specs = [.. SetupHelpers.GetNonDwFixedApiPermissionSpecs(setInheritable: true)];
+        }
 
         foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
         {
@@ -702,7 +729,7 @@ internal static class AllSubcommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId ?? string.Empty,
-            AgentIdentityDisplayName = $"{agentName} Agent",
+            AgentIdentityDisplayName = $"{agentName} Agent Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
             NeedDeployment = false,

@@ -323,7 +323,7 @@ public static class InfrastructureSubcommand
 
         if (skipInfra)
         {
-            logger.LogInformation("Skipping infrastructure setup (external hosting (non-Azure)).");
+            logger.LogInformation("Skipping infrastructure setup — no Azure deployment configured.");
             logger.LogDebug("Loading existing configuration...");
 
             // Load existing generated config if available
@@ -354,7 +354,6 @@ public static class InfrastructureSubcommand
                     logger.LogWarning("Could not load existing config: {Message}. Starting fresh.", ex.Message);
                 }
             }
-            logger.LogInformation("");
             return (principalId, false); // Skip infra means nothing was created/modified
         }
         else

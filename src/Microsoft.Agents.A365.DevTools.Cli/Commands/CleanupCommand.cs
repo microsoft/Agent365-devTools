@@ -1208,7 +1208,7 @@ public class CleanupCommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId ?? string.Empty,
-            AgentIdentityDisplayName = $"{agentName} Agent",
+            AgentIdentityDisplayName = $"{agentName} Agent Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
             NeedDeployment = false,

@@ -94,19 +94,35 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     [Fact]
-    public void PrintDryRunPlan_IncludesGraphPermissions()
+    public void PrintDryRunPlan_IncludesObservabilityApiPermissions()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
 
-        AnyLogContains("Microsoft Graph").Should().BeTrue(because: "Microsoft Graph is a required permission resource");
+        AnyLogContains("Observability API").Should().BeTrue(because: "Observability API is required for non-DW blueprints to write OpenTelemetry data");
     }
 
     [Fact]
-    public void PrintDryRunPlan_IncludesAgent365ToolsPermissions()
+    public void PrintDryRunPlan_IncludesPowerPlatformApiPermissions()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
 
-        AnyLogContains("Agent 365 Tools").Should().BeTrue(because: "Agent 365 Tools is a required permission resource");
+        AnyLogContains("Power Platform API").Should().BeTrue(because: "Power Platform API is required for non-DW blueprints");
+    }
+
+    [Fact]
+    public void PrintDryRunPlan_DoesNotIncludeMessagingBotApi()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
+
+        AnyLogContains("Messaging Bot API").Should().BeFalse(because: "Messaging Bot API is DW-only and must not appear in non-DW dry-run output");
+    }
+
+    [Fact]
+    public void PrintDryRunPlan_DoesNotIncludeMicrosoftGraph()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
+
+        AnyLogContains("Microsoft Graph").Should().BeFalse(because: "Microsoft Graph is DW-only and must not appear in non-DW dry-run output");
     }
 
     [Fact]

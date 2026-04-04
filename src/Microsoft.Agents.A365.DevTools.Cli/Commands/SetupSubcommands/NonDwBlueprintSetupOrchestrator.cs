@@ -39,24 +39,24 @@ internal static class NonDwBlueprintSetupOrchestrator
         var cmdArgs = rawArgs is { Length: > 0 }
             ? string.Join(" ", rawArgs.Where(a => !a.Equals("--dry-run", StringComparison.OrdinalIgnoreCase)))
             : "setup all";
-        logger.LogInformation("Dry run: a365 {Args}", cmdArgs);
+        logger.LogInformation("Dry run: a365 {Args} --dry-run", cmdArgs);
         logger.LogInformation("");
-        logger.LogInformation("The following steps will be executed.");
+        logger.LogInformation("The following steps would be performed.");
         logger.LogInformation("");
 
         // Prerequisites
-        if (isBootstrap)
-            logger.LogInformation(SetupHelpers.DryRunRow("Prerequisites") + "will be skipped (bootstrap mode)");
-        else if (skipRequirements)
+        if (skipRequirements)
             logger.LogInformation(SetupHelpers.DryRunRow("Prerequisites") + "will be skipped (--skip-requirements flag used)");
+        else if (isBootstrap)
+            logger.LogInformation(SetupHelpers.DryRunRow("Prerequisites") + "will be validated (Azure CLI, PowerShell modules)");
         else
-            logger.LogInformation(SetupHelpers.DryRunRow("Prerequisites") + "will be validated (PowerShell modules, Azure CLI)");
+            logger.LogInformation(SetupHelpers.DryRunRow("Prerequisites") + "will be validated (PowerShell modules, Azure CLI, client app)");
 
         // Azure hosting
         if (config.NeedDeployment)
             logger.LogInformation(SetupHelpers.DryRunRow("Azure hosting") + "will be provisioned (Resource Group, App Service Plan, Web App)");
         else
-            logger.LogInformation(SetupHelpers.DryRunRow("Azure hosting") + "will be skipped (external or self-hosted)");
+            logger.LogInformation(SetupHelpers.DryRunRow("Azure hosting") + "will be skipped (no Azure deployment configured)");
 
         // Blueprint
         var blueprintDisplayName = config.AgentBlueprintDisplayName ?? config.AgentIdentityDisplayName ?? "Agent Blueprint";
@@ -67,7 +67,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
         else
         {
-            logger.LogInformation(SetupHelpers.DryRunRow("Blueprint") + "will be created (multi-tenant) -- {DisplayName}", blueprintDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow("Blueprint") + "will be created (multi-tenant): {DisplayName}", blueprintDisplayName);
             logger.LogInformation(sub + "Service principal will be created");
             logger.LogInformation(sub + "Client secret will be created");
             logger.LogInformation(sub + "Federated identity credential (FIC) will be created");
@@ -75,36 +75,36 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
 
         // Permissions
-        var permsList = new List<string> { "Microsoft Graph", "Agent 365 Tools", "Messaging Bot API", "Observability API", "Power Platform API" };
+        var permsList = new List<string> { "Observability API", "Power Platform API" };
         if (config.CustomBlueprintPermissions?.Count > 0)
             foreach (var custom in config.CustomBlueprintPermissions)
                 permsList.Add(custom.ResourceName ?? custom.ResourceAppId);
-        logger.LogInformation(SetupHelpers.DryRunRow("Blueprint Permissions") + "will be set for {Permissions}", string.Join(", ", permsList));
+        logger.LogInformation(SetupHelpers.DryRunRow("Blueprint Permissions") + "will be granted access to {Permissions}", string.Join(", ", permsList));
 
         // Admin consent
-        logger.LogInformation(SetupHelpers.DryRunRow("Admin consent") + "will be configured (or URL printed for GA approval)");
+        logger.LogInformation(SetupHelpers.DryRunRow("Admin consent") + "will require Global Administrator approval — URL will be printed");
 
         // Agent Identity
         var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
-        if (identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
-            identityDisplayName = identityDisplayName[..^" Identity".Length] + " Agent";
+        var registrationDisplayName = identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
+            ? identityDisplayName[..^" Identity".Length].TrimEnd()
+            : identityDisplayName;
         if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-            logger.LogInformation(SetupHelpers.DryRunRow("Agent identity") + "already present in config -- will be reused (ID: {AgentId})", config.AgenticAppId);
+            logger.LogInformation(SetupHelpers.DryRunRow("Agent identity") + "already registered — will be reused (ID: {AgentId})", config.AgenticAppId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow("Agent identity") + "will be created -- {DisplayName}", identityDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow("Agent identity") + "will be created: {DisplayName}", identityDisplayName);
 
         // Agent Registration
         if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
-            logger.LogInformation(SetupHelpers.DryRunRow("Agent Registration") + "already registered -- will be reused (ID: {RegistrationId})", config.AgentRegistrationId);
+            logger.LogInformation(SetupHelpers.DryRunRow("Agent Registration") + "already registered — will be reused (ID: {RegistrationId})", config.AgentRegistrationId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow("Agent Registration") + "will be added to the Agent registry");
+            logger.LogInformation(SetupHelpers.DryRunRow("Agent Registration") + "will be added to the Agent Registry: {DisplayName}", registrationDisplayName);
 
         // Project settings
-        if (!isBootstrap)
-            logger.LogInformation(SetupHelpers.DryRunRow("Project settings") + "ServiceConnection, TokenValidation, and Observability settings will be written to appsettings.json");
+        logger.LogInformation(SetupHelpers.DryRunRow("Project settings") + "ServiceConnection, TokenValidation, and Observability settings will be written to appsettings.json");
 
         logger.LogInformation("");
-        logger.LogInformation("No changes will be made. Run without --dry-run to execute.");
+        logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
     }
 
     /// <summary>
@@ -208,7 +208,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             if (!ctx.SkipRequirements)
             {
                 var includeInfra = !ctx.SkipInfrastructure && ctx.Config.NeedDeployment;
-                var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfra);
+                var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfra, isBootstrap: ctx.IsBootstrap);
                 try
                 {
                     await RequirementsSubcommand.RunChecksOrExitAsync(checks, ctx.Config, ctx.Logger, ctx.CancellationToken);
@@ -223,10 +223,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
             else
             {
-                if (ctx.IsBootstrap)
-                    ctx.Logger.LogInformation("Requirements validation skipped (bootstrap mode)");
-                else
-                    ctx.Logger.LogInformation("Requirements validation skipped (--skip-requirements flag used)");
+                ctx.Logger.LogInformation("Requirements validation skipped (--skip-requirements flag used)");
             }
 
             // Step 1.5: Consent check — detect missing consent for required permissions and prompt.
@@ -238,17 +235,17 @@ internal static class NonDwBlueprintSetupOrchestrator
             // Step 3: Blueprint creation (shared with DW)
             await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
 
-            // Step 4: Batch permissions — same dynamic spec list as DW (AgentApplicationScopes + MCP manifest + CustomBlueprintPermissions)
-            var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
+            // Step 4: Batch permissions — non-DW path stamps only Observability API and Power Platform API.
+            // Microsoft Graph, Agent 365 Tools (MCP), and Messaging Bot API are excluded.
+            var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx, isDw: false);
             specs = buildResult.specs;
             var mcpResourceAppId = buildResult.mcpResourceAppId;
-            var mcpScopes = buildResult.mcpScopes;
 
             await AllSubcommand.ExecuteBatchPermissionsStepAsync(
                 ctx, specs,
                 knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-            SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
+            SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, graphScopes: [], mcpScopes: [], isDw: false);
 
             // Save state after permissions (before agent identity creation, so progress
             // is not lost if subsequent steps fail).
@@ -263,6 +260,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Logger.LogInformation("Agent identity already created (ID: {AgentId}). Skipping.", ctx.Config.AgenticAppId);
                 ctx.Results.AgentIdentityCreated = true;
                 ctx.Results.AgentIdentityId = ctx.Config.AgenticAppId;
+                ctx.Results.AgentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName;
             }
             else
             {
@@ -303,6 +301,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                     await ctx.ConfigService.SaveStateAsync(ctx.Config);
                     ctx.Results.AgentIdentityCreated = true;
                     ctx.Results.AgentIdentityId = agentId;
+                    ctx.Results.AgentIdentityDisplayName = agentIdentityDisplayName;
                     using (ctx.Logger.Indent())
                         ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
                     ctx.Logger.LogInformation("");
@@ -332,6 +331,14 @@ internal static class NonDwBlueprintSetupOrchestrator
 
             // Step 6: Register Agent via AgentX Agent Registration API V2.
 
+            // AgentX registration represents the agent itself, not the Entra identity.
+            // Strip " Identity" suffix so the registry entry reads "<name> Agent", not "<name> Agent Identity".
+            var agentDisplayName = ctx.Config.AgentIdentityDisplayName
+                ?? ctx.Config.WebAppName
+                ?? "Agent";
+            if (agentDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
+                agentDisplayName = agentDisplayName[..^" Identity".Length].TrimEnd();
+
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
             {
                 ctx.Logger.LogInformation("Registering agent...");
@@ -340,18 +347,11 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Logger.LogInformation("");
                 ctx.Results.AgentInstanceRegistered = true;
                 ctx.Results.AgentInstanceId = ctx.Config.AgentRegistrationId;
+                ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
             }
             else
             {
                 ctx.Logger.LogInformation("Registering agent...");
-
-                var agentDisplayName = ctx.Config.AgentIdentityDisplayName
-                    ?? ctx.Config.WebAppName
-                    ?? "Agent";
-                // AgentX registration represents the agent itself, not the Entra identity.
-                // Normalize any legacy " Identity" suffix to " Agent".
-                if (agentDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
-                    agentDisplayName = agentDisplayName[..^" Identity".Length] + " Agent";
 
                 var registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
                     ctx.Config.TenantId!,
@@ -368,6 +368,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                     await ctx.ConfigService.SaveStateAsync(ctx.Config);
                     ctx.Results.AgentInstanceRegistered = true;
                     ctx.Results.AgentInstanceId = registrationId;
+                    ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
                     using (ctx.Logger.Indent())
                         ctx.Logger.LogInformation("Agent registered (ID: {RegistrationId})", registrationId);
                     ctx.Logger.LogInformation("");
@@ -380,16 +381,12 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
 
             // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
-            // Skip in bootstrap mode — there is no project config file to update.
-            if (!ctx.IsBootstrap)
+            ctx.Logger.LogInformation("Updating project settings...");
+            using (ctx.Logger.Indent())
             {
-                ctx.Logger.LogInformation("Updating project settings...");
-                using (ctx.Logger.Indent())
-                {
-                    await ProjectSettingsSyncHelper.ExecuteAsync(
-                        ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
-                        ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
-                }
+                await ProjectSettingsSyncHelper.ExecuteAsync(
+                    ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
+                    ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
             }
         }
         catch (Agent365Exception ex)

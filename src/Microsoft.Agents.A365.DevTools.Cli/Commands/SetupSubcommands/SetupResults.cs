@@ -114,6 +114,11 @@ public class SetupResults
     public string? AgentIdentityId { get; set; }
 
     /// <summary>
+    /// The display name of the agent identity Entra app (e.g. "MyAgent Agent Identity").
+    /// </summary>
+    public string? AgentIdentityDisplayName { get; set; }
+
+    /// <summary>
     /// Whether the Agent Instance was successfully registered via the Agent Instance Graph API.
     /// Populated by the non-DW blueprint setup flow only.
     /// </summary>
@@ -124,6 +129,11 @@ public class SetupResults
     /// Non-null when <see cref="AgentInstanceRegistered"/> is true.
     /// </summary>
     public string? AgentInstanceId { get; set; }
+
+    /// <summary>
+    /// The display name used when registering the agent in the Agent Registry (e.g. "MyAgent Agent").
+    /// </summary>
+    public string? AgentRegistrationDisplayName { get; set; }
 
 
     public List<string> Errors { get; } = new();

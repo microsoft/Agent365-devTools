@@ -41,8 +41,18 @@ public static class ProjectSettingsSyncHelper
         var project = pkgConfig.DeploymentProjectPath;
         if (string.IsNullOrWhiteSpace(project) || !Directory.Exists(project))
         {
-            logger.LogWarning("deploymentProjectPath is not set or does not exist in a365.config.json; skipping project settings sync.");
-            return;
+            // Fall back to the directory of the config file (bootstrap mode: no deploymentProjectPath).
+            var configDir = Path.GetDirectoryName(Path.GetFullPath(a365ConfigPath));
+            if (!string.IsNullOrWhiteSpace(configDir) && Directory.Exists(configDir))
+            {
+                project = configDir;
+                logger.LogDebug("deploymentProjectPath not configured; using config directory: {Path}", project);
+            }
+            else
+            {
+                logger.LogWarning("deploymentProjectPath is not set or does not exist in a365.config.json; skipping project settings sync.");
+                return;
+            }
         }
 
         // Detect platform type (DotNet -> NodeJs -> Python -> Unknown)
