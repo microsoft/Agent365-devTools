@@ -16,6 +16,30 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class SetupHelpers
 {
+    // ── Dry-run layout helpers ─────────────────────────────────────────────────
+    // Shared by PrintDwSetupAllDryRunPlan (DW path) and NonDwBlueprintSetupOrchestrator.PrintDryRunPlan
+    // (non-DW path) so the column width and blueprint-reuse wording stay in sync.
+
+    internal const int DryRunValCol = 24;
+    internal static string DryRunRow(string label) => ("  " + label).PadRight(DryRunValCol);
+
+    /// <summary>
+    /// Prints the six blueprint-reuse rows common to both DW and non-DW dry-run plans.
+    /// Called when <c>AgentBlueprintId</c> is already present in config.
+    /// </summary>
+    internal static void PrintDryRunBlueprintReuseRows(ILogger logger, string blueprintId)
+    {
+        var sub = new string(' ', DryRunValCol);
+        logger.LogInformation(DryRunRow("Blueprint") + "already present in config -- will be reused");
+        logger.LogInformation(sub + "ID: {BlueprintId}", blueprintId);
+        logger.LogInformation(sub + "Service principal will be verified or created");
+        logger.LogInformation(sub + "Client secret will be created (new secret)");
+        logger.LogInformation(sub + "Federated identity credential (FIC) will be verified or created");
+        logger.LogInformation(sub + "Managed identity will be verified or created");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+
     /// <summary>
     /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
     /// agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
@@ -426,6 +450,75 @@ internal static class SetupHelpers
             logger.LogInformation("Admin setup completed with warnings");
         else
             logger.LogInformation("Admin setup completed successfully");
+    }
+
+    /// <summary>
+    /// Prints the dry-run plan for the Digital Worker (--aiteammate true) path of setup all.
+    /// </summary>
+    internal static void PrintDwSetupAllDryRunPlan(
+        ILogger logger,
+        bool skipInfrastructure,
+        bool skipRequirements,
+        string[] rawArgs,
+        Agent365Config? config = null)
+    {
+        var sub = new string(' ', DryRunValCol);
+
+        var cmdArgs = string.Join(' ', rawArgs.Where(a => !a.Equals("--dry-run", StringComparison.OrdinalIgnoreCase)));
+        logger.LogInformation("Dry run: a365 {Args}", cmdArgs);
+        logger.LogInformation("");
+        logger.LogInformation("The following steps will be executed.");
+        logger.LogInformation("");
+
+        // Prerequisites
+        if (skipRequirements)
+            logger.LogInformation(DryRunRow("Prerequisites") + "will be skipped (--skip-requirements flag used)");
+        else
+            logger.LogInformation(DryRunRow("Prerequisites") + "will be validated (PowerShell modules, Azure CLI)");
+
+        // Azure hosting
+        if (skipInfrastructure)
+            logger.LogInformation(DryRunRow("Azure hosting") + "will be skipped (--skip-infrastructure flag used)");
+        else
+            logger.LogInformation(DryRunRow("Azure hosting") + "will be provisioned (Resource Group, App Service Plan, Web App)");
+
+        // Blueprint — context-aware when config is available
+        if (!string.IsNullOrWhiteSpace(config?.AgentBlueprintId))
+        {
+            PrintDryRunBlueprintReuseRows(logger, config.AgentBlueprintId!);
+        }
+        else
+        {
+            logger.LogInformation(DryRunRow("Blueprint") + "will be created or reused if already exists");
+            logger.LogInformation(sub + "Service principal will be created");
+            logger.LogInformation(sub + "Client secret will be created");
+            logger.LogInformation(sub + "Federated identity credential (FIC) will be created");
+            logger.LogInformation(sub + "Managed identity will be created");
+        }
+
+        // Permissions
+        logger.LogInformation(DryRunRow("Blueprint Permissions") + "will be set for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Power Platform API");
+
+        // Admin consent
+        logger.LogInformation(DryRunRow("Admin consent") + "will be configured (or URL printed for GA approval)");
+
+        // Agent identity — context-aware when config is available
+        if (!string.IsNullOrWhiteSpace(config?.AgenticAppId))
+            logger.LogInformation(DryRunRow("Agent identity") + "already present in config -- will be reused (ID: {AgentId})", config.AgenticAppId);
+        else
+            logger.LogInformation(DryRunRow("Agent identity") + "will be created or reused if already exists");
+
+        // Agent Registration — context-aware when config is available
+        if (!string.IsNullOrWhiteSpace(config?.AgentRegistrationId))
+            logger.LogInformation(DryRunRow("Agent Registration") + "already registered -- will be reused (ID: {RegistrationId})", config.AgentRegistrationId);
+        else
+            logger.LogInformation(DryRunRow("Agent Registration") + "will be registered or reused if already exists");
+
+        // Project settings
+        logger.LogInformation(DryRunRow("Project settings") + "ServiceConnection, TokenValidation, and Observability settings will be written to appsettings.json");
+
+        logger.LogInformation("");
+        logger.LogInformation("No changes will be made. Run without --dry-run to execute.");
     }
 
     /// <summary>

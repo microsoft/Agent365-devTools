@@ -85,13 +85,13 @@ public static class InfrastructureSubcommand
                 logger.LogInformation("  - Managed Service Identity: Enabled");
                 
                 // Detect platform (even in dry-run for informational purposes)
-                if (!string.IsNullOrWhiteSpace(dryRunConfig.DeploymentProjectPath))
-                {
-                    var detectedPlatform = platformDetector.Detect(dryRunConfig.DeploymentProjectPath);
-                    var detectedRuntime = await GetLinuxFxVersionForPlatformAsync(detectedPlatform, dryRunConfig.DeploymentProjectPath, executor, logger);
-                    logger.LogInformation("  - Detected Platform: {Platform}", detectedPlatform);
-                    logger.LogInformation("  - Runtime: {Runtime}", detectedRuntime);
-                }
+                var dryRunProjectPath = string.IsNullOrWhiteSpace(dryRunConfig.DeploymentProjectPath)
+                    ? Environment.CurrentDirectory
+                    : dryRunConfig.DeploymentProjectPath;
+                var detectedPlatform = platformDetector.Detect(dryRunProjectPath);
+                var detectedRuntime = await GetLinuxFxVersionForPlatformAsync(detectedPlatform, dryRunProjectPath, executor, logger);
+                logger.LogInformation("  - Detected Platform: {Platform}", detectedPlatform);
+                logger.LogInformation("  - Runtime: {Runtime}", detectedRuntime);
                 
                 return;
             }
@@ -189,28 +189,13 @@ public static class InfrastructureSubcommand
                 return (false, false);
             }
         }
-        else
-        {
-            // Non-Azure hosting or --blueprint: no infra required
-            if (string.IsNullOrWhiteSpace(subscriptionId))
-            {
-                logger.LogWarning(
-                    "subscriptionId is not set. This is acceptable for blueprint-only or External hosting mode " +
-                    "as Azure infrastructure will not be provisioned.");
-            }
-        }
 
         // Detect project platform for appropriate runtime configuration
-        var platform = Models.ProjectPlatform.DotNet; // Default fallback
-        if (!string.IsNullOrWhiteSpace(deploymentProjectPath))
-        {
-            platform = platformDetector.Detect(deploymentProjectPath);
-            logger.LogInformation("Detected project platform: {Platform}", platform);
-        }
-        else
-        {
-            logger.LogWarning("No deploymentProjectPath specified, defaulting to .NET runtime");
-        }
+        var effectiveProjectPath = string.IsNullOrWhiteSpace(deploymentProjectPath)
+            ? Environment.CurrentDirectory
+            : deploymentProjectPath;
+        var platform = platformDetector.Detect(effectiveProjectPath);
+        logger.LogInformation("Detected project platform: {Platform}", platform);
         logger.LogInformation("");
 
         if (!skipInfra)
@@ -250,7 +235,7 @@ public static class InfrastructureSubcommand
             planSku,
             webAppName,
             generatedConfigPath,
-            deploymentProjectPath,
+            effectiveProjectPath,
             platform,
             logger,
             needDeployment,

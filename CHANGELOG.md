@@ -16,7 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `a365 setup admin` — new command for Global Administrators to complete tenant-wide AllPrincipals OAuth2 permission grants after `a365 setup all` has been run by an Agent ID Admin
 - `setup all --agent-name <name>` — config-free non-DW setup. No `a365.config.json` required. TenantId is auto-detected from `az account show`; ClientAppId resolved by finding an Entra app registration named `"Agent 365 CLI"` in the tenant.
 - `setup all --tenant-id <id>` — override tenant auto-detection when using `--agent-name`.
+- `cleanup --agent-name <name>` — config-free cleanup. No `a365.config.json` required. Loads resource IDs from the global generated config written by bootstrap setup. Tenant ID is auto-detected from `az account show` or overridden with `--tenant-id`.
 ### Changed
+- `setup all --dry-run` output is now column-aligned for readability
+- `setup infrastructure` now defaults `deploymentProjectPath` to the current directory when not specified in config
 - `setup all` now defaults to the non-AI Teammate (blueprint) flow. Use `--aiteammate true` to run the Digital Worker (AI Teammate) setup flow.
 - `a365 publish` updates manifest IDs, creates `manifest.zip`, and prints concise upload instructions for Microsoft 365 Admin Center (Agents > All agents > Upload custom agent). Interactive prompts only occur in interactive terminals; redirect stdin to suppress them in scripts.
 
@@ -29,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - macOS/Linux: device code fallback when browser authentication is unavailable (#309)
 - Linux: MSAL fallback when PowerShell `Connect-MgGraph` fails in non-TTY environments (#309)
 - Admin consent polling no longer times out after 180s — blueprint service principal now resolved with correct MSAL token (#309)
+- `a365 cleanup --agent-name` no longer stalls — interactive browser auth failure in embedded terminals now automatically falls back to device code flow (same as Conditional Access fallback)
 - `ConfigFileNotFoundException` now derives from `FileNotFoundException` so existing catch sites continue to work (#309)
 
 ## [1.1.0] - 2026-02

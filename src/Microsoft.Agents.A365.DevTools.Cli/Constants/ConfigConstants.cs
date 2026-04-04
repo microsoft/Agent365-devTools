@@ -77,9 +77,10 @@ public static class ConfigConstants
     public const string MessagingBotApiAdminConsentScope = "AgentData.ReadWrite";
 
     /// <summary>
-    /// Observability API scope used for admin consent URL construction.
-    /// Note: the orchestrator grants "user_impersonation" + ObservabilityApiOtelWriteScope via OAuth2
-    /// permission grants; this scope is the consent-URL-facing name for the same resource.
+    /// Observability API scope used in admin consent URLs.
+    /// This is the only scope published by the Observability API resource app manifest
+    /// that is valid for the /v2.0/adminconsent endpoint.
+    /// Note: user_impersonation and OtelWrite are granted separately via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
 

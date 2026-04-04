@@ -48,22 +48,44 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
-        var verboseOption = new Option<bool>(
-            new[] { "--verbose", "-v" },
-            description: "Enable verbose logging");
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name used with 'setup all --agent-name'. When provided, no config file is required.\n" +
+                         "Loads resource IDs from the global generated config written by the bootstrap setup.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'. Use with --agent-name.");
 
         cleanupCommand.AddOption(configOption);
-        cleanupCommand.AddOption(verboseOption);
+        cleanupCommand.AddOption(agentNameOption);
+        cleanupCommand.AddOption(tenantIdOption);
 
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
-        cleanupCommand.SetHandler(async (configFile, verbose) =>
+        cleanupCommand.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogInformation("Starting cleanup (CorrelationId: {CorrelationId})", correlationId);
 
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId);
-        }, configOption, verboseOption);
+            Agent365Config? bootstrapConfig = null;
+            if (!string.IsNullOrWhiteSpace(agentName))
+            {
+                bootstrapConfig = await BuildBootstrapConfigForCleanupAsync(
+                    agentName, tenantIdFlag, executor, logger);
+                if (bootstrapConfig is null)
+                {
+                    context.ExitCode = 1;
+                    return;
+                }
+            }
+
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig);
+        });
 
         // Add subcommands for granular control
         cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, graphApiService: graphApiService));
@@ -638,15 +660,16 @@ public class CleanupCommand
         FederatedCredentialService federatedCredentialService,
         FileInfo? configFile,
         GraphApiService? graphApiService = null,
-        string? correlationId = null)
+        string? correlationId = null,
+        Agent365Config? configOverride = null)
     {
         var cleanupSucceeded = false;
         var hasFailures = false;
         try
         {
             logger.LogInformation("Starting complete cleanup...");
-            
-            var config = await LoadConfigAsync(configFile, logger, configService);
+
+            var config = configOverride ?? await LoadConfigAsync(configFile, logger, configService);
             if (config == null) return;
             
             // Configure AgentBlueprintService with custom client app ID if available
@@ -1111,6 +1134,110 @@ public class CleanupCommand
             logger.LogWarning("  Orphaned identity SP: {ResourceId}", spId);
         logger.LogWarning("Delete them manually via the Entra portal or Graph API.");
     }
+
+    /// <summary>
+    /// Builds a cleanup config from the global generated config without requiring a static config file.
+    /// Used when cleanup is invoked with <c>--agent-name</c> after a bootstrap setup.
+    /// Loads resource IDs (blueprint, agent identity, registration) from the generated config saved
+    /// to the global config directory by <c>setup all --agent-name</c>.
+    /// </summary>
+    private static async Task<Agent365Config?> BuildBootstrapConfigForCleanupAsync(
+        string agentName,
+        string? tenantIdFlag,
+        CommandExecutor executor,
+        ILogger<CleanupCommand> logger)
+    {
+        // Step 1: Resolve tenant ID
+        string? tenantId = tenantIdFlag;
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            logger.LogInformation("Detecting tenant from 'az account show'...");
+            var result = await executor.ExecuteAsync("az", "account show --output json", suppressErrorLogging: true);
+            if (result.Success && !string.IsNullOrWhiteSpace(result.StandardOutput))
+            {
+                try
+                {
+                    var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
+                    using var doc = JsonDocument.Parse(cleaned);
+                    if (doc.RootElement.TryGetProperty("tenantId", out var tid))
+                        tenantId = tid.GetString();
+                }
+                catch { /* non-fatal — tenantId remains null */ }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            logger.LogError("Could not detect tenant ID. Sign in with 'az login' or pass --tenant-id.");
+            return null;
+        }
+
+        // Step 2: Load resource IDs from the generated config written by bootstrap setup.
+        // Check the local directory first (bootstrap setup anchors saves there via a365.config.json),
+        // then fall back to the global %LocalAppData% directory.
+        var localGeneratedPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
+        var globalGeneratedPath = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
+        var generatedConfigPath = File.Exists(localGeneratedPath) ? localGeneratedPath : globalGeneratedPath;
+
+        string? blueprintId = null, agenticAppId = null, agentRegistrationId = null, clientAppId = null;
+
+        if (File.Exists(generatedConfigPath))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(generatedConfigPath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                blueprintId = GetJsonString(root, "agentBlueprintId");
+                agenticAppId = GetJsonString(root, "agenticAppId");
+                agentRegistrationId = GetJsonString(root, "agentRegistrationId");
+                clientAppId = GetJsonString(root, "clientAppId");
+                logger.LogInformation("Loaded resource IDs from {Path}", generatedConfigPath);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Could not read generated config at {Path}: {Message}", generatedConfigPath, ex.Message);
+            }
+        }
+        else
+        {
+            logger.LogWarning("No generated config found at {Path}. Resource IDs may be missing — resources must be deleted manually.", generatedConfigPath);
+        }
+
+        var config = new Agent365Config
+        {
+            TenantId = tenantId,
+            ClientAppId = clientAppId ?? string.Empty,
+            AgentIdentityDisplayName = $"{agentName} Agent",
+            AgentBlueprintDisplayName = $"{agentName} Blueprint",
+            AgentDescription = agentName,
+            NeedDeployment = false,
+            AiTeammate = false,
+            UseBlueprint = true,
+            // Placeholder required to pass config validation (NeedDeployment=false path requires MessagingEndpoint)
+            MessagingEndpoint = "https://placeholder.example.com/api/messages",
+        };
+
+        config.AgentBlueprintId = blueprintId;
+        config.AgenticAppId = agenticAppId;
+        config.AgentRegistrationId = agentRegistrationId;
+
+        logger.LogInformation("Bootstrap cleanup config:");
+        using (logger.Indent())
+        {
+            logger.LogInformation("TenantId:        {TenantId}", tenantId);
+            logger.LogInformation("BlueprintId:     {BlueprintId}", blueprintId ?? "(not found)");
+            logger.LogInformation("AgentIdentityId: {AgentId}", agenticAppId ?? "(not found)");
+            logger.LogInformation("RegistrationId:  {RegId}", agentRegistrationId ?? "(not found)");
+        }
+
+        return config;
+    }
+
+    private static string? GetJsonString(JsonElement element, string key)
+        => element.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String
+            ? val.GetString()
+            : null;
 
     private static async Task<Agent365Config?> LoadConfigAsync(
         FileInfo? configFile,

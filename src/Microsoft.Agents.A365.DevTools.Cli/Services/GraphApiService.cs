@@ -635,7 +635,12 @@ public class GraphApiService
                     return true;
 
                 if (!grantResponse.Body.Contains("Directory_ObjectNotFound", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "OAuth2 permission grant failed (non-transient) for resource {ResourceSpId} with scopes [{Scopes}]. Graph response: {Body}",
+                        resourceSpObjectId, desiredScopeString, grantResponse.Body);
                     return false; // non-transient error, do not retry
+                }
 
                 if (attempt < maxRetries - 1)
                 {

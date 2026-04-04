@@ -194,6 +194,11 @@ internal static class AllSubcommand
                     }
                     else
                     {
+                        // Print banner first so it appears before any auth output
+                        var bootstrapRawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
+                        logger.LogInformation("Running \"a365 {Args}\"...", string.Join(" ", bootstrapRawArgs));
+                        logger.LogInformation("");
+
                         // Real run: resolve client app ID from Entra
                         nonDwConfig = await BuildBootstrapConfigAsync(
                             agentName!, tenantIdFlag, executor, graphApiService, logger, ct);
@@ -202,6 +207,24 @@ internal static class AllSubcommand
                             context.ExitCode = 1;
                             return;
                         }
+
+                        // Log resolved config so the user can verify the inferred values
+                        logger.LogInformation("Bootstrap config resolved:");
+                        using (logger.Indent())
+                        {
+                            logger.LogInformation("TenantId:             {TenantId}", nonDwConfig.TenantId);
+                            logger.LogInformation("ClientAppId:          {ClientAppId}", nonDwConfig.ClientAppId);
+                            logger.LogInformation("BlueprintDisplayName: {Name}", nonDwConfig.AgentBlueprintDisplayName);
+                            logger.LogInformation("IdentityDisplayName:  {Name}", nonDwConfig.AgentIdentityDisplayName);
+                            logger.LogInformation("NeedDeployment:       {NeedDeployment}", nonDwConfig.NeedDeployment);
+                        }
+                        logger.LogInformation("");
+
+                        // Write a365.config.json to anchor all SaveStateAsync calls to the local directory.
+                        // Without it, SaveStateAsync saves to the global %LocalAppData% directory instead,
+                        // making 'a365 cleanup' unable to find the resource IDs.
+                        if (!File.Exists(config.FullName))
+                            await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
                     }
                 }
                 else
@@ -220,7 +243,7 @@ internal static class AllSubcommand
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements);
                     return;
                 }
 
@@ -262,32 +285,10 @@ internal static class AllSubcommand
             // --- Digital Worker (default) path ---
             if (dryRun)
             {
-                logger.LogInformation("DRY RUN: Complete Agent 365 Setup");
-                logger.LogInformation("This would execute the following operations:");
-                logger.LogInformation("");
-
-                if (!skipRequirements)
-                {
-                    logger.LogInformation("  0. Validate prerequisites (PowerShell modules, etc.)");
-                }
-                else
-                {
-                    logger.LogInformation("  0. Skip: Requirements validation (--skip-requirements flag used)");
-                }
-
-                if (!skipInfrastructure)
-                {
-                    logger.LogInformation("  1. Create Azure infrastructure");
-                }
-                else
-                {
-                    logger.LogInformation("  1. Skip: Azure infrastructure (--skip-infrastructure flag used)");
-                }
-
-                logger.LogInformation("  2. Create agent blueprint (Entra ID application)");
-                logger.LogInformation("  3. Configure MCP server permissions");
-                logger.LogInformation("  4. Configure Bot API permissions");
-                logger.LogInformation("No actual changes will be made.");
+                var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
+                Agent365Config? dwDryRunConfig = null;
+                try { dwDryRunConfig = await configService.LoadAsync(config.FullName); } catch { /* config is optional for dry-run display */ }
+                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig);
                 return;
             }
 
@@ -489,14 +490,20 @@ internal static class AllSubcommand
                     isPermissionIssue: true);
             }
 
-            // CRITICAL: Wait for file system to ensure config file is fully written
-            // Blueprint creation writes directly to disk and may not be immediately readable
-            ctx.Logger.LogDebug("Waiting for config file write to complete...");
-            await Task.Delay(2000, ctx.CancellationToken);
+            // In bootstrap mode, CreateBlueprintImplementationAsync already sets AgentBlueprintId
+            // (and related properties) directly on ctx.Config. The static a365.config.json does
+            // not exist on disk, so LoadAsync would throw ConfigFileNotFoundException.
+            if (!ctx.IsBootstrap)
+            {
+                // CRITICAL: Wait for file system to ensure config file is fully written
+                // Blueprint creation writes directly to disk and may not be immediately readable
+                ctx.Logger.LogDebug("Waiting for config file write to complete...");
+                await Task.Delay(2000, ctx.CancellationToken);
 
-            // Reload config to get blueprint ID
-            var fullConfigPath = Path.GetFullPath(ctx.ConfigFile.FullName);
-            ctx.Config = await ctx.ConfigService.LoadAsync(fullConfigPath);
+                // Reload config to get blueprint ID and any other dynamic properties written to disk
+                var fullConfigPath = Path.GetFullPath(ctx.ConfigFile.FullName);
+                ctx.Config = await ctx.ConfigService.LoadAsync(fullConfigPath);
+            }
             ctx.Results.BlueprintId = ctx.Config.AgentBlueprintId;
 
             // Validate blueprint ID was properly saved
@@ -607,22 +614,8 @@ internal static class AllSubcommand
                 "Agent 365 Tools",
                 mcpScopes,
                 SetInheritable: true),
-            new ResourcePermissionSpec(
-                ConfigConstants.MessagingBotApiAppId,
-                "Messaging Bot API",
-                new[] { "Authorization.ReadWrite", "user_impersonation" },
-                SetInheritable: true),
-            new ResourcePermissionSpec(
-                ConfigConstants.ObservabilityApiAppId,
-                "Observability API",
-                new[] { "user_impersonation" },
-                SetInheritable: true),
-            new ResourcePermissionSpec(
-                PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                "Power Platform API",
-                new[] { "Connectivity.Connections.Read" },
-                SetInheritable: true),
         };
+        specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
 
         foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
         {
@@ -726,6 +719,36 @@ internal static class AllSubcommand
         }
 
         return config;
+    }
+
+    /// <summary>
+    /// Writes a minimal <c>a365.config.json</c> to <paramref name="path"/> from the bootstrap config so
+    /// that subsequent <see cref="IConfigService.SaveStateAsync"/> calls detect a local static config and
+    /// save the generated file to the local directory instead of the global %LocalAppData% directory.
+    /// Only the init-only (static) fields are persisted; dynamic/generated fields belong in
+    /// <c>a365.generated.config.json</c> and are written there by each setup step.
+    /// </summary>
+    private static async Task WriteBootstrapConfigFileAsync(
+        Agent365Config config,
+        string path,
+        ILogger logger)
+    {
+        var staticFields = new Dictionary<string, object?>
+        {
+            ["tenantId"] = config.TenantId,
+            ["clientAppId"] = config.ClientAppId,
+            ["agentIdentityDisplayName"] = config.AgentIdentityDisplayName,
+            ["agentBlueprintDisplayName"] = config.AgentBlueprintDisplayName,
+            ["agentDescription"] = config.AgentDescription,
+            ["needDeployment"] = config.NeedDeployment,
+            ["aiTeammate"] = config.AiTeammate,
+            ["useBlueprint"] = config.UseBlueprint,
+            ["messagingEndpoint"] = "https://placeholder.example.com/api/messages",
+        };
+
+        var json = JsonSerializer.Serialize(staticFields, new JsonSerializerOptions { WriteIndented = true });
+        await File.WriteAllTextAsync(path, json);
+        logger.LogDebug("Wrote bootstrap config to {Path}", path);
     }
 
     /// <summary>Step 1 — Creates Azure infrastructure (optional, skippable via --skip-infrastructure).</summary>
