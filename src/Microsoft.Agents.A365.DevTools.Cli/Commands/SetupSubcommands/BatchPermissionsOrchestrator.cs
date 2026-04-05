@@ -476,18 +476,16 @@ internal static class BatchPermissionsOrchestrator
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // If there are no Graph scopes to consent to (e.g. agent config has no agentApplicationScopes),
-        // skip Phase 3 entirely — there is nothing to grant via the admin consent URL.
-        if (graphScopes.Count == 0)
-        {
-            logger.LogInformation("No Microsoft Graph scopes require admin consent — skipping consent URL.");
-            return (true, null);
-        }
+        // Build consent URL only when there are Graph scopes — non-Graph APIs cannot be consented
+        // via the /v2.0/adminconsent endpoint. They require Phase 2b (oauth2PermissionGrants via Graph API).
+        string? consentUrl = graphScopes.Count > 0
+            ? SetupHelpers.BuildAdminConsentUrl(tenantId, blueprintAppId, graphScopes)
+            : null;
 
-        var consentUrl = SetupHelpers.BuildAdminConsentUrl(tenantId, blueprintAppId, graphScopes);
-
-        // Check if consent already exists for ALL resolved resources (Phase 2 programmatic grants satisfy this check).
-        // Only skip browser consent if every resource has its consent in place.
+        // Check if consent already exists for ALL resolved resources (Phase 2b programmatic grants
+        // satisfy this check). Run this regardless of whether Graph scopes are present — non-DW
+        // blueprints have no Graph scopes but still require oauth2PermissionGrants for Observability
+        // and Power Platform APIs created by GA via Phase 2b or 'a365 setup admin'.
         if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
         {
             var specsWithResolvedSp = specs
@@ -530,6 +528,14 @@ internal static class BatchPermissionsOrchestrator
             }
         }
 
+        // Grants not fully in place. When there are no Graph scopes (non-DW path), there is no
+        // consent URL to open — the admin must run 'a365 setup admin' to create the oauth2PermissionGrants.
+        // No inline message: the caller surfaces this as an Action Required item in the summary.
+        if (graphScopes.Count == 0)
+        {
+            return (false, null);
+        }
+
         // Consent not yet detected — check whether the current user can grant it interactively.
         // adminCheck was resolved before Phase 2 and passed in to avoid a duplicate Graph call.
         // When phase1Result is null, auth failed entirely — the message must reflect that, not imply
@@ -549,7 +555,7 @@ internal static class BatchPermissionsOrchestrator
         logger.LogInformation("Opening browser for Microsoft Graph admin consent...");
         logger.LogInformation(
             "If the browser does not open automatically, navigate to this URL: {ConsentUrl}", consentUrl);
-        BrowserHelper.TryOpenUrl(consentUrl, logger);
+        BrowserHelper.TryOpenUrl(consentUrl!, logger);
 
         bool consentGranted;
         if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))

@@ -460,8 +460,8 @@ public class PermissionsSubcommandTests
             config,
             false);
 
-        result.Should().BeTrue(
-            because: "McpServersMetadata.Read.All is always included even when the ToolingManifest is missing, so the method proceeds to configure permissions and returns true (pending admin consent)");
+        result.Should().BeFalse(
+            because: "MCP has no Graph scopes, so the consent check runs against the mocked Graph service which has no oauth2PermissionGrants — grants are not present and admin action is required, so the method correctly returns false");
     }
 
     #endregion

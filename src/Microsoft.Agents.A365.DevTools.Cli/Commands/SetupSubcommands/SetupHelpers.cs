@@ -165,7 +165,7 @@ internal static class SetupHelpers
         if (results.BlueprintCreated)
         {
             var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
+            logger.LogInformation("  Agent blueprint {Status}  '{DisplayName}' (ID: {BlueprintId})", status, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
         }
         if (results.BatchPermissionsPhase2Completed)
         {

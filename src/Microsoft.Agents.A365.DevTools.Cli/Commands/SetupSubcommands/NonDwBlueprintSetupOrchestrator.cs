@@ -196,6 +196,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Results.BlueprintCreated = true;
                 ctx.Results.BlueprintAlreadyExisted = true;
                 ctx.Results.BlueprintId = ctx.Config.AgentBlueprintId;
+                ctx.Results.BlueprintDisplayName = ctx.Config.AgentBlueprintDisplayName;
                 ctx.Results.BatchPermissionsPhase2Completed = true;
                 ctx.Results.AdminConsentGranted = true;
                 // Still check and prompt for consent even when skipping other steps — consent

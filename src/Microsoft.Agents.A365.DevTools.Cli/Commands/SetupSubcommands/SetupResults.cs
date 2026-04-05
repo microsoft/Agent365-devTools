@@ -11,6 +11,7 @@ public class SetupResults
     public bool InfrastructureCreated { get; set; }
     public bool BlueprintCreated { get; set; }
     public string? BlueprintId { get; set; }
+    public string? BlueprintDisplayName { get; set; }
     public bool McpPermissionsConfigured { get; set; }
     public bool BotApiPermissionsConfigured { get; set; }
     public bool MessagingEndpointRegistered { get; set; }

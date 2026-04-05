@@ -520,6 +520,7 @@ internal static class AllSubcommand
                 ctx.Config = await ctx.ConfigService.LoadAsync(fullConfigPath);
             }
             ctx.Results.BlueprintId = ctx.Config.AgentBlueprintId;
+            ctx.Results.BlueprintDisplayName = ctx.Config.AgentBlueprintDisplayName;
 
             // Validate blueprint ID was properly saved
             if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
