@@ -209,7 +209,8 @@ internal static class SetupHelpers
             {
                 actionCount++;
                 logger.LogInformation("  {N}. OAuth2 grants: a Global Administrator must run:", actionCount);
-                logger.LogInformation("     a365 setup admin --config-dir \"<path-to-config-folder>\"");
+                var adminCmdBlueprintId = results.BlueprintId ?? "<blueprint-id>";
+                logger.LogInformation("     a365 setup admin --blueprint-id {BlueprintId}", adminCmdBlueprintId);
                 var consentUrl = !string.IsNullOrWhiteSpace(results.CombinedConsentUrl)
                     ? results.CombinedConsentUrl
                     : results.AdminConsentUrl;

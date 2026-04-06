@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
@@ -43,23 +44,24 @@ internal static class AdminSubcommand
         var command = new Command(
             "admin",
             "Complete OAuth2 permission grants that require Global Administrator.\n\n" +
-            "Run this after 'a365 setup all' has been executed by an Agent ID Admin or Developer.\n" +
-            "Point --config-dir at the folder containing the agent's a365.config.json and\n" +
-            "a365.generated.config.json files.\n\n" +
-            "The permission set is auto-detected from the configuration:\n" +
-            "  - DW blueprint (aiTeammate=true):    Graph + A365 Tools + Bot API + Observability + Power Platform\n" +
-            "  - Non-DW blueprint (aiTeammate=false): Graph + A365 Tools only\n\n" +
-            "For non-DW blueprint flows, this command also attempts agent instance registration\n" +
-            "if not yet done. That step requires 'Agent Registry Administrator' role (separate\n" +
-            "from Global Administrator). If the running account lacks that role, the OAuth2\n" +
-            "grants still complete and a warning is printed for the remaining step.\n\n" +
+            "Run this after 'a365 setup all' has been executed by an Agent ID Admin or Developer.\n\n" +
+            "Two modes:\n" +
+            "  --blueprint-id <guid>   Config-free. Pass the blueprint ID shown in 'a365 setup all' output.\n" +
+            "                          Creates Observability API and Power Platform API grants only.\n" +
+            "                          Tenant is auto-detected from 'az account show'.\n" +
+            "  --config-dir <path>     Full mode. Loads config files and creates grants for all APIs\n" +
+            "                          configured in a365.config.json.\n\n" +
             "Required permissions:\n" +
             "  - Global Administrator (for OAuth2 grants)\n" +
             "  - Agent Registry Administrator (for non-DW agent instance registration — optional)\n\n" +
             "Typical handoff workflow:\n" +
-            "  1. Agent ID Admin runs: a365 setup all\n" +
-            "  2. Agent ID Admin shares the config folder with a Global Administrator\n" +
-            "  3. Global Admin runs:   a365 setup admin --config-dir \"<path-to-config-folder>\"");
+            "  1. Agent ID Developer runs: a365 setup all --agent-name <name>\n" +
+            "  2. Global Admin runs:       a365 setup admin --blueprint-id <blueprint-id from output>");
+
+        var blueprintIdOption = new Option<string?>(
+            ["--blueprint-id", "-id"],
+            description: "Blueprint app ID (client ID). Config-free mode: skips loading config files.\n" +
+                         "Use the ID shown in the 'a365 setup all' output. Tenant is auto-detected from 'az account show'.");
 
         var configDirOption = new Option<DirectoryInfo>(
             ["--config-dir", "-d"],
@@ -83,6 +85,7 @@ internal static class AdminSubcommand
             ["--yes", "-y"],
             description: "Skip confirmation prompt and proceed automatically");
 
+        command.AddOption(blueprintIdOption);
         command.AddOption(configDirOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
@@ -91,6 +94,7 @@ internal static class AdminSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext ctx) =>
         {
+            var blueprintId      = ctx.ParseResult.GetValueForOption(blueprintIdOption);
             var configDir        = ctx.ParseResult.GetValueForOption(configDirOption)!;
             var dryRun           = ctx.ParseResult.GetValueForOption(dryRunOption);
             var skipRequirements = ctx.ParseResult.GetValueForOption(skipRequirementsOption);
@@ -105,16 +109,27 @@ internal static class AdminSubcommand
                 logger.LogInformation("DRY RUN: Admin Permission Grants");
                 logger.LogInformation("This would execute the following operations:");
                 logger.LogInformation("");
-                if (!skipRequirements)
-                    logger.LogInformation("  0. Validate prerequisites");
+                if (!string.IsNullOrWhiteSpace(blueprintId))
+                {
+                    logger.LogInformation("  Mode: config-free (--blueprint-id)");
+                    logger.LogInformation("  Blueprint ID: {BlueprintId}", blueprintId);
+                    logger.LogInformation("  1. Detect tenant from 'az account show'");
+                    logger.LogInformation("  2. Resolve blueprint and resource service principals");
+                    logger.LogInformation("  3. Create AllPrincipals OAuth2 grants for Observability API and Power Platform API");
+                }
                 else
-                    logger.LogInformation("  0. Skip: Requirements validation (--skip-requirements flag used)");
-                logger.LogInformation("  1. Load configuration from: {ConfigDir}", configDir.FullName);
-                logger.LogInformation("  2. Resolve blueprint and resource service principals");
-                logger.LogInformation("  3. Create AllPrincipals OAuth2 grants (resource set auto-detected from configuration)");
-                logger.LogInformation("  4. [Non-DW only] Attempt agent instance registration if not yet done");
-                logger.LogInformation("     Requires 'Agent Registry Administrator' role — separate from Global Administrator.");
-                logger.LogInformation("     If this account does not have that role, step 4 is skipped with a warning.");
+                {
+                    if (!skipRequirements)
+                        logger.LogInformation("  0. Validate prerequisites");
+                    else
+                        logger.LogInformation("  0. Skip: Requirements validation (--skip-requirements flag used)");
+                    logger.LogInformation("  1. Load configuration from: {ConfigDir}", configDir.FullName);
+                    logger.LogInformation("  2. Resolve blueprint and resource service principals");
+                    logger.LogInformation("  3. Create AllPrincipals OAuth2 grants (resource set auto-detected from configuration)");
+                    logger.LogInformation("  4. [Non-DW only] Attempt agent instance registration if not yet done");
+                    logger.LogInformation("     Requires 'Agent Registry Administrator' role.");
+                    logger.LogInformation("     If this account does not have that role, step 4 is skipped with a warning.");
+                }
                 logger.LogInformation("No actual changes will be made.");
                 return;
             }
@@ -123,84 +138,116 @@ internal static class AdminSubcommand
 
             try
             {
-                var configPath = Path.Combine(configDir.FullName, "a365.config.json");
-                if (!File.Exists(configPath))
+                Agent365Config setupConfig;
+                List<ResourcePermissionSpec> specs;
+                bool isBlueprintIdMode = !string.IsNullOrWhiteSpace(blueprintId);
+
+                if (isBlueprintIdMode)
                 {
-                    logger.LogError(
-                        "Configuration file not found: {ConfigPath}",
-                        configPath);
-                    logger.LogError(
-                        "Ensure the Agent ID Admin has run 'a365 setup all' and shared the config folder.");
-                    ExceptionHandler.ExitWithCleanup(1);
-                    return;
-                }
-
-                var setupConfig = await configService.LoadAsync(configPath);
-
-                if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-                    graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-
-                if (!skipRequirements)
-                {
-                    var checks = GetChecks(authValidator);
-                    try
+                    // Config-free path: admin received only the blueprint ID from the developer.
+                    // Detect tenant from az account; grant Observability + Power Platform only.
+                    var tenantId = await TenantDetectionHelper.DetectTenantIdAsync(null, logger);
+                    if (string.IsNullOrWhiteSpace(tenantId))
                     {
-                        await RequirementsSubcommand.RunChecksOrExitAsync(
-                            checks, setupConfig, logger, ct);
-                    }
-                    catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
-                    {
-                        logger.LogError("Requirements check failed: {Message}", reqEx.Message);
-                        logger.LogDebug(reqEx, "Requirements check exception details");
-                        logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
+                        logger.LogError("Could not detect tenant ID. Run 'az login' and ensure an account is selected.");
                         ExceptionHandler.ExitWithCleanup(1);
+                        return;
                     }
+
+                    // Resolve the well-known CLI client app so Graph auth uses delegated permissions.
+                    // FindApplicationByDisplayNameAsync uses the default (az CLI) token path and
+                    // does not require CustomClientAppId to be set beforehand.
+                    var clientAppId = await graphApiService.FindApplicationByDisplayNameAsync(
+                        tenantId, AuthenticationConstants.WellKnownClientAppDisplayName, ct);
+                    if (!string.IsNullOrWhiteSpace(clientAppId))
+                        graphApiService.CustomClientAppId = clientAppId;
+
+                    setupConfig = new Agent365Config { TenantId = tenantId, AgentBlueprintId = blueprintId };
+                    specs = SetupHelpers.GetNonDwFixedApiPermissionSpecs(setInheritable: false).ToList();
                 }
-
-                if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+                else
                 {
-                    logger.LogError(
-                        "AgentBlueprintId is missing from the generated config. " +
-                        "Ensure 'a365 setup all' completed blueprint creation before running this command.");
-                    ExceptionHandler.ExitWithCleanup(1);
-                    return;
-                }
-
-                // Build the spec list using dynamic config values (same for both DW and non-DW).
-                var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
-                var mcpManifestPath = Path.Combine(
-                    setupConfig.DeploymentProjectPath ?? string.Empty,
-                    McpConstants.ToolingManifestFileName);
-                var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
-
-                var specs = new List<ResourcePermissionSpec>
-                {
-                    new ResourcePermissionSpec(
-                        AuthenticationConstants.MicrosoftGraphResourceAppId,
-                        "Microsoft Graph",
-                        setupConfig.AgentApplicationScopes.ToArray(),
-                        SetInheritable: false),
-                    new ResourcePermissionSpec(
-                        mcpResourceAppId,
-                        "Agent 365 Tools",
-                        mcpScopes,
-                        SetInheritable: false),
-                };
-                specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
-
-                foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-                {
-                    var (isValid, _) = customPerm.Validate();
-                    if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+                    // Config-dir path: load full config from disk.
+                    var configPath = Path.Combine(configDir.FullName, "a365.config.json");
+                    if (!File.Exists(configPath))
                     {
-                        var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                            ? customPerm.ResourceAppId
-                            : customPerm.ResourceName;
-                        specs.Add(new ResourcePermissionSpec(
-                            customPerm.ResourceAppId,
-                            resourceName,
-                            customPerm.Scopes.ToArray(),
-                            SetInheritable: false));
+                        logger.LogError(
+                            "Configuration file not found: {ConfigPath}",
+                            configPath);
+                        logger.LogError(
+                            "Ensure the Agent ID Admin has run 'a365 setup all' and shared the config folder, " +
+                            "or pass --blueprint-id to skip config file loading.");
+                        ExceptionHandler.ExitWithCleanup(1);
+                        return;
+                    }
+
+                    setupConfig = await configService.LoadAsync(configPath);
+
+                    if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+                        graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+
+                    if (!skipRequirements)
+                    {
+                        var checks = GetChecks(authValidator);
+                        try
+                        {
+                            await RequirementsSubcommand.RunChecksOrExitAsync(
+                                checks, setupConfig, logger, ct);
+                        }
+                        catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
+                        {
+                            logger.LogError("Requirements check failed: {Message}", reqEx.Message);
+                            logger.LogDebug(reqEx, "Requirements check exception details");
+                            logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
+                            ExceptionHandler.ExitWithCleanup(1);
+                        }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+                    {
+                        logger.LogError(
+                            "AgentBlueprintId is missing from the generated config. " +
+                            "Ensure 'a365 setup all' completed blueprint creation before running this command.");
+                        ExceptionHandler.ExitWithCleanup(1);
+                        return;
+                    }
+
+                    // Build the spec list using dynamic config values.
+                    var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                    var mcpManifestPath = Path.Combine(
+                        setupConfig.DeploymentProjectPath ?? string.Empty,
+                        McpConstants.ToolingManifestFileName);
+                    var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
+
+                    specs = new List<ResourcePermissionSpec>
+                    {
+                        new ResourcePermissionSpec(
+                            AuthenticationConstants.MicrosoftGraphResourceAppId,
+                            "Microsoft Graph",
+                            setupConfig.AgentApplicationScopes.ToArray(),
+                            SetInheritable: false),
+                        new ResourcePermissionSpec(
+                            mcpResourceAppId,
+                            "Agent 365 Tools",
+                            mcpScopes,
+                            SetInheritable: false),
+                    };
+                    specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
+
+                    foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+                    {
+                        var (isValid, _) = customPerm.Validate();
+                        if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+                        {
+                            var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                                ? customPerm.ResourceAppId
+                                : customPerm.ResourceName;
+                            specs.Add(new ResourcePermissionSpec(
+                                customPerm.ResourceAppId,
+                                resourceName,
+                                customPerm.Scopes.ToArray(),
+                                SetInheritable: false));
+                        }
                     }
                 }
 
@@ -219,8 +266,6 @@ internal static class AdminSubcommand
 
                 logger.LogInformation("");
                 logger.LogInformation("Running admin permission grants... (TraceId: {TraceId})", correlationId);
-                if (skipRequirements)
-                    logger.LogInformation("NOTE: Requirements validation skipped (--skip-requirements flag used)");
 
                 (bool grantsConfigured, string? blueprintSpObjectId) =
                     await BatchPermissionsOrchestrator.GrantAdminPermissionsAsync(
@@ -231,10 +276,10 @@ internal static class AdminSubcommand
 
                 setupResults.AdminConsentGranted = grantsConfigured;
 
-                // For non-DW blueprint flow: also attempt agent instance registration if not yet done.
-                // This requires 'Agent Registry Administrator' role � separate from Global Administrator.
+                // Agent instance registration: config-dir path only — display name not available in blueprint-id mode.
+                // This requires 'Agent Registry Administrator' role —� separate from Global Administrator.
                 // The admin running this command may or may not hold that role. We attempt it and report.
-                if (setupConfig.IsNonDwBlueprint)
+                if (!isBlueprintIdMode && setupConfig.IsNonDwBlueprint)
                 {
                     if (!string.IsNullOrWhiteSpace(setupConfig.AgentInstanceId))
                     {
