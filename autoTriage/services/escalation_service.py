@@ -69,10 +69,14 @@ class EscalationService:
             return {'lead': [], 'manager': None}
         return self.team_config.escalation_chain
 
+    def is_already_escalated(self, issue) -> bool:
+        """Return True if the issue already carries the 'escalated' label."""
+        return any(label.name.lower() == "escalated" for label in issue.labels)
+
     def check_issue_sla(self, issue) -> EscalationResult:
         """Check if a single issue has breached its SLA."""
         priority = self.get_issue_priority(issue)
-        
+
         if not priority:
             # No priority label, can't check SLA
             return EscalationResult(
@@ -84,6 +88,24 @@ class EscalationService:
                 sla_hours=0,
                 sla_breached=False,
                 escalation_action=None,
+                escalated_to=[]
+            )
+
+        if self.is_already_escalated(issue):
+            # Issue was already escalated in a previous run; do not re-escalate to avoid
+            # repeated noise. Surfaced in reports as "already_escalated" for visibility.
+            # The escalated label must be manually removed once the issue is resolved or
+            # handed off, at which point normal SLA tracking resumes.
+            sla_hours = self.get_sla_hours(priority)
+            return EscalationResult(
+                issue_number=issue.number,
+                issue_title=issue.title,
+                priority=priority,
+                assigned_to=[a.login for a in issue.assignees],
+                hours_open=self.calculate_hours_open(issue),
+                sla_hours=sla_hours,
+                sla_breached=False,
+                escalation_action="already_escalated",
                 escalated_to=[]
             )
 
@@ -232,17 +254,20 @@ class EscalationService:
             Dict with summary and results
         """
         logger.info(f"Running SLA escalation check for {owner}/{repo}")
-        
-        breached_issues = self.get_breached_issues(owner, repo)
-        
+
+        all_issues = self.check_all_open_issues(owner, repo)
+        breached_issues = [r for r in all_issues if r.sla_breached]
+        already_escalated_issues = [r for r in all_issues if r.escalation_action == "already_escalated"]
+
         results = {
             "repository": f"{owner}/{repo}",
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "total_breached": len(breached_issues),
+            "total_already_escalated": len(already_escalated_issues),
             "apply_mode": apply,
             "issues": []
         }
-        
+
         for result in breached_issues:
             issue_info = {
                 "number": result.issue_number,
@@ -265,5 +290,18 @@ class EscalationService:
                     logger.warning(f"Failed to apply escalation to issue #{result.issue_number}")
             
             results["issues"].append(issue_info)
-        
+
+        for result in already_escalated_issues:
+            results["issues"].append({
+                "number": result.issue_number,
+                "title": result.issue_title,
+                "priority": result.priority,
+                "hours_open": result.hours_open,
+                "sla_hours": result.sla_hours,
+                "assigned_to": result.assigned_to,
+                "escalation_action": "already_escalated",
+                "escalated_to": [],
+                "applied": False
+            })
+
         return results

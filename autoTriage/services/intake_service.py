@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from services.github_service import GitHubService, MAX_CONFIG_FILES
 from services.llm_service import LlmService
-from utils.sanitise import MAX_ISSUE_BODY_LENGTH, sanitise_exception as _sanitise_exception, sanitise_user_content as _sanitise_user_content
+from utils.sanitise import MAX_ISSUE_BODY_LENGTH, MAX_ISSUE_TITLE_LENGTH, sanitise_exception as _sanitise_exception, sanitise_user_content as _sanitise_user_content
 from services.config_parser import ConfigParser
 from services.teams_service import TeamsService
 from services.copilot_service import CopilotService
@@ -384,8 +384,11 @@ This issue has been automatically analyzed and triaged.
                 if copilot_service.is_copilot_enabled(owner, repo):
                     # Fetch the actual issue to get title and body for Copilot context
                     issue = github_service.get_issue(owner, repo, classification.issue_number)
-                    issue_title = issue.title if issue else f"Issue #{classification.issue_number}"
-                    # Sanitise and truncate body before passing to Copilot instructions
+                    issue_title = (
+                        _sanitise_user_content(issue.title, max_length=MAX_ISSUE_TITLE_LENGTH)
+                        if issue else f"Issue #{classification.issue_number}"
+                    )
+                    # Sanitise and truncate title and body before passing to Copilot instructions
                     # to prevent prompt injection via malicious issue content.
                     issue_body = ""
                     if issue and issue.body:
