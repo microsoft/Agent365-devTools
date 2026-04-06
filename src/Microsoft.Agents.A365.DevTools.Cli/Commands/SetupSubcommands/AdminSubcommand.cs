@@ -106,31 +106,24 @@ internal static class AdminSubcommand
 
             if (dryRun)
             {
-                logger.LogInformation("DRY RUN: Admin Permission Grants");
-                logger.LogInformation("This would execute the following operations:");
+                logger.LogInformation("Dry run: a365 setup admin --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("The following steps would be performed.");
                 logger.LogInformation("");
                 if (!string.IsNullOrWhiteSpace(blueprintId))
                 {
-                    logger.LogInformation("  Mode: config-free (--blueprint-id)");
-                    logger.LogInformation("  Blueprint ID: {BlueprintId}", blueprintId);
-                    logger.LogInformation("  1. Detect tenant from 'az account show'");
-                    logger.LogInformation("  2. Resolve blueprint and resource service principals");
-                    logger.LogInformation("  3. Create AllPrincipals OAuth2 grants for Observability API and Power Platform API");
+                    logger.LogInformation(SetupHelpers.DryRunRow(1, "Prerequisites") + "validate (az account show — tenant detection)");
+                    logger.LogInformation(SetupHelpers.DryRunRow(2, "Blueprint") + "resolve (service principal lookup for {BlueprintId})", blueprintId);
+                    logger.LogInformation(SetupHelpers.DryRunRow(3, "Permission Grants") + "grant tenant-wide for Observability API, Power Platform API");
                 }
                 else
                 {
-                    if (!skipRequirements)
-                        logger.LogInformation("  0. Validate prerequisites");
-                    else
-                        logger.LogInformation("  0. Skip: Requirements validation (--skip-requirements flag used)");
-                    logger.LogInformation("  1. Load configuration from: {ConfigDir}", configDir.FullName);
-                    logger.LogInformation("  2. Resolve blueprint and resource service principals");
-                    logger.LogInformation("  3. Create AllPrincipals OAuth2 grants (resource set auto-detected from configuration)");
-                    logger.LogInformation("  4. [Non-DW only] Attempt agent instance registration if not yet done");
-                    logger.LogInformation("     Requires 'Agent Registry Administrator' role.");
-                    logger.LogInformation("     If this account does not have that role, step 4 is skipped with a warning.");
+                    logger.LogInformation(SetupHelpers.DryRunRow(1, "Prerequisites") + (skipRequirements ? "skip (--skip-requirements)" : "validate"));
+                    logger.LogInformation(SetupHelpers.DryRunRow(2, "Blueprint") + "resolve from config: {ConfigDir}", configDir.FullName);
+                    logger.LogInformation(SetupHelpers.DryRunRow(3, "Permission Grants") + "grant tenant-wide (resource set from configuration)");
                 }
-                logger.LogInformation("No actual changes will be made.");
+                logger.LogInformation("");
+                logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
                 return;
             }
 
@@ -322,6 +315,16 @@ internal static class AdminSubcommand
                 }
 
                 SetupHelpers.DisplayAdminSetupSummary(setupResults, blueprintSpObjectId, logger);
+
+                // For autonomous/S2S agents, application-type permissions are needed once resource
+                // APIs publish app roles. Until then, the delegated grants above serve as a bridge.
+                if (isBlueprintIdMode)
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("Note: For autonomous/S2S agents, application-type permissions will be required once available.");
+                    logger.LogInformation("  Grant them in the Entra portal: App registrations > <blueprint-app> > API permissions > Grant admin consent");
+                    logger.LogInformation("  Microsoft Admin Center: https://admin.microsoft.com");
+                }
             }
             catch (Agent365Exception ex)
             {

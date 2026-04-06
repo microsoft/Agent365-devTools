@@ -143,6 +143,15 @@ public class SetupResults
     public string? AgentRegistrationDisplayName { get; set; }
 
 
+    /// <summary>Whether step 1 (Requirements validation) was skipped via --skip-requirements.</summary>
+    public bool PrerequisitesSkipped { get; set; }
+
+    /// <summary>Whether step 2 (Azure hosting) was skipped because no Azure deployment is configured.</summary>
+    public bool InfrastructureSkipped { get; set; }
+
+    /// <summary>Whether step 8 (Project settings) was written to appsettings.json.</summary>
+    public bool ProjectSettingsWritten { get; set; }
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
 

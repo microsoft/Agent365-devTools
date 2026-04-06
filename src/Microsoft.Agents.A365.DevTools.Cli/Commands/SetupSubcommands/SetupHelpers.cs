@@ -20,22 +20,22 @@ internal static class SetupHelpers
     // Shared by PrintDwSetupAllDryRunPlan (DW path) and NonDwBlueprintSetupOrchestrator.PrintDryRunPlan
     // (non-DW path) so the column width and blueprint-reuse wording stay in sync.
 
-    internal const int DryRunValCol = 24;
+    internal const int DryRunValCol = 30;
     internal static string DryRunRow(string label) => ("  " + label).PadRight(DryRunValCol);
+    internal static string DryRunRow(int step, string label) => $"  {step}. {label}".PadRight(DryRunValCol);
 
     /// <summary>
     /// Prints the six blueprint-reuse rows common to both DW and non-DW dry-run plans.
     /// Called when <c>AgentBlueprintId</c> is already present in config.
     /// </summary>
-    internal static void PrintDryRunBlueprintReuseRows(ILogger logger, string blueprintId)
+    internal static void PrintDryRunBlueprintReuseRows(ILogger logger, string blueprintId, int step = 3)
     {
         var sub = new string(' ', DryRunValCol);
-        logger.LogInformation(DryRunRow("Blueprint") + "already present in config — will be reused");
-        logger.LogInformation(sub + "ID: {BlueprintId}", blueprintId);
-        logger.LogInformation(sub + "Service principal will be verified or created");
-        logger.LogInformation(sub + "Client secret will be created (new secret)");
-        logger.LogInformation(sub + "Federated identity credential (FIC) will be verified or created");
-        logger.LogInformation(sub + "Managed identity will be verified or created");
+        logger.LogInformation(DryRunRow(step, "Blueprint") + "reuse (ID: {BlueprintId})", blueprintId);
+        logger.LogInformation(sub + "verify or create service principal");
+        logger.LogInformation(sub + "create client secret");
+        logger.LogInformation(sub + "verify or create federated identity credential (FIC)");
+        logger.LogInformation(sub + "verify or create managed identity");
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ internal static class SetupHelpers
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { ConfigConstants.ObservabilityApiAdminConsentScope },
+            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
             setInheritable),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
@@ -77,7 +77,7 @@ internal static class SetupHelpers
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { ConfigConstants.ObservabilityApiAdminConsentScope },
+            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
             setInheritable),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
@@ -147,7 +147,7 @@ internal static class SetupHelpers
     /// <summary>
     /// Display comprehensive setup summary showing what succeeded and what failed
     /// </summary>
-    public static void DisplaySetupSummary(SetupResults results, ILogger logger)
+    public static void DisplaySetupSummary(SetupResults results, ILogger logger, bool isDw = true)
     {
         logger.LogInformation("");
         logger.LogInformation("Setup Summary");
@@ -155,45 +155,52 @@ internal static class SetupHelpers
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
 
-        // Completed steps
-        logger.LogInformation("Completed Steps:");
-        if (results.InfrastructureCreated)
-        {
-            var status = results.InfrastructureAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  Infrastructure {Status}", status);
-        }
+        // ── Numbered step rows — mirrors the dry-run step list ─────────────────
+
+        // 1. Prerequisites
+        logger.LogInformation(DryRunRow(1, "Prerequisites") + (results.PrerequisitesSkipped ? "skipped" : "validated"));
+
+        // 2. Azure hosting
+        if (results.InfrastructureSkipped)
+            logger.LogInformation(DryRunRow(2, "Azure hosting") + "skipped");
+        else if (results.InfrastructureCreated)
+            logger.LogInformation(DryRunRow(2, "Azure hosting") + (results.InfrastructureAlreadyExisted ? "reused" : "provisioned"));
+
+        // 3. Blueprint
         if (results.BlueprintCreated)
         {
-            var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  Agent blueprint {Status}  '{DisplayName}' (ID: {BlueprintId})", status, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
-        }
-        if (results.BatchPermissionsPhase2Completed)
-        {
-            logger.LogInformation("  Inheritable permissions configured and verified");
-            if (results.AdminConsentGranted && !results.AgentIdentityPermissionsGranted)
-                logger.LogInformation("  OAuth2 grants configured (tenant-wide admin consent)");
-        }
-        if (results.AgentIdentityPermissionsGranted)
-            logger.LogInformation("  OAuth2 grants configured (developer-scoped consent for this account)");
-        if (results.MessagingEndpointRegistered)
-        {
-            var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  Messaging endpoint {Status}", status);
-        }
-        if (results.AgentIdentityCreated)
-        {
-            logger.LogInformation("  Agent identity: created '{DisplayName}' (ID: {AgentId})",
-                results.AgentIdentityDisplayName ?? "unknown",
-                results.AgentIdentityId ?? "unknown");
-        }
-        if (results.AgentInstanceRegistered)
-        {
-            logger.LogInformation("  Agent registration: registered '{DisplayName}' (ID: {InstanceId})",
-                results.AgentRegistrationDisplayName ?? "unknown",
-                results.AgentInstanceId ?? "unknown");
+            var bpStatus = results.BlueprintAlreadyExisted ? "reused" : "created";
+            logger.LogInformation(DryRunRow(3, "Blueprint") + "{Status}   '{Name}' (ID: {Id})",
+                bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
         }
 
-        // Action required — items that block progress but need user/admin action (not errors per se)
+        // 4. Inheritable Permissions
+        if (results.BatchPermissionsPhase1Completed)
+            logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configured");
+
+        // 5. Permission Grants
+        if (results.AgentIdentityPermissionsGranted)
+            logger.LogInformation(DryRunRow(5, "Permission Grants") + "ok (developer-scoped)");
+        else if (results.BatchPermissionsPhase2Completed)
+            logger.LogInformation(DryRunRow(5, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
+
+        // Non-DW: Agent identity (6) and Agent Registration (7)
+        if (!isDw)
+        {
+            if (results.AgentIdentityCreated)
+                logger.LogInformation(DryRunRow(6, "Agent identity") + "created   '{Name}' (ID: {Id})",
+                    results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
+
+            if (results.AgentInstanceRegistered)
+                logger.LogInformation(DryRunRow(7, "Agent Registration") + "registered   '{Name}' (ID: {Id})",
+                    results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
+        }
+
+        // Project settings (step 6 for DW, step 8 for non-DW)
+        if (results.ProjectSettingsWritten)
+            logger.LogInformation(DryRunRow(isDw ? 6 : 8, "Project settings") + "written");
+
+        // ── Action Required ────────────────────────────────────────────────────
         var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
         if (hasActionRequired)
         {
@@ -203,37 +210,39 @@ internal static class SetupHelpers
             if (results.ClientSecretManualActionRequired)
             {
                 actionCount++;
-                logger.LogInformation("  {N}. Client secret: create manually in the Entra portal for app {AppId}.", actionCount, results.BlueprintId ?? "<blueprint-app-id>");
+                logger.LogInformation("  {N}. Client secret — create manually in the Entra portal for app {AppId}.", actionCount, results.BlueprintId ?? "<blueprint-app-id>");
                 logger.LogInformation("     Add it to a365.generated.config.json as 'agentBlueprintClientSecret', then re-run setup.");
                 logger.LogInformation("     See: https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials");
             }
             if (pendingAdminAction)
             {
                 actionCount++;
-                logger.LogInformation("  {N}. OAuth2 grants: a Global Administrator must run:", actionCount);
+                logger.LogInformation("  {N}. Permission Grants — a Global Administrator must run:", actionCount);
                 var adminCmdBlueprintId = results.BlueprintId ?? "<blueprint-id>";
                 logger.LogInformation("     a365 setup admin --blueprint-id {BlueprintId}", adminCmdBlueprintId);
-                var consentUrl = !string.IsNullOrWhiteSpace(results.CombinedConsentUrl)
-                    ? results.CombinedConsentUrl
-                    : results.AdminConsentUrl;
-                if (!string.IsNullOrWhiteSpace(consentUrl))
+                if (isDw)
                 {
-                    logger.LogInformation("     Or share this URL with the administrator to grant consent via browser:");
-                    logger.LogInformation("       {ConsentUrl}", consentUrl);
+                    var consentUrl = !string.IsNullOrWhiteSpace(results.CombinedConsentUrl)
+                        ? results.CombinedConsentUrl
+                        : results.AdminConsentUrl;
+                    if (!string.IsNullOrWhiteSpace(consentUrl))
+                    {
+                        logger.LogInformation("     Or share this URL with the administrator to grant consent via browser:");
+                        logger.LogInformation("       {ConsentUrl}", consentUrl);
+                    }
                 }
             }
         }
 
-        // Failed steps
+        // ── Errors and Warnings ────────────────────────────────────────────────
         if (results.Errors.Count > 0)
         {
             logger.LogInformation("");
-            logger.LogInformation("Failed Steps:");
+            logger.LogInformation("Errors:");
             foreach (var error in results.Errors)
                 logger.LogError("  {Error}", error);
         }
 
-        // Warnings
         if (results.Warnings.Count > 0)
         {
             logger.LogInformation("");
@@ -254,7 +263,7 @@ internal static class SetupHelpers
         else
             logger.LogInformation("Setup completed successfully");
 
-        // Next steps — one hint per actionable item, AZ CLI style (no verbose Option A/B blocks)
+        // Next steps
         var hasNextSteps = results.HasErrors
             || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
             || !string.IsNullOrEmpty(results.FederatedCredentialError);
@@ -264,9 +273,7 @@ internal static class SetupHelpers
             var nextStepLines = new List<Action>();
 
             if ((!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
-            {
                 nextStepLines.Add(() => logger.LogInformation("  To retry permissions: a365 setup all"));
-            }
 
             if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
                 nextStepLines.Add(() => logger.LogInformation("  To retry Graph inheritable permissions: a365 setup blueprint"));
@@ -384,20 +391,23 @@ internal static class SetupHelpers
                 urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
 
             urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
+            urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
         }
 
-        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
     }
 
     /// <summary>
-    /// Builds a single combined /v2.0/adminconsent URL. DW path covers all five required
-    /// resources (Graph, MCP, Messaging Bot API, Observability API, Power Platform API).
-    /// Non-DW path covers only Observability API and Power Platform API — controlled by
-    /// <paramref name="isDw"/>. All scope tokens are joined with %20 into one scope parameter,
-    /// allowing a Global Administrator to grant consent with a single browser visit.
+    /// Builds a single combined /v2.0/adminconsent URL for the DW path only.
+    /// Covers Graph, MCP, Messaging Bot API, Observability API, and Power Platform API.
+    ///
+    /// Non-DW path: Observability API and Power Platform API are NOT included here.
+    /// The /v2.0/adminconsent endpoint requires scopes to be registered as
+    /// oauth2PermissionScopes on the resource SP in the tenant. These resource SPs are
+    /// not guaranteed to exist in all tenants, causing AADSTS650053. For non-DW,
+    /// admin consent for these APIs is handled programmatically via 'a365 setup admin'.
     /// </summary>
     internal static string BuildCombinedConsentUrl(
         string tenantId,
@@ -414,8 +424,8 @@ internal static class SetupHelpers
             foreach (var s in mcpScopes)
                 allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
             allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
+            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
         }
-        allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
     }
@@ -457,17 +467,20 @@ internal static class SetupHelpers
     {
         logger.LogInformation("");
         logger.LogInformation("Admin Setup Summary");
-        logger.LogInformation("Completed Steps:");
+        logger.LogInformation("");
 
-        if (results.AdminConsentGranted)
-        {
-            logger.LogInformation("  OAuth2 grants configured (tenant-wide)");
-        }
+        // Numbered step rows — mirrors the setup admin dry-run
+        logger.LogInformation(DryRunRow(1, "Prerequisites") + "ok");
+        if (!string.IsNullOrWhiteSpace(blueprintSpObjectId))
+            logger.LogInformation(DryRunRow(2, "Blueprint") + "resolved   (SP: {SpObjectId})", blueprintSpObjectId);
+        else
+            logger.LogInformation(DryRunRow(2, "Blueprint") + "resolved");
+        logger.LogInformation(DryRunRow(3, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "failed"));
 
         if (results.Errors.Count > 0)
         {
             logger.LogInformation("");
-            logger.LogInformation("Failed Steps:");
+            logger.LogInformation("Errors:");
             foreach (var error in results.Errors)
                 logger.LogError("  {Error}", error);
         }
@@ -480,12 +493,11 @@ internal static class SetupHelpers
                 logger.LogWarning("  {Warning}", warning);
         }
 
-        logger.LogInformation("");
-
         if (!string.IsNullOrWhiteSpace(blueprintSpObjectId))
         {
-            logger.LogInformation("Verify OAuth2 grants in Graph Explorer:");
-            logger.LogInformation("  GET https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{BlueprintSpObjectId}'", blueprintSpObjectId);
+            logger.LogInformation("");
+            logger.LogInformation("Verify grants:");
+            logger.LogInformation("  GET https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{SpObjectId}'", blueprintSpObjectId);
         }
 
         logger.LogInformation("");
@@ -516,66 +528,40 @@ internal static class SetupHelpers
         logger.LogInformation("The following steps would be performed.");
         logger.LogInformation("");
 
-        // Prerequisites
+        // 1. Prerequisites
         if (skipRequirements)
-            logger.LogInformation(DryRunRow("Prerequisites") + "will be skipped (--skip-requirements flag used)");
+            logger.LogInformation(DryRunRow(1, "Prerequisites") + "skip (--skip-requirements)");
         else
-            logger.LogInformation(DryRunRow("Prerequisites") + "will be validated (PowerShell modules, Azure CLI)");
+            logger.LogInformation(DryRunRow(1, "Prerequisites") + "validate (PowerShell modules, Azure CLI)");
 
-        // Azure hosting
+        // 2. Azure hosting
         if (skipInfrastructure)
-            logger.LogInformation(DryRunRow("Azure hosting") + "will be skipped (--skip-infrastructure flag used)");
+            logger.LogInformation(DryRunRow(2, "Azure hosting") + "skip — no Azure deployment configured");
         else
-            logger.LogInformation(DryRunRow("Azure hosting") + "will be provisioned (Resource Group, App Service Plan, Web App)");
+            logger.LogInformation(DryRunRow(2, "Azure hosting") + "provision (Resource Group, App Service Plan, Web App)");
 
-        // Blueprint — context-aware when config is available
+        // 3. Blueprint — context-aware when config is available
         if (!string.IsNullOrWhiteSpace(config?.AgentBlueprintId))
         {
-            PrintDryRunBlueprintReuseRows(logger, config.AgentBlueprintId!);
+            PrintDryRunBlueprintReuseRows(logger, config.AgentBlueprintId!, step: 3);
         }
         else
         {
-            logger.LogInformation(DryRunRow("Blueprint") + "will be created or reused if already exists");
-            logger.LogInformation(sub + "Service principal will be created");
-            logger.LogInformation(sub + "Client secret will be created");
-            logger.LogInformation(sub + "Federated identity credential (FIC) will be created");
-            logger.LogInformation(sub + "Managed identity will be created");
+            logger.LogInformation(DryRunRow(3, "Blueprint") + "create (multi-tenant)");
+            logger.LogInformation(sub + "create service principal");
+            logger.LogInformation(sub + "create client secret");
+            logger.LogInformation(sub + "create federated identity credential (FIC)");
+            logger.LogInformation(sub + "create managed identity");
         }
 
-        // Permissions
-        logger.LogInformation(DryRunRow("Blueprint Permissions") + "will be granted access to Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Power Platform API");
+        // 4. Inheritable Permissions
+        logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configure for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Power Platform API");
 
-        // Admin consent
-        logger.LogInformation(DryRunRow("Admin consent") + "will require Global Administrator approval — URL will be printed");
+        // 5. Permission Grants
+        logger.LogInformation(DryRunRow(5, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id <blueprint-id>");
 
-        // Agent identity — context-aware when config is available
-        if (!string.IsNullOrWhiteSpace(config?.AgenticAppId))
-            logger.LogInformation(DryRunRow("Agent identity") + "already registered — will be reused (ID: {AgentId})", config.AgenticAppId);
-        else
-            logger.LogInformation(DryRunRow("Agent identity") + "will be created or reused if already exists");
-
-        // Agent Registration — context-aware when config is available
-        if (!string.IsNullOrWhiteSpace(config?.AgentRegistrationId))
-        {
-            logger.LogInformation(DryRunRow("Agent Registration") + "already registered — will be reused (ID: {RegistrationId})", config.AgentRegistrationId);
-        }
-        else
-        {
-            var regDisplayName = config?.AgentIdentityDisplayName;
-            if (!string.IsNullOrWhiteSpace(regDisplayName))
-            {
-                if (regDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
-                    regDisplayName = regDisplayName[..^" Identity".Length] + " Agent";
-                logger.LogInformation(DryRunRow("Agent Registration") + "will be added to the Agent Registry: {DisplayName}", regDisplayName);
-            }
-            else
-            {
-                logger.LogInformation(DryRunRow("Agent Registration") + "will be added to the Agent Registry");
-            }
-        }
-
-        // Project settings
-        logger.LogInformation(DryRunRow("Project settings") + "ServiceConnection, TokenValidation, and Observability settings will be written to appsettings.json");
+        // 6. Project settings (DW has no Agent identity or Agent Registration steps)
+        logger.LogInformation(DryRunRow(6, "Project settings") + "write to appsettings.json");
 
         logger.LogInformation("");
         logger.LogInformation("No changes will be made. Run without --dry-run to apply.");

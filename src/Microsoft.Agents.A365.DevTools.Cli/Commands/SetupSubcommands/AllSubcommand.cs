@@ -321,6 +321,9 @@ internal static class AllSubcommand
                     graphApiService.CustomClientAppId = setupConfig.ClientAppId;
                 }
 
+                setupResults.PrerequisitesSkipped = skipRequirements;
+                setupResults.InfrastructureSkipped = skipInfrastructure || !setupConfig.NeedDeployment;
+
                 // Validate all prerequisites in one pass
                 if (!skipRequirements)
                 {
@@ -397,6 +400,7 @@ internal static class AllSubcommand
                 await ProjectSettingsSyncHelper.ExecuteAsync(
                     ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
                     ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
+                setupResults.ProjectSettingsWritten = true;
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
