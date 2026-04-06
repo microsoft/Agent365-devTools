@@ -213,6 +213,28 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Returns the set of delegated scope value names (e.g. "Agent365.Observability.OtelWrite")
+    /// that are published by the service principal's resource app manifest.
+    /// Used to filter permission grant calls to only include scopes that exist in the tenant.
+    /// Returns an empty set if the call fails or the SP exposes no delegated scopes.
+    /// </summary>
+    public virtual async Task<HashSet<string>> GetAvailableScopeNamesAsync(
+        string tenantId, string spObjectId, CancellationToken ct = default)
+    {
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/servicePrincipals/{spObjectId}?$select=oauth2PermissionScopes", ct);
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (doc?.RootElement.TryGetProperty("oauth2PermissionScopes", out var arr) == true)
+        {
+            foreach (var scope in arr.EnumerateArray())
+            {
+                if (scope.TryGetProperty("value", out var val) && val.GetString() is string name)
+                    result.Add(name);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Checks whether a service principal with the given object ID exists in the tenant.
     /// Replaces 'az ad sp show --id {principalId}' (~30s) with a Graph HTTP call (~200ms).
     /// Used for MSI propagation polling — returns true when the SP is visible in the tenant.
@@ -584,7 +606,8 @@ public class GraphApiService
         string resourceSpObjectId,
         IEnumerable<string> scopes,
         CancellationToken ct = default,
-        IEnumerable<string>? permissionGrantScopes = null)
+        IEnumerable<string>? permissionGrantScopes = null,
+        string? principalId = null)
     {
         var desiredScopeString = string.Join(' ', scopes);
 
@@ -592,9 +615,13 @@ public class GraphApiService
         string? existingId = null;
         string existingScopes = "";
 
+        var existingFilter = principalId is not null
+            ? $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}' and consentType eq 'Principal' and principalId eq '{principalId}'"
+            : $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'";
+
         using (var listDoc = await GraphGetAsync(
             tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
+            $"/v1.0/oauth2PermissionGrants?$filter={existingFilter}",
             ct,
             permissionGrantScopes))
         {
@@ -608,15 +635,11 @@ public class GraphApiService
 
         if (string.IsNullOrWhiteSpace(existingId))
         {
+            // Principal grants can be created by the developer for their own account.
             // AllPrincipals (tenant-wide) grants require Global Administrator.
-            // Only called from admin paths (setup admin or setup all run by GA).
-            var payload = new
-            {
-                clientId = clientSpObjectId,
-                consentType = "AllPrincipals",
-                resourceId = resourceSpObjectId,
-                scope = desiredScopeString
-            };
+            object payload = principalId is not null
+                ? new { clientId = clientSpObjectId, consentType = "Principal", principalId, resourceId = resourceSpObjectId, scope = desiredScopeString }
+                : new { clientId = clientSpObjectId, consentType = "AllPrincipals", resourceId = resourceSpObjectId, scope = desiredScopeString };
 
             _logger.LogDebug("Graph POST /v1.0/oauth2PermissionGrants body: {Body}", JsonSerializer.Serialize(payload));
 

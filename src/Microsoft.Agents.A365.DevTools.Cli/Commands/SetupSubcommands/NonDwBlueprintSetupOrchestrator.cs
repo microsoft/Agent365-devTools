@@ -185,6 +185,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogDebug("TraceId: {TraceId}", ctx.CorrelationId);
 
         List<ResourcePermissionSpec> specs = [];
+        bool blueprintAdminConsentGranted = false;
 
         try
         {
@@ -242,9 +243,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             specs = buildResult.specs;
             var mcpResourceAppId = buildResult.mcpResourceAppId;
 
-            await AllSubcommand.ExecuteBatchPermissionsStepAsync(
-                ctx, specs,
-                knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
+            await AllSubcommand.ExecuteBatchPermissionsStepAsync(ctx, specs, isDw: false);
+            blueprintAdminConsentGranted = ctx.Results.AdminConsentGranted;
 
             SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, graphScopes: [], mcpScopes: [], isDw: false);
 
@@ -271,7 +271,7 @@ internal static class NonDwBlueprintSetupOrchestrator
 
                 // Try delegated flow first (AgentIdentity.Create.All) — no client secret required.
                 // Requires Agent ID Administrator, Agent ID Developer, or Global Administrator role.
-                ctx.Logger.LogInformation("Creating agent identity (delegated flow)...");
+                ctx.Logger.LogInformation("Creating agent identity...");
                 var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
                     ctx.Config.TenantId!,
                     ctx.Config.AgentBlueprintId!,
@@ -281,7 +281,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Fall back to blueprint client credentials if delegated flow failed and secret is available.
                 if (agentId is null && !string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
                 {
-                    ctx.Logger.LogInformation("Delegated flow failed — retrying via blueprint client credentials...");
+                    ctx.Logger.LogInformation("Retrying via blueprint client credentials...");
 
                     var clientSecret = SecretProtectionHelper.UnprotectSecret(
                         ctx.Config.AgentBlueprintClientSecret,
@@ -318,17 +318,13 @@ internal static class NonDwBlueprintSetupOrchestrator
                 }
             }
 
-            // Step 5a: (Disabled) Grant blueprint permissions to the Agent Identity SP.
-            // After admin consent is granted tenant-wide (AllPrincipals), the agent identity inherits
-            // the blueprint's permission grants automatically. Explicit oauth2PermissionGrant calls
-            // fail for non-admin developers (403) and are redundant for admins. Keeping code for reference.
-            // TODO: Remove once confirmed unnecessary across all environments.
-            //
-            // if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
-            // {
-            //     ctx.Logger.LogInformation("");
-            //     await GrantAgentIdentityPermissionsAsync(ctx, specs);
-            // }
+            // Step 5a: Grant permissions to the agent identity (non-admin path only).
+            // If the batch permissions step already granted AllPrincipals admin consent, skip this.
+            if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId) && !blueprintAdminConsentGranted)
+            {
+                ctx.Logger.LogInformation("");
+                await GrantAgentIdentityPermissionsAsync(ctx, specs);
+            }
 
             // Step 6: Register Agent via AgentX Agent Registration API V2.
 
@@ -385,9 +381,11 @@ internal static class NonDwBlueprintSetupOrchestrator
             ctx.Logger.LogInformation("Updating project settings...");
             using (ctx.Logger.Indent())
             {
+                // Pass ctx.Config directly so AgentDescription and AgentIdentityDisplayName
+                // derived from --agent-name are written rather than stale values from disk.
                 await ProjectSettingsSyncHelper.ExecuteAsync(
-                    ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
-                    ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
+                    ctx.ConfigFile.FullName, ctx.Config,
+                    ctx.PlatformDetector, ctx.Logger);
             }
         }
         catch (Agent365Exception ex)
@@ -438,6 +436,22 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         ctx.Logger.LogInformation("Granting permissions to agent identity ({AgentId})...", ctx.Config.AgenticAppId);
 
+        // Resolve the current developer's object ID so we can create Principal-scoped grants
+        // that don't require GA or Cloud App Admin.
+        var currentUserObjectId = await ctx.GraphApiService.GetCurrentUserObjectIdAsync(
+            ctx.Config.TenantId!, ctx.CancellationToken);
+
+        if (string.IsNullOrWhiteSpace(currentUserObjectId))
+        {
+            ctx.Logger.LogWarning(
+                "Could not resolve current user object ID. " +
+                "Permissions to the agent identity must be granted manually in the Entra portal.");
+            ctx.Results.Warnings.Add(
+                "Could not resolve current user object ID for Principal-scoped permission grants. " +
+                "Grant them manually in the Entra portal.");
+            return;
+        }
+
         var agentIdentitySpObjectId = await ctx.GraphApiService.EnsureServicePrincipalForAppIdAsync(
             ctx.Config.TenantId!,
             ctx.Config.AgenticAppId!,
@@ -473,23 +487,42 @@ internal static class NonDwBlueprintSetupOrchestrator
                 continue;
             }
 
+            // Query the resource SP's published scopes and filter out any that haven't
+            // been rolled out to this tenant yet. Attempting to grant a non-existent scope
+            // returns Request_BadRequest from Graph, which would surface as a misleading warning.
+            var availableScopes = await ctx.GraphApiService.GetAvailableScopeNamesAsync(
+                ctx.Config.TenantId!, resourceSpObjectId, ctx.CancellationToken);
+
+            var scopesToGrant = availableScopes.Count > 0
+                ? spec.Scopes.Where(s => availableScopes.Contains(s)).ToArray()
+                : spec.Scopes; // if the query failed, try all and let Graph surface any real error
+
+            if (scopesToGrant.Length == 0)
+            {
+                ctx.Logger.LogInformation(
+                    "Scopes [{Scopes}] not yet available on {ResourceName} in this tenant — skipping.",
+                    string.Join(" ", spec.Scopes), spec.ResourceName);
+                continue;
+            }
+
             var granted = await ctx.GraphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
                 ctx.Config.TenantId!,
                 agentIdentitySpObjectId,
                 resourceSpObjectId,
-                spec.Scopes,
+                scopesToGrant,
                 ctx.CancellationToken,
-                Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
+                Constants.AuthenticationConstants.RequiredPermissionGrantScopes,
+                principalId: currentUserObjectId);
 
             if (granted)
                 ctx.Logger.LogInformation(
-                    "Granted {Scopes} on {ResourceName} to agent identity.",
-                    string.Join(" ", spec.Scopes), spec.ResourceName);
+                    "Granted {Scopes} on {ResourceName} to agent identity (principal scope).",
+                    string.Join(" ", scopesToGrant), spec.ResourceName);
             else
             {
                 ctx.Logger.LogWarning(
                     "Failed to grant {Scopes} on {ResourceName} to agent identity.",
-                    string.Join(" ", spec.Scopes), spec.ResourceName);
+                    string.Join(" ", scopesToGrant), spec.ResourceName);
                 anyFailed = true;
             }
         }
@@ -499,6 +532,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 "One or more permissions could not be granted to the agent identity. " +
                 "Check the log output and grant them manually in the Entra portal.");
         else
+        {
             ctx.Logger.LogInformation("All permissions granted to agent identity ({AgentId}).", ctx.Config.AgenticAppId);
+            ctx.Results.AgentIdentityPermissionsGranted = true;
+        }
     }
 }

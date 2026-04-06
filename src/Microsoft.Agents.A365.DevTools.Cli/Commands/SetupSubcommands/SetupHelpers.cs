@@ -55,7 +55,7 @@ internal static class SetupHelpers
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
+            new[] { ConfigConstants.ObservabilityApiAdminConsentScope },
             setInheritable),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
@@ -77,7 +77,7 @@ internal static class SetupHelpers
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
+            new[] { ConfigConstants.ObservabilityApiAdminConsentScope },
             setInheritable),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
@@ -170,9 +170,11 @@ internal static class SetupHelpers
         if (results.BatchPermissionsPhase2Completed)
         {
             logger.LogInformation("  Inheritable permissions configured and verified");
-            if (results.AdminConsentGranted)
-                logger.LogInformation("  OAuth2 grants and admin consent configured");
+            if (results.AdminConsentGranted && !results.AgentIdentityPermissionsGranted)
+                logger.LogInformation("  OAuth2 grants configured (tenant-wide admin consent)");
         }
+        if (results.AgentIdentityPermissionsGranted)
+            logger.LogInformation("  OAuth2 grants configured (developer-scoped consent for this account)");
         if (results.MessagingEndpointRegistered)
         {
             var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";

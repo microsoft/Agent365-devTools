@@ -103,6 +103,12 @@ public class SetupResults
     public bool IsNonDwBlueprintFlow { get; set; }
 
     /// <summary>
+    /// Whether Principal-scoped oauth2PermissionGrants were successfully created for the agent identity.
+    /// Set in the non-DW non-admin path as an alternative to tenant-wide AllPrincipals consent.
+    /// </summary>
+    public bool AgentIdentityPermissionsGranted { get; set; }
+
+    /// <summary>
     /// Whether the Agent Identity was successfully created via the Agent Identity Graph API.
     /// Populated by the non-DW blueprint setup flow only.
     /// </summary>

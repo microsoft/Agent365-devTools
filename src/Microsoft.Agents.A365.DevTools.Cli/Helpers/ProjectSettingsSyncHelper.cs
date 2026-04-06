@@ -24,6 +24,19 @@ public static class ProjectSettingsSyncHelper
     // Messaging Bot API Application GUID
     private const string DEFAULT_SERVICE_CONNECTION_SCOPE = $"{ConfigConstants.MessagingBotApiAppId}/.default";
 
+    /// <summary>
+    /// Overload that accepts a pre-built config (e.g. from ctx.Config in the setup orchestrator)
+    /// so that in-memory values such as AgentDescription and AgentIdentityDisplayName derived
+    /// from --agent-name are not lost when the config is reloaded from disk.
+    /// </summary>
+    public static Task ExecuteAsync(
+        string a365ConfigPath,
+        Agent365Config config,
+        PlatformDetector platformDetector,
+        ILogger logger)
+        => ExecuteAsyncCore(a365ConfigPath, config, platformDetector, logger);
+
+
     public static async Task ExecuteAsync(
         string a365ConfigPath,
         string a365GeneratedPath,
@@ -35,9 +48,17 @@ public static class ProjectSettingsSyncHelper
         if (!File.Exists(a365GeneratedPath))
             throw new FileNotFoundException("a365.generated.config.json not found", a365GeneratedPath);
 
-        // Load merged config via ConfigService
         var pkgConfig = await configService.LoadAsync(a365ConfigPath, a365GeneratedPath);
+        await ExecuteAsync(a365ConfigPath, pkgConfig, platformDetector, logger);
+    }
 
+    private static async Task ExecuteAsyncCore(
+        string a365ConfigPath,
+        Agent365Config pkgConfig,
+        PlatformDetector platformDetector,
+        ILogger logger
+    )
+    {
         var project = pkgConfig.DeploymentProjectPath;
         if (string.IsNullOrWhiteSpace(project) || !Directory.Exists(project))
         {

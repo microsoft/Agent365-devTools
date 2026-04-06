@@ -285,6 +285,9 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var (ctx, graph) = BuildGrantTestContext();
 
+        graph.GetCurrentUserObjectIdAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns("user-object-id");
+
         graph.EnsureServicePrincipalForAppIdAsync(
             Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())

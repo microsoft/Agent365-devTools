@@ -80,13 +80,13 @@ public static class ConfigConstants
     /// Observability API scope used in admin consent URLs.
     /// This is the only scope published by the Observability API resource app manifest
     /// that is valid for the /v2.0/adminconsent endpoint.
-    /// Note: user_impersonation and OtelWrite are granted separately via OAuth2PermissionGrants.
+    /// Note: OtelWrite is granted separately via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
 
     /// <summary>
     /// Observability API scope for writing OpenTelemetry data.
-    /// Granted alongside "user_impersonation" to all provisioned agent identities.
+    /// Granted to all provisioned agent identities via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
 
