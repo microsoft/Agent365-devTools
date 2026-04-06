@@ -99,7 +99,7 @@ public static class ProjectSettingsSyncHelper
             }
         }
 
-        logger.LogInformation("Stamped TenantId, ServiceConnection, and AgentBluePrint settings into {ProjectPath}", project);
+        logger.LogInformation("Stamped TenantId, ServiceConnection, and AgentBlueprint settings into {ProjectPath}", project);
     }
 
     /// <summary>
