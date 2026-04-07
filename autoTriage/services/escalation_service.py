@@ -102,7 +102,7 @@ class EscalationService:
                 issue_title=issue.title,
                 priority=priority,
                 assigned_to=[a.login for a in issue.assignees],
-                hours_open=self.calculate_hours_open(issue),
+                hours_open=round(self.calculate_hours_open(issue), 1),
                 sla_hours=sla_hours,
                 sla_breached=False,
                 escalation_action="already_escalated",

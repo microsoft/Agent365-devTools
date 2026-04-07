@@ -206,6 +206,122 @@ class TestSLABreachDetection:
         assert sla_breached == expected_breached, f"Failed: {description}"
 
 
+class TestAlreadyEscalated:
+    """Test already-escalated detection and its effect on SLA reporting (MSRC #112249 follow-on)."""
+
+    def _make_service(self):
+        with patch('services.escalation_service.GitHubService'):
+            from services.escalation_service import EscalationService
+            return EscalationService()
+
+    def _make_issue(self, label_names, hours_open=72):
+        mock_labels = []
+        for name in label_names:
+            lbl = MagicMock()
+            lbl.name = name
+            mock_labels.append(lbl)
+        mock_assignee = MagicMock()
+        mock_assignee.login = "user1"
+        issue = MagicMock()
+        issue.number = 99
+        issue.title = "Test issue"
+        issue.labels = mock_labels
+        issue.assignees = [mock_assignee]
+        issue.updated_at = datetime.now(timezone.utc) - timedelta(hours=hours_open)
+        issue.created_at = issue.updated_at
+        return issue
+
+    def test_is_already_escalated_true_with_escalated_label(self):
+        """is_already_escalated returns True when issue carries 'escalated' label."""
+        service = self._make_service()
+        issue = self._make_issue(["P1", "escalated"])
+        assert service.is_already_escalated(issue) is True, \
+            "Issue with 'escalated' label must be detected as already escalated"
+
+    def test_is_already_escalated_false_without_label(self):
+        """is_already_escalated returns False when issue has no 'escalated' label."""
+        service = self._make_service()
+        issue = self._make_issue(["P1", "bug"])
+        assert service.is_already_escalated(issue) is False, \
+            "Issue without 'escalated' label must not be detected as already escalated"
+
+    def test_is_already_escalated_case_insensitive(self):
+        """is_already_escalated is case-insensitive for the label name."""
+        service = self._make_service()
+        for label in ("Escalated", "ESCALATED", "EsCalAtEd"):
+            issue = self._make_issue(["P1", label])
+            assert service.is_already_escalated(issue) is True, \
+                f"Label '{label}' should be recognized as the escalated label"
+
+    def test_check_issue_sla_already_escalated_returns_not_breached(self):
+        """check_issue_sla returns sla_breached=False for an already-escalated issue.
+
+        Requirement: previously escalated issues must not trigger a new escalation
+        action to avoid repeated noise (MSRC #112249 follow-on).
+        """
+        service = self._make_service()
+        # P1 SLA is 48h; issue is 72h old — would normally breach
+        issue = self._make_issue(["P1", "escalated"], hours_open=72)
+        result = service.check_issue_sla(issue)
+
+        assert result.sla_breached is False, \
+            "Already-escalated issue must not be marked as breached"
+        assert result.escalation_action == "already_escalated", \
+            "Already-escalated issue must carry action 'already_escalated'"
+
+    def test_check_issue_sla_already_escalated_hours_open_rounded(self):
+        """hours_open in the already_escalated path is rounded to 1 decimal place.
+
+        Requirement: consistent reporting format — the normal breach path rounds
+        to 1 decimal; the already_escalated path must do the same.
+        """
+        service = self._make_service()
+        issue = self._make_issue(["P1", "escalated"], hours_open=72)
+        result = service.check_issue_sla(issue)
+
+        # hours_open must be a rounded float (no more than 1 decimal place)
+        assert result.hours_open == round(result.hours_open, 1), \
+            "hours_open must be rounded to 1 decimal in the already_escalated path"
+
+    def test_run_escalation_check_separates_breached_from_already_escalated(self):
+        """run_escalation_check counts already-escalated issues separately from breached.
+
+        Requirement: total_breached must not include already-escalated issues;
+        total_already_escalated must reflect them; and both groups appear in 'issues'.
+        """
+        from services.escalation_service import EscalationService
+
+        with patch('services.escalation_service.GitHubService') as mock_gh_cls:
+            service = EscalationService()
+
+            # Issue A: P1, 72h old, NOT yet escalated -> breached
+            issue_a = self._make_issue(["P1"], hours_open=72)
+            issue_a.number = 1
+            issue_a.title = "New breach"
+
+            # Issue B: P1, 72h old, already escalated -> not breached again
+            issue_b = self._make_issue(["P1", "escalated"], hours_open=72)
+            issue_b.number = 2
+            issue_b.title = "Already escalated"
+
+            service.github_service.get_open_issues.return_value = [issue_a, issue_b]
+
+            result = service.run_escalation_check(owner="owner", repo="repo", apply=False)
+
+        assert result["total_breached"] == 1, \
+            "Only the genuinely new breach should be counted in total_breached"
+        assert result["total_already_escalated"] == 1, \
+            "The already-escalated issue must appear in total_already_escalated"
+
+        issue_numbers = {i["number"] for i in result["issues"]}
+        assert 1 in issue_numbers, "Newly breached issue must appear in results"
+        assert 2 in issue_numbers, "Already-escalated issue must appear in results for visibility"
+
+        already_esc_entry = next(i for i in result["issues"] if i["number"] == 2)
+        assert already_esc_entry["escalation_action"] == "already_escalated", \
+            "Already-escalated entry must carry action 'already_escalated'"
+
+
 class TestEscalationAction:
     """Test escalation action determination."""
 
