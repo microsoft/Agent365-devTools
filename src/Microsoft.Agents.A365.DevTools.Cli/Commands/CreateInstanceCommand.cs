@@ -55,7 +55,7 @@ public class CreateInstanceCommand
             {
                 logger.LogInformation("DRY RUN: Agent 365 Instance Creation - All Steps");
                 logger.LogInformation("This would execute the following operations:");
-                logger.LogInformation("  1. Create Agent Identity and Agent User");
+                logger.LogInformation("  1. Create Agent Identity and Agent User with required permissions");
                 logger.LogInformation("  2. Add licenses to Agent User");
                 logger.LogInformation("No actual changes will be made.");
                 return;

@@ -57,7 +57,7 @@ After installing or updating, confirm the CLI is ready by running `a365 -h` to d
 
 ### Adapt to CLI version differences
 
-The CLI is under active development, and some commands may have changed in recent versions. The instructions in this prompt assume you have the latest version. If you discover that a command referenced later (such as `publish`) is not recognized, it means you have an older version – in that case, upgrade the CLI. Using the latest version is essential because older flows (e.g. the `create-instance` command) have been deprecated in favor of new commands (`publish`, etc.). If upgrading isn't possible, adjust your steps according to the older CLI's documentation (for example, use the old `a365 create-instance` command in place of `publish`), but prefer to upgrade if at all feasible.
+The CLI is under active development, and some commands may have changed in recent versions. The instructions in this prompt assume you have the latest version. If you discover that a command referenced later (such as `publish`) is not recognized, it means you have an older version – in that case, upgrade the CLI. Using the latest version is essential because the CLI evolves rapidly and newer versions include important fixes and new commands (e.g. `create-instance`, `publish`). If upgrading isn't possible, adjust your steps according to the older CLI's documentation, but prefer to upgrade if at all feasible.
 
 ### Step 1 completion
 
@@ -89,7 +89,7 @@ Once the user provides the ID, replace `<CLIENT_APP_ID>` in the command below an
 az ad app show --id <CLIENT_APP_ID> --query "{appId:appId, displayName:displayName, requiredResourceAccess:requiredResourceAccess}" -o json && az ad app permission list-grants --id <CLIENT_APP_ID> --query "[].{resourceDisplayName:resourceDisplayName, scope:scope}" -o table
 ```
 
-From the output of the command above, verify these 6 permissions appear with admin consent. If any are missing or consent is not granted, see "What to do if validation fails" below.
+From the output of the command above, verify these 7 permissions appear with admin consent. If any are missing or consent is not granted, see "What to do if validation fails" below.
 
 Required **delegated** Microsoft Graph permissions (all must have **admin consent granted**):
 
@@ -97,6 +97,7 @@ Required **delegated** Microsoft Graph permissions (all must have **admin consen
 |------------|-------------|
 | `AgentIdentityBlueprint.ReadWrite.All` | Manage Agent 365 Blueprints |
 | `AgentIdentityBlueprint.UpdateAuthProperties.All` | Update Blueprint auth properties |
+| `AgentIdentityBlueprint.AddRemoveCreds.All` | Add and remove credentials on Agent Identity Blueprints |
 | `Application.ReadWrite.All` | Create and manage Azure AD applications |
 | `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
 | `Directory.Read.All` | Read directory data |
@@ -108,7 +109,7 @@ If the app does not exist, permissions are missing, or admin consent has not bee
 
 1. STOP — do not proceed to run any `a365` CLI commands.
 2. Inform the user the custom client app registration is missing or incomplete.
-3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all six permissions above, and have a Global Admin grant admin consent.
+3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all seven permissions above, and have a Global Admin grant admin consent.
 4. Wait for the user to confirm the app is properly configured, then re-run the same validation command above.
 
 Save the `clientAppId` value — it will be used automatically in Step 3 (do NOT ask the user for it again).
