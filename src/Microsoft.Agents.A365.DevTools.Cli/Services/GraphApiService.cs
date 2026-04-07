@@ -528,39 +528,125 @@ public class GraphApiService
         CancellationToken ct = default,
         IEnumerable<string>? permissionGrantScopes = null)
     {
-        var desiredScopeString = string.Join(' ', scopes);
+        return await CreateOrUpdateOauth2PermissionGrantCoreAsync(
+            tenantId,
+            clientSpObjectId,
+            resourceSpObjectId,
+            principalId: null,
+            consentType: "AllPrincipals",
+            scopes,
+            ct,
+            permissionGrantScopes);
+    }
 
-        // Read existing — extract string values immediately so JsonDocument can be disposed
+    /// <summary>
+    /// Creates or updates an oauth2PermissionGrant with consentType=Principal, scoped to a
+    /// specific principal (service principal). This is used when admin consent has not been
+    /// granted on the blueprint, so permissions must be granted directly to the agent identity.
+    /// </summary>
+    /// <param name="tenantId">Azure AD tenant ID</param>
+    /// <param name="clientSpObjectId">Object ID of the client service principal (agent identity)</param>
+    /// <param name="resourceSpObjectId">Object ID of the resource service principal (e.g. Microsoft Graph)</param>
+    /// <param name="principalId">Object ID of the principal (the agent identity SP) to scope the grant to</param>
+    /// <param name="scopes">Scopes to grant</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <param name="permissionGrantScopes">Optional MSAL scopes for token acquisition</param>
+    /// <returns>True on success</returns>
+    public async Task<bool> CreatePrincipalOauth2PermissionGrantAsync(
+        string tenantId,
+        string clientSpObjectId,
+        string resourceSpObjectId,
+        string principalId,
+        IEnumerable<string> scopes,
+        CancellationToken ct = default,
+        IEnumerable<string>? permissionGrantScopes = null)
+    {
+        return await CreateOrUpdateOauth2PermissionGrantCoreAsync(
+            tenantId,
+            clientSpObjectId,
+            resourceSpObjectId,
+            principalId,
+            consentType: "Principal",
+            scopes,
+            ct,
+            permissionGrantScopes);
+    }
+
+    /// <summary>
+    /// Shared implementation for creating or updating an oauth2PermissionGrant.
+    /// Both AllPrincipals (tenant-wide) and Principal (scoped) consent types use the same
+    /// query → create-or-merge flow. The only differences are the OData filter, the payload
+    /// shape (Principal includes principalId), and the in-code matching for Principal grants.
+    /// </summary>
+    private async Task<bool> CreateOrUpdateOauth2PermissionGrantCoreAsync(
+        string tenantId,
+        string clientSpObjectId,
+        string resourceSpObjectId,
+        string? principalId,
+        string consentType,
+        IEnumerable<string> scopes,
+        CancellationToken ct,
+        IEnumerable<string>? permissionGrantScopes)
+    {
+        var desiredScopeString = string.Join(' ', scopes);
+        var isPrincipal = string.Equals(consentType, "Principal", StringComparison.OrdinalIgnoreCase);
+
+        // Read existing — extract string values immediately so JsonDocument can be disposed.
+        // AllPrincipals grants can filter by clientId+resourceId server-side.
+        // Principal grants must filter by clientId only, then match resourceId/consentType/principalId in code
+        // because the Graph API oauth2PermissionGrants endpoint has limited $filter support.
         string? existingId = null;
         string existingScopes = "";
 
+        var filter = isPrincipal
+            ? $"clientId eq '{clientSpObjectId}'"
+            : $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'";
+
         using (var listDoc = await GraphGetAsync(
             tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'",
+            $"/v1.0/oauth2PermissionGrants?$filter={filter}",
             ct,
             permissionGrantScopes))
         {
-            if (listDoc?.RootElement.TryGetProperty("value", out var arr) == true && arr.GetArrayLength() > 0)
+            if (listDoc?.RootElement.TryGetProperty("value", out var arr) == true)
             {
-                var grant = arr[0];
-                existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
-                existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
+                if (isPrincipal)
+                {
+                    // Principal grants: match resourceId, consentType, and principalId in code.
+                    foreach (var grant in arr.EnumerateArray())
+                    {
+                        var grantResourceId = grant.TryGetProperty("resourceId", out var rid) ? rid.GetString() : null;
+                        var grantConsentType = grant.TryGetProperty("consentType", out var ctp) ? ctp.GetString() : null;
+                        var grantPrincipalId = grant.TryGetProperty("principalId", out var pid) ? pid.GetString() : null;
+
+                        if (string.Equals(grantResourceId, resourceSpObjectId, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(grantConsentType, "Principal", StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(grantPrincipalId, principalId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                            existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
+                            break;
+                        }
+                    }
+                }
+                else if (arr.GetArrayLength() > 0)
+                {
+                    // AllPrincipals grants: the server-side filter is precise enough.
+                    var grant = arr[0];
+                    existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                    existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
+                }
             }
         }
 
         if (string.IsNullOrWhiteSpace(existingId))
         {
-            // AllPrincipals (tenant-wide) grants require Global Administrator.
-            // Only called from admin paths (setup admin or setup all run by GA).
-            var payload = new
-            {
-                clientId = clientSpObjectId,
-                consentType = "AllPrincipals",
-                resourceId = resourceSpObjectId,
-                scope = desiredScopeString
-            };
+            // Build payload — Principal grants include principalId.
+            object payload = isPrincipal
+                ? new { clientId = clientSpObjectId, consentType, principalId, resourceId = resourceSpObjectId, scope = desiredScopeString }
+                : new { clientId = clientSpObjectId, consentType, resourceId = resourceSpObjectId, scope = desiredScopeString };
 
-            _logger.LogDebug("Graph POST /v1.0/oauth2PermissionGrants body: {Body}", JsonSerializer.Serialize(payload));
+            _logger.LogDebug("Graph POST /v1.0/oauth2PermissionGrants ({ConsentType}) body: {Body}", consentType, JsonSerializer.Serialize(payload));
 
             // A freshly-created service principal may not yet be visible to the
             // oauth2PermissionGrants replica (Directory_ObjectNotFound). Retry with
@@ -590,119 +676,9 @@ public class GraphApiService
             }
 
             _logger.LogWarning(
-                "OAuth2 permission grant failed after {MaxRetries} retries — service principal may still be propagating. " +
-                "Re-run 'a365 setup admin' to retry.",
-                maxRetries);
-            return false;
-        }
-
-        // Merge scopes if needed
-        var currentSet = new HashSet<string>(existingScopes.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
-        var desiredSet = new HashSet<string>(desiredScopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
-
-        if (desiredSet.IsSubsetOf(currentSet)) return true; // already satisfied
-
-        currentSet.UnionWith(desiredSet);
-        var merged = string.Join(' ', currentSet);
-
-        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes);
-    }
-
-    /// <summary>
-    /// Creates or updates an oauth2PermissionGrant with consentType=Principal, scoped to a
-    /// specific principal (service principal). This is used when admin consent has not been
-    /// granted on the blueprint, so permissions must be granted directly to the agent identity.
-    /// </summary>
-    /// <param name="tenantId">Azure AD tenant ID</param>
-    /// <param name="clientSpObjectId">Object ID of the client service principal (agent identity)</param>
-    /// <param name="resourceSpObjectId">Object ID of the resource service principal (e.g. Microsoft Graph)</param>
-    /// <param name="principalId">Object ID of the principal (the agent identity SP) to scope the grant to</param>
-    /// <param name="scopes">Scopes to grant</param>
-    /// <param name="ct">Cancellation token</param>
-    /// <param name="permissionGrantScopes">Optional MSAL scopes for token acquisition</param>
-    /// <returns>True on success</returns>
-    public async Task<bool> CreatePrincipalOauth2PermissionGrantAsync(
-        string tenantId,
-        string clientSpObjectId,
-        string resourceSpObjectId,
-        string principalId,
-        IEnumerable<string> scopes,
-        CancellationToken ct = default,
-        IEnumerable<string>? permissionGrantScopes = null)
-    {
-        var desiredScopeString = string.Join(' ', scopes);
-
-        // Read existing principal-scoped grant for this client+resource+principal combination
-        // Note: The Graph API oauth2PermissionGrants endpoint only supports filtering by clientId.
-        // We filter the results in code for resourceId, consentType, and principalId.
-        string? existingId = null;
-        string existingScopes = "";
-
-        using (var listDoc = await GraphGetAsync(
-            tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}'",
-            ct,
-            permissionGrantScopes))
-        {
-            if (listDoc?.RootElement.TryGetProperty("value", out var arr) == true)
-            {
-                foreach (var grant in arr.EnumerateArray())
-                {
-                    var grantResourceId = grant.TryGetProperty("resourceId", out var rid) ? rid.GetString() : null;
-                    var grantConsentType = grant.TryGetProperty("consentType", out var ctp) ? ctp.GetString() : null;
-                    var grantPrincipalId = grant.TryGetProperty("principalId", out var pid) ? pid.GetString() : null;
-
-                    if (string.Equals(grantResourceId, resourceSpObjectId, StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(grantConsentType, "Principal", StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(grantPrincipalId, principalId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
-                        existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(existingId))
-        {
-            var payload = new
-            {
-                clientId = clientSpObjectId,
-                consentType = "Principal",
-                principalId,
-                resourceId = resourceSpObjectId,
-                scope = desiredScopeString
-            };
-
-            _logger.LogDebug("Graph POST /v1.0/oauth2PermissionGrants (Principal) body: {Body}", JsonSerializer.Serialize(payload));
-
-            const int maxRetries = 8;
-            const int baseDelaySeconds = 5;
-            for (int attempt = 0; attempt < maxRetries; attempt++)
-            {
-                var grantResponse = await GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
-                grantResponse.Json?.Dispose();
-
-                if (grantResponse.IsSuccess)
-                    return true;
-
-                if (!grantResponse.Body.Contains("Directory_ObjectNotFound", StringComparison.OrdinalIgnoreCase))
-                    return false;
-
-                if (attempt < maxRetries - 1)
-                {
-                    var delaySecs = (int)Math.Min(baseDelaySeconds * Math.Pow(2, attempt), 60);
-                    _logger.LogWarning(
-                        "Service principal not yet replicated to grants endpoint - retrying in {Delay}s (attempt {Attempt}/{Max})...",
-                        delaySecs, attempt + 1, maxRetries - 1);
-                    await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
-                }
-            }
-
-            _logger.LogWarning(
-                "OAuth2 permission grant (Principal) failed after {MaxRetries} retries - service principal may still be propagating.",
-                maxRetries);
+                "OAuth2 permission grant ({ConsentType}) failed after {MaxRetries} retries — service principal may still be propagating. " +
+                "Re-run the command to retry.",
+                consentType, maxRetries);
             return false;
         }
 

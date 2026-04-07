@@ -542,13 +542,13 @@ public sealed class A365CreateInstanceRunner
             string? currentUserId = null;
             try
             {
-                // Use Azure CLI token to get current user (this requires delegated context)
+                // Use MSAL delegated token to get current user (this requires delegated context)
                 var delegatedToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: ct);
                 if (!string.IsNullOrWhiteSpace(delegatedToken))
                 {
                     using var delegatedClient = HttpClientFactory.CreateAuthenticatedClient(delegatedToken, correlationId: correlationId);
 
-                    using var meResponse = await delegatedClient.GetAsync($"{GraphApiConstants.BaseUrl}/v1.0/me", ct);
+                    using var meResponse = await delegatedClient.GetAsync($"{_graphService.GraphBaseUrl}/v1.0/me", ct);
                     if (meResponse.IsSuccessStatusCode)
                     {
                         var meJson = await meResponse.Content.ReadAsStringAsync(ct);
@@ -664,7 +664,7 @@ public sealed class A365CreateInstanceRunner
             {
                 new KeyValuePair<string, string>("client_id", clientId),
                 new KeyValuePair<string, string>("client_secret", clientSecret),
-                new KeyValuePair<string, string>("scope", $"{GraphApiConstants.BaseUrl}/.default"),
+                new KeyValuePair<string, string>("scope", $"{_graphService.GraphBaseUrl}/.default"),
                 new KeyValuePair<string, string>("grant_type", "client_credentials")
             });
 
@@ -741,7 +741,7 @@ public sealed class A365CreateInstanceRunner
             // Check if user already exists
             try
             {
-                var checkUserUrl = $"{GraphApiConstants.BaseUrl}/beta/users/{Uri.EscapeDataString(userPrincipalName)}";
+                var checkUserUrl = $"{_graphService.GraphBaseUrl}/beta/users/{Uri.EscapeDataString(userPrincipalName)}";
                 var checkResponse = await httpClient.GetAsync(checkUserUrl, ct);
                 
                 if (checkResponse.IsSuccessStatusCode)
@@ -765,7 +765,7 @@ public sealed class A365CreateInstanceRunner
 
             // Create agent user
             var mailNickname = userPrincipalName.Split('@')[0];
-            var createUserUrl = $"{GraphApiConstants.BaseUrl}/beta/users";
+            var createUserUrl = $"{_graphService.GraphBaseUrl}/beta/users";
             var userBody = new JsonObject
             {
                 ["@odata.type"] = "microsoft.graph.agentUser",
@@ -832,7 +832,7 @@ public sealed class A365CreateInstanceRunner
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Look up manager by email
-            var managerUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users?$filter=mail eq '{managerEmail}'";
+            var managerUrl = $"{_graphService.GraphBaseUrl}/v1.0/users?$filter=mail eq '{managerEmail}'";
             var managerResponse = await httpClient.GetAsync(managerUrl, ct);
 
             if (!managerResponse.IsSuccessStatusCode)
@@ -856,10 +856,10 @@ public sealed class A365CreateInstanceRunner
             var managerName = manager["displayName"]?.GetValue<string>();
 
             // Assign manager
-            var assignManagerUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users/{userId}/manager/$ref";
+            var assignManagerUrl = $"{_graphService.GraphBaseUrl}/v1.0/users/{userId}/manager/$ref";
             var assignBody = new JsonObject
             {
-                ["@odata.id"] = $"{GraphApiConstants.BaseUrl}/v1.0/users/{managerId}"
+                ["@odata.id"] = $"{_graphService.GraphBaseUrl}/v1.0/users/{managerId}"
             };
 
             var assignResponse = await httpClient.PutAsync(
@@ -914,7 +914,7 @@ public sealed class A365CreateInstanceRunner
             if (!string.IsNullOrWhiteSpace(usageLocation))
             {
                 _logger.LogInformation("  - Setting usage location: {Location}", usageLocation);
-                var updateUserUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users/{userId}";
+                var updateUserUrl = $"{_graphService.GraphBaseUrl}/v1.0/users/{userId}";
                 var updateBody = new JsonObject
                 {
                     ["usageLocation"] = usageLocation
@@ -934,7 +934,7 @@ public sealed class A365CreateInstanceRunner
 
             // Assign licenses
             _logger.LogInformation("  - Assigning Microsoft 365 licenses");
-            var assignLicenseUrl = $"{GraphApiConstants.BaseUrl}/v1.0/users/{userId}/assignLicense";
+            var assignLicenseUrl = $"{_graphService.GraphBaseUrl}/v1.0/users/{userId}/assignLicense";
             var licenseBody = new JsonObject
             {
                 ["addLicenses"] = new JsonArray
@@ -1020,7 +1020,7 @@ public sealed class A365CreateInstanceRunner
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Query for service principal by appId
-            var spUrl = $"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
+            var spUrl = $"{_graphService.GraphBaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'";
             using var response = await httpClient.GetAsync(spUrl, ct);
 
             if (!response.IsSuccessStatusCode)
