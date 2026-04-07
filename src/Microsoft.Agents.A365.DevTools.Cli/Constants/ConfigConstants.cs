@@ -177,8 +177,8 @@ public static string GetAgent365ToolsResourceAppId(string environment)
     // Default to production app ID
     return environment?.ToLower() switch
     {
-        "prod" => McpConstants.Agent365ToolsProdAppId,
-        _ => McpConstants.Agent365ToolsProdAppId
+        "prod" => McpConstants.WorkIQToolsProdAppId,
+        _ => McpConstants.WorkIQToolsProdAppId
     };
 }
 }

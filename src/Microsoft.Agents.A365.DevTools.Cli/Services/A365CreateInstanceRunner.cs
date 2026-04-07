@@ -14,7 +14,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
 /// Supports all phases: Identity/User creation and License assignment.
-/// MCP permissions are configured via inheritable permissions during setup phase.
+/// Adds required permissions to agent identity via admin consent
 /// </summary>
 public sealed class A365CreateInstanceRunner
 {
@@ -116,9 +116,6 @@ public sealed class A365CreateInstanceRunner
             ? protectedNode?.GetValue<bool>() ?? false
             : false;
 
-        // Check inheritance status from ResourceConsents
-        var inheritanceConfigured = IsInheritanceConfigured(instance);
-
         // Decrypt the secret if it was encrypted
         if (!string.IsNullOrWhiteSpace(agentBlueprintClientSecret) && isProtected)
         {
@@ -149,37 +146,6 @@ public sealed class A365CreateInstanceRunner
         else
         {
             _logger.LogInformation("Using environment from config: {Env}", environment);
-        }
-
-        // AgentIdentityScopes (fallback to hardcoded defaults)
-        var agentIdentityScopes = new List<string>();
-        if (config.TryGetPropertyValue("agentIdentityScopes", out var scopesNode) && scopesNode is JsonArray scopesArray)
-        {
-            _logger.LogInformation("Found 'agentIdentityScopes' in config");
-            agentIdentityScopes = scopesArray
-                .Select(s => s?.GetValue<string>())
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .ToList()!;
-        }
-        else if (config.TryGetPropertyValue("agentIdentityScope", out var singleScopeNode))
-        {
-            var singleScope = singleScopeNode?.GetValue<string>();
-            if (!string.IsNullOrWhiteSpace(singleScope))
-            {
-                _logger.LogInformation("Found single 'agentIdentityScope' in config");
-                agentIdentityScopes.Add(singleScope);
-            }
-        }
-        else
-        {
-            _logger.LogInformation("'agentIdentityScopes' not found in config, using hardcoded defaults");
-            agentIdentityScopes.AddRange(ConfigConstants.DefaultAgentIdentityScopes);
-        }
-
-        if (agentIdentityScopes.Count == 0)
-        {
-            _logger.LogWarning("No agent identity scopes available, falling back to Graph default");
-            agentIdentityScopes.Add($"{GraphApiConstants.BaseUrl}/.default");
         }
 
         var usageLocation = GetConfig("agentUserUsageLocation");
@@ -333,46 +299,161 @@ public sealed class A365CreateInstanceRunner
                 _logger.LogInformation("Agent User already exists: {Id}", agenticUserId);
             }
 
-            // Consent URLs and polling
+            // Grant required permissions to the agent identity (AllPrincipals).
+            // Start with a baseline from constants, then merge any additional
+            // entries from resourceConsents in the generated config.
             if (!string.IsNullOrWhiteSpace(agenticAppId))
             {
-                if (inheritanceConfigured)
+                // Look up the agent identity service principal
+                var agenticSpObjectId = await _graphService.LookupServicePrincipalByAppIdAsync(
+                    tenantId, agenticAppId, cancellationToken);
+
+                if (string.IsNullOrWhiteSpace(agenticSpObjectId))
                 {
-                    _logger.LogInformation("Inheritance already configured; skipping admin consent requests");
-                    _logger.LogInformation("Phase 1 complete.");
+                    _logger.LogError("Could not find service principal for agent identity {AppId}", agenticAppId);
+                    return false;
                 }
-                else
+
+                // Build required permissions from well-known constants.
+                // Key = resourceAppId, Value = (displayName, scopes set)
+                var requiredPermissions = new Dictionary<string, (string name, HashSet<string> scopes)>(StringComparer.OrdinalIgnoreCase)
                 {
+                    [AuthenticationConstants.MicrosoftGraphResourceAppId] = (
+                        "Microsoft Graph",
+                        new HashSet<string>(ConfigConstants.DefaultAgentIdentityScopes, StringComparer.OrdinalIgnoreCase)),
+                    [McpConstants.WorkIQToolsProdAppId] = (
+                        "Work IQ Tools",
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            "McpServers.Mail.All",
+                            "McpServersMetadata.Read.All"
+                        }),
+                    [ConfigConstants.ObservabilityApiAppId] = (
+                        "Observability API",
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            "user_impersonation",
+                            ConfigConstants.ObservabilityApiOtelWriteScope
+                        }),
+                    [ConfigConstants.MessagingBotApiAppId] = (
+                        "Messaging Bot API",
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            "Authorization.ReadWrite",
+                            "user_impersonation"
+                        }),
+                    [PowerPlatformConstants.PowerPlatformApiResourceAppId] = (
+                        "Power Platform API",
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead
+                        }),
+                };
 
-                    var scopesJoined = string.Join(' ', agentIdentityScopes);
-                    var consentGraph = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={agenticAppId}&scope={Uri.EscapeDataString(scopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
-
-                    SetInstanceField(instance, "agentIdentityConsentUrlGraph", consentGraph);
-
-                    // Request admin consent for Graph API
-                    var consentGraphSuccess = await RequestAdminConsentAsync(
-                        consentGraph,
-                        agenticAppId,
-                        tenantId,
-                        "Agent Instance Graph scopes",
-                        180,
-                        cancellationToken);
-
-                    // Consent for MCP servers from ToolingManifest.json
-                    var consentMcpSuccess = await ProcessMcpConsentAsync(
-                        instance,
-                        agenticAppId,
-                        tenantId,
-                        configDirectory,
-                        cancellationToken);
-
-                    instance["consent1Granted"] = consentGraphSuccess;
-                    instance["consent3Granted"] = consentMcpSuccess;
-
-                    if (!consentGraphSuccess || !consentMcpSuccess)
+                // Merge additional scopes from resourceConsents in the generated config
+                if (instance.TryGetPropertyValue("resourceConsents", out var consentsNode) &&
+                    consentsNode is JsonArray consentsArray)
+                {
+                    foreach (var consentEntry in consentsArray)
                     {
-                        _logger.LogWarning("One or more consents may not have been detected");
-                        _logger.LogInformation("The setup will continue, but you may need to grant consent manually if needed.");
+                        var obj = consentEntry?.AsObject();
+                        if (obj == null) continue;
+
+                        var resourceAppId = obj["resourceAppId"]?.GetValue<string>();
+                        if (string.IsNullOrWhiteSpace(resourceAppId)) continue;
+
+                        var resourceName = obj["resourceName"]?.GetValue<string>() ?? "(unknown)";
+
+                        if (!requiredPermissions.TryGetValue(resourceAppId, out var entry))
+                        {
+                            entry = (resourceName, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                            requiredPermissions[resourceAppId] = entry;
+                        }
+
+                        if (obj.TryGetPropertyValue("scopes", out var consentScopesNode) && consentScopesNode is JsonArray scopesArr)
+                        {
+                            foreach (var s in scopesArr)
+                            {
+                                var scopeValue = s?.GetValue<string>();
+                                if (!string.IsNullOrWhiteSpace(scopeValue))
+                                    entry.scopes.Add(scopeValue);
+                            }
+                        }
+                    }
+                }
+
+                _logger.LogInformation("Granting permissions to agent identity across {Count} resource(s)", requiredPermissions.Count);
+
+                // Get existing oauth2PermissionGrants on the agent identity
+                var existingGrants = await _graphService.GetOauth2PermissionGrantsAsync(
+                    tenantId, agenticSpObjectId, cancellationToken);
+
+                // Build a lookup: resourceSpObjectId -> set of already-granted scopes
+                var existingScopesByResource = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var grant in existingGrants)
+                {
+                    if (!existingScopesByResource.TryGetValue(grant.resourceId, out var scopeSet))
+                    {
+                        scopeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        existingScopesByResource[grant.resourceId] = scopeSet;
+                    }
+                    foreach (var s in grant.scope.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                        scopeSet.Add(s);
+                }
+
+                // For each resource, check if scopes are already granted; if not, add them
+                foreach (var (resourceAppId, (resourceName, scopes)) in requiredPermissions)
+                {
+                    if (scopes.Count == 0)
+                    {
+                        _logger.LogDebug("No scopes for '{Name}' ({AppId}); skipping", resourceName, resourceAppId);
+                        continue;
+                    }
+
+                    var resourceSpObjectId = await _graphService.EnsureServicePrincipalForAppIdAsync(
+                        tenantId, resourceAppId, cancellationToken);
+
+                    if (string.IsNullOrWhiteSpace(resourceSpObjectId))
+                    {
+                        _logger.LogWarning("Could not find or create service principal for resource '{Name}' ({AppId}); skipping",
+                            resourceName, resourceAppId);
+                        continue;
+                    }
+
+                    // Determine which scopes are missing
+                    var alreadyGranted = existingScopesByResource.TryGetValue(resourceSpObjectId, out var existing)
+                        ? existing
+                        : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    var missingScopes = scopes.Where(s => !alreadyGranted.Contains(s)).ToList();
+
+                    if (missingScopes.Count == 0)
+                    {
+                        _logger.LogInformation("All scopes for '{Name}' ({AppId}) already granted to agent identity; skipping",
+                            resourceName, resourceAppId);
+                        continue;
+                    }
+
+                    // Grant scopes as AllPrincipals (tenant-wide) on the agent identity SP.
+                    // CreateOrUpdateOauth2PermissionGrantAsync merges with existing grants.
+                    _logger.LogInformation("Granting scopes for '{Name}' ({AppId}) to agent identity (consentType=AllPrincipals): {Scopes}",
+                        resourceName, resourceAppId, string.Join(", ", scopes));
+
+                    var grantOk = await _graphService.CreateOrUpdateOauth2PermissionGrantAsync(
+                        tenantId,
+                        agenticSpObjectId,
+                        resourceSpObjectId,
+                        scopes,
+                        cancellationToken);
+
+                    if (!grantOk)
+                    {
+                        _logger.LogWarning("Failed to grant scopes for '{Name}' ({AppId}) to agent identity",
+                            resourceName, resourceAppId);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Scopes for '{Name}' granted successfully", resourceName);
                     }
                 }
             }
@@ -803,94 +884,6 @@ public sealed class A365CreateInstanceRunner
     }
 
     /// <summary>
-    /// Process MCP consent from ToolingManifest.json
-    /// </summary>
-    private async Task<bool> ProcessMcpConsentAsync(
-        JsonObject instance,
-        string agenticAppId,
-        string tenantId,
-        string configDirectory,
-        CancellationToken ct)
-    {
-        var scriptDir = Path.GetDirectoryName(configDirectory) ?? Environment.CurrentDirectory;
-        var toolingManifestPath = Path.GetFullPath(Path.Combine(
-            scriptDir,
-            "../../dotnet/samples/semantic-kernel-multiturn/ToolingManifest.json"));
-
-        if (!File.Exists(toolingManifestPath))
-        {
-            _logger.LogWarning("ToolingManifest.json not found at {Path}; skipping MCP consent", toolingManifestPath);
-            return false;
-        }
-
-        try
-        {
-            var manifest = JsonNode.Parse(await File.ReadAllTextAsync(toolingManifestPath, ct))!.AsObject();
-            var mcpAudiences = new Dictionary<string, List<string>>();
-
-            if (manifest.TryGetPropertyValue("mcpServers", out var serversNode) &&
-                serversNode is JsonArray servers)
-            {
-                foreach (var server in servers)
-                {
-                    var serverObj = server?.AsObject();
-                    if (serverObj == null) continue;
-
-                    var audience = serverObj["audience"]?.GetValue<string>();
-                    var scope = serverObj["scope"]?.GetValue<string>();
-
-                    if (string.IsNullOrWhiteSpace(audience) || string.IsNullOrWhiteSpace(scope))
-                        continue;
-
-                    var audienceId = audience.Replace("api://", "");
-
-                    if (!mcpAudiences.ContainsKey(audienceId))
-                    {
-                        mcpAudiences[audienceId] = new List<string>();
-                    }
-
-                    mcpAudiences[audienceId].Add(scope);
-                }
-            }
-
-            // Build consent for each unique audience
-            var allConsentSuccess = true;
-            var consentCounter = 3;
-
-            foreach (var (audienceId, scopes) in mcpAudiences)
-            {
-                var uniqueScopes = scopes.Distinct().ToList();
-                var scopesWithAudience = uniqueScopes.Select(s => $"api://{audienceId}/{s}");
-                var mcpScopesJoined = string.Join(' ', scopesWithAudience);
-
-                var consentUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={agenticAppId}&scope={Uri.EscapeDataString(mcpScopesJoined)}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123";
-
-                SetInstanceField(instance, $"agentIdentityConsentUrlMcp{consentCounter}", consentUrl);
-
-                var consentSuccess = await RequestAdminConsentAsync(
-                    consentUrl,
-                    agenticAppId,
-                    tenantId,
-                    $"Agent Instance MCP scopes for audience {audienceId}",
-                    180,
-                    ct);
-
-                instance[$"consent{consentCounter}Granted"] = consentSuccess;
-
-                if (!consentSuccess) allConsentSuccess = false;
-                consentCounter++;
-            }
-
-            return allConsentSuccess;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to process ToolingManifest.json for MCP consent");
-            return false;
-        }
-    }
-
-    /// <summary>
     /// Assign licenses using Microsoft Graph API
     /// Replaces inline PowerShell license assignment script
     /// </summary>
@@ -998,106 +991,6 @@ public sealed class A365CreateInstanceRunner
         _logger.LogInformation("Saved instance state to {Path}", path);
     }
 
-    private async Task<bool> RequestAdminConsentAsync(
-        string consentUrl,
-        string appId,
-        string tenantId,
-        string description,
-        int timeoutSeconds,
-        CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("");
-        _logger.LogInformation("=== Consent Required: {Desc} ===", description);
-        _logger.LogInformation("Opening browser for admin consent...");
-        _logger.LogInformation("URL: {Url}", consentUrl);
-
-        // Open browser
-        BrowserHelper.TryOpenUrl(consentUrl, _logger);
-
-        _logger.LogInformation("");
-        _logger.LogInformation("Waiting for admin consent (timeout: {Timeout} seconds)...", timeoutSeconds);
-        _logger.LogInformation("Polling for consent status...");
-
-        var startTime = DateTime.UtcNow;
-        var pollInterval = 5;
-        string? spId = null;
-        var dotCount = 0;
-
-        while ((DateTime.UtcNow - startTime).TotalSeconds < timeoutSeconds && !cancellationToken.IsCancellationRequested)
-        {
-            // Get service principal ID
-            if (spId == null)
-            {
-                var spResult = await _executor.ExecuteAsync(
-                    "az",
-                    $"rest --method GET --url \"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
-                    captureOutput: true,
-                    suppressErrorLogging: true,
-                    cancellationToken: cancellationToken);
-
-                if (spResult.Success)
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(spResult.StandardOutput);
-                        var value = doc.RootElement.GetProperty("value");
-                        if (value.GetArrayLength() > 0)
-                        {
-                            spId = value[0].GetProperty("id").GetString();
-                        }
-                    }
-                    catch { /* ignore parse errors */ }
-                }
-            }
-
-            // Check for grants
-            if (spId != null)
-            {
-                var grants = await _executor.ExecuteAsync(
-                    "az",
-                    $"rest --method GET --url \"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
-                    captureOutput: true,
-                    suppressErrorLogging: true,
-                    cancellationToken: cancellationToken);
-
-                if (grants.Success)
-                {
-                    try
-                    {
-                        using var gdoc = JsonDocument.Parse(grants.StandardOutput);
-                        var arr = gdoc.RootElement.GetProperty("value");
-                        if (arr.GetArrayLength() > 0)
-                        {
-                            _logger.LogInformation("");
-                            _logger.LogInformation("Consent granted successfully!");
-                            await Task.Delay(2000, cancellationToken); // Brief pause to ensure consent propagates
-                            return true;
-                        }
-                    }
-                    catch { /* ignore parse errors */ }
-                }
-            }
-
-            // Show progress
-            Console.Write(".");
-            dotCount++;
-            if (dotCount >= 12)
-            {
-                Console.Write(" (still waiting...)");
-                Console.WriteLine();
-                dotCount = 0;
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(pollInterval), cancellationToken);
-        }
-
-        Console.WriteLine();
-        _logger.LogWarning("Timeout waiting for admin consent");
-        _logger.LogInformation("You can manually verify consent was granted and continue.");
-        return false;
-    }
-
-
     /// <summary>
     /// Verify that a service principal exists in Azure AD for the given app ID.
     /// This is critical before creating an agent user that references the identity as a parent.
@@ -1160,28 +1053,5 @@ public sealed class A365CreateInstanceRunner
             _logger.LogWarning(ex, "Exception verifying service principal: {Message}", ex.Message);
             return false;
         }
-    }
-
-    /// <summary>
-    /// Checks if inheritable permissions are configured by examining ResourceConsents.
-    /// Returns true if all resources with inheritable permissions have them configured.
-    /// </summary>
-    private static bool IsInheritanceConfigured(JsonNode instance)
-    {
-        if (!instance.AsObject().TryGetPropertyValue("resourceConsents", out var resourceConsentsNode))
-            return false;
-
-        if (resourceConsentsNode?.AsArray() is not { } resourceConsents || resourceConsents.Count == 0)
-            return false;
-
-        var resourcesWithInheritance = resourceConsents
-            .Where(rc => rc?["inheritablePermissionsConfigured"] != null)
-            .ToList();
-
-        if (resourcesWithInheritance.Count == 0)
-            return false;
-
-        return resourcesWithInheritance.All(rc => 
-            rc?["inheritablePermissionsConfigured"]?.GetValue<bool>() == true);
     }
 }
