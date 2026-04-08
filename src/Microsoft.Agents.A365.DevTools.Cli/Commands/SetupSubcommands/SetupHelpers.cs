@@ -87,6 +87,68 @@ internal static class SetupHelpers
     ];
 
     /// <summary>
+    /// Fixed permission specs for the non-DW admin consent flow.
+    /// Observability API and Power Platform API — both delegated.
+    /// Extend this list or pass an override to <see cref="LogNonDwAdminConsentInstructions"/>
+    /// when additional APIs are required (e.g. dynamic MCP scopes, custom permissions).
+    /// </summary>
+    internal static readonly IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)> NonDwAdminConsentSpecs =
+    [
+        ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Delegated"),
+        ("Power Platform API", PowerPlatformConstants.PowerPlatformApiResourceAppId,           PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,  "Delegated"),
+    ];
+
+    /// <summary>
+    /// Logs step-by-step instructions for a Global Administrator to grant admin consent
+    /// for the blueprint app, with two options: Entra portal and PowerShell.
+    /// <para>
+    /// Defaults to <see cref="NonDwAdminConsentSpecs"/> (Observability API + Power Platform API).
+    /// Pass an explicit <paramref name="specs"/> list to support dynamic or extended permission sets.
+    /// </para>
+    /// </summary>
+    internal static void LogNonDwAdminConsentInstructions(
+        ILogger logger,
+        string blueprintId,
+        IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null)
+    {
+        specs ??= NonDwAdminConsentSpecs;
+
+        // Option A — Entra portal
+        logger.LogInformation("     Option A — Entra portal:");
+        logger.LogInformation("       1. Open https://entra.microsoft.com");
+        logger.LogInformation("       2. Navigate to: Identity > Applications > App registrations");
+        logger.LogInformation("       3. Search for the blueprint app by ID: {BlueprintId}", blueprintId);
+        logger.LogInformation("          (switch to 'All applications' tab if not shown under 'Owned applications')");
+        logger.LogInformation("       4. Open the app, go to: API permissions");
+        logger.LogInformation("       5. Confirm the following permissions are listed:");
+        foreach (var (resourceName, _, scope, permType) in specs)
+            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermType})", resourceName, scope, permType);
+        logger.LogInformation("       6. Click 'Grant admin consent for your organization' and confirm");
+
+        // Option B — PowerShell (Microsoft Graph SDK)
+        logger.LogInformation("");
+        logger.LogInformation("     Option B — PowerShell (Microsoft.Graph module required):");
+        logger.LogInformation("       Install-Module Microsoft.Graph -Scope CurrentUser  # skip if already installed");
+        logger.LogInformation("       Connect-MgGraph -Scopes \"DelegatedPermissionGrant.ReadWrite.All\"");
+        logger.LogInformation("       $sp = (Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\").Id", blueprintId);
+        foreach (var (resourceName, resourceAppId, _, _) in specs)
+        {
+            var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
+            logger.LogInformation("       {Var} = (Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\").Id  # {Name}",
+                varName, resourceAppId, resourceName);
+        }
+        foreach (var (resourceName, _, scope, _) in specs)
+        {
+            var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
+            // Use Invoke-MgGraphRequest instead of New-MgOauth2PermissionGrant to avoid
+            // assembly conflicts when Microsoft.Graph.Identity.SignIns is already partially loaded.
+            logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' \\");
+            logger.LogInformation("         -Body @{{ clientId = $sp; consentType = 'AllPrincipals'; resourceId = {Var}; scope = '{Scope}' }}",
+                varName, scope);
+        }
+    }
+
+    /// <summary>
     /// Display verification URLs after successful setup
     /// </summary>
     public static async Task DisplayVerificationInfoAsync(FileInfo setupConfigFile, ILogger logger)
@@ -217,11 +279,11 @@ internal static class SetupHelpers
             if (pendingAdminAction)
             {
                 actionCount++;
-                logger.LogInformation("  {N}. Permission Grants — a Global Administrator must run:", actionCount);
                 var adminCmdBlueprintId = results.BlueprintId ?? "<blueprint-id>";
-                logger.LogInformation("     a365 setup admin --blueprint-id {BlueprintId}", adminCmdBlueprintId);
                 if (isDw)
                 {
+                    logger.LogInformation("  {N}. Permission Grants — a Global Administrator must run:", actionCount);
+                    logger.LogInformation("     a365 setup admin --blueprint-id {BlueprintId}", adminCmdBlueprintId);
                     var consentUrl = !string.IsNullOrWhiteSpace(results.CombinedConsentUrl)
                         ? results.CombinedConsentUrl
                         : results.AdminConsentUrl;
@@ -230,6 +292,11 @@ internal static class SetupHelpers
                         logger.LogInformation("     Or share this URL with the administrator to grant consent via browser:");
                         logger.LogInformation("       {ConsentUrl}", consentUrl);
                     }
+                }
+                else
+                {
+                    logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId);
                 }
             }
         }

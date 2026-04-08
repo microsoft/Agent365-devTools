@@ -326,7 +326,6 @@ internal static class NonDwBlueprintSetupOrchestrator
             // If the batch permissions step already granted AllPrincipals admin consent, skip this.
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId) && !blueprintAdminConsentGranted)
             {
-                ctx.Logger.LogInformation("");
                 await GrantAgentIdentityPermissionsAsync(ctx, specs);
             }
 
@@ -539,8 +538,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 "Check the log output and grant them manually in the Entra portal.");
         else
         {
+            var grantedNames = string.Join(", ", specs.Where(s => s.Scopes.Length > 0).Select(s => s.ResourceName));
             using (ctx.Logger.Indent())
-                ctx.Logger.LogInformation("Permissions granted.");
+                ctx.Logger.LogInformation("Developer-scoped permissions granted ({Resources}).", grantedNames);
             ctx.Results.AgentIdentityPermissionsGranted = true;
         }
     }

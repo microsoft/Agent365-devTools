@@ -1,0 +1,43 @@
+{
+  "name": "agent365",
+  "displayName": "Agent 365",
+  "description": "Delivers Agent 365 Copilot Chat prompt files to your workspace — provision, deploy, and manage agents using GitHub Copilot.",
+  "version": "0.1.0",
+  "publisher": "ms-agent365",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/microsoft/Agent365-devTools"
+  },
+  "keywords": [
+    "agent365",
+    "copilot",
+    "azure",
+    "agents"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {},
+  "scripts": {
+    "vscode:prepublish": "node scripts/sync-skills.js && npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "sync-skills": "node scripts/sync-skills.js",
+    "package": "node scripts/sync-skills.js && vsce package --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}

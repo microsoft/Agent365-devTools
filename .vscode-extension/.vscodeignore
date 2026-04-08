@@ -1,0 +1,8 @@
+.vscode-test/
+node_modules/
+*.vsix
+src/
+scripts/
+tsconfig.json
+package-lock.json
+skills/
