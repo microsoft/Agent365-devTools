@@ -571,16 +571,19 @@ public class PythonBuilder : IPlatformBuilder
             {
                 _logger.LogWarning(
                     "Both pyproject.toml/setup.py and requirements.txt exist. " +
-                    "Using editable install approach (pyproject.toml takes precedence). " +
+                    "Using wheel install approach (pyproject.toml takes precedence). " +
                     "Dependencies from requirements.txt will be ignored - ensure they're declared in pyproject.toml instead.");
             }
 
-            // Use editable install approach for projects with pyproject.toml/setup.py
-            // This allows pip to install the project as a package
-            _logger.LogInformation("Detected pyproject.toml or setup.py - using editable install approach");
-            var content = "--find-links dist\n--pre\n-e .\n";
+            // Install from the pre-built wheel in dist/ rather than using editable install (-e .)
+            // Editable installs fail on Azure because Oryx builds in a different location than wwwroot
+            var publishDist = Path.Combine(publishPath, "dist");
+            var packageName = DetectPackageName(publishPath, publishDist);
+
+            _logger.LogInformation("Detected pyproject.toml or setup.py - using wheel install approach");
+            var content = $"--find-links dist\n--pre\n{packageName}\n";
             await File.WriteAllTextAsync(requirementsTxt, content);
-            _logger.LogInformation("Created requirements.txt for editable install");
+            _logger.LogInformation("Created requirements.txt to install {Package} from local wheel", packageName);
         }
         else if (File.Exists(sourceRequirements))
         {
@@ -616,6 +619,50 @@ public class PythonBuilder : IPlatformBuilder
             var content = "# Auto-generated - add your dependencies here\n";
             await File.WriteAllTextAsync(requirementsTxt, content);
         }
+    }
+
+    /// <summary>
+    /// Detects the package name from the pre-built wheel filename or pyproject.toml.
+    /// Wheel filenames follow the format: {name}-{version}-{tags}.whl
+    /// where the distribution name uses underscores (PEP 427), but pip accepts hyphens.
+    /// </summary>
+    private string DetectPackageName(string publishPath, string publishDist)
+    {
+        // Try to extract from wheel filename first
+        if (Directory.Exists(publishDist))
+        {
+            var wheels = Directory.GetFiles(publishDist, "*.whl");
+            if (wheels.Length > 0)
+            {
+                var wheelName = Path.GetFileNameWithoutExtension(wheels[0]);
+                // Wheel format: {name}-{version}-{python}-{abi}-{platform}
+                var parts = wheelName.Split('-');
+                if (parts.Length >= 2)
+                {
+                    var name = parts[0].Replace('_', '-');
+                    _logger.LogDebug("Detected package name from wheel: {Name}", name);
+                    return name;
+                }
+            }
+        }
+
+        // Fallback: try to read name from pyproject.toml
+        var pyprojectPath = Path.Combine(publishPath, "pyproject.toml");
+        if (File.Exists(pyprojectPath))
+        {
+            var content = File.ReadAllText(pyprojectPath);
+            var match = System.Text.RegularExpressions.Regex.Match(content, @"name\s*=\s*""([^""]+)""");
+            if (match.Success)
+            {
+                var name = match.Groups[1].Value;
+                _logger.LogDebug("Detected package name from pyproject.toml: {Name}", name);
+                return name;
+            }
+        }
+
+        // Last resort fallback
+        _logger.LogWarning("Could not detect package name, using '.' as fallback");
+        return ".";
     }
 
     private async Task CreateDeploymentFile(string publishPath)
