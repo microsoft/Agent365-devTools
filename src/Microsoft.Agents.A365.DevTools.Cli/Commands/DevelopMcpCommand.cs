@@ -838,6 +838,9 @@ public static class DevelopMcpCommand
         var idpClientSecretOption = new Option<string?>("--idp-client-secret", description: "External IDP client secret (required for ExternalIDP)");
         command.AddOption(idpClientSecretOption);
 
+        var toolsOption = new Option<string?>("--tools", description: "Comma-separated list of tool names exposed by this server (e.g., 'tool1,tool2,tool3')");
+        command.AddOption(toolsOption);
+
         var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://myapp/.default')");
         command.AddOption(remoteScopesOption);
 
@@ -866,6 +869,7 @@ public static class DevelopMcpCommand
             var idpScopes = context.ParseResult.GetValueForOption(idpScopesOption);
             var idpClientId = context.ParseResult.GetValueForOption(idpClientIdOption);
             var idpClientSecret = context.ParseResult.GetValueForOption(idpClientSecretOption);
+            var toolsInput = context.ParseResult.GetValueForOption(toolsOption);
             var remoteScopes = context.ParseResult.GetValueForOption(remoteScopesOption);
             var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
             var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption);
@@ -875,6 +879,7 @@ public static class DevelopMcpCommand
 
             var isEntra = false;
             var isExternalIdp = false;
+            List<string>? toolList = null;
 
             try
             {
@@ -944,6 +949,22 @@ public static class DevelopMcpCommand
                         if (string.IsNullOrWhiteSpace(idpClientSecret)) { logger.LogError("Client secret is required for ExternalIDP"); return; }
                     }
                 }
+
+                // Tool names are required
+                if (string.IsNullOrWhiteSpace(toolsInput))
+                {
+                    toolsInput = InputValidator.PromptAndValidateRequiredInput("Enter comma-separated list of tool names: ", "Tool names", 2000);
+                    if (string.IsNullOrWhiteSpace(toolsInput)) { logger.LogError("At least one tool name is required"); return; }
+                }
+
+                toolList = toolsInput!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                if (toolList.Count == 0)
+                {
+                    logger.LogError("At least one tool name is required");
+                    return;
+                }
+
+                logger.LogInformation("Tools to register: {Tools}", string.Join(", ", toolList));
 
                 // Remote scopes are required for both Entra and ExternalIDP
                 if (string.IsNullOrWhiteSpace(remoteScopes))
@@ -1077,6 +1098,7 @@ public static class DevelopMcpCommand
             {
                 ServerName = serverName,
                 ServerUrl = serverUrl,
+                ToolList = toolList,
                 AuthType = authType,
                 AuthMetadata = new Models.AddMcpServerAuthMetadata
                 {
