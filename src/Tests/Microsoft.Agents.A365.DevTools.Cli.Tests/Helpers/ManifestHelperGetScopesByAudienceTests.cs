@@ -39,13 +39,13 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
                   "mcpServerName": "mcp_MailTools",
                   "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
                   "scope": "McpServers.Mail.All",
-                  "audience": "{{McpConstants.Agent365ToolsProdAppId}}"
+                  "audience": "{{McpConstants.WorkIQToolsProdAppId}}"
                 },
                 {
                   "mcpServerName": "mcp_CalendarTools",
                   "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_CalendarTools",
                   "scope": "McpServers.Calendar.All",
-                  "audience": "{{McpConstants.Agent365ToolsProdAppId}}"
+                  "audience": "{{McpConstants.WorkIQToolsProdAppId}}"
                 }
               ]
             }
@@ -56,8 +56,8 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
 
         // Assert — single key: ATG AppId
         Assert.Single(result);
-        Assert.True(result.ContainsKey(McpConstants.Agent365ToolsProdAppId));
-        var scopes = result[McpConstants.Agent365ToolsProdAppId];
+        Assert.True(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
+        var scopes = result[McpConstants.WorkIQToolsProdAppId];
         Assert.Contains("McpServers.Mail.All", scopes);
         Assert.Contains("McpServers.Calendar.All", scopes);
         Assert.Contains("McpServersMetadata.Read.All", scopes);
@@ -83,8 +83,8 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
         var result = await ManifestHelper.GetScopesByAudienceAsync(path);
 
         // Assert — falls back to ATG AppId
-        Assert.True(result.ContainsKey(McpConstants.Agent365ToolsProdAppId));
-        Assert.Contains("McpServers.Mail.All", result[McpConstants.Agent365ToolsProdAppId]);
+        Assert.True(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
+        Assert.Contains("McpServers.Mail.All", result[McpConstants.WorkIQToolsProdAppId]);
     }
 
     [Fact]
@@ -108,8 +108,8 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
         var result = await ManifestHelper.GetScopesByAudienceAsync(path);
 
         // Assert — api:// audience treated as ATG fallback
-        Assert.True(result.ContainsKey(McpConstants.Agent365ToolsProdAppId));
-        Assert.Contains("McpServers.Mail.All", result[McpConstants.Agent365ToolsProdAppId]);
+        Assert.True(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
+        Assert.Contains("McpServers.Mail.All", result[McpConstants.WorkIQToolsProdAppId]);
         Assert.DoesNotContain("api://mcp-mailtools", result.Keys);
     }
 
@@ -164,7 +164,7 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
                 {
                   "mcpServerName": "mcp_MailTools",
                   "scope": "McpServers.Mail.All",
-                  "audience": "{{McpConstants.Agent365ToolsProdAppId}}"
+                  "audience": "{{McpConstants.WorkIQToolsProdAppId}}"
                 },
                 {
                   "mcpServerName": "mcp_TeamsServer",
@@ -179,9 +179,9 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
         var result = await ManifestHelper.GetScopesByAudienceAsync(path);
 
         // Assert — both keys present (additive by default)
-        Assert.True(result.ContainsKey(McpConstants.Agent365ToolsProdAppId));
+        Assert.True(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
         Assert.True(result.ContainsKey("2cc60bb0-1024-48c8-95f0-1fce211a04d8"));
-        Assert.Contains("McpServers.Mail.All", result[McpConstants.Agent365ToolsProdAppId]);
+        Assert.Contains("McpServers.Mail.All", result[McpConstants.WorkIQToolsProdAppId]);
         Assert.Contains("Tools.ListInvoke.All", result["2cc60bb0-1024-48c8-95f0-1fce211a04d8"]);
     }
 
@@ -195,7 +195,7 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
                 {
                   "mcpServerName": "mcp_MailTools",
                   "scope": "McpServers.Mail.All",
-                  "audience": "{{McpConstants.Agent365ToolsProdAppId}}"
+                  "audience": "{{McpConstants.WorkIQToolsProdAppId}}"
                 },
                 {
                   "mcpServerName": "mcp_TeamsServer",
@@ -210,7 +210,7 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
         var result = await ManifestHelper.GetScopesByAudienceAsync(path, excludeLegacyAtg: true);
 
         // Assert — ATG key gone, per-server key remains
-        Assert.False(result.ContainsKey(McpConstants.Agent365ToolsProdAppId));
+        Assert.False(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
         Assert.True(result.ContainsKey("2cc60bb0-1024-48c8-95f0-1fce211a04d8"));
         Assert.Contains("Tools.ListInvoke.All", result["2cc60bb0-1024-48c8-95f0-1fce211a04d8"]);
     }
@@ -227,8 +227,8 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
         var result = await ManifestHelper.GetScopesByAudienceAsync(path);
 
         // Assert — McpServersMetadata.Read.All always seeded under ATG AppId
-        Assert.True(result.ContainsKey(McpConstants.Agent365ToolsProdAppId));
-        Assert.Contains("McpServersMetadata.Read.All", result[McpConstants.Agent365ToolsProdAppId]);
+        Assert.True(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
+        Assert.Contains("McpServersMetadata.Read.All", result[McpConstants.WorkIQToolsProdAppId]);
     }
 
     [Fact]
@@ -241,7 +241,7 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
                 {
                   "mcpServerName": "mcp_MailTools",
                   "scope": "McpServers.Mail.All",
-                  "audience": "{{McpConstants.Agent365ToolsProdAppId}}"
+                  "audience": "{{McpConstants.WorkIQToolsProdAppId}}"
                 }
               ]
             }

@@ -31,10 +31,10 @@ public class DevelopCommandV1V2MigrationTests
         //   resolved = (null/empty/api://) ? ATG AppId : rawAudience
         var resolved = string.IsNullOrWhiteSpace(rawAudience) ||
             rawAudience.StartsWith("api://", StringComparison.OrdinalIgnoreCase)
-            ? McpConstants.Agent365ToolsProdAppId
+            ? McpConstants.WorkIQToolsProdAppId
             : rawAudience;
 
-        var isAtg = string.Equals(resolved, McpConstants.Agent365ToolsProdAppId,
+        var isAtg = string.Equals(resolved, McpConstants.WorkIQToolsProdAppId,
             StringComparison.OrdinalIgnoreCase);
 
         Assert.Equal(expectsAtg, isAtg);

@@ -528,7 +528,7 @@ public class PermissionsSubcommandTests
                     {
                       "mcpServerName": "mcp_MailTools",
                       "scope": "McpServers.Mail.All",
-                      "audience": "{{Microsoft.Agents.A365.DevTools.Cli.Constants.McpConstants.Agent365ToolsProdAppId}}"
+                      "audience": "{{Microsoft.Agents.A365.DevTools.Cli.Constants.McpConstants.WorkIQToolsProdAppId}}"
                     }
                   ]
                 }

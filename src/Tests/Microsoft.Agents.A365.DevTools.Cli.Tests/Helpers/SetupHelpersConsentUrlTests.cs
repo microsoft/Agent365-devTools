@@ -127,7 +127,7 @@ public class SetupHelpersConsentUrlTests
         };
         var mcpScopes = new[] { "McpServers.Mail.All" };
 
-        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.Agent365ToolsProdAppId, mcpScopes);
+        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.WorkIQToolsProdAppId, mcpScopes);
 
         names.Should().NotBeEmpty();
         config.ResourceConsents.Should().NotBeEmpty();
@@ -143,7 +143,7 @@ public class SetupHelpersConsentUrlTests
             AgentBlueprintId = BlueprintClientId,
         };
 
-        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.Agent365ToolsProdAppId, new[] { "scope" });
+        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.WorkIQToolsProdAppId, new[] { "scope" });
 
         names.Should().BeEquivalentTo(config.ResourceConsents.Select(rc => rc.ResourceName));
     }
@@ -163,7 +163,7 @@ public class SetupHelpersConsentUrlTests
             ConsentUrl = "https://old-url"
         });
 
-        SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.Agent365ToolsProdAppId, new[] { "scope" });
+        SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.WorkIQToolsProdAppId, new[] { "scope" });
 
         var botConsent = config.ResourceConsents.First(rc => rc.ResourceName == "Messaging Bot API");
         botConsent.ConsentUrl.Should().NotBe("https://old-url",

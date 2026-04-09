@@ -130,7 +130,7 @@ internal static class PermissionsSubcommand
                 logger.LogWarning("--remove-legacy-scopes will remove the shared ATG audience ({AtgAppId}) " +
                                   "from the blueprint. Agents still on V1 SDK will lose tool access. " +
                                   "Only proceed after V2 SDK is confirmed deployed.",
-                                  McpConstants.Agent365ToolsProdAppId);
+                                  McpConstants.WorkIQToolsProdAppId);
                 Console.Write("Continue? [y/N]: ");
                 var confirm = Console.ReadLine()?.Trim();
                 if (!string.Equals(confirm, "y", StringComparison.OrdinalIgnoreCase))

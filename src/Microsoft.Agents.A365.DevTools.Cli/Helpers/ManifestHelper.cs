@@ -276,7 +276,7 @@ public static class ManifestHelper
     /// Reads ToolingManifest.json and returns scopes grouped by their audience (resourceAppId).
     /// Supports V1 (shared ATG AppId), V2 (per-server AppId), and mixed manifests.
     /// Fallback rules when audience is missing or in legacy api:// format:
-    ///   → falls back to <see cref="McpConstants.Agent365ToolsProdAppId"/> (ATG AppId).
+    ///   → falls back to <see cref="McpConstants.WorkIQToolsProdAppId"/> (ATG AppId).
     /// </summary>
     /// <param name="manifestPath">Path to ToolingManifest.json</param>
     /// <param name="excludeLegacyAtg">
@@ -288,7 +288,7 @@ public static class ManifestHelper
         string manifestPath,
         bool excludeLegacyAtg = false)
     {
-        var atgAppId = McpConstants.Agent365ToolsProdAppId;
+        var atgAppId = McpConstants.WorkIQToolsProdAppId;
         var scopesByAudience = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
         // McpServersMetadata.Read.All is always required and belongs to the ATG AppId

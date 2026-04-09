@@ -194,7 +194,7 @@ public class AuthenticationService : IAuthenticationService
             {
                 string scope;
                 // Check if this is the production App ID
-                if (resourceUrl == McpConstants.Agent365ToolsProdAppId)
+                if (resourceUrl == McpConstants.WorkIQToolsProdAppId)
                 {
                     scope = $"{resourceUrl}/.default";
                     _logger.LogInformation("Authenticating to Agent 365 Tools");
@@ -205,9 +205,9 @@ public class AuthenticationService : IAuthenticationService
                     // Use production App ID by default
                     // For non-production environments, users should provide the App ID directly via config
                     // or set environment variable A365_MCP_APP_ID (without environment suffix for backward compatibility)
-                    var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.Agent365ToolsProdAppId;
+                    var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.WorkIQToolsProdAppId;
 
-                    if (appId != McpConstants.Agent365ToolsProdAppId)
+                    if (appId != McpConstants.WorkIQToolsProdAppId)
                     {
                         _logger.LogInformation("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
                     }
@@ -426,7 +426,7 @@ public class AuthenticationService : IAuthenticationService
     public string[] ResolveScopesForResource(string resourceUrl, string? manifestPath = null)
     {
         // Default to Agent 365 Tools resource app ID scope for backward compatibility
-        var scope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+        var scope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
         var defaultScopes = new[] { scope };
 
         // If no manifest path provided, try to find it in current directory

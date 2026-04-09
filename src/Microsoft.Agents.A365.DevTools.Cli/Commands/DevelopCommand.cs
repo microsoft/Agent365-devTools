@@ -797,9 +797,9 @@ public static class DevelopCommand
                         // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
                         var resolvedAudience = string.IsNullOrWhiteSpace(audience) ||
                             audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase)
-                            ? McpConstants.Agent365ToolsProdAppId
+                            ? McpConstants.WorkIQToolsProdAppId
                             : audience;
-                        if (string.Equals(resolvedAudience, McpConstants.Agent365ToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+                        if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
                         {
                             logger.LogWarning("{Server} uses legacy ATG audience. Re-run add-mcp-servers after V2 endpoint is live.", existingServerName);
                         }
@@ -868,9 +868,9 @@ public static class DevelopCommand
             // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
             var resolvedAudienceForNew = string.IsNullOrWhiteSpace(audience) ||
                 audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase)
-                ? McpConstants.Agent365ToolsProdAppId
+                ? McpConstants.WorkIQToolsProdAppId
                 : audience;
-            if (string.Equals(resolvedAudienceForNew, McpConstants.Agent365ToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(resolvedAudienceForNew, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogWarning("{Server} uses legacy ATG audience. Re-run add-mcp-servers after V2 endpoint is live.", serverName);
             }
