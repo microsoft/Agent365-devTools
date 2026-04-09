@@ -143,15 +143,41 @@ internal static class PermissionsSubcommand
             if (dryRun)
             {
                 var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
-                var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(
-                    manifestPath, excludeLegacyAtg: removeLegacyScopes);
 
                 logger.LogInformation("DRY RUN: Configure MCP Permissions");
-                logger.LogInformation("Would configure OAuth2 grants and inheritable permissions:");
-                logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                foreach (var (audience, scopes) in scopesByAudience)
-                    logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
-                        audience, string.Join(", ", scopes));
+                logger.LogInformation("  Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
+
+                if (removeLegacyScopes)
+                {
+                    // Show what would be removed (ATG audience entries only)
+                    var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false);
+                    var remainingScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: true);
+                    var removedAudiences = allScopes.Keys
+                        .Where(k => !remainingScopes.ContainsKey(k))
+                        .ToList();
+
+                    if (removedAudiences.Count > 0)
+                    {
+                        logger.LogInformation("Would REMOVE (--remove-legacy-scopes):");
+                        foreach (var audience in removedAudiences)
+                            logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
+                                audience, string.Join(", ", allScopes[audience]));
+                    }
+
+                    logger.LogInformation("Would CONFIGURE:");
+                    foreach (var (audience, scopes) in remainingScopes)
+                        logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
+                            audience, string.Join(", ", scopes));
+                }
+                else
+                {
+                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false);
+                    logger.LogInformation("Would configure OAuth2 grants and inheritable permissions:");
+                    foreach (var (audience, scopes) in scopesByAudience)
+                        logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
+                            audience, string.Join(", ", scopes));
+                }
+
                 return;
             }
 

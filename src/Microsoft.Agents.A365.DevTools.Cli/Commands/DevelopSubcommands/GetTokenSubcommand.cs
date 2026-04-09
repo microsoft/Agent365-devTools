@@ -381,6 +381,7 @@ internal static class GetTokenSubcommand
         logger.LogInformation("");
 
         var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath);
+        var serverNamesByAudience = await ManifestHelper.GetServerNamesByAudienceAsync(manifestPath);
 
         var tokenResults = new List<McpServerTokenResult>();
         foreach (var kvp in scopesByAudience)
@@ -401,17 +402,33 @@ internal static class GetTokenSubcommand
 
         DisplayResults(tokenResults, outputFormat, verbose, logger);
 
-        // Save first successful token to platform config (backward compat)
-        var firstSuccess = tokenResults.FirstOrDefault(r => r.Success);
-        if (firstSuccess != null)
+        // Save tokens: first V1/shared token as BEARER_TOKEN (backward compat),
+        // each per-server audience token as BEARER_TOKEN_<SERVER_NAME>
+        bool anySaved = false;
+        bool firstTokenSaved = false;
+        foreach (var result in tokenResults.Where(r => r.Success))
         {
-            await SaveAndReportTokenAsync(firstSuccess.Token!, setupConfig, logger);
+            serverNamesByAudience.TryGetValue(result.Audience!, out var serverNames);
+
+            if (serverNames is { Count: > 0 })
+            {
+                // V2 per-server audience — write one entry per server name
+                foreach (var serverName in serverNames)
+                    await SaveAndReportTokenAsync(result.Token!, setupConfig, logger, serverUniqueName: serverName);
+            }
+            else if (!firstTokenSaved)
+            {
+                // V1 shared audience or ATG seed entry — write as BEARER_TOKEN (backward compat)
+                await SaveAndReportTokenAsync(result.Token!, setupConfig, logger, serverUniqueName: null);
+                firstTokenSaved = true;
+            }
+            anySaved = true;
+        }
+
+        if (anySaved)
             logger.LogInformation("Token acquisition complete!");
-        }
         else
-        {
             Environment.Exit(1);
-        }
     }
 
     private static string ResolveClientAppId(string? appId, Agent365Config? setupConfig)
@@ -423,18 +440,25 @@ internal static class GetTokenSubcommand
         throw new InvalidOperationException("No client application ID specified. Use --app-id or ensure ClientAppId is set in config.");
     }
 
-    private static async Task SaveAndReportTokenAsync(string token, Agent365Config? setupConfig, ILogger logger)
+    private static async Task SaveAndReportTokenAsync(
+        string token,
+        Agent365Config? setupConfig,
+        ILogger logger,
+        string? serverUniqueName = null)
     {
         if (setupConfig != null)
         {
-            await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, logger);
+            await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, logger, serverUniqueName);
         }
         else
         {
+            var envVarKey = !string.IsNullOrWhiteSpace(serverUniqueName)
+                ? AuthenticationConstants.GetPerServerBearerTokenEnvVar(serverUniqueName)
+                : AuthenticationConstants.BearerTokenEnvironmentVariable;
             logger.LogInformation("");
             logger.LogInformation("Note: To use this token in your samples, manually add it to:");
-            logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > BEARER_TOKEN");
-            logger.LogInformation("  - Python/Node.js projects: .env file as BEARER_TOKEN={Token}", token);
+            logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > {Key}", envVarKey);
+            logger.LogInformation("  - Python/Node.js projects: .env file as {Key}={Token}", envVarKey, token);
             logger.LogInformation("");
         }
     }

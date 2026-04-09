@@ -334,7 +334,8 @@ public static class ManifestHelper
                 audience = audienceEl.GetString();
 
             if (string.IsNullOrWhiteSpace(audience) ||
-                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase))
+                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
             {
                 audience = atgAppId;
             }
@@ -365,5 +366,43 @@ public static class ManifestHelper
                 k => k.Key,
                 v => v.Value.OrderBy(s => s).ToArray(),
                 StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Reads ToolingManifest.json and returns a mapping of audience → server unique names.
+    /// Used by get-token to associate each acquired token with the right per-server env var key.
+    /// </summary>
+    public static async Task<Dictionary<string, List<string>>> GetServerNamesByAudienceAsync(string manifestPath)
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        var parsed = await ReadManifestAsync(manifestPath);
+        if (parsed is null) return result;
+
+        var (servers, _) = parsed.Value;
+
+        foreach (var element in servers)
+        {
+            string? audience = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
+                audience = audienceEl.GetString();
+
+            if (string.IsNullOrWhiteSpace(audience) ||
+                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var uniqueName = ExtractUniqueServerName(element);
+            if (string.IsNullOrWhiteSpace(uniqueName)) continue;
+
+            if (!result.TryGetValue(audience, out var names))
+            {
+                names = new List<string>();
+                result[audience] = names;
+            }
+            names.Add(uniqueName);
+        }
+
+        return result;
     }
 }
