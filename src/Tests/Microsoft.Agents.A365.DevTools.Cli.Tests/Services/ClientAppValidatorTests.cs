@@ -40,8 +40,8 @@ public class ClientAppValidatorTests
     private const string DelegatedPermissionGrantReadWriteAllId = "aaaa0005-0000-0000-0000-000000000000";
     private const string DirectoryReadAllId = "aaaa0006-0000-0000-0000-000000000000";
     private const string AgentInstanceReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
-    private const string AgentIdentityReadWriteAllId = "aaaa0008-0000-0000-0000-000000000000";
-    private const string UserReadId = "aaaa0009-0000-0000-0000-000000000000";
+    private const string UserReadId = "aaaa0008-0000-0000-0000-000000000000";
+    private const string UserReadWriteAllId = "aaaa0009-0000-0000-0000-000000000000";
 
     // Separate SP object ID used only by the consent-grant path (GetConsentedPermissionsAsync)
     // so it does not conflict with SetupAdminConsentSp / SetupAdminConsentGrantsEmpty.
@@ -350,8 +350,8 @@ public class ClientAppValidatorTests
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
                     {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{AgentIdentityReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{UserReadId}}", "type": "Scope"}
+                    {"id": "{{UserReadId}}", "type": "Scope"},
+                    {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -393,8 +393,8 @@ public class ClientAppValidatorTests
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
                     {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
                     {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
-                    {"id": "{{AgentIdentityReadWriteAllId}}", "value": "AgentIdentity.ReadWrite.All"},
-                    {"id": "{{UserReadId}}", "value": "User.Read"}
+                    {"id": "{{UserReadId}}", "value": "User.Read"},
+                    {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
                 ]
             }]
         }
@@ -822,7 +822,7 @@ public class ClientAppValidatorTests
     }
 
     /// <summary>
-    /// Sets up the app info GET with all required permissions (9 with GUIDs + AgentIdentity.Create.All,
+    /// Sets up the app info GET with all required permissions (8 with GUIDs + AgentIdentity.Create.All,
     /// AgentIdentityBlueprint.DeleteRestore.All, and AgentIdentity.DeleteRestore.All via consent grant).
     /// The permission GUIDs match those returned by SetupPermissionResolution so validation passes.
     /// The three no-GUID scopes are resolved via GetConsentedPermissionsAsync fallback.
@@ -841,8 +841,8 @@ public class ClientAppValidatorTests
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
                     {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{AgentIdentityReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{UserReadId}}", "type": "Scope"}
+                    {"id": "{{UserReadId}}", "type": "Scope"},
+                    {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -854,7 +854,7 @@ public class ClientAppValidatorTests
 
     /// <summary>
     /// Sets up the Microsoft Graph SP permission resolution GET (select includes oauth2PermissionScopes).
-    /// Returns the 6 required permissions with GUIDs matching the test constants.
+    /// Returns the 7 required permissions with GUIDs matching the test constants.
     /// </summary>
     private void SetupPermissionResolution()
     {
@@ -871,8 +871,8 @@ public class ClientAppValidatorTests
                         {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
                         {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
                         {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
-                        {"id": "{{AgentIdentityReadWriteAllId}}", "value": "AgentIdentity.ReadWrite.All"},
-                        {"id": "{{UserReadId}}", "value": "User.Read"}
+                        {"id": "{{UserReadId}}", "value": "User.Read"},
+                        {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
                     ]
                 }
             ]

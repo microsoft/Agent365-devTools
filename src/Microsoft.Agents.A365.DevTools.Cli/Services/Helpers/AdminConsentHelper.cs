@@ -199,6 +199,8 @@ public static class AdminConsentHelper
     /// <param name="ct">Cancellation token</param>
     /// <param name="scopes">OAuth2 scopes for Graph token acquisition. Should include DelegatedPermissionGrant.ReadWrite.All
     /// to read oauth2PermissionGrants. When null, falls back to Azure CLI token which may lack required permissions.</param>
+    /// <param name="consentType">Optional consent type filter (e.g. "AllPrincipals" or "Principal").
+    /// When specified, only grants with this consent type are considered. When null, any consent type matches.</param>
     /// <returns>True if all required scopes are already granted, false otherwise</returns>
     public static async Task<bool> CheckConsentExistsAsync(
         Services.GraphApiService graphApiService,
@@ -208,7 +210,8 @@ public static class AdminConsentHelper
         System.Collections.Generic.IEnumerable<string> requiredScopes,
         ILogger logger,
         CancellationToken ct,
-        System.Collections.Generic.IEnumerable<string>? scopes = null)
+        System.Collections.Generic.IEnumerable<string>? scopes = null,
+        string? consentType = null)
     {
         if (string.IsNullOrWhiteSpace(clientSpId) || string.IsNullOrWhiteSpace(resourceSpId))
         {
@@ -221,9 +224,15 @@ public static class AdminConsentHelper
         {
             // Query existing grants — pass scopes so EnsureGraphHeadersAsync uses the MSAL token provider
             // (which has DelegatedPermissionGrant.ReadWrite.All) instead of falling back to the Azure CLI token.
+            var filter = $"clientId eq '{clientSpId}' and resourceId eq '{resourceSpId}'";
+            if (!string.IsNullOrWhiteSpace(consentType))
+            {
+                filter += $" and consentType eq '{consentType}'";
+            }
+
             var grantDoc = await graphApiService.GraphGetAsync(
                 tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpId}' and resourceId eq '{resourceSpId}'",
+                $"/v1.0/oauth2PermissionGrants?$filter={filter}",
                 ct,
                 scopes);
 

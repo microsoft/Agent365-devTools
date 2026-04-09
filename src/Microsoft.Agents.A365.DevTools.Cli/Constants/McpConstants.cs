@@ -9,8 +9,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 public static class McpConstants
 {
 
-    // Agent 365 Tools App IDs for different environments
-    public const string Agent365ToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
+    // WorkIQ Tools App ID
+    public const string WorkIQToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
 
     /// <summary>
     /// Agent 365 Tools identifier URI (used for admin consent URL construction).

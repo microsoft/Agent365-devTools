@@ -70,7 +70,7 @@ After installing or updating, confirm the CLI is ready by running `a365 -h` to d
 
 ### Adapt to CLI version differences
 
-The CLI is under active development, and some commands may have changed in recent versions. The instructions in this prompt assume you have the latest version. If you discover that a command referenced later (such as `publish`) is not recognized, it means you have an older version – in that case, upgrade the CLI. Using the latest version is essential because older flows (e.g. the `create-instance` command) have been deprecated in favor of new commands (`publish`, etc.). If upgrading isn't possible, adjust your steps according to the older CLI's documentation (for example, use the old `a365 create-instance` command in place of `publish`), but prefer to upgrade if at all feasible.
+The CLI is under active development, and some commands may have changed in recent versions. The instructions in this prompt assume you have the latest version. If you discover that a command referenced later (such as `publish`) is not recognized, it means you have an older version – in that case, upgrade the CLI. Using the latest version is essential because the CLI evolves rapidly and newer versions include important fixes and new commands (e.g. `create-instance`, `publish`). If upgrading isn't possible, adjust your steps according to the older CLI's documentation, but prefer to upgrade if at all feasible.
 
 ### Step 1 completion
 

@@ -168,7 +168,7 @@ public class AuthenticationServiceTests : IDisposable
 
             // Assert - Should return default Power Platform scope when no MCP scopes are found
             Assert.Single(noScopeResult);
-            var scope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+            var scope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
             Assert.Equal(scope, noScopeResult[0]);
         }
         finally
@@ -334,7 +334,7 @@ public class AuthenticationServiceTests : IDisposable
 
         // Assert
         scopes.Should().ContainSingle();
-        var expectedScope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+        var expectedScope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
         scopes[0].Should().Be(expectedScope);
     }
 
@@ -360,7 +360,7 @@ public class AuthenticationServiceTests : IDisposable
 
             // Assert
             scopes.Should().ContainSingle();
-            var expectedScope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+            var expectedScope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
             scopes[0].Should().Be(expectedScope);
         }
         finally
@@ -530,7 +530,7 @@ public class AuthenticationServiceTests : IDisposable
 
             // Assert
             scopes.Should().ContainSingle();
-            var expectedScope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+            var expectedScope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
             scopes[0].Should().Be(expectedScope);
         }
         finally

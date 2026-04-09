@@ -151,7 +151,7 @@ class Program
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
-                botConfigurator, graphApiService));
+                graphApiService));
             rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
                 deploymentService, azureAuthValidator, graphApiService, agentBlueprintService));
 

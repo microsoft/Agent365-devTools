@@ -19,12 +19,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public class CreateInstanceCommand
 {
     public static Command CreateCommand(ILogger<CreateInstanceCommand> logger, IConfigService configService, CommandExecutor executor,
-        IBotConfigurator botConfigurator, GraphApiService graphApiService)
+        GraphApiService graphApiService)
     {
-        // Command description - deprecated
-        // Old: Create and configure agent user identities with appropriate
+        // Command description
+        // Create and configure agent user identities with appropriate
         // licenses and notification settings for your deployed agent
-        var command = new Command("create-instance", "DEPRECATED: Use 'a365 publish', optionally 'a365 deploy', then create instances in Microsoft Teams");
+        var command = new Command("create-instance", "Create and configure agent user identities with appropriate licenses and notification settings for your deployed agent");
 
         // Options for the main create-instance command
         var configOption = new Option<FileInfo>(
@@ -44,25 +44,19 @@ public class CreateInstanceCommand
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        // Subcommands removed - command is deprecated
-        // Keeping subcommand implementation code for local development only
+        // Subcommands
+        command.AddCommand(CreateIdentitySubcommand(logger, configService, executor, graphApiService));
+        command.AddCommand(CreateLicensesSubcommand(logger, configService, executor, graphApiService));
 
         // Default handler
         command.SetHandler(async (config, verbose, dryRun) =>
         {
-            LogDeprecationError(logger, "create-instance");
-            Environment.Exit(1);
-            
-            // Unreachable code below - preserved for local development use cases
-            #pragma warning disable CS0162 // Unreachable code detected
-            
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Agent 365 Instance Creation - All Steps");
                 logger.LogInformation("This would execute the following operations:");
-                logger.LogInformation("  1. Create Agent Identity and Agent User");
+                logger.LogInformation("  1. Create Agent Identity and Agent User with required permissions");
                 logger.LogInformation("  2. Add licenses to Agent User");
-                logger.LogInformation("  3. Configure Bot Service");
                 logger.LogInformation("No actual changes will be made.");
                 return;
             }
@@ -82,19 +76,14 @@ public class CreateInstanceCommand
                 logger.LogInformation("Step 1-3: Creating Agent Identity, adding licenses, and registering MCP servers...");
                 logger.LogInformation("");
 
-                // Use C# runner with AuthenticationService and GraphApiService
-                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
-                var authService = new AuthenticationService(
-                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
-
-                var graphService = new GraphApiService(
-                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
-                    executor);
+                // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
+                var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
-                    graphService);
+                    graphApiService);
 
                 var generatedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -194,8 +183,8 @@ public class CreateInstanceCommand
                 logger.LogInformation("     - Agent Blueprint ID: {AgentBlueprintId}", instanceConfig.AgentBlueprintId);
                 logger.LogInformation("     - Required Graph scopes: {Scopes}", string.Join(", ", instanceConfig.AgentIdentityScopes));
                 
-                // Attempt to read agent identity information from agenticuser.config.json
-                var agentUserConfigPath = Path.Combine(Environment.CurrentDirectory, "agenticuser.config.json");
+                // Attempt to read agent identity information from a365.generated.config.json
+                var agentUserConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
                 string? agenticAppId = instanceConfig.AgenticAppId;
                 string? agenticUserId = instanceConfig.AgenticUserId;
                 var baseEndpointName = $"{instanceConfig.WebAppName}-endpoint";
@@ -203,7 +192,7 @@ public class CreateInstanceCommand
 
                 if (File.Exists(agentUserConfigPath))
                 {
-                    logger.LogInformation("     - Reading agent identity from agenticuser.config.json");
+                    logger.LogInformation("     - Reading agent identity from a365.generated.config.json");
                     try
                     {
                         var agentUserConfigText = await File.ReadAllTextAsync(agentUserConfigPath);
@@ -244,7 +233,7 @@ public class CreateInstanceCommand
                 logger.LogInformation("     Agent Blueprint ID: {AgentBlueprintId}", instanceConfig.AgentBlueprintId);
                 logger.LogInformation("     Agent Instance ID: {AgenticAppId}", instanceConfig.AgenticAppId);
                 logger.LogInformation("     Agent User ID: {AgenticUserId}", instanceConfig.AgenticUserId);
-                logger.LogInformation("     Bot ID: {BotId}", instanceConfig.BotId);
+                logger.LogInformation("     Agent User Principal Name: {AgentUserPrincipalName}", instanceConfig.AgentUserPrincipalName);
                 
                 // Save the updated configuration using ConfigService
                 await configService.SaveStateAsync(instanceConfig);
@@ -258,7 +247,7 @@ public class CreateInstanceCommand
                     generatedConfigPath = Path.Combine(
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
-                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    using var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                     var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -292,7 +281,8 @@ public class CreateInstanceCommand
     private static Command CreateIdentitySubcommand(
         ILogger<CreateInstanceCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var command = new Command("identity", "Create Agent Identity and Agent User");
 
@@ -315,12 +305,6 @@ public class CreateInstanceCommand
 
         command.SetHandler(async (config, verbose, dryRun) =>
         {
-            LogDeprecationError(logger, "create-instance identity");
-            Environment.Exit(1);
-            
-            // Unreachable code below - preserved for local development
-            #pragma warning disable CS0162
-            
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Creating Agent Identity and Agent User");
@@ -337,19 +321,14 @@ public class CreateInstanceCommand
                 var instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
                 if (instanceConfig == null) Environment.Exit(1);
 
-                // Use C# runner with AuthenticationService and GraphApiService
-                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
-                var authService = new AuthenticationService(
-                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
-
-                var graphService = new GraphApiService(
-                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
-                    executor);
+                // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
+                var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
-                    graphService);
+                    graphApiService);
 
                 var generatedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -372,7 +351,7 @@ public class CreateInstanceCommand
                         config.DirectoryName ?? Environment.CurrentDirectory,
                         "a365.generated.config.json");
                     
-                    var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+                    using var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                     var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
                     await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -406,7 +385,8 @@ public class CreateInstanceCommand
     private static Command CreateLicensesSubcommand(
         ILogger<CreateInstanceCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        GraphApiService graphApiService)
     {
         var command = new Command("licenses", "Add licenses to Agent User");
 
@@ -429,12 +409,6 @@ public class CreateInstanceCommand
 
         command.SetHandler(async (config, verbose, dryRun) =>
         {
-            LogDeprecationError(logger, "create-instance licenses");
-            Environment.Exit(1);
-            
-            // Unreachable code below - preserved for local development
-            #pragma warning disable CS0162
-            
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Adding licenses to Agent User");
@@ -450,19 +424,14 @@ public class CreateInstanceCommand
                 var instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
                 if (instanceConfig == null) Environment.Exit(1);
 
-                // Use C# runner with AuthenticationService and GraphApiService
-                var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
-                var authService = new AuthenticationService(
-                    cleanLoggerFactory.CreateLogger<AuthenticationService>());
-
-                var graphService = new GraphApiService(
-                    cleanLoggerFactory.CreateLogger<GraphApiService>(),
-                    executor);
+                // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
+                var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
+                using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
 
                 var instanceRunner = new A365CreateInstanceRunner(
                     cleanLoggerFactory.CreateLogger<A365CreateInstanceRunner>(),
                     executor,
-                    graphService);
+                    graphApiService);
 
                 var generatedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -516,24 +485,4 @@ public class CreateInstanceCommand
         }
     }
 
-    /// <summary>
-    /// Logs deprecation error message for create-instance command and its subcommands.
-    /// Uses plain ASCII text for cross-platform compatibility.
-    /// </summary>
-    private static void LogDeprecationError(ILogger logger, string commandName)
-    {
-        logger.LogError("ERROR: Command '{Command}' has been deprecated.", commandName);
-        logger.LogError("");
-        logger.LogError("This command bypasses the standard agent registration workflow,");
-        logger.LogError("which prevents proper agent registration and event propagation.");
-        logger.LogError("");
-        logger.LogError("Use the recommended workflow instead:");
-        logger.LogError("  1. Run 'a365 publish' to package and upload your agent manifest");
-        logger.LogError("  2. Run 'a365 deploy' to deploy your application (if Azure-hosted)");
-        logger.LogError("  3. Create an agent instance through Microsoft Teams");
-        logger.LogError("");
-        logger.LogError("For more information, see:");
-        logger.LogError("https://learn.microsoft.com/microsoft-agent-365/onboard");
-        logger.LogError("");
-    }
 }

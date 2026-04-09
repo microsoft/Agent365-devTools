@@ -231,6 +231,7 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Blueprint application
         "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
         "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment
+        "User.ReadWrite.All",  // Required for agent user creation, usage location update, and license assignment
         // Note: RoleManagementReadDirectoryScope is excluded because Directory.Read.All covers the needed read operations.
     };
 
