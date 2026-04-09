@@ -11,6 +11,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 public interface IAgent365ToolingService
 {
     /// <summary>
+    /// The target environment (test, preprod, prod)
+    /// </summary>
+    string Environment { get; }
+    /// <summary>
     /// Lists all available Dataverse environments
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -80,6 +84,28 @@ public interface IAgent365ToolingService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>ServerInfo</returns>
     public Task<ServerInfo> GetServerInfoAsync(
+        string serverName,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Adds a BYO (Bring Your Own) MCP server
+    /// </summary>
+    /// <param name="request">Add MCP server request</param>
+    /// <param name="environmentId">Dataverse environment ID to set as x-ms-environment-id header</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing server details and MosToolId</returns>
+    Task<AddMcpServerResponse?> AddMcpServerAsync(
+        AddMcpServerRequest request,
+        string? environmentId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Provisions an identity for an external MCP server
+    /// </summary>
+    /// <param name="serverName">MCP server name</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing the provisioned application ID</returns>
+    Task<ProvisionIdentityResponse?> ProvisionIdentityAsync(
         string serverName,
         CancellationToken cancellationToken = default);
 }

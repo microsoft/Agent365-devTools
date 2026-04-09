@@ -146,7 +146,7 @@ class Program
 
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, graphApiService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
@@ -275,14 +275,31 @@ class Program
             {
                 try
                 {
-                    // Try to load config file to get environment
-                    var config = configService.LoadAsync(args[configIndex + 1]).Result;
-                    environment = config.Environment;
+                    // Read environment from config without full validation
+                    // (commands like register-external-mcp-server don't need deployment fields)
+                    var configFilePath = args[configIndex + 1];
+                    if (!Path.IsPathRooted(configFilePath))
+                        configFilePath = Path.Combine(System.Environment.CurrentDirectory, configFilePath);
+
+                    if (File.Exists(configFilePath))
+                    {
+                        var json = File.ReadAllText(configFilePath);
+                        using var doc = System.Text.Json.JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("environment", out var envProp))
+                        {
+                            var envValue = envProp.GetString();
+                            if (!string.IsNullOrWhiteSpace(envValue))
+                            {
+                                environment = envValue;
+                            }
+                        }
+                    }
+                    logger.LogDebug("Resolved environment from config: {Environment}", environment);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // If config loading fails, stick with default "prod"
-                    // This is fine - the service will work with default environment
+                    // If config reading fails, stick with default "prod"
+                    logger.LogDebug("Failed to read environment from config: {Error}", ex.Message);
                 }
             }
 

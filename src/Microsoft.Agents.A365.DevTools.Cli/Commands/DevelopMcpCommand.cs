@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -18,8 +19,9 @@ public static class DevelopMcpCommand
     /// Creates the develop-mcp command with subcommands for MCP server management in Dataverse
     /// </summary>
     public static Command CreateCommand(
-        ILogger logger, 
-        IAgent365ToolingService toolingService)
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService = null)
     {
         var developMcpCommand = new Command("develop-mcp", "Manage MCP servers in Dataverse environments");
 
@@ -38,6 +40,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateApproveSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
 
         return developMcpCommand;
     }
@@ -798,6 +801,421 @@ public static class DevelopMcpCommand
         }, serverNameOption, developerNameOption, iconUrlOption, outputPathOption, dryRunOption);
 
         return command;
+    }
+
+    /// <summary>
+    /// Creates the register-external-mcp-server subcommand
+    /// </summary>
+    private static Command CreateRegisterExternalMcpServerSubcommand(
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService)
+    {
+        var command = new Command("register-external-mcp-server", "Register an external MCP server with Entra or external IDP authentication");
+
+        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name to register");
+        command.AddOption(serverNameOption);
+
+        var serverUrlOption = new Option<string?>(["--server-url", "-u"], description: "Remote MCP server URL");
+        command.AddOption(serverUrlOption);
+
+        var authTypeOption = new Option<string?>(["--auth-type", "-a"], description: "Authentication type: Entra or ExternalIDP");
+        command.AddOption(authTypeOption);
+
+        // ExternalIDP-specific options
+        var idpAuthUrlOption = new Option<string?>("--idp-authorization-url", description: "External IDP authorization URL (required for ExternalIDP)");
+        command.AddOption(idpAuthUrlOption);
+
+        var idpTokenUrlOption = new Option<string?>("--idp-token-url", description: "External IDP token URL (required for ExternalIDP)");
+        command.AddOption(idpTokenUrlOption);
+
+        var idpScopesOption = new Option<string?>("--idp-scopes", description: "External IDP scopes (required for ExternalIDP)");
+        command.AddOption(idpScopesOption);
+
+        var idpClientIdOption = new Option<string?>("--idp-client-id", description: "External IDP client ID (required for ExternalIDP)");
+        command.AddOption(idpClientIdOption);
+
+        var idpClientSecretOption = new Option<string?>("--idp-client-secret", description: "External IDP client secret (required for ExternalIDP)");
+        command.AddOption(idpClientSecretOption);
+
+        var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://myapp/.default')");
+        command.AddOption(remoteScopesOption);
+
+        var tenantIdOption = new Option<string?>(["--tenant-id", "-t"], description: "Entra tenant ID for app registration (defaults to current az login tenant)");
+        command.AddOption(tenantIdOption);
+
+        var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
+        command.AddOption(serviceTreeIdOption);
+
+        var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
+        command.AddOption(configOption);
+
+        var dryRunOption = new Option<bool>("--dry-run", description: "Show what would be done without executing");
+        command.AddOption(dryRunOption);
+
+        var verboseOption = new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (context) =>
+        {
+            var serverName = context.ParseResult.GetValueForOption(serverNameOption);
+            var serverUrl = context.ParseResult.GetValueForOption(serverUrlOption);
+            var authType = context.ParseResult.GetValueForOption(authTypeOption);
+            var idpAuthUrl = context.ParseResult.GetValueForOption(idpAuthUrlOption);
+            var idpTokenUrl = context.ParseResult.GetValueForOption(idpTokenUrlOption);
+            var idpScopes = context.ParseResult.GetValueForOption(idpScopesOption);
+            var idpClientId = context.ParseResult.GetValueForOption(idpClientIdOption);
+            var idpClientSecret = context.ParseResult.GetValueForOption(idpClientSecretOption);
+            var remoteScopes = context.ParseResult.GetValueForOption(remoteScopesOption);
+            var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
+            var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption);
+            var configPath = context.ParseResult.GetValueForOption(configOption)!;
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+
+            var isEntra = false;
+            var isExternalIdp = false;
+
+            try
+            {
+                // Validate required inputs
+                if (string.IsNullOrWhiteSpace(serverName))
+                {
+                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to register: ", "Server name", 100);
+                    if (string.IsNullOrWhiteSpace(serverName)) { logger.LogError("Server name is required"); return; }
+                }
+                else
+                {
+                    serverName = InputValidator.ValidateInput(serverName, "Server name");
+                    if (serverName == null) { logger.LogError("Invalid server name format"); return; }
+                }
+
+                if (string.IsNullOrWhiteSpace(serverUrl))
+                {
+                    serverUrl = InputValidator.PromptAndValidateRequiredInput("Enter remote MCP server URL: ", "Server URL", 500);
+                    if (string.IsNullOrWhiteSpace(serverUrl)) { logger.LogError("Server URL is required"); return; }
+                }
+
+                // Validate auth type
+                if (string.IsNullOrWhiteSpace(authType))
+                {
+                    authType = InputValidator.PromptAndValidateRequiredInput("Enter authentication type (Entra or ExternalIDP): ", "Auth type", 20);
+                    if (string.IsNullOrWhiteSpace(authType)) { logger.LogError("Auth type is required"); return; }
+                }
+
+                isEntra = authType.Equals("Entra", StringComparison.OrdinalIgnoreCase);
+                isExternalIdp = authType.Equals("ExternalIDP", StringComparison.OrdinalIgnoreCase);
+                if (!isEntra && !isExternalIdp)
+                {
+                    logger.LogError("Invalid auth type '{AuthType}'. Must be 'Entra' or 'ExternalIDP'", authType);
+                    return;
+                }
+
+                // For ExternalIDP, collect IDP details
+                if (isExternalIdp)
+                {
+                    if (string.IsNullOrWhiteSpace(idpAuthUrl))
+                    {
+                        idpAuthUrl = InputValidator.PromptAndValidateRequiredInput("Enter external IDP authorization URL: ", "Authorization URL", 500);
+                        if (string.IsNullOrWhiteSpace(idpAuthUrl)) { logger.LogError("Authorization URL is required for ExternalIDP"); return; }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(idpTokenUrl))
+                    {
+                        idpTokenUrl = InputValidator.PromptAndValidateRequiredInput("Enter external IDP token URL: ", "Token URL", 500);
+                        if (string.IsNullOrWhiteSpace(idpTokenUrl)) { logger.LogError("Token URL is required for ExternalIDP"); return; }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(idpScopes))
+                    {
+                        idpScopes = InputValidator.PromptAndValidateRequiredInput("Enter external IDP scopes: ", "Scopes", 500);
+                        if (string.IsNullOrWhiteSpace(idpScopes)) { logger.LogError("Scopes are required for ExternalIDP"); return; }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(idpClientId))
+                    {
+                        idpClientId = InputValidator.PromptAndValidateRequiredInput("Enter external IDP client ID: ", "Client ID", 100);
+                        if (string.IsNullOrWhiteSpace(idpClientId)) { logger.LogError("Client ID is required for ExternalIDP"); return; }
+                    }
+
+                    if (string.IsNullOrWhiteSpace(idpClientSecret))
+                    {
+                        idpClientSecret = InputValidator.PromptAndValidateRequiredInput("Enter external IDP client secret: ", "Client secret", 500);
+                        if (string.IsNullOrWhiteSpace(idpClientSecret)) { logger.LogError("Client secret is required for ExternalIDP"); return; }
+                    }
+                }
+
+                // Remote scopes are required for both Entra and ExternalIDP
+                if (string.IsNullOrWhiteSpace(remoteScopes))
+                {
+                    remoteScopes = InputValidator.PromptAndValidateRequiredInput("Enter scopes for the remote MCP server: ", "Remote scopes", 500);
+                    if (string.IsNullOrWhiteSpace(remoteScopes)) { logger.LogError("Remote scopes are required"); return; }
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogError("Input validation failed: {Message}", ex.Message);
+                return;
+            }
+
+            logger.LogInformation("Starting register-external-mcp-server operation for {ServerName} (AuthType: {AuthType})...", serverName, authType);
+
+            if (dryRun)
+            {
+                logger.LogInformation("[DRY RUN] Would create Entra apps and register MCP server {ServerName}", serverName);
+                return;
+            }
+
+            // Step 1: Create Entra app(s) and get secrets
+            if (graphApiService == null)
+            {
+                logger.LogError("Graph API service is not available. Cannot create Entra applications.");
+                return;
+            }
+
+            // Auto-detect tenant ID from az account if not provided
+            var tenantId = userTenantId ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                try
+                {
+                    var isWindows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows);
+                    var psi = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = isWindows ? "cmd.exe" : "az",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    };
+                    if (isWindows)
+                    {
+                        psi.ArgumentList.Add("/c");
+                        psi.ArgumentList.Add("az");
+                    }
+
+                    psi.ArgumentList.Add("account");
+                    psi.ArgumentList.Add("show");
+                    psi.ArgumentList.Add("--query");
+                    psi.ArgumentList.Add("tenantId");
+                    psi.ArgumentList.Add("-o");
+                    psi.ArgumentList.Add("tsv");
+
+                    using var proc = System.Diagnostics.Process.Start(psi);
+                    if (proc != null)
+                    {
+                        var output = await proc.StandardOutput.ReadToEndAsync();
+                        await proc.WaitForExitAsync();
+                        tenantId = output?.Trim() ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(tenantId))
+                        {
+                            logger.LogInformation("Auto-detected tenant ID from az account: {TenantId}", tenantId);
+                        }
+                    }
+                }
+                catch
+                {
+                    logger.LogDebug("Could not auto-detect tenant ID from az account");
+                }
+            }
+
+            // A365 Proxy app (always created)
+            logger.LogInformation("Creating Entra application for A365 Proxy...");
+            var a365App = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-A365Proxy", serviceTreeId: serviceTreeId);
+            if (a365App == null)
+            {
+                logger.LogError("Failed to create Entra application for A365 Proxy");
+                return;
+            }
+
+            var a365Secret = await graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId);
+            if (string.IsNullOrWhiteSpace(a365Secret))
+            {
+                logger.LogError("Failed to create secret for A365 Proxy Entra application");
+                return;
+            }
+
+            logger.LogInformation("Created A365 Proxy app: {ClientId}", a365App.Value.ClientId);
+
+            Guid clientApp2Id;
+            string clientApp2Secret;
+            string? remoteProxyAppObjectId = null;
+
+            if (isEntra)
+            {
+                // Entra flow: create second Entra app for RemoteProxy
+                logger.LogInformation("Creating Entra application for Remote Proxy...");
+                var remoteApp = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-RemoteProxy", serviceTreeId: serviceTreeId);
+                if (remoteApp == null)
+                {
+                    logger.LogError("Failed to create Entra application for Remote Proxy");
+                    return;
+                }
+
+                var remoteSecret = await graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId);
+                if (string.IsNullOrWhiteSpace(remoteSecret))
+                {
+                    logger.LogError("Failed to create secret for Remote Proxy Entra application");
+                    return;
+                }
+
+                logger.LogInformation("Created Remote Proxy app: {ClientId}", remoteApp.Value.ClientId);
+                clientApp2Id = Guid.Parse(remoteApp.Value.ClientId);
+                clientApp2Secret = remoteSecret;
+                remoteProxyAppObjectId = remoteApp.Value.ObjectId;
+            }
+            else
+            {
+                // ExternalIDP flow: use user-provided client ID and secret for RemoteProxy
+                clientApp2Id = Guid.Parse(idpClientId!);
+                clientApp2Secret = idpClientSecret!;
+            }
+
+            // Step 2: Call Add MCP server API
+            logger.LogInformation("Adding MCP server {ServerName}...", serverName);
+            var addRequest = new Models.AddMcpServerRequest
+            {
+                ServerName = serverName,
+                ServerUrl = serverUrl,
+                AuthType = authType,
+                AuthMetadata = new Models.AddMcpServerAuthMetadata
+                {
+                    ClientApp1Id = Guid.Parse(a365App.Value.ClientId),
+                    ClientApp1Secret = a365Secret,
+                    ClientApp2Id = clientApp2Id,
+                    ClientApp2Secret = clientApp2Secret,
+                },
+                ExternalIdp = isExternalIdp ? new Models.ExternalIdpDetails
+                {
+                    AuthorizationUrl = idpAuthUrl,
+                    TokenUrl = idpTokenUrl,
+                    Scopes = idpScopes,
+                } : null,
+                RemoteServerScopes = remoteScopes,
+            };
+
+            var addResponse = await toolingService.AddMcpServerAsync(addRequest);
+
+            if (addResponse == null || !addResponse.IsSuccess)
+            {
+                var errorMsg = addResponse?.Message ?? "No response received";
+                logger.LogError("Failed to add MCP server {ServerName}: {Error}", serverName, errorMsg);
+                return;
+            }
+
+            logger.LogInformation("Successfully added MCP server {ServerName}", serverName);
+
+            var a365RedirectUri = addResponse.Server?.A365ProxyRedirectUri;
+            var remoteRedirectUri = addResponse.Server?.RemoteMCPServerProxyRedirectUri;
+
+            // Step 3: Update redirect URIs on Entra apps (both tc-prefixed and original)
+            if (!string.IsNullOrWhiteSpace(a365RedirectUri))
+            {
+                var a365OriginalUri = RemoveTcPrefix(a365RedirectUri);
+                var a365Uris = a365OriginalUri != null ? new[] { a365RedirectUri, a365OriginalUri } : new[] { a365RedirectUri };
+                logger.LogInformation("A365 Proxy Redirect URIs: {RedirectUris}", string.Join(", ", a365Uris));
+                logger.LogInformation("Updating redirect URIs on A365 Proxy Entra app...");
+                await graphApiService.UpdateAppRedirectUrisAsync(tenantId, a365App.Value.ObjectId, a365Uris);
+            }
+            else
+            {
+                logger.LogWarning("A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped for A365 Proxy app.");
+            }
+
+            if (isEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri) && remoteProxyAppObjectId != null)
+            {
+                var remoteOriginalUri = RemoveTcPrefix(remoteRedirectUri);
+                var remoteUris = remoteOriginalUri != null ? new[] { remoteRedirectUri, remoteOriginalUri } : new[] { remoteRedirectUri };
+                logger.LogInformation("Remote MCP Proxy Redirect URIs: {RedirectUris}", string.Join(", ", remoteUris));
+                logger.LogInformation("Updating redirect URIs on Remote Proxy Entra app...");
+                await graphApiService.UpdateAppRedirectUrisAsync(tenantId, remoteProxyAppObjectId, remoteUris);
+            }
+            else if (isEntra)
+            {
+                logger.LogWarning("Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped for Remote Proxy app.");
+            }
+
+            // Step 4: Configure PPMI app scope and A365 Proxy API permission
+            var ppmiAppClientId = addResponse.Server?.PpmiAppClientId;
+            if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
+            {
+                logger.LogInformation("PPMI app provisioned: {PpmiAppClientId}", ppmiAppClientId);
+                logger.LogInformation("Waiting for PPMI app to replicate in Entra ID (this may take up to 60 seconds)...");
+
+                // Look up PPMI app objectId (PPMI-created apps have Graph API replication lag)
+                var ppmiObjectId = await graphApiService.GetAppObjectIdByClientIdAsync(tenantId, ppmiAppClientId);
+                if (!string.IsNullOrWhiteSpace(ppmiObjectId))
+                {
+                    // Set Application ID URI on the PPMI app
+                    var identifierUri = McpConstants.BuildPpmiIdentifierUri(toolingService.Environment, tenantId, serverName);
+                    logger.LogInformation("Setting Application ID URI: {Uri}", identifierUri);
+                    await graphApiService.SetIdentifierUriAsync(tenantId, ppmiObjectId, identifierUri);
+
+                    // Add <serverName>.All scope to the PPMI app
+                    var scopeName = $"{serverName}.All";
+                    logger.LogInformation("Adding scope '{ScopeName}' to PPMI app...", scopeName);
+                    var scopeId = await graphApiService.AddOAuth2PermissionScopeAsync(tenantId, ppmiObjectId, scopeName, $"Full access to {serverName}");
+
+                    if (scopeId.HasValue)
+                    {
+                        // Add API permission on A365 Proxy app for the PPMI app's scope
+                        logger.LogInformation("Adding API permission on A365 Proxy app for PPMI scope...");
+                        await graphApiService.AddRequiredResourceAccessAsync(tenantId, a365App.Value.ObjectId, ppmiAppClientId, scopeId.Value);
+                    }
+                }
+                else
+                {
+                    logger.LogWarning("Could not find PPMI app {PpmiAppClientId} in Entra. Scope configuration skipped.", ppmiAppClientId);
+                }
+            }
+            else
+            {
+                logger.LogWarning("PPMI app was not provisioned. Scope configuration skipped.");
+            }
+
+            // Step 5: Show completion messages
+            logger.LogInformation("");
+            logger.LogInformation("MCP server '{ServerName}' has been registered successfully.", serverName);
+            logger.LogInformation("");
+            logger.LogInformation("The following Entra applications were created:");
+            logger.LogInformation("  1. A365 Proxy:    {ClientId}  ({DisplayName})", a365App.Value.ClientId, $"{serverName}-A365Proxy");
+            if (isEntra)
+            {
+                logger.LogInformation("  2. Remote Proxy:  {ClientId}  ({DisplayName})", clientApp2Id, $"{serverName}-RemoteProxy");
+            }
+            if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
+            {
+                logger.LogInformation("  {Num}. PPMI App:      {ClientId}  ({DisplayName})", isEntra ? "3" : "2", ppmiAppClientId, serverName);
+            }
+            logger.LogInformation("");
+            logger.LogInformation("Please ask your tenant admin to grant admin consent on all Entra applications listed above.");
+            if (!isEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri))
+            {
+                logger.LogInformation("");
+                logger.LogInformation("Remote MCP Proxy Redirect URI: {RedirectUri}", remoteRedirectUri);
+                logger.LogInformation("Please add this redirect URI to your external IDP application.");
+            }
+        });
+
+        return command;
+    }
+
+    /// <summary>
+    /// Removes the "tc-" prefix from the last path segment of a redirect URI to get the original URI.
+    /// </summary>
+    private static string? RemoveTcPrefix(string tcPrefixedUri)
+    {
+        var lastSlash = tcPrefixedUri.LastIndexOf('/');
+        if (lastSlash >= 0)
+        {
+            var lastSegment = tcPrefixedUri.Substring(lastSlash + 1);
+            if (lastSegment.StartsWith("tc-", StringComparison.Ordinal))
+            {
+                return tcPrefixedUri.Substring(0, lastSlash + 1) + lastSegment.Substring(3);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

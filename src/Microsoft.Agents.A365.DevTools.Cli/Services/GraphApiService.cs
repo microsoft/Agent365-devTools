@@ -919,4 +919,268 @@ public class GraphApiService
         catch { /* ignore parse errors */ }
         return null;
     }
+
+    /// <summary>
+    /// Creates a single-tenant Entra application registration.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID (empty string for default tenant).</param>
+    /// <param name="displayName">Display name for the application.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Tuple of (applicationObjectId, applicationClientId), or null on failure.</returns>
+    public async Task<(string ObjectId, string ClientId)?> CreateEntraAppAsync(
+        string tenantId, string displayName, string? serviceTreeId = null, CancellationToken ct = default)
+    {
+        object payload;
+        if (!string.IsNullOrWhiteSpace(serviceTreeId))
+        {
+            payload = new
+            {
+                displayName,
+                signInAudience = "AzureADMyOrg",
+                serviceManagementReference = serviceTreeId,
+            };
+        }
+        else
+        {
+            payload = new
+            {
+                displayName,
+                signInAudience = "AzureADMyOrg",
+            };
+        }
+
+        using var doc = await GraphPostAsync(tenantId, "/v1.0/applications", payload, ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to create Entra application {DisplayName}", displayName);
+            return null;
+        }
+
+        var objectId = doc.RootElement.GetProperty("id").GetString();
+        var clientId = doc.RootElement.GetProperty("appId").GetString();
+        _logger.LogInformation("Created Entra application {DisplayName}: objectId={ObjectId}, clientId={ClientId}", displayName, objectId, clientId);
+        return (objectId!, clientId!);
+    }
+
+    /// <summary>
+    /// Adds a password (client secret) to an Entra application.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID.</param>
+    /// <param name="applicationObjectId">The application object ID (not the appId/clientId).</param>
+    /// <param name="displayName">Display name for the secret.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The secret text, or null on failure.</returns>
+    public async Task<string?> AddAppPasswordAsync(
+        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", CancellationToken ct = default)
+    {
+        var payload = new
+        {
+            passwordCredential = new
+            {
+                displayName,
+            },
+        };
+
+        using var doc = await GraphPostAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to add password to application {ObjectId}", applicationObjectId);
+            return null;
+        }
+
+        var secretText = doc.RootElement.GetProperty("secretText").GetString();
+        _logger.LogInformation("Added password to application {ObjectId}", applicationObjectId);
+        return secretText;
+    }
+
+    /// <summary>
+    /// Updates the redirect URIs (web platform) on an Entra application.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID.</param>
+    /// <param name="applicationObjectId">The application object ID.</param>
+    /// <param name="redirectUris">The redirect URIs to set.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>True if successful.</returns>
+    public async Task<bool> UpdateAppRedirectUrisAsync(
+        string tenantId, string applicationObjectId, IEnumerable<string> redirectUris, CancellationToken ct = default)
+    {
+        var payload = new
+        {
+            web = new
+            {
+                redirectUris,
+            },
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogInformation("Updated redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+        else
+        {
+            _logger.LogError("Failed to update redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Looks up an application by its appId (clientId) and returns the object ID.
+    /// Retries up to 3 times with a delay to handle replication lag for newly created apps.
+    /// </summary>
+    public async Task<string?> GetAppObjectIdByClientIdAsync(
+        string tenantId, string clientId, CancellationToken ct = default)
+    {
+        const int maxAttempts = 6;
+        const int delayMs = 10_000;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var response = await GraphGetWithResponseAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{clientId}'&$select=id", ct);
+            if (response.IsSuccess && response.Json != null)
+            {
+                var values = response.Json.RootElement.GetProperty("value");
+                if (values.GetArrayLength() > 0)
+                {
+                    return values[0].GetProperty("id").GetString();
+                }
+            }
+            else
+            {
+                _logger.LogDebug("App {ClientId} query failed: {Code} {Reason} (attempt {Attempt}/{Max})", clientId, response.StatusCode, response.ReasonPhrase, attempt + 1, maxAttempts);
+            }
+
+            if (attempt < maxAttempts - 1)
+            {
+                _logger.LogDebug("App {ClientId} not found yet, retrying in {Delay}s (attempt {Attempt}/{Max})...", clientId, delayMs / 1000, attempt + 1, maxAttempts);
+                await Task.Delay(delayMs, ct);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Sets the identifierUris on an application.
+    /// </summary>
+    public async Task<bool> SetIdentifierUriAsync(
+        string tenantId, string applicationObjectId, string identifierUri, CancellationToken ct = default)
+    {
+        var payload = new { identifierUris = new[] { identifierUri } };
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogInformation("Set identifierUri on application {ObjectId}: {Uri}", applicationObjectId, identifierUri);
+        }
+        else
+        {
+            _logger.LogError("Failed to set identifierUri on application {ObjectId}", applicationObjectId);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Adds an oauth2PermissionScope to an application's api section.
+    /// </summary>
+    public async Task<Guid?> AddOAuth2PermissionScopeAsync(
+        string tenantId, string applicationObjectId, string scopeName, string scopeDescription, CancellationToken ct = default)
+    {
+        // First read current scopes
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}?$select=api", ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to read application {ObjectId} for adding scope", applicationObjectId);
+            return null;
+        }
+
+        var existingScopes = new List<object>();
+        if (doc.RootElement.TryGetProperty("api", out var api) &&
+            api.TryGetProperty("oauth2PermissionScopes", out var scopes))
+        {
+            foreach (var scope in scopes.EnumerateArray())
+            {
+                existingScopes.Add(JsonSerializer.Deserialize<object>(scope.GetRawText())!);
+            }
+        }
+
+        var newScopeId = Guid.NewGuid();
+        existingScopes.Add(new
+        {
+            id = newScopeId,
+            adminConsentDescription = scopeDescription,
+            adminConsentDisplayName = scopeName,
+            isEnabled = true,
+            type = "Admin",
+            value = scopeName,
+        });
+
+        var payload = new
+        {
+            api = new
+            {
+                oauth2PermissionScopes = existingScopes,
+            },
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogInformation("Added scope '{ScopeName}' (ID: {ScopeId}) to application {ObjectId}", scopeName, newScopeId, applicationObjectId);
+            return newScopeId;
+        }
+
+        _logger.LogError("Failed to add scope '{ScopeName}' to application {ObjectId}", scopeName, applicationObjectId);
+        return null;
+    }
+
+    /// <summary>
+    /// Adds a required resource access entry (API permission) to an application.
+    /// </summary>
+    public async Task<bool> AddRequiredResourceAccessAsync(
+        string tenantId, string applicationObjectId, string resourceAppId, Guid scopeId, CancellationToken ct = default)
+    {
+        // First read current requiredResourceAccess
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}?$select=requiredResourceAccess", ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to read application {ObjectId} for adding API permission", applicationObjectId);
+            return false;
+        }
+
+        var existingAccess = new List<object>();
+        if (doc.RootElement.TryGetProperty("requiredResourceAccess", out var rra))
+        {
+            foreach (var entry in rra.EnumerateArray())
+            {
+                existingAccess.Add(JsonSerializer.Deserialize<object>(entry.GetRawText())!);
+            }
+        }
+
+        existingAccess.Add(new
+        {
+            resourceAppId,
+            resourceAccess = new[]
+            {
+                new { id = scopeId, type = "Scope" },
+            },
+        });
+
+        var payload = new
+        {
+            requiredResourceAccess = existingAccess,
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogInformation("Added API permission for resource {ResourceAppId} scope {ScopeId} on application {ObjectId}", resourceAppId, scopeId, applicationObjectId);
+        }
+        else
+        {
+            _logger.LogError("Failed to add API permission for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
+        }
+
+        return result;
+    }
 }

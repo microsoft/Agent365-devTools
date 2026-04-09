@@ -41,18 +41,19 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(7);
-        
+        command.Subcommands.Should().HaveCount(8);
+
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
-        subcommandNames.Should().Contain(new[] 
-        { 
-            "list-environments", 
-            "list-servers", 
-            "publish", 
-            "unpublish", 
-            "approve", 
+        subcommandNames.Should().Contain(new[]
+        {
+            "list-environments",
+            "list-servers",
+            "publish",
+            "unpublish",
+            "approve",
             "block",
-            "package-mcp-server"
+            "package-mcp-server",
+            "register-external-mcp-server"
         });
     }
 

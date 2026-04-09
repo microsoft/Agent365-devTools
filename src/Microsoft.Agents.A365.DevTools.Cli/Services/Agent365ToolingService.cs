@@ -22,6 +22,9 @@ public class Agent365ToolingService : IAgent365ToolingService
     private readonly ILogger<Agent365ToolingService> _logger;
     private readonly string _environment;
 
+    /// <inheritdoc />
+    public string Environment => _environment;
+
     public Agent365ToolingService(
         IConfigService configService,
         AuthenticationService authService,
@@ -211,6 +214,31 @@ public class Agent365ToolingService : IAgent365ToolingService
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
         return $"{baseUrl}/agents/mcpServers/{serverName}/block";
+    }
+
+    /// <summary>
+    /// Builds URL for adding a BYO MCP server
+    /// </summary>
+    /// <param name="environment">Environment name</param>
+    /// <returns>Full URL for add MCP server endpoint</returns>
+    private string BuildAddMcpServerUrl(string environment)
+    {
+        // TODO: Revert to BuildAgent365ToolsBaseUrl(environment) once backend is deployed
+        var baseUrl = "http://localhost:52857";
+        return $"{baseUrl}/agents/mcpServers/add";
+    }
+
+    /// <summary>
+    /// Builds URL for provisioning an identity for an external MCP server
+    /// </summary>
+    /// <param name="environment">Environment name</param>
+    /// <param name="serverName">MCP server name</param>
+    /// <returns>Full URL for provision identity endpoint</returns>
+    private string BuildProvisionIdentityUrl(string environment, string serverName)
+    {
+        // TODO: Revert to BuildAgent365ToolsBaseUrl(environment) once backend is deployed
+        var baseUrl = "http://localhost:52857";
+        return $"{baseUrl}/agents/mcpServers/{serverName}/provisionIdentity";
     }
 
     /// <summary>
@@ -746,6 +774,156 @@ public class Agent365ToolingService : IAgent365ToolingService
             McpServerDescription = Get("description"),
             McpServerUrl = Get("url")
         };
+    }
+
+    /// <inheritdoc />
+    public async Task<AddMcpServerResponse?> AddMcpServerAsync(
+        AddMcpServerRequest request,
+        string? environmentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (request == null)
+            throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.ServerName))
+            throw new ArgumentException("Server name cannot be null or empty", nameof(request));
+
+        try
+        {
+            var endpointUrl = BuildAddMcpServerUrl(_environment);
+
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Adding MCP server {ServerName} (CorrelationId: {CorrelationId})", request.ServerName, correlationId);
+            _logger.LogInformation("Environment: {Env}", _environment);
+            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+
+            // TODO: Revert to ConfigConstants.GetAgent365ToolsResourceAppId(_environment) once backend is deployed
+            var audience = "05879165-0320-489e-b644-f72b33f3edf0";
+            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogError("Failed to acquire authentication token");
+                return null;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+            if (!string.IsNullOrWhiteSpace(environmentId))
+            {
+                httpClient.DefaultRequestHeaders.Add("x-ms-environment-id", environmentId);
+                _logger.LogInformation("Setting x-ms-environment-id header: {EnvironmentId}", environmentId);
+            }
+
+            var requestPayload = JsonSerializer.Serialize(request);
+            var jsonContent = new StringContent(
+                requestPayload,
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            LogRequest("POST", endpointUrl, requestPayload);
+
+            using var response = await httpClient.PostAsync(endpointUrl, jsonContent, cancellationToken);
+
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "add MCP server", cancellationToken);
+            if (!isSuccess)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(responseContent))
+            {
+                _logger.LogError("Add MCP server returned empty response");
+                return null;
+            }
+
+            var addResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<AddMcpServerResponse>(
+                responseContent, _logger);
+
+            if (addResponse == null)
+            {
+                _logger.LogError("Failed to deserialize add MCP server response");
+                return null;
+            }
+
+            _logger.LogInformation("Successfully added MCP server {ServerName}", request.ServerName);
+            return addResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to add MCP server {ServerName}", request.ServerName);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<ProvisionIdentityResponse?> ProvisionIdentityAsync(
+        string serverName,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(serverName))
+            throw new ArgumentException("Server name cannot be null or empty", nameof(serverName));
+
+        try
+        {
+            var endpointUrl = BuildProvisionIdentityUrl(_environment, serverName);
+
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogInformation("Provisioning identity for MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
+            _logger.LogInformation("Environment: {Env}", _environment);
+            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+
+            // TODO: Revert to ConfigConstants.GetAgent365ToolsResourceAppId(_environment) once backend is deployed
+            var audience = "05879165-0320-489e-b644-f72b33f3edf0";
+            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogError("Failed to acquire authentication token");
+                return null;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+            LogRequest("POST", endpointUrl);
+
+            var content = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
+            using var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
+
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "provision identity", cancellationToken);
+            if (!isSuccess)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(responseContent))
+            {
+                _logger.LogError("Provision identity returned empty response");
+                return null;
+            }
+
+            var provisionResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<ProvisionIdentityResponse>(
+                responseContent, _logger);
+
+            if (provisionResponse == null || string.IsNullOrWhiteSpace(provisionResponse.ApplicationId))
+            {
+                _logger.LogError("Provision identity response is missing applicationId");
+                return null;
+            }
+
+            _logger.LogInformation("Successfully provisioned identity with application ID: {ApplicationId}", provisionResponse.ApplicationId);
+            return provisionResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to provision identity for MCP server {ServerName}", serverName);
+            return null;
+        }
     }
 }
 
