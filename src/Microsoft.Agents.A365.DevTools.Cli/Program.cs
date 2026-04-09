@@ -200,6 +200,17 @@ class Program
                     }
                 });
 
+            // Validate the configured clientAppId still exists in the tenant before any command runs.
+            // If not found, falls back to the well-known display name and patches a365.config.json.
+            try
+            {
+                await configService.TryResolveClientAppIdAsync(graphApiService);
+            }
+            catch (Exception ex)
+            {
+                startupLogger.LogDebug(ex, "Client app ID pre-resolution skipped: {Message}", ex.Message);
+            }
+
             var parser = builder.Build();
             return await parser.InvokeAsync(args);
         }

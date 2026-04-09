@@ -61,10 +61,15 @@ public class CleanupCommand
             ["--yes", "-y"],
             description: "Skip confirmation prompts and proceed automatically");
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+
         cleanupCommand.AddOption(configOption);
         cleanupCommand.AddOption(agentNameOption);
         cleanupCommand.AddOption(tenantIdOption);
         cleanupCommand.AddOption(yesOption);
+        cleanupCommand.AddOption(verboseOption);
 
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
@@ -73,6 +78,7 @@ public class CleanupCommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var yes = context.ParseResult.GetValueForOption(yesOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption); // consumed by Program.cs startup via args
 
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();

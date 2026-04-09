@@ -31,14 +31,7 @@ public sealed class InteractiveGraphAuthService
     private GraphServiceClient? _cachedClient;
     private string? _cachedTenantId;
 
-    // Scopes required for Agent Blueprint creation and inheritable permissions configuration
-    private static readonly string[] RequiredScopes = new[]
-    {
-        "https://graph.microsoft.com/Application.ReadWrite.All",
-        "https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All",
-        "https://graph.microsoft.com/AgentIdentityBlueprint.UpdateAuthProperties.All",
-        "https://graph.microsoft.com/User.Read"
-    };
+    private static readonly string[] RequiredScopes = AuthenticationConstants.BlueprintInteractiveAuthScopes;
 
     public InteractiveGraphAuthService(
         ILogger logger,
@@ -122,7 +115,7 @@ public sealed class InteractiveGraphAuthService
         }
         catch (Microsoft.Identity.Client.MsalServiceException ex) when (ex.ErrorCode == "access_denied")
         {
-            _logger.LogError("Authentication was denied or cancelled");
+            _logger.LogDebug("Authentication was denied or cancelled by user (access_denied)");
             throw new GraphApiException(
                 "Interactive browser authentication",
                 "Authentication was denied or cancelled by the user",
@@ -130,7 +123,9 @@ public sealed class InteractiveGraphAuthService
         }
         catch (Exception ex)
         {
-            _logger.LogError("Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
+            var isCanceled = ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase);
+            if (!isCanceled)
+                _logger.LogError("Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
             throw new GraphApiException(
                 "Browser authentication",
                 $"Authentication failed: {ex.Message}",

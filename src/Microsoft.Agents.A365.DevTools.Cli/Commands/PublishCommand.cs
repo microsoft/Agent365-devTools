@@ -207,7 +207,8 @@ public class PublishCommand
 
                     Console.Write("Press Enter when you have finished editing the manifest to continue: ");
                     Console.Out.Flush();
-                    Console.ReadLine();
+                    if (Console.ReadLine() is null)
+                        throw new OperationCanceledException();
                     Console.WriteLine();
                 }
 

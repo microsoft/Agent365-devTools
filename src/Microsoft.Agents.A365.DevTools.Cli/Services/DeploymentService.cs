@@ -301,7 +301,7 @@ public class DeploymentService
         Console.Write("Proceed with deployment? [Y/n]: ");
         var response = Console.ReadLine()?.Trim().ToLowerInvariant();
 
-        if (response == "n" || response == "no")
+        if (response is null || response == "n" || response == "no")
         {
             _logger.LogInformation("Deployment cancelled by user");
             Environment.Exit(0);

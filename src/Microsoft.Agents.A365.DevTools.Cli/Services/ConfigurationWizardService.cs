@@ -230,8 +230,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             // Step 11: Final confirmation to save configuration
             Console.Write("Save this configuration? (Y/n): ");
             var saveResponse = Console.ReadLine()?.Trim().ToLowerInvariant();
-            
-            if (saveResponse == "n" || saveResponse == "no")
+
+            if (saveResponse is null || saveResponse == "n" || saveResponse == "no")
             {
                 Console.WriteLine("Configuration cancelled.");
                 _logger.LogInformation("Configuration wizard cancelled by user");
@@ -408,7 +408,9 @@ public class ConfigurationWizardService : IConfigurationWizardService
         {
             Console.Write($"Select resource group [1-{resourceGroups.Count}] (default: {Math.Max(1, defaultIndex)}), or type a new resource group name: ");
             var input = Console.ReadLine()?.Trim();
-            
+            if (input is null)
+                throw new OperationCanceledException();
+
             if (string.IsNullOrWhiteSpace(input))
             {
                 input = Math.Max(1, defaultIndex).ToString();
@@ -459,7 +461,9 @@ public class ConfigurationWizardService : IConfigurationWizardService
             {
                 Console.Write($"Select option [1-{plansInRg.Count + 1}] (default: {Math.Max(1, defaultIndex)}): ");
                 var input = Console.ReadLine()?.Trim();
-                
+                if (input is null)
+                    throw new OperationCanceledException();
+
                 if (string.IsNullOrWhiteSpace(input))
                 {
                     input = Math.Max(1, defaultIndex).ToString();
@@ -501,6 +505,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 if (string.IsNullOrWhiteSpace(defaultPlanName)) defaultPlanName = "agent365-plan";
                 Console.Write($"Enter a name for the new App Service Plan (default: {defaultPlanName}, or type 'cancel' to abort): ");
                 var input = Console.ReadLine()?.Trim();
+                if (input is null)
+                    throw new OperationCanceledException();
                 if (string.IsNullOrWhiteSpace(input))
                 {
                     input = defaultPlanName;
@@ -1018,7 +1024,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 Console.WriteLine($"Please fix the issues and try again. (Attempt {attemptCount}/{maxAttempts})");
                 Console.WriteLine("Press Enter to retry, or type 'cancel' to abort setup.");
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-                if (response == "cancel")
+                if (response is null || response == "cancel")
                 {
                     return null;
                 }

@@ -455,12 +455,11 @@ internal static class BlueprintSubcommand
 
         if (!blueprintResult.success)
         {
-            logger.LogError("Failed to create agent blueprint");
-            return new BlueprintCreationResult 
-            { 
-                BlueprintCreated = false, 
-                EndpointRegistered = false, 
-                EndpointRegistrationAttempted = false 
+            return new BlueprintCreationResult
+            {
+                BlueprintCreated = false,
+                EndpointRegistered = false,
+                EndpointRegistrationAttempted = false
             };
         }
 
@@ -885,12 +884,14 @@ internal static class BlueprintSubcommand
             var blueprintLoginHint = loginHintResolver != null
                 ? await loginHintResolver()
                 : await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
-            // Use Application.ReadWrite.All explicitly — NOT .default. Using .default bundles all
-            // consented scopes including AgentIdentityBlueprint.*, which Entra rejects for
-            // POST /v1.0/servicePrincipals ("backing application must be in the local tenant").
-            logger.LogDebug("Acquiring blueprint httpClient token — scope: Application.ReadWrite.All, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
+            // Explicit scopes — NOT .default. Using .default bundles all consented scopes including
+            // AgentIdentityBlueprint.*, which Entra rejects for POST /v1.0/servicePrincipals
+            // ("backing application must be in the local tenant").
+            // AgentIdentityBlueprintPrincipal.Create is the correct scope per Agent ID team (Kyle Marsh).
+            logger.LogDebug("Acquiring blueprint httpClient token — scope: AgentIdentityBlueprintPrincipal.Create, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
             var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct,
-                scope: AuthenticationConstants.ApplicationReadWriteAllScope, loginHint: blueprintLoginHint);
+                scope: AuthenticationConstants.AgentIdentityBlueprintPrincipalCreateScope,
+                loginHint: blueprintLoginHint);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
@@ -957,7 +958,7 @@ internal static class BlueprintSubcommand
                                 return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
                             }
 
-                            logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation will fail unless the custom client app has Application.ReadWrite.All permission or you have Application Administrator role in your Entra tenant.");
+                            logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation may fail — ensure you have Application Administrator role or the blueprint owner is set correctly.");
                         }
                         else
                         {
@@ -1118,7 +1119,7 @@ internal static class BlueprintSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
+            logger.LogDebug(ex, "Blueprint creation failed: {Message}", ex.Message);
             return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
         }
     }
@@ -1670,7 +1671,7 @@ internal static class BlueprintSubcommand
     /// rejected by the Agent Blueprint API. Defaults to .default (all consented permissions).
     /// Pass loginHint so WAM targets the az-logged-in user rather than the OS default account.
     /// </summary>
-    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null, string? loginHint = null)
+    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null, string? loginHint = null, string[]? additionalScopes = null)
     {
         // Guard: MSAL will fail (and block for ~30s on WAM) with empty credentials.
         if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
@@ -1688,11 +1689,19 @@ internal static class BlueprintSubcommand
                 logger,
                 loginHint: loginHint);
 
-            var resolvedScope = string.IsNullOrWhiteSpace(scope)
+            var primaryScope = string.IsNullOrWhiteSpace(scope)
                 ? $"{Constants.GraphApiConstants.BaseUrl}/.default"
                 : $"{Constants.GraphApiConstants.BaseUrl}/{scope}";
-            var tokenRequestContext = new TokenRequestContext(new[] { resolvedScope });
+
+            var allScopes = additionalScopes?.Length > 0
+                ? new[] { primaryScope }.Concat(additionalScopes.Select(s => $"{Constants.GraphApiConstants.BaseUrl}/{s}")).ToArray()
+                : new[] { primaryScope };
+
+            var tokenRequestContext = new TokenRequestContext(allScopes);
             var token = await credential.GetTokenAsync(tokenRequestContext, ct);
+
+            logger.LogDebug("Acquired MSAL token (requested: [{Scopes}])", string.Join(", ", allScopes));
+            TryLogTokenScp(token.Token, logger);
 
             return token.Token;
         }
@@ -1701,6 +1710,28 @@ internal static class BlueprintSubcommand
             logger.LogError(ex, "Failed to acquire MSAL Graph access token");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Decodes the JWT payload and logs the scp claim at Debug level.
+    /// Used only to diagnose scope issues during blueprint creation.
+    /// </summary>
+    private static void TryLogTokenScp(string token, ILogger logger)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2) return;
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var scp = doc.RootElement.TryGetProperty("scp", out var scpEl) ? scpEl.GetString() : "(absent)";
+            var upn = doc.RootElement.TryGetProperty("upn", out var upnEl) ? upnEl.GetString()
+                : doc.RootElement.TryGetProperty("unique_name", out var unEl) ? unEl.GetString() : "(absent)";
+            logger.LogDebug("Token scp: {Scp} | upn: {Upn}", scp, upn);
+        }
+        catch { /* non-fatal */ }
     }
 
     /// <summary>
@@ -1724,12 +1755,16 @@ internal static class BlueprintSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
-            logger.LogError("");
-            logger.LogError("TROUBLESHOOTING:");
-            logger.LogError("1. Ensure you are a Global Administrator or have Application.ReadWrite.All permission");
-            logger.LogError("2. The account must have already consented to these permissions");
-            logger.LogError("");
+            var isCanceled = ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase);
+            if (!isCanceled)
+            {
+                logger.LogError("Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
+                logger.LogError("");
+                logger.LogError("TROUBLESHOOTING:");
+                logger.LogError("1. Ensure you are a Global Administrator or have AgentIdentityBlueprint.ReadWrite.All permission");
+                logger.LogError("2. The account must have already consented to these permissions");
+                logger.LogError("");
+            }
             throw new InvalidOperationException($"Microsoft Graph authentication failed: {ex.Message}", ex);
         }
     }

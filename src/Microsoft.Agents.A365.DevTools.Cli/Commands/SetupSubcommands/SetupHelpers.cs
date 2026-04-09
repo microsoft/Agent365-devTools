@@ -211,6 +211,10 @@ internal static class SetupHelpers
     /// </summary>
     public static void DisplaySetupSummary(SetupResults results, ILogger logger, bool isDw = true)
     {
+        // Prefer the flag set on results — it is reliable regardless of which code path calls this.
+        var isNonDw = results.IsNonDwBlueprintFlow || !isDw;
+        var notRun = "not run (previous step failed)";
+
         logger.LogInformation("");
         logger.LogInformation("Setup Summary");
         logger.LogInformation("");
@@ -227,40 +231,67 @@ internal static class SetupHelpers
             logger.LogInformation(DryRunRow(2, "Azure hosting") + "skipped");
         else if (results.InfrastructureCreated)
             logger.LogInformation(DryRunRow(2, "Azure hosting") + (results.InfrastructureAlreadyExisted ? "reused" : "provisioned"));
+        else
+            logger.LogError(DryRunRow(2, "Azure hosting") + "failed");
 
         // 3. Blueprint
         if (results.BlueprintCreated)
         {
             var bpStatus = results.BlueprintAlreadyExisted ? "reused" : "created";
-            logger.LogInformation(DryRunRow(3, "Blueprint") + "{Status}   '{Name}' (ID: {Id})",
-                bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
+            if (!results.BlueprintServicePrincipalCreated)
+                logger.LogWarning(DryRunRow(3, "Blueprint") + "{Status} (service principal failed — see warnings)   '{Name}' (ID: {Id})",
+                    bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
+            else
+                logger.LogInformation(DryRunRow(3, "Blueprint") + "{Status}   '{Name}' (ID: {Id})",
+                    bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
         }
+        else if (results.BlueprintFailed)
+            logger.LogError(DryRunRow(3, "Blueprint") + "failed");
 
         // 4. Inheritable Permissions
-        if (results.BatchPermissionsPhase1Completed)
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + notRun);
+        else if (results.BatchPermissionsPhase1Completed)
             logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configured");
 
         // 5. Permission Grants
-        if (results.AgentIdentityPermissionsGranted)
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(5, "Permission Grants") + notRun);
+        else if (results.AgentIdentityPermissionsGranted)
             logger.LogInformation(DryRunRow(5, "Permission Grants") + "ok (developer-scoped)");
         else if (results.BatchPermissionsPhase2Completed)
             logger.LogInformation(DryRunRow(5, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
 
-        // Non-DW: Agent identity (6) and Agent Registration (7)
-        if (!isDw)
+        // Non-DW only: Agent identity (6) and Agent Registration (7)
+        if (isNonDw)
         {
-            if (results.AgentIdentityCreated)
-                logger.LogInformation(DryRunRow(6, "Agent identity") + "created   '{Name}' (ID: {Id})",
-                    results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
+            if (results.BlueprintFailed)
+            {
+                logger.LogInformation(DryRunRow(6, "Agent identity") + notRun);
+                logger.LogInformation(DryRunRow(7, "Agent Registration") + notRun);
+            }
+            else
+            {
+                if (results.AgentIdentityCreated)
+                    logger.LogInformation(DryRunRow(6, "Agent identity") + "created   '{Name}' (ID: {Id})",
+                        results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
+                else if (results.AgentIdentityFailed)
+                    logger.LogWarning(DryRunRow(6, "Agent identity") + "failed — see warnings");
 
-            if (results.AgentInstanceRegistered)
-                logger.LogInformation(DryRunRow(7, "Agent Registration") + "registered   '{Name}' (ID: {Id})",
-                    results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
+                if (results.AgentInstanceRegistered)
+                    logger.LogInformation(DryRunRow(7, "Agent Registration") + "registered   '{Name}' (ID: {Id})",
+                        results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
+                else if (results.AgentRegistrationFailed)
+                    logger.LogWarning(DryRunRow(7, "Agent Registration") + "failed — see warnings");
+            }
         }
 
-        // Project settings (step 6 for DW, step 8 for non-DW)
-        if (results.ProjectSettingsWritten)
-            logger.LogInformation(DryRunRow(isDw ? 6 : 8, "Project settings") + "written");
+        // Project settings: step 6 for DW, step 8 for non-DW
+        var settingsStep = isNonDw ? 8 : 6;
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
+        else if (results.ProjectSettingsWritten)
+            logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
 
         // ── Action Required ────────────────────────────────────────────────────
         var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
@@ -301,15 +332,7 @@ internal static class SetupHelpers
             }
         }
 
-        // ── Errors and Warnings ────────────────────────────────────────────────
-        if (results.Errors.Count > 0)
-        {
-            logger.LogInformation("");
-            logger.LogInformation("Errors:");
-            foreach (var error in results.Errors)
-                logger.LogError("  {Error}", error);
-        }
-
+        // ── Warnings ───────────────────────────────────────────────────────────
         if (results.Warnings.Count > 0)
         {
             logger.LogInformation("");
@@ -736,7 +759,7 @@ internal static class SetupHelpers
         {
             throw new SetupValidationException(
                 $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to {resourceName} {resourceAppId}. " +
-                "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All permissions.");
+                "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All permission.");
         }
 
         // 3. Set inheritable permissions (for agent blueprints)
@@ -758,7 +781,7 @@ internal static class SetupHelpers
             if (!ok && !alreadyExists)
             {
                 throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
-                    "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All and Application.ReadWrite.All permissions in your custom client app.");
+                    "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All permission in your custom client app.");
             }
 
             if (alreadyExists)

@@ -33,7 +33,7 @@ public class ClientAppValidatorTests
 
     // Stable test GUIDs for required permissions — must match between SetupPermissionResolution
     // and SetupAppInfoWithAllPermissions so the validation resolves all permissions as present.
-    private const string ApplicationReadWriteAllId = "aaaa0001-0000-0000-0000-000000000000";
+    private const string AgentBlueprintPrincipalCreateId = "aaaa0001-0000-0000-0000-000000000000";
     private const string AgentBlueprintReadWriteAllId = "aaaa0002-0000-0000-0000-000000000000";
     private const string AgentBlueprintUpdateAuthId = "aaaa0003-0000-0000-0000-000000000000";
     private const string AgentBlueprintAddRemoveCredsId = "aaaa0004-0000-0000-0000-000000000000";
@@ -191,13 +191,13 @@ public class ClientAppValidatorTests
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenAppMissingSomePermissions_ThrowsClientAppValidationException()
     {
-        // Only Application.ReadWrite.All present — missing the other 5
+        // Only AgentIdentityBlueprintPrincipal.Create present — missing the other required permissions
         var requiredResourceAccess = $$"""
         [
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"}
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -343,7 +343,7 @@ public class ClientAppValidatorTests
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
@@ -386,7 +386,7 @@ public class ClientAppValidatorTests
             "value": [{
                 "id": "graph-sp-id-123",
                 "oauth2PermissionScopes": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "value": "Application.ReadWrite.All"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"},
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
@@ -449,7 +449,7 @@ public class ClientAppValidatorTests
             "value": [{
                 "id": "graph-sp-id-123",
                 "oauth2PermissionScopes": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "value": "Application.ReadWrite.All"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"}
                 ]
             }]
@@ -834,7 +834,7 @@ public class ClientAppValidatorTests
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
@@ -864,7 +864,7 @@ public class ClientAppValidatorTests
                 {
                     "id": "graph-sp-id-123",
                     "oauth2PermissionScopes": [
-                        {"id": "{{ApplicationReadWriteAllId}}", "value": "Application.ReadWrite.All"},
+                        {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                         {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"},
                         {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
                         {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},

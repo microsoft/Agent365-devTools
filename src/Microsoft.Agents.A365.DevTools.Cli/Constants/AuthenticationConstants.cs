@@ -161,11 +161,12 @@ public static class AuthenticationConstants
     public const string DirectoryReadAllScope = "Directory.Read.All";
 
     /// <summary>
-    /// Delegated scope for read/write access to Entra ID applications.
-    /// Used for FIC retrieval and deletion operations that are not yet covered by
-    /// more granular AgentIdentityBlueprint.* scopes.
+    /// Delegated scope required to create the Agent Blueprint service principal
+    /// (Agent Blueprint Principal) via POST /v1.0/servicePrincipals.
+    /// Per the Agent ID team (Kyle Marsh), AgentIdentityBlueprintPrincipal.Create is the correct
+    /// scope — AgentIdentityBlueprintPrincipal.ReadWrite.All alone returns 403.
     /// </summary>
-    public const string ApplicationReadWriteAllScope = "Application.ReadWrite.All";
+    public const string AgentIdentityBlueprintPrincipalCreateScope = "AgentIdentityBlueprintPrincipal.Create";
 
     /// <summary>
     /// Delegated scope required to delete an Agent Blueprint.
@@ -198,6 +199,14 @@ public static class AuthenticationConstants
     public const string AgentIdentityBlueprintReadWriteAllScope = "AgentIdentityBlueprint.ReadWrite.All";
 
     /// <summary>
+    /// Delegated scope for full read/write access to Entra ID applications.
+    /// No longer in RequiredClientAppPermissions — replaced by AgentIdentityBlueprintPrincipal.Create
+    /// for blueprint SP creation per Agent ID team guidance.
+    /// Retained as a named constant for reference and potential future use.
+    /// </summary>
+    public const string ApplicationReadWriteAllScope = "Application.ReadWrite.All";
+
+    /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
     /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
     /// All permissions require admin consent.
@@ -207,15 +216,18 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] RequiredClientAppPermissions = new[]
     {
-        "Application.ReadWrite.All",
+        "AgentIdentityBlueprintPrincipal.Create",  // Required for POST /v1.0/servicePrincipals (blueprint SP creation) — per Agent ID team (Kyle Marsh)
         "AgentIdentityBlueprint.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
         "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
-        "AgentIdentity.ReadWrite.All",  // Required for general agent identity operations
-        "AgentIdentity.Create.All",  // Required for POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity; not in v1.0 oauth2PermissionScopes so ClientAppValidator provisions it via consent grant patch (no GUID needed)
+        // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
+        // Create uses blueprint client credentials (AgentIdentity.CreateAsManager automatic).
+        // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
+        // AgentIdentity.Create.All is app-only (not a delegated scope) — cannot be granted on a client app.
+        // Agent identity creation uses blueprint client credentials (app-only) which get AgentIdentity.CreateAsManager automatically.
         "AgentIdentityBlueprint.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Blueprint application
         "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
         "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment
@@ -231,9 +243,21 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] RequiredPermissionGrantScopes = new[]
     {
-        "Application.ReadWrite.All",
         "DelegatedPermissionGrant.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All"
+    };
+
+    /// <summary>
+    /// Scopes requested when acquiring an interactive Graph token for blueprint creation
+    /// and inheritable permissions configuration (used by InteractiveGraphAuthService).
+    /// Expressed as fully-qualified URIs as required by the Graph SDK credential constructor.
+    /// </summary>
+    public static readonly string[] BlueprintInteractiveAuthScopes = new[]
+    {
+        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprintPrincipal.Create",
+        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprint.ReadWrite.All",
+        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprint.UpdateAuthProperties.All",
+        $"{MicrosoftGraphResourceUri}/User.Read"
     };
 
     /// <summary>

@@ -136,7 +136,7 @@ internal static class AllSubcommand
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name (e.g. \"MyAgent\"). When provided, no config file is required.\n" +
-                        "Derives AgentIdentityDisplayName=\"<name> Agent Identity\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
+                        "Derives AgentIdentityDisplayName=\"<name> Identity\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
                         "TenantId is auto-detected from 'az account show' (override with --tenant-id).\n" +
                         $"ClientAppId is resolved by looking up \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" in your tenant.");
 
@@ -189,7 +189,7 @@ internal static class AllSubcommand
                         {
                             TenantId = dryRunTenantId ?? "(unknown — run 'az login' or pass --tenant-id)",
                             ClientAppId = string.Empty,
-                            AgentIdentityDisplayName = $"{agentName} Agent Identity",
+                            AgentIdentityDisplayName = $"{agentName} Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",
                             AgentDescription = agentName,
                             NeedDeployment = false,
@@ -534,8 +534,9 @@ internal static class AllSubcommand
                     "This is required for the next steps (MCP permissions and Bot permissions).");
             }
 
-            // Warn when service principal creation failed (SP object ID missing after blueprint creation).
-            if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintServicePrincipalObjectId))
+            // Track whether the service principal was created (SP object ID present after blueprint creation).
+            ctx.Results.BlueprintServicePrincipalCreated = !string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintServicePrincipalObjectId);
+            if (!ctx.Results.BlueprintServicePrincipalCreated)
             {
                 var spWarning = "Agent blueprint service principal was not created. " +
                     "Inheritable permissions and FIC may not function correctly. " +
@@ -547,6 +548,7 @@ internal static class AllSubcommand
         catch (Agent365Exception blueprintEx)
         {
             ctx.Results.BlueprintCreated = false;
+            ctx.Results.BlueprintFailed = true;
             ctx.Results.MessagingEndpointRegistered = false;
             ctx.Results.Errors.Add($"Blueprint: {blueprintEx.Message}");
             throw;
@@ -554,6 +556,7 @@ internal static class AllSubcommand
         catch (Exception blueprintEx)
         {
             ctx.Results.BlueprintCreated = false;
+            ctx.Results.BlueprintFailed = true;
             ctx.Results.MessagingEndpointRegistered = false;
             ctx.Results.Errors.Add($"Blueprint: {blueprintEx.Message}");
             ctx.Logger.LogError("Failed to create blueprint: {Message}", blueprintEx.Message);
@@ -734,7 +737,7 @@ internal static class AllSubcommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId ?? string.Empty,
-            AgentIdentityDisplayName = $"{agentName} Agent Identity",
+            AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
             NeedDeployment = false,

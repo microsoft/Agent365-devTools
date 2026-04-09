@@ -588,8 +588,99 @@ public class ConfigService : IConfigService
         return FindConfigFile("a365.generated.config.json");
     }
 
+    /// <inheritdoc />
+    public async Task TryResolveClientAppIdAsync(GraphApiService graphApiService, CancellationToken ct = default)
+    {
+        var configPath = GetConfigFilePath();
+        if (configPath == null)
+        {
+            _logger?.LogDebug("No a365.config.json found — skipping client app ID resolution.");
+            return;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(configPath, ct);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            root.TryGetProperty("tenantId", out var tenantIdEl);
+            root.TryGetProperty("clientAppId", out var clientAppIdEl);
+            var tenantId = tenantIdEl.ValueKind == JsonValueKind.String ? tenantIdEl.GetString() : null;
+            var configuredId = clientAppIdEl.ValueKind == JsonValueKind.String ? clientAppIdEl.GetString() : null;
+
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                _logger?.LogDebug("No tenantId in config — skipping client app ID resolution.");
+                return;
+            }
+
+            // If a clientAppId is configured, validate it still exists.
+            if (!string.IsNullOrWhiteSpace(configuredId))
+            {
+                var exists = await graphApiService.ApplicationExistsByAppIdAsync(tenantId, configuredId, ct);
+                if (exists)
+                {
+                    _logger?.LogDebug("Configured clientAppId {Id} is valid.", configuredId);
+                    return;
+                }
+
+                _logger?.LogInformation(
+                    "Configured clientAppId {Id} was not found in the tenant. Looking up by display name '{Name}'...",
+                    configuredId, AuthenticationConstants.WellKnownClientAppDisplayName);
+            }
+
+            // Look up by well-known display name.
+            var resolvedId = await graphApiService.FindApplicationByDisplayNameAsync(
+                tenantId, AuthenticationConstants.WellKnownClientAppDisplayName, ct);
+
+            if (string.IsNullOrWhiteSpace(resolvedId))
+            {
+                _logger?.LogDebug(
+                    "No app named '{Name}' found — client app ID unresolved.",
+                    AuthenticationConstants.WellKnownClientAppDisplayName);
+                return;
+            }
+
+            if (string.Equals(resolvedId, configuredId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger?.LogDebug("Resolved clientAppId matches configured value — no update needed.");
+                return;
+            }
+
+            // Patch clientAppId in the JSON file preserving all other fields.
+            await PatchClientAppIdInConfigFileAsync(configPath, resolvedId, ct);
+            _logger?.LogInformation(
+                "clientAppId updated to {NewId} (found by display name '{Name}'). a365.config.json has been updated.",
+                resolvedId, AuthenticationConstants.WellKnownClientAppDisplayName);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Client app ID resolution skipped due to error: {Message}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Patches only the clientAppId field in a365.config.json, preserving all other fields and formatting.
+    /// </summary>
+    private static async Task PatchClientAppIdInConfigFileAsync(string configPath, string newClientAppId, CancellationToken ct)
+    {
+        var json = await File.ReadAllTextAsync(configPath, ct);
+        var dict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)
+            ?? throw new JsonException("Failed to parse config file for patching.");
+
+        dict["clientAppId"] = JsonSerializer.SerializeToElement(newClientAppId);
+
+        var updated = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
+        await File.WriteAllTextAsync(configPath, updated, ct);
+    }
+
     #endregion
-    
+
     #region Private Helper Methods
 
     /// <summary>

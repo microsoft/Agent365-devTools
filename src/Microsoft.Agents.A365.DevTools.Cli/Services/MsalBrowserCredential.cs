@@ -489,7 +489,15 @@ public sealed class MsalBrowserCredential : TokenCredential
         catch (MsalException ex)
         {
             _logger?.LogDebug(ex, "MSAL authentication failed");
-            _logger?.LogError("MSAL authentication failed: {Message}", ex.Message);
+            if (ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase) ||
+                ex.ErrorCode is "authentication_canceled" or "user_canceled")
+            {
+                _logger?.LogDebug("Sign-in was canceled.");
+            }
+            else
+            {
+                _logger?.LogError("MSAL authentication failed: {Message}", ex.Message);
+            }
             throw new MsalAuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
         }
     }

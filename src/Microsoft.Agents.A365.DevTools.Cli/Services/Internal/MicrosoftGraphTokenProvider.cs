@@ -343,10 +343,17 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             _logger.LogDebug("Microsoft Graph access token acquired successfully.");
             return tokenResult.Token;
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("MSAL Graph token acquisition cancelled.");
+            return null;
+        }
         catch (Exception ex)
         {
+            var isCanceled = ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase);
             _logger.LogDebug(ex, "MSAL Graph token acquisition failed");
-            _logger.LogWarning("MSAL Graph token acquisition failed: {Message}", ex.Message);
+            if (!isCanceled)
+                _logger.LogWarning("MSAL Graph token acquisition failed: {Message}", ex.Message);
             return null;
         }
     }

@@ -88,7 +88,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // 6. Agent identity
         var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
         var registrationDisplayName = identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
-            ? identityDisplayName[..^" Identity".Length].TrimEnd()
+            ? identityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
             : identityDisplayName;
         if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
             logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
@@ -145,6 +145,11 @@ internal static class NonDwBlueprintSetupOrchestrator
         Console.Write("Grant admin consent for these permissions now? [y/N]: ");
         var answer = Console.ReadLine();
 
+        // null means stdin was closed (Ctrl+C / EOF) — exit immediately.
+        // ThrowIfCancellationRequested handles the case where the CT fired asynchronously
+        // slightly after ReadLine returned a non-null value.
+        if (answer is null)
+            throw new OperationCanceledException("User cancelled at consent prompt.");
         ctx.CancellationToken.ThrowIfCancellationRequested();
 
         if (!string.Equals(answer?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
@@ -273,20 +278,21 @@ internal static class NonDwBlueprintSetupOrchestrator
                     ?? ctx.Config.WebAppName
                     ?? "Agent";
 
-                // Try delegated flow first (AgentIdentity.Create.All) — no client secret required.
-                // Requires Agent ID Administrator, Agent ID Developer, or Global Administrator role.
+                // Agent identity creation: prefer app-only flow (blueprint client credentials) when available.
+                // Fall back to delegated flow (AgentIdentity.Create.All) when the client secret is missing.
                 ctx.Logger.LogInformation("Creating agent identity...");
-                var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
-                    ctx.Config.TenantId!,
-                    ctx.Config.AgentBlueprintId!,
-                    agentIdentityDisplayName,
-                    ctx.CancellationToken);
-
-                // Fall back to blueprint client credentials if delegated flow failed and secret is available.
-                if (agentId is null && !string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
+                string? agentId = null;
+                if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
                 {
-                    ctx.Logger.LogInformation("Retrying via blueprint client credentials...");
-
+                    ctx.Logger.LogInformation("Blueprint client secret not available — attempting delegated flow...");
+                    agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
+                        ctx.Config.TenantId!,
+                        ctx.Config.AgentBlueprintId!,
+                        agentIdentityDisplayName,
+                        ctx.CancellationToken);
+                }
+                else
+                {
                     var clientSecret = SecretProtectionHelper.UnprotectSecret(
                         ctx.Config.AgentBlueprintClientSecret,
                         ctx.Config.AgentBlueprintClientSecretProtected,
@@ -311,14 +317,11 @@ internal static class NonDwBlueprintSetupOrchestrator
                         ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
                     ctx.Logger.LogInformation("");
                 }
-                else
+                else if (!ctx.Results.AgentIdentityFailed)
                 {
-                    ctx.Results.Errors.Add(
-                        "Agent identity creation failed. " +
-                        "Ensure the account has Agent ID Administrator, Agent ID Developer, or Global Administrator role.");
-                    ctx.Logger.LogError(
-                        "Agent identity creation failed. " +
-                        "Ensure the account has Agent ID Administrator, Agent ID Developer, or Global Administrator role.");
+                    ctx.Results.AgentIdentityFailed = true;
+                    ctx.Results.Warnings.Add("Agent identity creation failed. Check the blueprint client secret and ensure the blueprint was set up correctly.");
+                    ctx.Logger.LogWarning("Agent identity creation failed. Check the blueprint client secret and ensure the blueprint was set up correctly.");
                 }
             }
 
@@ -332,12 +335,12 @@ internal static class NonDwBlueprintSetupOrchestrator
             // Step 6: Register Agent via AgentX Agent Registration API V2.
 
             // AgentX registration represents the agent itself, not the Entra identity.
-            // Strip " Identity" suffix so the registry entry reads "<name> Agent", not "<name> Agent Identity".
+            // Strip " Identity" suffix so the registry entry reads "<name> Agent", not "<name> Identity".
             var agentDisplayName = ctx.Config.AgentIdentityDisplayName
                 ?? ctx.Config.WebAppName
                 ?? "Agent";
             if (agentDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
-                agentDisplayName = agentDisplayName[..^" Identity".Length].TrimEnd();
+                agentDisplayName = agentDisplayName[..^" Identity".Length].TrimEnd() + " Agent";
 
             ctx.Logger.LogInformation("");
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
@@ -376,8 +379,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 }
                 else
                 {
-                    ctx.Results.Errors.Add("Agent registration failed via AgentX V2 API.");
-                    ctx.Logger.LogError("Agent registration failed via AgentX V2 API.");
+                    ctx.Results.AgentRegistrationFailed = true;
+                    ctx.Results.Warnings.Add("Agent registration failed via AgentX V2 API.");
+                    ctx.Logger.LogWarning("Agent registration failed via AgentX V2 API.");
                 }
             }
 

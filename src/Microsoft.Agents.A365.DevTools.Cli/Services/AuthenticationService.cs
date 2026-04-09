@@ -267,7 +267,7 @@ public class AuthenticationService : IAuthenticationService
                     // This allows passing custom App IDs directly via config
                     scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                         ? resourceUrl
-                        : $"{resourceUrl}/.default";
+                        : $"{resourceUrl.TrimEnd('/')}/.default";
                     _logger.LogDebug("Using custom resource for authentication: {Resource}", resourceUrl);
                 }
                 scopes = [scope];

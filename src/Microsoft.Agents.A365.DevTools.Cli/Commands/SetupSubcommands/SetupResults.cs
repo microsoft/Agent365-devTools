@@ -149,6 +149,18 @@ public class SetupResults
     /// <summary>Whether step 2 (Azure hosting) was skipped because no Azure deployment is configured.</summary>
     public bool InfrastructureSkipped { get; set; }
 
+    /// <summary>Whether step 3 (Blueprint creation) failed. Drives "failed"/"skipped" rows in the summary.</summary>
+    public bool BlueprintFailed { get; set; }
+
+    /// <summary>Whether the blueprint service principal was created successfully. False means blueprint is partial.</summary>
+    public bool BlueprintServicePrincipalCreated { get; set; }
+
+    /// <summary>Whether step 6 (Agent identity creation) was attempted but failed.</summary>
+    public bool AgentIdentityFailed { get; set; }
+
+    /// <summary>Whether step 7 (Agent registration) was attempted but failed.</summary>
+    public bool AgentRegistrationFailed { get; set; }
+
     /// <summary>Whether step 8 (Project settings) was written to appsettings.json.</summary>
     public bool ProjectSettingsWritten { get; set; }
 

@@ -510,6 +510,25 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Checks whether an Entra application with the given appId exists in the tenant.
+    /// Uses the default az CLI token — does not require CustomClientAppId to be set.
+    /// Returns false on any error so callers can fall back gracefully.
+    /// Virtual to allow mocking in unit tests.
+    /// </summary>
+    public virtual async Task<bool> ApplicationExistsByAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default)
+    {
+        if (!Guid.TryParse(appId, out var validGuid)) return false;
+
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/applications?$filter=appId eq '{validGuid:D}'&$select=appId&$top=1",
+            ct);
+        if (doc == null) return false;
+        return doc.RootElement.TryGetProperty("value", out var value) && value.GetArrayLength() > 0;
+    }
+
+    /// <summary>
     /// Looks up the display name of a service principal by its application ID.
     /// Returns null if the service principal is not found.
     /// Virtual to allow substitution in unit tests using NSubstitute.
@@ -1281,6 +1300,7 @@ public class GraphApiService
         }
 
         token = token.ReplaceLineEndings(string.Empty).Trim();
+        LogJwtClaims(token, "AgentX delete token");
         var url = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration/{registrationId}";
         _logger.LogInformation("DELETE {Url} (AgentX V2)", url);
 
@@ -1297,7 +1317,13 @@ public class GraphApiService
                 return true;
 
             var body = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError("AgentX agent delete failed with HTTP {StatusCode}. Body: {Body}", (int)response.StatusCode, body);
+            var allHeaders = string.Join("; ", response.Headers.Select(h => $"{h.Key}: {string.Join(", ", h.Value)}"));
+
+            _logger.LogError(
+                "AgentX agent delete failed with HTTP {StatusCode}. Body: {Body} | Response headers: {Headers}",
+                (int)response.StatusCode,
+                string.IsNullOrWhiteSpace(body) ? "(empty)" : body,
+                string.IsNullOrWhiteSpace(allHeaders) ? "(none)" : allHeaders);
             return false;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
@@ -1404,6 +1430,10 @@ public class GraphApiService
 
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Exception acquiring blueprint access token: {Message}", ex.Message);
@@ -1456,7 +1486,7 @@ public class GraphApiService
                     _logger.LogDebug("Agent identity token upn : {Upn}", upn ?? "(missing)");
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogDebug(ex, "Could not preview token claims (non-fatal)");
             }
@@ -1513,6 +1543,10 @@ public class GraphApiService
             var id = doc.RootElement.GetProperty("id").GetString();
             _logger.LogDebug("Agent identity created via delegated flow (ID: {Id})", id);
             return id;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -1695,5 +1729,44 @@ public class GraphApiService
         }
         catch { /* ignore parse errors */ }
         return null;
+    }
+
+    private void LogJwtClaims(string token, string label)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2) return;
+            var payload = parts[1];
+            // Pad base64url to standard base64
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            string Get(string claim) =>
+                root.TryGetProperty(claim, out var v) ? v.ToString() : "(absent)";
+
+            string expReadable = "(absent)";
+            if (root.TryGetProperty("exp", out var expEl) && expEl.TryGetInt64(out var expEpoch))
+                expReadable = DateTimeOffset.FromUnixTimeSeconds(expEpoch).ToString("u");
+
+            _logger.LogDebug(
+                "{Label} claims — aud: {Aud} | scp: {Scp} | roles: {Roles} | tid: {Tid} | oid: {Oid} | upn: {Upn} | appid: {AppId} | exp: {Exp}",
+                label,
+                Get("aud"),
+                Get("scp"),
+                Get("roles"),
+                Get("tid"),
+                Get("oid"),
+                Get("upn"),
+                Get("appid"),
+                expReadable);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("Could not decode JWT claims for {Label}: {Message}", label, ex.Message);
+        }
     }
 }
