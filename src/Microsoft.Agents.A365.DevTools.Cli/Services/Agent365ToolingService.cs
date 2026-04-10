@@ -17,6 +17,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// </summary>
 public class Agent365ToolingService : IAgent365ToolingService
 {
+    private static readonly JsonSerializerOptions CaseInsensitiveOptions = new() { PropertyNameCaseInsensitive = true };
+
     private readonly IConfigService _configService;
     private readonly AuthenticationService _authService;
     private readonly ILogger<Agent365ToolingService> _logger;
@@ -346,13 +348,8 @@ public class Agent365ToolingService : IAgent365ToolingService
                 return null;
             }
 
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            };
-
             var serversResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<DataverseMcpServersResponse>(
-                responseContent, _logger, options);
+                responseContent, _logger, CaseInsensitiveOptions);
 
             return serversResponse;
         }
@@ -639,6 +636,122 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogError(ex, "Failed to block MCP server {ServerName}", serverName);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Builds URL for the MCPManagement server endpoint
+    /// </summary>
+    private string BuildMcpManagementUrl(string environment)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/servers/MCPManagement";
+    }
+
+    /// <inheritdoc />
+    public async Task<CreateCustomMcpServerResponse?> CreateCustomMcpServerAsync(
+        CreateCustomMcpServerRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request == null)
+            throw new ArgumentNullException(nameof(request));
+
+        var endpointUrl = BuildMcpManagementUrl(_environment);
+        var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+        _logger.LogInformation("Creating custom MCP server '{Name}' (CorrelationId: {CorrelationId})", request.Name, correlationId);
+        _logger.LogInformation("Environment: {Env}", _environment);
+        _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+
+        var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+        _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+
+        var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+        var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+        if (string.IsNullOrWhiteSpace(authToken))
+        {
+            _logger.LogError("Failed to acquire authentication token");
+            return null;
+        }
+
+        using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+        var requestObject = new
+        {
+            @params = new
+            {
+                name = "CreateCustomMCPServer",
+                arguments = request
+            },
+            method = "tools/call",
+            id = "1",
+            jsonrpc = "2.0"
+        };
+
+        var json = JsonSerializer.Serialize(requestObject);
+        LogRequest("POST", endpointUrl, json);
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpointUrl)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+        httpRequest.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+        httpRequest.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+        using var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Failed to create custom MCP server. Status: {Status}", response.StatusCode);
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError("Error response: {Error}", errorContent);
+            return null;
+        }
+
+        var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+        _logger.LogInformation("Successfully received response from MCPManagement endpoint");
+
+        // Parse SSE response: join all "data: ..." lines
+        var dataJson = string.Concat(
+            responseContent.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+               .Where(l => l.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+               .Select(l => l.Substring(5).Trim()));
+
+        // Parse outer JSON-RPC envelope
+        var root = JsonNode.Parse(dataJson);
+        if (root == null)
+        {
+            _logger.LogError("Failed to parse MCPManagement response as JSON");
+            return null;
+        }
+
+        var content = root["result"]?["content"]?.AsArray();
+        if (content == null)
+        {
+            _logger.LogError("Missing result.content in MCPManagement response");
+            return null;
+        }
+
+        // Find the first text chunk that contains inner JSON (starts with '{')
+        var innerJson = content
+            .Select(n => n?["text"]?.GetValue<string>())
+            .FirstOrDefault(t => t is { } s && s.TrimStart().StartsWith("{"));
+
+        if (innerJson == null)
+        {
+            _logger.LogError("Inner JSON not found in MCPManagement response content");
+            return null;
+        }
+
+        var result = JsonSerializer.Deserialize<CreateCustomMcpServerResponse>(innerJson, CaseInsensitiveOptions);
+
+        if (result == null)
+        {
+            _logger.LogError("Failed to deserialize CreateCustomMCPServer response");
+            return null;
+        }
+
+        _logger.LogInformation("Successfully created custom MCP server '{Name}' with ID '{Id}'", result.Name, result.Id);
+        return result;
     }
 
     /// <inheritdoc />

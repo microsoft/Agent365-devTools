@@ -41,18 +41,19 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(7);
-        
+        command.Subcommands.Should().HaveCount(8);
+
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
-        subcommandNames.Should().Contain(new[] 
-        { 
-            "list-environments", 
-            "list-servers", 
-            "publish", 
-            "unpublish", 
-            "approve", 
+        subcommandNames.Should().Contain(new[]
+        {
+            "list-environments",
+            "list-servers",
+            "publish",
+            "unpublish",
+            "approve",
             "block",
-            "package-mcp-server"
+            "package-mcp-server",
+            "create-custom-server"
         });
     }
 
@@ -303,7 +304,43 @@ public class DevelopMcpCommandTests
             $"Option '{optionName}' in '{subcommandName}' should have alias '{expectedAlias}'");
     }
 
-    [Fact] 
+    [Fact]
+    public void CreateCustomServerSubcommand_HasCorrectOptions()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "create-custom-server");
+
+        // Assert
+        subcommand.Description.Should().Be("Create a custom MCP server via the MCPManagement server");
+
+        var options = subcommand.Options.ToList();
+        var optionNames = options.Select(o => o.Name).ToList();
+
+        optionNames.Should().Contain("name");
+        optionNames.Should().Contain("base-server-id");
+        optionNames.Should().Contain("display-name");
+        optionNames.Should().Contain("description");
+        optionNames.Should().Contain("instructions");
+        optionNames.Should().Contain("selected-base-tools");
+        optionNames.Should().Contain("environment-id");
+        optionNames.Should().Contain("dry-run");
+        optionNames.Should().Contain("config");
+
+        options.First(o => o.Name == "name").IsRequired.Should().BeTrue();
+        options.First(o => o.Name == "base-server-id").IsRequired.Should().BeTrue();
+
+        var displayNameOption = options.First(o => o.Name == "display-name");
+        displayNameOption.Aliases.Should().Contain("-d");
+
+        var envOption = options.First(o => o.Name == "environment-id");
+        envOption.Aliases.Should().Contain("-e");
+
+        var configOption = options.First(o => o.Name == "config");
+        configOption.Aliases.Should().Contain("-c");
+    }
+
+    [Fact]
     public void NoSubcommands_UsePositionalArguments_OnlyOptions()
     {
         // This is a regression test to ensure we don't accidentally revert to positional arguments

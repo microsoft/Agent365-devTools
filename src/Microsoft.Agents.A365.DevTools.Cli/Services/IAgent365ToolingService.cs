@@ -82,5 +82,15 @@ public interface IAgent365ToolingService
     public Task<ServerInfo> GetServerInfoAsync(
         string serverName,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates a custom MCP server via the MCPManagement server
+    /// </summary>
+    /// <param name="request">Request with name, base server, tools, and optional metadata</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The created custom MCP server details</returns>
+    Task<CreateCustomMcpServerResponse?> CreateCustomMcpServerAsync(
+        CreateCustomMcpServerRequest request,
+        CancellationToken cancellationToken = default);
 }
 

@@ -38,6 +38,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateApproveSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreateCustomServerSubcommand(logger, toolingService));
 
         return developMcpCommand;
     }
@@ -796,6 +797,124 @@ public static class DevelopMcpCommand
             }
 
         }, serverNameOption, developerNameOption, iconUrlOption, outputPathOption, dryRunOption);
+
+        return command;
+    }
+
+    /// <summary>
+    /// Creates the create-custom-server subcommand
+    /// </summary>
+    private static Command CreateCustomServerSubcommand(ILogger logger, IAgent365ToolingService toolingService)
+    {
+        var command = new Command("create-custom-server", "Create a custom MCP server via the MCPManagement server");
+
+        var nameOption = new Option<string>("--name", "Unique logical name for the custom MCP server (no whitespace)") { IsRequired = true };
+        var baseServerIdOption = new Option<string>("--base-server-id", "Base server ID to extend (e.g. mcp_MailServer)") { IsRequired = true };
+        var displayNameOption = new Option<string?>(["--display-name", "-d"], description: "User-friendly display name");
+        var descriptionOption = new Option<string?>(["--description"], description: "Description of the custom MCP server");
+        var instructionsOption = new Option<string?>(["--instructions"], description: "AI agent instructions for how to use this server");
+        var selectedBaseToolsOption = new Option<string[]?>("--selected-base-tools", description: "Comma-separated list of tool names to select from the base server") { AllowMultipleArgumentsPerToken = true };
+        var environmentIdOption = new Option<string?>(["--environment-id", "-e"], description: "Dataverse environment ID (null = tenant-level)");
+        var dryRunOption = new Option<bool>("--dry-run", description: "Show what would be done without executing");
+        var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
+
+        command.AddOption(nameOption);
+        command.AddOption(baseServerIdOption);
+        command.AddOption(displayNameOption);
+        command.AddOption(descriptionOption);
+        command.AddOption(instructionsOption);
+        command.AddOption(selectedBaseToolsOption);
+        command.AddOption(environmentIdOption);
+        command.AddOption(dryRunOption);
+        command.AddOption(configOption);
+
+        command.SetHandler(async (name, baseServerId, displayName, description, instructions, selectedBaseTools, environmentId, dryRun) =>
+        {
+            try
+            {
+                name = InputValidator.ValidateInput(name, "Name") ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    logger.LogError("Invalid name format");
+                    return;
+                }
+
+                baseServerId = InputValidator.ValidateInput(baseServerId, "Base server ID") ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(baseServerId))
+                {
+                    logger.LogError("Invalid base server ID format");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(environmentId))
+                {
+                    environmentId = InputValidator.ValidateInput(environmentId, "Environment ID");
+                    if (environmentId == null)
+                    {
+                        logger.LogError("Invalid environment ID format");
+                        return;
+                    }
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                logger.LogError("Input validation failed: {Message}", ex.Message);
+                return;
+            }
+
+            logger.LogInformation("Starting create-custom-server operation for '{Name}' extending '{BaseServerId}'...", name, baseServerId);
+
+            if (dryRun)
+            {
+                logger.LogInformation("[DRY RUN] Would create custom MCP server '{Name}' extending '{BaseServerId}'", name, baseServerId);
+                logger.LogInformation("[DRY RUN] Display Name: {DisplayName}", displayName ?? "[not set]");
+                logger.LogInformation("[DRY RUN] Environment ID: {EnvironmentId}", environmentId ?? "[tenant-level]");
+                if (selectedBaseTools?.Length > 0)
+                {
+                    logger.LogInformation("[DRY RUN] Selected base tools: {Tools}", string.Join(", ", selectedBaseTools));
+                }
+                await Task.CompletedTask;
+                return;
+            }
+
+            var request = new CreateCustomMcpServerRequest
+            {
+                Name = name,
+                BaseServerId = baseServerId,
+                DisplayName = displayName,
+                Description = description,
+                Instructions = instructions,
+                SelectedBaseTools = selectedBaseTools?.Length > 0 ? selectedBaseTools : null,
+                EnvironmentId = string.IsNullOrWhiteSpace(environmentId) ? null : environmentId
+            };
+
+            var response = await toolingService.CreateCustomMcpServerAsync(request);
+
+            if (response == null)
+            {
+                logger.LogError("Failed to create custom MCP server '{Name}'", name);
+                return;
+            }
+
+            logger.LogInformation("Successfully created custom MCP server '{Name}'", response.Name);
+            logger.LogInformation("   ID: {Id}", response.Id);
+            if (!string.IsNullOrWhiteSpace(response.DisplayName))
+            {
+                logger.LogInformation("   Display Name: {DisplayName}", response.DisplayName);
+            }
+            if (!string.IsNullOrWhiteSpace(response.Scope))
+            {
+                logger.LogInformation("   Scope: {Scope}", response.Scope);
+            }
+            logger.LogInformation("   Total Tools: {TotalTools}", response.TotalTools);
+            logger.LogInformation("   Active: {IsActive}", response.IsActive);
+            if (response.Mos3UploadSuccess)
+            {
+                logger.LogInformation("   MOS3 Upload: Success (Title ID: {TitleId})", response.Mos3TitleId);
+            }
+
+        }, nameOption, baseServerIdOption, displayNameOption, descriptionOption, instructionsOption,
+           selectedBaseToolsOption, environmentIdOption, dryRunOption);
 
         return command;
     }
