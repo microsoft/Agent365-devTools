@@ -36,7 +36,7 @@ requests==2.33.0
 httpx==0.28.1
 
 # YAML config parsing
-PyYAML==6.0.2
+PyYAML==6.0.3
 
 # Async support
 aiohttp==3.13.5
