@@ -23,7 +23,7 @@ uvicorn==0.42.0
 python-dotenv==1.0.1
 
 # GitHub API
-PyGithub==2.5.0
+PyGithub==2.9.0
 
 # Azure DevOps API
 azure-devops==7.1.0b4
