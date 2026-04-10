@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP Server Quality Report</title>
+<style>
+/* -- Foundation --------------------------------------------------- */
+:root {
+  --blue: #0078d4; --blue-light: #deecf9; --blue-dark: #004578; --blue-bg: #f0f6fc;
+  --green: #107c10; --green-light: #dff6dd; --green-bg: #f1faf1;
+  --red: #d13438; --red-light: #fde7e9; --red-bg: #fef2f2;
+  --orange: #c4700e; --orange-light: #fff4ce; --orange-bg: #fffbeb;
+  --purple: #5c2d91; --purple-light: #f3e8ff; --purple-bg: #faf5ff;
+  --gray-50: #fafafa; --gray-100: #f5f5f5; --gray-200: #ebebeb;
+  --gray-300: #d1d1d1; --gray-500: #8a8886; --gray-600: #605e5c;
+  --gray-800: #323130; --gray-900: #201f1e;
+  --radius: 10px; --radius-sm: 6px;
+  --shadow: 0 1px 4px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  --shadow-lg: 0 2px 8px rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.06);
+  --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--gray-50); color: var(--gray-900);
+  line-height: 1.6; font-size: 14px; -webkit-font-smoothing: antialiased; }
+.container { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+h2 { font-size: 20px; font-weight: 600; color: var(--gray-900); letter-spacing: -0.01em; }
+h3 { font-size: 15px; font-weight: 600; color: var(--gray-800); }
+.section { background: #fff; border-radius: var(--radius); padding: 28px 32px;
+  box-shadow: var(--shadow); margin-bottom: 24px; }
+.section-intro { font-size: 14px; color: var(--gray-600); margin: 4px 0 20px; line-height: 1.6; }
+code { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 13px;
+  background: var(--gray-100); padding: 1px 5px; border-radius: 3px; }
+
+/* -- Hero --------------------------------------------------------- */
+.hero { background: linear-gradient(135deg, #002050 0%, var(--blue) 100%); color: #fff;
+  border-radius: var(--radius); padding: 40px 40px 36px; margin-bottom: 24px;
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 24px; }
+.hero-left h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 6px; }
+.hero-left .subtitle { opacity: 0.7; font-size: 13px; word-break: break-all; }
+.hero-right { display: flex; gap: 24px; align-items: center; }
+.score-ring { position: relative; width: 110px; height: 110px; }
+.score-ring svg { transform: rotate(-90deg); }
+.score-ring .val { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; }
+.score-ring .num { font-size: 34px; font-weight: 700; line-height: 1; }
+.score-ring .of { font-size: 11px; opacity: 0.6; }
+.maturity-pill { background: rgba(255,255,255,0.15); backdrop-filter: blur(4px);
+  border-radius: var(--radius); padding: 16px 22px; text-align: center; }
+.maturity-pill .lv { font-size: 32px; font-weight: 700; line-height: 1.1; }
+.maturity-pill .lb { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+
+/* -- Narrative ----------------------------------------------------- */
+.narrative { font-size: 15px; line-height: 1.7; color: var(--gray-800); }
+.narrative strong { color: var(--gray-900); }
+.highlight-good { color: var(--green); font-weight: 600; }
+.highlight-warn { color: var(--orange); font-weight: 600; }
+.highlight-bad { color: var(--red); font-weight: 600; }
+
+/* -- Stats --------------------------------------------------------- */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px; margin-bottom: 24px; }
+.stat { background: #fff; border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+  text-align: center; }
+.stat .n { font-size: 26px; font-weight: 700; }
+.stat .l { font-size: 11px; color: var(--gray-600); margin-top: 2px; letter-spacing: 0.03em;
+  text-transform: uppercase; }
+
+/* -- Maturity journey ---------------------------------------------- */
+.journey-track { display: flex; margin-bottom: 20px; }
+.journey-step { flex: 1; position: relative; text-align: center; padding: 14px 4px 8px; }
+.journey-step::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0;
+  height: 4px; background: var(--gray-200); border-radius: 2px; }
+.journey-step.done::after { background: var(--green); }
+.journey-step.current::after { background: var(--blue); }
+.journey-step.current { background: var(--blue-light); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.journey-step .num { font-size: 20px; font-weight: 700; color: var(--gray-300); }
+.journey-step.done .num { color: var(--green); }
+.journey-step.current .num { color: var(--blue); }
+.journey-step .name { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+.journey-step.current .name { color: var(--blue-dark); font-weight: 600; }
+.next-box { background: var(--blue-bg); border-radius: var(--radius-sm); padding: 16px 20px; }
+.next-box h3 { color: var(--blue-dark); margin-bottom: 8px; font-size: 14px; }
+.next-box ul { padding-left: 18px; font-size: 13px; color: var(--gray-800); }
+.next-box li { margin-bottom: 4px; }
+
+/* -- Category bars ------------------------------------------------- */
+.cat-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.cat-label { width: 180px; flex-shrink: 0; text-align: right; }
+.cat-label .name { font-size: 13px; font-weight: 600; }
+.cat-label .why { font-size: 11px; color: var(--gray-500); }
+.cat-track { flex: 1; height: 22px; background: var(--gray-100); border-radius: 11px; overflow: hidden; }
+.cat-fill { height: 100%; border-radius: 11px; transition: width 0.5s ease-out; }
+.cat-num { width: 36px; font-size: 14px; font-weight: 700; text-align: right; flex-shrink: 0; }
+
+/* -- Impact analysis ----------------------------------------------- */
+.impact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .impact-grid { grid-template-columns: 1fr; } }
+.impact-card { border-radius: var(--radius); padding: 20px; position: relative; overflow: hidden; }
+.impact-card.tool_selection { background: var(--red-bg); border-left: 4px solid var(--red); }
+.impact-card.param_accuracy { background: var(--orange-bg); border-left: 4px solid var(--orange); }
+.impact-card.completeness { background: var(--purple-bg); border-left: 4px solid var(--purple); }
+.impact-card.conciseness { background: var(--blue-bg); border-left: 4px solid var(--blue); }
+.impact-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.impact-title { font-size: 15px; font-weight: 600; }
+.impact-count { font-size: 22px; font-weight: 700; line-height: 1; }
+.impact-card.tool_selection .impact-count { color: var(--red); }
+.impact-card.param_accuracy .impact-count { color: var(--orange); }
+.impact-card.completeness .impact-count { color: var(--purple); }
+.impact-card.conciseness .impact-count { color: var(--blue); }
+.impact-explain { font-size: 12px; color: var(--gray-600); margin-bottom: 12px; line-height: 1.5; }
+.impact-issues { font-size: 12px; color: var(--gray-800); }
+.impact-issues li { margin-bottom: 3px; list-style: none; padding-left: 14px; position: relative; }
+.impact-issues li::before { content: ''; position: absolute; left: 0; top: 6px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--gray-300); }
+
+/* -- Action items -------------------------------------------------- */
+.pri-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.pri-tab { padding: 6px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; }
+.pri-tab.on { border-color: var(--gray-800); }
+.pri-tab.p0 { background: var(--red-light); color: var(--red); }
+.pri-tab.p1 { background: var(--orange-light); color: var(--orange); }
+.pri-tab.p2 { background: var(--blue-light); color: var(--blue); }
+.pri-tab.p3 { background: var(--gray-100); color: var(--gray-600); }
+.act-list { display: flex; flex-direction: column; gap: 10px; }
+.act { border-radius: var(--radius-sm); padding: 14px 16px; background: var(--gray-50);
+  border-left: 4px solid var(--gray-300); }
+.act.P0 { border-left-color: var(--red); }
+.act.P1 { border-left-color: var(--orange); }
+.act.P2 { border-left-color: var(--blue); }
+.act.P3 { border-left-color: var(--gray-300); }
+.act-top { display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 4px; gap: 8px; }
+.act-title { font-weight: 600; font-size: 14px; }
+.act-tool { font-size: 12px; color: var(--gray-500); font-family: 'Cascadia Code','Consolas',monospace; }
+.act-desc { font-size: 13px; color: var(--gray-600); margin-bottom: 6px; }
+.act-fix { font-size: 13px; color: var(--green); }
+.act-risk { font-size: 12px; color: var(--red); margin-top: 6px; padding: 6px 10px;
+  background: var(--red-bg); border-radius: var(--radius-sm); line-height: 1.5; }
+.act-tags { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.tag-area { background: var(--blue-light); color: var(--blue-dark); }
+.dl-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px;
+  border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+  background: var(--blue); color: #fff; border: none; transition: background 0.15s; }
+.dl-btn:hover { background: var(--blue-dark); }
+.dl-btn svg { width: 14px; height: 14px; fill: currentColor; }
+.actions-header { display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 4px; }
+
+/* -- Tool cards ---------------------------------------------------- */
+.tools-section h2 { margin-bottom: 16px; }
+.tc { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow);
+  margin-bottom: 12px; overflow: hidden; }
+.tc-head { display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 20px; cursor: pointer; user-select: none; }
+.tc-head:hover { background: var(--gray-50); }
+.tc-name { font-weight: 600; font-family: 'Cascadia Code','Consolas',monospace; font-size: 14px; }
+.tc-meta { font-size: 12px; color: var(--gray-500); margin-left: 10px; }
+.tc-score { font-size: 20px; font-weight: 700; }
+.tc-body { padding: 0 20px 20px; display: none; }
+.tc.open .tc-body { display: block; }
+.tc-desc { font-size: 13px; color: var(--gray-600); padding: 10px 12px;
+  background: var(--gray-50); border-radius: var(--radius-sm); margin-bottom: 14px;
+  white-space: pre-wrap; border-left: 3px solid var(--gray-200); }
+.tc-cat-scores { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.tc-cat-pill { font-size: 11px; padding: 4px 10px; border-radius: 12px;
+  font-weight: 600; background: var(--gray-100); color: var(--gray-600); }
+.tc-cat-pill.good { background: var(--green-light); color: var(--green); }
+.tc-cat-pill.warn { background: var(--orange-light); color: var(--orange); }
+.tc-cat-pill.bad { background: var(--red-light); color: var(--red); }
+
+/* -- Parameter table ----------------------------------------------- */
+.param-section { margin-bottom: 16px; }
+.param-section h4 { font-size: 13px; font-weight: 600; color: var(--gray-800);
+  margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.param-tbl { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 4px; }
+.param-tbl th { text-align: left; padding: 7px 10px; border-bottom: 2px solid var(--gray-200);
+  font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em;
+  background: var(--gray-50); }
+.param-tbl td { padding: 7px 10px; border-bottom: 1px solid var(--gray-100); vertical-align: top; }
+.param-tbl tr:hover { background: var(--gray-50); }
+.param-name { font-family: 'Cascadia Code','Consolas',monospace; font-weight: 600; font-size: 13px; white-space: nowrap; }
+.param-req { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 5px;
+  border-radius: 3px; margin-left: 4px; vertical-align: middle; }
+.param-req.yes { background: var(--red-light); color: var(--red); }
+.param-req.no { background: var(--gray-100); color: var(--gray-500); }
+.param-type { font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px;
+  color: var(--blue); background: var(--blue-light); padding: 1px 6px; border-radius: 3px; }
+.param-desc-text { font-size: 12px; color: var(--gray-800); line-height: 1.5; }
+.param-constraints { margin-top: 4px; }
+.param-chip { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 3px;
+  margin-right: 4px; margin-top: 2px; background: var(--gray-100); color: var(--gray-600);
+  font-family: 'Cascadia Code','Consolas',monospace; }
+.param-enum { font-size: 11px; color: var(--purple); margin-top: 4px; }
+.param-default { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+.no-params { font-size: 13px; color: var(--gray-500); font-style: italic;
+  padding: 10px 0; }
+
+/* -- Checks table -------------------------------------------------- */
+.checks-section h4 { font-size: 13px; font-weight: 600; color: var(--gray-800);
+  margin-bottom: 8px; }
+.chk-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.chk-tbl th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--gray-200);
+  font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em; }
+.chk-tbl td { padding: 6px 8px; border-bottom: 1px solid var(--gray-100); }
+.chk-ok { color: var(--green); font-weight: 600; } .chk-no { color: var(--red); font-weight: 600; }
+.arr { transition: transform 0.2s; display: inline-block; font-size: 12px; }
+.tc.open .arr { transform: rotate(90deg); }
+
+/* -- Footer -------------------------------------------------------- */
+.footer { text-align: center; font-size: 11px; color: var(--gray-500); padding: 24px;
+  line-height: 1.6; }
+.footer a { color: var(--blue); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container" id="app"></div>
+
+<script>window.__REPORT_DATA__ = {{REPORT_DATA}};</script>
+<script>
+const D = window.__REPORT_DATA__.result;
+const IM = window.__REPORT_DATA__.impact_map;
+const ML = window.__REPORT_DATA__.maturity_ladder;
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+function sc(v) { return v >= 80 ? 'var(--green)' : v >= 60 ? 'var(--orange)' : 'var(--red)'; }
+
+/* -- Helpers ------------------------------------------------------- */
+function ring(score, sz, sw) {
+  sz = sz || 110; sw = sw || 9;
+  const r = (sz-sw)/2, c = 2*Math.PI*r, off = c*(1-score/100);
+  return '<div class="score-ring" style="width:'+sz+'px;height:'+sz+'px">'
+    + '<svg width="'+sz+'" height="'+sz+'">'
+    + '<circle cx="'+sz/2+'" cy="'+sz/2+'" r="'+r+'" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="'+sw+'"/>'
+    + '<circle cx="'+sz/2+'" cy="'+sz/2+'" r="'+r+'" fill="none" stroke="'+sc(score)+'" stroke-width="'+sw+'"'
+    + ' stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'" stroke-linecap="round"/>'
+    + '</svg>'
+    + '<div class="val"><span class="num">'+score.toFixed(1)+'</span><span class="of">out of 100</span></div>'
+    + '</div>';
+}
+
+function hlClass(v) { return v >= 80 ? 'highlight-good' : v >= 60 ? 'highlight-warn' : 'highlight-bad'; }
+
+/* -- 1. Hero ------------------------------------------------------- */
+function renderHero() {
+  return '<div class="hero">'
+    + '<div class="hero-left">'
+    + '<h1>MCP Server Quality Report</h1>'
+    + '<div class="subtitle">'+esc(D.server_name || D.server_url)+'</div>'
+    + '</div>'
+    + '<div class="hero-right">'
+    + ring(D.overall_score)
+    + '<div class="maturity-pill">'
+    + '<div class="lv">L'+D.maturity.level+'</div>'
+    + '<div class="lb">'+esc(D.maturity.label)+'</div>'
+    + '</div>'
+    + '</div>'
+    + '</div>';
+}
+
+/* -- 2. Narrative summary ------------------------------------------ */
+function renderNarrative() {
+  var ca = D.category_averages;
+  var cats = [
+    ['tool_name','Tool naming'],['tool_description','Tool descriptions'],
+    ['param_name','Parameter naming'],['param_description','Parameter documentation'],
+    ['schema_structure','Schema structure']
+  ];
+  var sorted = cats.slice().sort(function(a,b) { return (ca[b[0]]||0)-(ca[a[0]]||0); });
+  var best = sorted.filter(function(c) { return (ca[c[0]]||0) >= 75; }).slice(0,2);
+  var worst = sorted.filter(function(c) { return (ca[c[0]]||0) < 75; }).reverse().slice(0,2);
+  var total = 0;
+  Object.keys(D.action_items_by_priority).forEach(function(k) { total += D.action_items_by_priority[k]; });
+  var p0 = D.action_items_by_priority['P0']||0;
+  var p1 = D.action_items_by_priority['P1']||0;
+
+  var story = 'This server exposes <strong>'+D.tool_count+' tool'+(D.tool_count!==1?'s':'')+'</strong>'
+    + ' and received an overall quality score of <span class="'+hlClass(D.overall_score)+'">'
+    + D.overall_score.toFixed(1)+' out of 100</span>, placing it at <strong>Level '
+    + D.maturity.level+' ('+D.maturity.label+')</strong> on the maturity scale.';
+
+  if (best.length)
+    story += ' <strong>Strengths:</strong> '+best.map(function(c) {
+      return c[1]+' (<span class="highlight-good">'+ca[c[0]].toFixed(1)+'</span>)';
+    }).join(' and ')+'.';
+  if (worst.length)
+    story += ' <strong>Needs attention:</strong> '+worst.map(function(c) {
+      return c[1]+' (<span class="'+hlClass(ca[c[0]])+'">'+ca[c[0]].toFixed(1)+'</span>)';
+    }).join(' and ')+'.';
+
+  if (total > 0) {
+    story += ' We identified <strong>'+total+' action item'+(total!==1?'s':'')+'</strong>';
+    if (p0 > 0) story += ', including <span class="highlight-bad">'+p0+' critical</span>';
+    if (p0 > 0 && p1 > 0) story += ' and <span class="highlight-warn">'+p1+' high-priority</span>';
+    else if (p1 > 0) story += ', including <span class="highlight-warn">'+p1+' high-priority</span>';
+    story += ' fix'+(total!==1?'es':'')+' that will improve how AI agents interact with this server.';
+  }
+
+  return '<div class="section"><div class="narrative">'+story+'</div></div>';
+}
+
+/* -- 3. Stats strip ------------------------------------------------ */
+function renderStats() {
+  var total = 0;
+  Object.keys(D.action_items_by_priority).forEach(function(k) { total += D.action_items_by_priority[k]; });
+  var items = [
+    { n: D.tool_count, l: 'Tools' },
+    { n: total, l: 'Fixes Needed', c: total > 0 ? 'var(--orange)' : 'var(--green)' },
+    { n: D.action_items_by_priority['P0']||0, l: 'Critical', c: 'var(--red)' },
+    { n: D.action_items_by_priority['P1']||0, l: 'High Priority', c: 'var(--orange)' }
+  ];
+  return '<div class="stats">'+items.map(function(i) {
+    return '<div class="stat"><div class="n" style="color:'+(i.c||'var(--blue)')+'">'+i.n+'</div><div class="l">'+i.l+'</div></div>';
+  }).join('')+'</div>';
+}
+
+/* -- 4. Maturity journey ------------------------------------------- */
+function renderMaturity() {
+  var steps = ML.map(function(entry, i) {
+    var cls = i < D.maturity.level ? 'done' : i === D.maturity.level ? 'current' : '';
+    return '<div class="journey-step '+cls+'">'
+      + '<div class="num">'+i+'</div><div class="name">'+esc(entry.label)+'</div>'
+      + '</div>';
+  }).join('');
+
+  var curEntry = ML[D.maturity.level];
+  var curDesc = curEntry ? curEntry.description : '';
+  var reqs = (D.maturity.next_level_requirements||[]).map(function(r) { return '<li>'+esc(r)+'</li>'; }).join('');
+  var nextEntry = D.maturity.level < 4 ? ML[D.maturity.level + 1] : null;
+  var nextLbl = nextEntry ? nextEntry.label : null;
+
+  return '<div class="section">'
+    + '<h2>Where You Stand</h2>'
+    + '<p class="section-intro">The maturity model tracks how ready your server is for AI agents, from basic functionality to production-grade quality. You are currently at <strong>Level '+D.maturity.level+'</strong>: '+esc(curDesc)+'.</p>'
+    + '<div class="journey-track">'+steps+'</div>'
+    + (reqs && nextLbl ? '<div class="next-box"><h3>To reach Level '+(D.maturity.level+1)+' ('+esc(nextLbl)+'):</h3><ul>'+reqs+'</ul></div>' : '')
+    + '</div>';
+}
+
+/* -- 5. Category breakdown ----------------------------------------- */
+function renderCategories() {
+  var cats = [
+    ['tool_name', 'Tool Names', 'How agents identify and select tools'],
+    ['tool_description', 'Tool Descriptions', 'How agents understand purpose and usage'],
+    ['param_name', 'Parameter Names', 'How agents know what data to provide'],
+    ['param_description', 'Parameter Docs', 'How agents know format, type, and constraints'],
+    ['schema_structure', 'Schema Structure', 'Whether schemas are technically valid and processable']
+  ];
+  var rows = cats.map(function(c) {
+    var k = c[0], label = c[1], why = c[2];
+    var v = D.category_averages[k] || 0;
+    return '<div class="cat-row">'
+      + '<div class="cat-label"><div class="name">'+label+'</div><div class="why">'+why+'</div></div>'
+      + '<div class="cat-track"><div class="cat-fill" style="width:'+v+'%;background:'+sc(v)+'"></div></div>'
+      + '<div class="cat-num" style="color:'+sc(v)+'">'+v.toFixed(1)+'</div>'
+      + '</div>';
+  }).join('');
+  return '<div class="section">'
+    + '<h2>How Your Server Performs</h2>'
+    + '<p class="section-intro">Quality is measured across five dimensions. Each affects how reliably AI agents can discover and use your tools.</p>'
+    + rows
+    + '</div>';
+}
+
+/* -- 6. Impact analysis -------------------------------------------- */
+function renderImpact() {
+  var areas = {
+    ToolSelection: { title: 'Can agents find the right tool?', explain:
+      'When tool names or descriptions are unclear, AI agents pick the wrong tool or fail to find the right one. This is the most visible failure mode -- users see the agent calling completely irrelevant tools.',
+      issues: [], css: 'tool_selection', color: 'var(--red)' },
+    ParamAccuracy: { title: 'Can agents fill in the right values?', explain:
+      'When parameter documentation is missing or vague, AI agents guess at values, send wrong formats, or omit required fields. Research shows this causes 38% more errors.',
+      issues: [], css: 'param_accuracy', color: 'var(--orange)' },
+    Completeness: { title: 'Does the agent have all the information it needs?', explain:
+      'When return values, prerequisites, or limitations are undocumented, agents miss important steps, misinterpret results, or attempt impossible operations.',
+      issues: [], css: 'completeness', color: 'var(--purple)' },
+    Conciseness: { title: 'Is the signal clear, or buried in noise?', explain:
+      'When descriptions repeat the tool name, contain boilerplate, or include implementation jargon, agents waste context window tokens and may overthink simple operations.',
+      issues: [], css: 'conciseness', color: 'var(--blue)' }
+  };
+
+  var seen = {};
+  D.all_action_items.forEach(function(a) {
+    (a.impact_areas||[]).forEach(function(ia) {
+      if (areas[ia]) {
+        var key = ia + ':' + a.title + ':' + (a.tool_name||'');
+        if (!seen[key]) {
+          seen[key] = true;
+          areas[ia].issues.push(a);
+        }
+      }
+    });
+  });
+
+  var cards = Object.keys(areas).map(function(key) {
+    var area = areas[key];
+    var count = area.issues.length;
+    if (count === 0) return '';
+    var byTitle = {};
+    area.issues.forEach(function(a) {
+      var t = a.title;
+      if (!byTitle[t]) byTitle[t] = { title: t, tools: [], leads: [] };
+      if (a.tool_name) byTitle[t].tools.push(a.tool_name);
+      (a.issue_leads_to||[]).forEach(function(l) { if (byTitle[t].leads.indexOf(l) === -1) byTitle[t].leads.push(l); });
+    });
+    var items = Object.keys(byTitle).slice(0, 6).map(function(tk) {
+      var g = byTitle[tk];
+      var toolStr = g.tools.length > 0
+        ? ' ('+g.tools.slice(0,3).map(function(t){ return '<code>'+esc(t)+'</code>'; }).join(', ')+(g.tools.length>3?' +'+(g.tools.length-3)+' more':'')+')'
+        : '';
+      return '<li>'+esc(g.title)+toolStr+'</li>';
+    }).join('');
+
+    return '<div class="impact-card '+area.css+'">'
+      + '<div class="impact-head">'
+      + '<div class="impact-title">'+area.title+'</div>'
+      + '<div class="impact-count">'+count+'</div>'
+      + '</div>'
+      + '<div class="impact-explain">'+area.explain+'</div>'
+      + '<ul class="impact-issues">'+items+'</ul>'
+      + '</div>';
+  }).filter(Boolean).join('');
+
+  if (!cards) return '';
+  return '<div class="section">'
+    + '<h2>What AI Agents Experience</h2>'
+    + '<p class="section-intro">Every quality issue affects AI agents in one of four ways. Here is how the issues in your server break down by real-world impact.</p>'
+    + '<div class="impact-grid">'+cards+'</div>'
+    + '</div>';
+}
+
+/* -- Download action items ----------------------------------------- */
+function downloadActionItems() {
+  var lines = [];
+  lines.push('# Action Items -- ' + (D.server_name || D.server_url));
+  lines.push('# Score: ' + D.overall_score.toFixed(1) + '/100 | Maturity: Level ' + D.maturity.level + ' (' + D.maturity.label + ')');
+  lines.push('# Generated: ' + new Date(D.evaluated_at).toISOString());
+  lines.push('');
+
+  var priOrder = { P0: 0, P1: 1, P2: 2, P3: 3 };
+  var sorted = D.all_action_items.slice().sort(function(a, b) {
+    return (priOrder[a.priority] || 9) - (priOrder[b.priority] || 9);
+  });
+
+  sorted.forEach(function(a, i) {
+    lines.push('## ' + (i + 1) + '. [' + a.priority + '] ' + a.title);
+    if (a.tool_name) lines.push('Tool: ' + a.tool_name);
+    lines.push('Problem: ' + a.description);
+    if (a.remediation) lines.push('Fix: ' + a.remediation);
+    if (a.impact_areas && a.impact_areas.length)
+      lines.push('Impact: ' + a.impact_areas.join(', '));
+    if (a.issue_leads_to && a.issue_leads_to.length)
+      lines.push('Risk if unfixed: ' + a.issue_leads_to.join('; '));
+    lines.push('');
+  });
+
+  if (D.maturity.next_level_requirements && D.maturity.next_level_requirements.length) {
+    lines.push('## Next maturity level requirements');
+    D.maturity.next_level_requirements.forEach(function(r) { lines.push('- ' + r); });
+    lines.push('');
+  }
+
+  var blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'action_items.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* -- 7. Action items ----------------------------------------------- */
+function renderActions() {
+  if (!D.all_action_items.length) return '';
+  var byP = {};
+  D.all_action_items.forEach(function(a) { (byP[a.priority] = byP[a.priority]||[]).push(a); });
+
+  var priLabels = { P0:'Critical -- fix immediately', P1:'High priority', P2:'Medium priority', P3:'Low priority / polish' };
+  var tabs = ['P0','P1','P2','P3'].filter(function(p) { return byP[p]; }).map(function(p,i) {
+    return '<div class="pri-tab '+p.toLowerCase()+' '+(i===0?'on':'')+'" data-p="'+p+'">'+priLabels[p]+' ('+byP[p].length+')</div>';
+  }).join('');
+
+  var AREA_LABELS = {
+    ToolSelection: 'Affects tool selection',
+    ParamAccuracy: 'Affects parameter accuracy',
+    Completeness: 'Affects completeness',
+    Conciseness: 'Affects conciseness'
+  };
+
+  function renderAct(a) {
+    var tags = (a.impact_areas||[]).map(function(ia) {
+      return '<span class="tag tag-area">'+(AREA_LABELS[ia]||ia)+'</span>';
+    }).join('');
+    var risks = (a.issue_leads_to||[]);
+    var riskHtml = risks.length
+      ? '<div class="act-risk"><strong>If left unfixed:</strong> '+risks.map(function(r) { return esc(r); }).join(' ')+'</div>'
+      : '';
+    return '<div class="act '+a.priority+'">'
+      + '<div class="act-top">'
+      + '<div><span class="act-title">'+esc(a.title)+'</span>'
+      + (a.tool_name ? '<span class="act-tool"> '+esc(a.tool_name)+'</span>' : '<span class="act-tool"> Server-level</span>')+'</div>'
+      + '</div>'
+      + '<div class="act-desc">'+esc(a.description)+'</div>'
+      + (a.remediation ? '<div class="act-fix">'+esc(a.remediation)+'</div>' : '')
+      + riskHtml
+      + '<div class="act-tags">'+tags+'</div>'
+      + '</div>';
+  }
+
+  var firstP = ['P0','P1','P2','P3'].find(function(p) { return byP[p]; });
+  var lists = Object.keys(byP).map(function(p) {
+    return '<div class="act-list" data-p="'+p+'" style="display:'+(p===firstP?'flex':'none')+'">'+byP[p].map(renderAct).join('')+'</div>';
+  }).join('');
+
+  return '<div class="section">'
+    + '<div class="actions-header">'
+    + '<h2>What to Fix</h2>'
+    + '<button class="dl-btn" onclick="downloadActionItems()">'
+    + '<svg viewBox="0 0 16 16"><path d="M8 12l-4-4h2.5V2h3v6H12L8 12zm-6 2h12v1.5H2V14z"/></svg>'
+    + 'Download action_items.txt'
+    + '</button>'
+    + '</div>'
+    + '<p class="section-intro">Each fix below explains what is wrong, how to fix it, and what could go wrong if left unaddressed. Start with critical items.</p>'
+    + '<div class="pri-tabs">'+tabs+'</div>'+lists
+    + '</div>';
+}
+
+/* -- 8. Per-tool cards --------------------------------------------- */
+function catPillClass(v) { return v >= 80 ? 'good' : v >= 60 ? 'warn' : 'bad'; }
+
+function renderParamTable(schema) {
+  var props = schema.properties || {};
+  var required = {};
+  (schema.required || []).forEach(function(r) { required[r] = true; });
+  var names = Object.keys(props);
+  if (names.length === 0) return '<div class="no-params">No parameters defined</div>';
+
+  var rows = names.map(function(name) {
+    var p = props[name] || {};
+    var type = p.type || (p['$ref'] ? '$ref' : '--');
+    var desc = p.description || '';
+    var isReq = !!required[name];
+
+    var chips = [];
+    if (p.format) chips.push('format: ' + p.format);
+    if (p.pattern) chips.push('pattern: ' + p.pattern);
+    if (p.minimum !== undefined) chips.push('min: ' + p.minimum);
+    if (p.maximum !== undefined) chips.push('max: ' + p.maximum);
+    if (p.minLength !== undefined) chips.push('minLen: ' + p.minLength);
+    if (p.maxLength !== undefined) chips.push('maxLen: ' + p.maxLength);
+    if (p.minItems !== undefined) chips.push('minItems: ' + p.minItems);
+    if (p.maxItems !== undefined) chips.push('maxItems: ' + p.maxItems);
+    if (p.items && p.items.type) chips.push('items: ' + p.items.type);
+
+    var chipsHtml = chips.length
+      ? '<div class="param-constraints">' + chips.map(function(c) { return '<span class="param-chip">'+esc(c)+'</span>'; }).join('') + '</div>'
+      : '';
+
+    var enumHtml = p['enum']
+      ? '<div class="param-enum">Values: '+p['enum'].map(function(v) { return '<code>'+esc(String(v))+'</code>'; }).join(', ')+'</div>'
+      : '';
+
+    var defaultHtml = p['default'] !== undefined
+      ? '<div class="param-default">Default: <code>'+esc(JSON.stringify(p['default']))+'</code></div>'
+      : '';
+
+    return '<tr>'
+      + '<td><span class="param-name">'+esc(name)+'</span>'
+      + '<span class="param-req '+(isReq?'yes':'no')+'">'+(isReq?'required':'optional')+'</span></td>'
+      + '<td><span class="param-type">'+esc(type)+'</span></td>'
+      + '<td>'
+      + '<div class="param-desc-text">'+(esc(desc) || '<span style="color:var(--gray-500);font-style:italic">No description</span>')+'</div>'
+      + chipsHtml+enumHtml+defaultHtml
+      + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<table class="param-tbl">'
+    + '<thead><tr><th>Parameter</th><th>Type</th><th>Description &amp; Constraints</th></tr></thead>'
+    + '<tbody>'+rows+'</tbody>'
+    + '</table>';
+}
+
+function renderTools() {
+  if (!D.tool_results.length) return '';
+  var sorted = D.tool_results.slice().sort(function(a,b) { return a.score - b.score; });
+
+  var CAT_LABELS = {
+    tool_name: 'Names', tool_description: 'Descriptions',
+    param_name: 'Param Names', param_description: 'Param Docs',
+    schema_structure: 'Schema'
+  };
+
+  var cards = sorted.map(function(t) {
+    var fails = t.checks.filter(function(c) { return c.score === false; }).length;
+    var schema = t.input_schema || {};
+
+    var pills = Object.keys(CAT_LABELS).map(function(k) {
+      var v = t.category_scores[k];
+      if (v === undefined) return '';
+      return '<span class="tc-cat-pill '+catPillClass(v)+'">'+CAT_LABELS[k]+': '+v.toFixed(1)+'</span>';
+    }).filter(Boolean).join('');
+
+    var paramHtml = renderParamTable(schema);
+
+    var failedChecks = t.checks.filter(function(c) { return c.score === false; });
+    var passedChecks = t.checks.filter(function(c) { return c.score === true; });
+    var skippedChecks = t.checks.filter(function(c) { return c.score === null || c.score === undefined; });
+    var orderedChecks = failedChecks.concat(passedChecks).concat(skippedChecks);
+    var rows = orderedChecks.map(function(c) {
+      var statusClass = c.score === true ? 'chk-ok' : c.score === false ? 'chk-no' : '';
+      var statusText = c.score === true ? 'PASS' : c.score === false ? 'FAIL' : '--';
+      return '<tr>'
+        + '<td class="'+statusClass+'">'+statusText+'</td>'
+        + '<td>'+esc(c.prompt)+'</td>'
+        + '<td>'+esc(c.reason || '')+'</td>'
+        + '</tr>';
+    }).join('');
+
+    return '<div class="tc" onclick="this.classList.toggle(\'open\')">'
+      + '<div class="tc-head">'
+      + '<div><span class="arr">&#9654;</span> <span class="tc-name">'+esc(t.tool_name)+'</span>'
+      + '<span class="tc-meta">'+t.param_count+' param'+(t.param_count!==1?'s':'')+' | '+fails+' issue'+(fails!==1?'s':'')+'</span></div>'
+      + '<span class="tc-score" style="color:'+sc(t.score)+'">'+t.score.toFixed(1)+'</span>'
+      + '</div>'
+      + '<div class="tc-body">'
+      + '<div class="tc-desc">'+esc(t.tool_description || '(no description)')+'</div>'
+      + '<div class="tc-cat-scores">'+pills+'</div>'
+      + '<div class="param-section">'
+      + '<h4>Parameters ('+t.param_count+')</h4>'
+      + paramHtml
+      + '</div>'
+      + '<div class="checks-section">'
+      + '<h4>Quality Checks ('+fails+' issue'+(fails!==1?'s':'')+' of '+t.checks.length+')</h4>'
+      + '<table class="chk-tbl"><thead><tr><th></th><th>Check</th><th>Details</th></tr></thead>'
+      + '<tbody>'+rows+'</tbody></table>'
+      + '</div>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+
+  return '<div class="section tools-section">'
+    + '<h2>Tool-by-Tool Details</h2>'
+    + '<p class="section-intro">Click any tool to see its full schema, parameters, and quality checklist. Sorted worst-to-best so you can focus on the biggest opportunities first.</p>'
+    + cards
+    + '</div>';
+}
+
+/* -- Render page --------------------------------------------------- */
+document.getElementById('app').innerHTML = [
+  renderHero(), renderNarrative(), renderStats(), renderMaturity(),
+  renderCategories(), renderImpact(), renderActions(), renderTools(),
+  '<div class="footer">Generated by MCP schema quality evaluator<br>'
+    + 'Methodology: 18-smell taxonomy (Li et al., 2026) and 6-component framework (Hasan et al., 2026)<br>'
+    + new Date(D.evaluated_at).toLocaleString()+'</div>'
+].join('');
+
+/* -- Tab interaction ----------------------------------------------- */
+document.querySelectorAll('.pri-tab').forEach(function(tab) {
+  tab.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var p = tab.dataset.p;
+    tab.parentElement.querySelectorAll('.pri-tab').forEach(function(t) { t.classList.remove('on'); });
+    tab.classList.add('on');
+    tab.closest('.section').querySelectorAll('.act-list').forEach(function(l) {
+      l.style.display = l.dataset.p === p ? 'flex' : 'none';
+    });
+  });
+});
+</script>
+</body>
+</html>

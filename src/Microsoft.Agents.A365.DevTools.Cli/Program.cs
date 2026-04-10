@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -165,6 +166,17 @@ class Program
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService));
 
+            // Register evaluate command
+            var evaluateLogger = loggerFactory.CreateLogger("EvaluateCommand");
+            var schemaDiscoveryService = serviceProvider.GetRequiredService<ISchemaDiscoveryService>();
+            var checklistGenerator = serviceProvider.GetRequiredService<IChecklistGenerator>();
+            var checklistEvaluator = serviceProvider.GetRequiredService<IChecklistEvaluator>();
+            var evaluationAnalyzer = serviceProvider.GetRequiredService<IEvaluationAnalyzer>();
+            var reportGenerator = serviceProvider.GetRequiredService<IReportGenerator>();
+            rootCommand.AddCommand(EvaluateCommand.CreateCommand(
+                evaluateLogger, schemaDiscoveryService, checklistGenerator,
+                checklistEvaluator, evaluationAnalyzer, reportGenerator));
+
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
             var builder = new CommandLineBuilder(rootCommand)
@@ -322,6 +334,14 @@ class Program
         
         // Register confirmation provider for user prompts
         services.AddSingleton<IConfirmationProvider, ConsoleConfirmationProvider>();
+
+        // Register evaluate pipeline services
+        services.AddHttpClient<ISchemaDiscoveryService, SchemaDiscoveryService>();
+        services.AddSingleton<IChecklistGenerator, ChecklistGenerator>();
+        services.AddSingleton<CodingAgentRunner>();
+        services.AddSingleton<IChecklistEvaluator, ChecklistEvaluator>();
+        services.AddSingleton<IEvaluationAnalyzer, EvaluationAnalyzer>();
+        services.AddSingleton<IReportGenerator, ReportGenerator>();
     }
 
     public static string GetDisplayVersion()
