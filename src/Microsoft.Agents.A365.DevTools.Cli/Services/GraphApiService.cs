@@ -1135,10 +1135,19 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Adds a required resource access entry (API permission) to an application.
+    /// Adds a required resource access entry (API permission) to an application for a single scope.
     /// </summary>
     public async Task<bool> AddRequiredResourceAccessAsync(
         string tenantId, string applicationObjectId, string resourceAppId, Guid scopeId, CancellationToken ct = default)
+    {
+        return await AddRequiredResourceAccessAsync(tenantId, applicationObjectId, resourceAppId, new[] { scopeId }, ct);
+    }
+
+    /// <summary>
+    /// Adds a required resource access entry (API permission) to an application for one or more scopes.
+    /// </summary>
+    public async Task<bool> AddRequiredResourceAccessAsync(
+        string tenantId, string applicationObjectId, string resourceAppId, IEnumerable<Guid> scopeIds, CancellationToken ct = default)
     {
         // First read current requiredResourceAccess
         using var doc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}?$select=requiredResourceAccess", ct);
@@ -1160,10 +1169,7 @@ public class GraphApiService
         existingAccess.Add(new
         {
             resourceAppId,
-            resourceAccess = new[]
-            {
-                new { id = scopeId, type = "Scope" },
-            },
+            resourceAccess = scopeIds.Select(id => new { id, type = "Scope" }).ToArray(),
         });
 
         var payload = new
@@ -1174,11 +1180,11 @@ public class GraphApiService
         var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
         if (result)
         {
-            _logger.LogInformation("Added API permission for resource {ResourceAppId} scope {ScopeId} on application {ObjectId}", resourceAppId, scopeId, applicationObjectId);
+            _logger.LogInformation("Added API permissions for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
         }
         else
         {
-            _logger.LogError("Failed to add API permission for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
+            _logger.LogError("Failed to add API permissions for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
         }
 
         return result;

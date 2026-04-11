@@ -966,11 +966,11 @@ public static class DevelopMcpCommand
 
                 logger.LogInformation("Tools to register: {Tools}", string.Join(", ", toolList));
 
-                // Remote scopes are required for both Entra and ExternalIDP
+                // Remote scopes are optional — if empty, the Remote Proxy connector uses NoAuth
                 if (string.IsNullOrWhiteSpace(remoteScopes))
                 {
-                    remoteScopes = InputValidator.PromptAndValidateRequiredInput("Enter scopes for the remote MCP server: ", "Remote scopes", 500);
-                    if (string.IsNullOrWhiteSpace(remoteScopes)) { logger.LogError("Remote scopes are required"); return; }
+                    Console.Write("Enter scopes for the remote MCP server (leave empty for no auth): ");
+                    remoteScopes = Console.ReadLine()?.Trim() ?? string.Empty;
                 }
             }
             catch (ArgumentException ex)
@@ -1157,7 +1157,7 @@ public static class DevelopMcpCommand
                 logger.LogWarning("Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped for Remote Proxy app.");
             }
 
-            // Step 4: Configure PPMI app scope and A365 Proxy API permission
+            // Step 4: Configure PPMI app scopes and A365 Proxy API permissions
             var ppmiAppClientId = addResponse.Server?.PpmiAppClientId;
             if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
             {
@@ -1173,17 +1173,32 @@ public static class DevelopMcpCommand
                     logger.LogInformation("Setting Application ID URI: {Uri}", identifierUri);
                     await graphApiService.SetIdentifierUriAsync(tenantId, ppmiObjectId, identifierUri);
 
+                    // Add user_impersonation scope (required for PPMI OBO token flow)
+                    logger.LogInformation("Adding 'user_impersonation' scope to PPMI app...");
+                    var uiScopeId = await graphApiService.AddOAuth2PermissionScopeAsync(
+                        tenantId,
+                        ppmiObjectId,
+                        "user_impersonation",
+                        "Allow the application to access resources on behalf of the signed-in user");
+
                     // Add <serverName>.All scope to the PPMI app
                     var scopeName = $"{serverName}.All";
                     logger.LogInformation("Adding scope '{ScopeName}' to PPMI app...", scopeName);
-                    var scopeId = await graphApiService.AddOAuth2PermissionScopeAsync(tenantId, ppmiObjectId, scopeName, $"Full access to {serverName}");
+                    var serverAllScopeId = await graphApiService.AddOAuth2PermissionScopeAsync(
+                        tenantId, ppmiObjectId, scopeName, $"Full access to {serverName}");
 
-                    if (scopeId.HasValue)
+                    // Add API permissions on A365 Proxy app for both PPMI scopes
+                    var ppmiScopeIds = new List<Guid>();
+                    if (uiScopeId.HasValue) ppmiScopeIds.Add(uiScopeId.Value);
+                    if (serverAllScopeId.HasValue) ppmiScopeIds.Add(serverAllScopeId.Value);
+
+                    if (ppmiScopeIds.Count > 0)
                     {
-                        // Add API permission on A365 Proxy app for the PPMI app's scope
-                        logger.LogInformation("Adding API permission on A365 Proxy app for PPMI scope...");
-                        await graphApiService.AddRequiredResourceAccessAsync(tenantId, a365App.Value.ObjectId, ppmiAppClientId, scopeId.Value);
+                        logger.LogInformation("Adding API permissions on A365 Proxy app for PPMI scopes...");
+                        await graphApiService.AddRequiredResourceAccessAsync(
+                            tenantId, a365App.Value.ObjectId, ppmiAppClientId, ppmiScopeIds);
                     }
+
                 }
                 else
                 {

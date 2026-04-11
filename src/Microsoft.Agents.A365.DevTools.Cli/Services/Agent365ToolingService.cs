@@ -114,6 +114,31 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <summary>
+    /// Extracts a human-readable error message from a JSON error response body.
+    /// </summary>
+    private static string? ExtractErrorMessage(string? responseContent)
+    {
+        if (string.IsNullOrWhiteSpace(responseContent))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseContent);
+            var root = doc.RootElement;
+
+            var details = root.TryGetProperty("details", out var d) ? d.GetString() : null;
+            var error = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+            var message = root.TryGetProperty("message", out var m) ? m.GetString() : null;
+
+            return details ?? error ?? message;
+        }
+        catch
+        {
+            return responseContent;
+        }
+    }
+
+    /// <summary>
     /// Common helper method to log HTTP request details
     /// </summary>
     /// <param name="method">HTTP method</param>
@@ -830,7 +855,9 @@ public class Agent365ToolingService : IAgent365ToolingService
             var (isSuccess, responseContent) = await ValidateResponseAsync(response, "add MCP server", cancellationToken);
             if (!isSuccess)
             {
-                return null;
+                // Try to extract error details from server response
+                var errorMessage = ExtractErrorMessage(responseContent) ?? $"Server returned {response.StatusCode}";
+                return new AddMcpServerResponse { Status = "Failed", Message = errorMessage };
             }
 
             if (string.IsNullOrWhiteSpace(responseContent))
@@ -853,8 +880,8 @@ public class Agent365ToolingService : IAgent365ToolingService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to add MCP server {ServerName}", request.ServerName);
-            return null;
+            _logger.LogError("Failed to add MCP server {ServerName}: {ErrorMessage}", request.ServerName, ex.Message);
+            return new AddMcpServerResponse { Status = "Failed", Message = ex.Message };
         }
     }
 
