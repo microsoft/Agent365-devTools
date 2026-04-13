@@ -278,33 +278,14 @@ internal static class NonDwBlueprintSetupOrchestrator
                     ?? ctx.Config.WebAppName
                     ?? "Agent";
 
-                // Agent identity creation: prefer app-only flow (blueprint client credentials) when available.
-                // Fall back to delegated flow (AgentIdentity.Create.All) when the client secret is missing.
+                // Agent identity creation via delegated flow (AgentIdentity.Create.All).
+                // Agent ID Developer role is sufficient — client credentials are not required.
                 ctx.Logger.LogInformation("Creating agent identity...");
-                string? agentId = null;
-                if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
-                {
-                    ctx.Logger.LogInformation("Blueprint client secret not available — attempting delegated flow...");
-                    agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
-                        ctx.Config.TenantId!,
-                        ctx.Config.AgentBlueprintId!,
-                        agentIdentityDisplayName,
-                        ctx.CancellationToken);
-                }
-                else
-                {
-                    var clientSecret = SecretProtectionHelper.UnprotectSecret(
-                        ctx.Config.AgentBlueprintClientSecret,
-                        ctx.Config.AgentBlueprintClientSecretProtected,
-                        ctx.Logger);
-
-                    agentId = await ctx.GraphApiService.CreateAgentIdentityAsync(
-                        ctx.Config.TenantId!,
-                        ctx.Config.AgentBlueprintId!,
-                        clientSecret,
-                        agentIdentityDisplayName,
-                        ctx.CancellationToken);
-                }
+                var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
+                    ctx.Config.TenantId!,
+                    ctx.Config.AgentBlueprintId!,
+                    agentIdentityDisplayName,
+                    ctx.CancellationToken);
 
                 if (agentId is not null)
                 {
@@ -320,8 +301,8 @@ internal static class NonDwBlueprintSetupOrchestrator
                 else if (!ctx.Results.AgentIdentityFailed)
                 {
                     ctx.Results.AgentIdentityFailed = true;
-                    ctx.Results.Warnings.Add("Agent identity creation failed. Check the blueprint client secret and ensure the blueprint was set up correctly.");
-                    ctx.Logger.LogWarning("Agent identity creation failed. Check the blueprint client secret and ensure the blueprint was set up correctly.");
+                    ctx.Results.Warnings.Add("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
+                    ctx.Logger.LogWarning("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
                 }
             }
 
