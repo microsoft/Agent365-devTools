@@ -28,6 +28,12 @@ public class AddMcpServerRequest
     public List<string>? ToolList { get; set; }
 
     /// <summary>
+    /// Tool descriptions keyed by tool name. Used for MOS package generation only.
+    /// </summary>
+    [JsonPropertyName("toolDescriptions")]
+    public Dictionary<string, string>? ToolDescriptions { get; set; }
+
+    /// <summary>
     /// Authentication metadata for the server
     /// </summary>
     [JsonPropertyName("authMetadata")]

@@ -92,4 +92,10 @@ public class AddMcpServerDetails
     /// </summary>
     [JsonPropertyName("ppmiAppClientId")]
     public string? PpmiAppClientId { get; set; }
+
+    /// <summary>
+    /// The MOS title ID returned from publishing to MOS3
+    /// </summary>
+    [JsonPropertyName("mosTitleId")]
+    public string? MOSTitleId { get; set; }
 }

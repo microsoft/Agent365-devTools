@@ -880,6 +880,7 @@ public static class DevelopMcpCommand
             var isEntra = false;
             var isExternalIdp = false;
             List<string>? toolList = null;
+            Dictionary<string, string>? toolDescriptions = null;
 
             try
             {
@@ -965,6 +966,18 @@ public static class DevelopMcpCommand
                 }
 
                 logger.LogInformation("Tools to register: {Tools}", string.Join(", ", toolList));
+
+                // Collect optional descriptions for each tool (used in MOS package)
+                toolDescriptions = new Dictionary<string, string>();
+                foreach (var tool in toolList)
+                {
+                    Console.Write($"Enter description for tool '{tool}' (press Enter to skip): ");
+                    var desc = Console.ReadLine()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(desc))
+                    {
+                        toolDescriptions[tool] = desc;
+                    }
+                }
 
                 // Remote scopes are optional — if empty, the Remote Proxy connector uses NoAuth
                 if (string.IsNullOrWhiteSpace(remoteScopes))
@@ -1099,6 +1112,7 @@ public static class DevelopMcpCommand
                 ServerName = serverName,
                 ServerUrl = serverUrl,
                 ToolList = toolList,
+                ToolDescriptions = toolDescriptions?.Count > 0 ? toolDescriptions : null,
                 AuthType = authType,
                 AuthMetadata = new Models.AddMcpServerAuthMetadata
                 {

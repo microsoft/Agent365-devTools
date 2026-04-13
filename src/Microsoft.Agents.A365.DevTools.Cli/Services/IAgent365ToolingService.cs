@@ -93,7 +93,7 @@ public interface IAgent365ToolingService
     /// <param name="request">Add MCP server request</param>
     /// <param name="environmentId">Dataverse environment ID to set as x-ms-environment-id header</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Response containing server details and MosToolId</returns>
+    /// <returns>Response containing server details and MOSTitleId</returns>
     Task<AddMcpServerResponse?> AddMcpServerAsync(
         AddMcpServerRequest request,
         string? environmentId = null,
