@@ -50,8 +50,8 @@ public class PythonBuilderTests : IDisposable
         var content = await File.ReadAllTextAsync(requirementsTxt);
         content.Should().Contain("--find-links dist");
         content.Should().Contain("--pre");
-        content.Should().Contain("-e .");
-        content.Should().NotContain("flask==2.0.0", "editable install should replace original requirements.txt");
+        content.Should().NotContain("-e .", "wheel install should not use editable install");
+        content.Should().NotContain("flask==2.0.0", "wheel install should replace original requirements.txt");
     }
 
     [Fact]
@@ -80,8 +80,8 @@ public class PythonBuilderTests : IDisposable
         var content = await File.ReadAllTextAsync(requirementsTxt);
         content.Should().Contain("--find-links dist");
         content.Should().Contain("--pre");
-        content.Should().Contain("-e .");
-        content.Should().NotContain("django==3.2.0", "editable install should replace original requirements.txt");
+        content.Should().NotContain("-e .", "wheel install should not use editable install");
+        content.Should().NotContain("django==3.2.0", "wheel install should replace original requirements.txt");
     }
 
     [Fact]
@@ -139,7 +139,9 @@ public class PythonBuilderTests : IDisposable
         File.Exists(requirementsTxt).Should().BeTrue();
 
         var content = await File.ReadAllTextAsync(requirementsTxt);
-        content.Should().Contain("-e .", "should use editable install when pyproject.toml exists");
+        content.Should().Contain("--find-links dist");
+        content.Should().Contain("--pre");
+        content.Should().NotContain("-e .", "wheel install should not use editable install");
         content.Should().NotContain("fastapi==0.95.0", "should not copy requirements.txt when pyproject.toml exists");
     }
 
