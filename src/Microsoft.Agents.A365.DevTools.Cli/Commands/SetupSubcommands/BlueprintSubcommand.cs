@@ -870,13 +870,17 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Could not retrieve current user for sponsors field: {Message}", ex.Message);
             }
 
+            // Resolve the correct managed-by app ID for the tenant's sovereign cloud
+            var tenantRegionScope = await GetTenantRegionScopeAsync(graphApiService, tenantId, logger, ct);
+            var managedByAppId = ResolveManagedBy(tenantRegionScope);
+
             // Define the application manifest with @odata.type for Agent Identity Blueprint
             var appManifest = new JsonObject
             {
                 ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint", // CRITICAL: Required for Agent Blueprint type
                 ["displayName"] = displayName,
                 ["signInAudience"] = "AzureADMultipleOrgs", // Multi-tenant
-                ["managerApplications"] = "e8be65d6-d430-4289-a665-51bf2a194bda" // required to enable manageability for A365
+                ["managerApplications"] = managedByAppId // required to enable manageability for A365
             };
 
             // Add sponsors and owners fields if we have the current user
@@ -1702,6 +1706,67 @@ internal static class BlueprintSubcommand
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "Failed to acquire MSAL Graph access token");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the managed-by app ID based on the tenant's sovereign cloud region.
+    /// </summary>
+    internal static string ResolveManagedBy(string? tenantRegionScope)
+    {
+        return tenantRegionScope switch
+        {
+            "USGOV_DOD" or "USGOV_GCCHIGH"
+                => "4f9121cd-7399-4d33-86f7-ac2c4c3844b2", // GCC-H
+
+            "USG"
+                => "2b24b050-39d6-49c1-ab5f-73343dfd5f1d", // GCC-M
+
+            _ => "e8be65d6-d430-4289-a665-51bf2a194bda"    // prod
+        };
+    }
+
+    /// <summary>
+    /// Queries the Microsoft Graph /organization endpoint to determine the tenant's region scope.
+    /// Returns null when the call fails or the property is missing.
+    /// </summary>
+    internal static async Task<string?> GetTenantRegionScopeAsync(
+        GraphApiService graphApiService,
+        string tenantId,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var orgDoc = await graphApiService.GraphGetAsync(
+                tenantId,
+                "v1.0/organization?$select=id,tenantType,tenantRegionScope",
+                ct);
+
+            if (orgDoc is null)
+            {
+                logger.LogWarning("Could not retrieve organization info from Graph; defaulting to worldwide managed-by app.");
+                return null;
+            }
+
+            if (orgDoc.RootElement.TryGetProperty("value", out var valueArray) &&
+                valueArray.GetArrayLength() > 0)
+            {
+                var org = valueArray[0];
+                if (org.TryGetProperty("tenantRegionScope", out var regionProp) &&
+                    regionProp.ValueKind == JsonValueKind.String)
+                {
+                    return regionProp.GetString();
+                }
+            }
+
+            logger.LogDebug("tenantRegionScope not found in organization response; defaulting to worldwide managed-by app.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Failed to determine tenant region scope: {Message}. Defaulting to worldwide managed-by app.", ex.Message);
             return null;
         }
     }
