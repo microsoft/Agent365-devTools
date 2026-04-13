@@ -578,7 +578,7 @@ public class PythonBuilder : IPlatformBuilder
             // Install from the pre-built wheel in dist/ rather than using editable install (-e .)
             // Editable installs fail on Azure because Oryx builds in a different location than wwwroot
             var publishDist = Path.Combine(publishPath, "dist");
-            var packageName = DetectPackageName(publishPath, publishDist);
+            var packageName = await DetectPackageName(publishPath, publishDist);
 
             _logger.LogInformation("Detected pyproject.toml or setup.py - using wheel install approach");
             var content = $"--no-index\n--find-links dist\n--pre\n{packageName}\n";
@@ -626,15 +626,64 @@ public class PythonBuilder : IPlatformBuilder
     /// Wheel filenames follow the format: {name}-{version}-{tags}.whl
     /// where the distribution name uses underscores (PEP 427), but pip accepts hyphens.
     /// </summary>
-    private string DetectPackageName(string publishPath, string publishDist)
+    private async Task<string> DetectPackageName(string publishPath, string publishDist)
     {
-        // Try to extract from wheel filename first
+        // Read the expected project name from pyproject.toml first, so we can use it
+        // to narrow wheel selection when multiple wheels exist.
+        string? expectedName = null;
+        var pyprojectPath = Path.Combine(publishPath, "pyproject.toml");
+        if (File.Exists(pyprojectPath))
+        {
+            try
+            {
+                var tomlContent = await File.ReadAllTextAsync(pyprojectPath);
+
+                // Extract the [project] table body up to the next table header (or end of file),
+                // then match name = "..." only within that section.
+                var projectSectionMatch = System.Text.RegularExpressions.Regex.Match(
+                    tomlContent,
+                    @"^\[project\]\s*$\r?\n(.*?)(?=^\[|\z)",
+                    System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Singleline);
+                if (projectSectionMatch.Success)
+                {
+                    var projectSection = projectSectionMatch.Groups[1].Value;
+                    var nameMatch = System.Text.RegularExpressions.Regex.Match(
+                        projectSection,
+                        @"^name\s*=\s*[""']([^""']+)[""']\s*$",
+                        System.Text.RegularExpressions.RegexOptions.Multiline);
+                    if (nameMatch.Success)
+                    {
+                        expectedName = nameMatch.Groups[1].Value;
+                        _logger.LogDebug("Detected expected package name from pyproject.toml: {Name}", expectedName);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse pyproject.toml when detecting package name");
+            }
+        }
+
+        // Try to extract from wheel filename
         if (Directory.Exists(publishDist))
         {
             var wheels = Directory.GetFiles(publishDist, "*.whl");
             if (wheels.Length > 0)
             {
                 Array.Sort(wheels, StringComparer.Ordinal);
+
+                // If we know the expected project name, prefer the matching wheel
+                if (expectedName is not null && wheels.Length > 1)
+                {
+                    var normalizedExpected = expectedName.Replace('-', '_').ToLowerInvariant();
+                    var matched = wheels.FirstOrDefault(w =>
+                        Path.GetFileNameWithoutExtension(w).Split('-')[0].ToLowerInvariant() == normalizedExpected);
+                    if (matched is not null)
+                    {
+                        _logger.LogDebug("Selected wheel matching project name {Name}: {Wheel}", expectedName, Path.GetFileName(matched));
+                        wheels = new[] { matched };
+                    }
+                }
 
                 if (wheels.Length > 1)
                 {
@@ -656,31 +705,11 @@ public class PythonBuilder : IPlatformBuilder
             }
         }
 
-        // Fallback: try to read name from pyproject.toml [project] table (PEP 621)
-        var pyprojectPath = Path.Combine(publishPath, "pyproject.toml");
-        if (File.Exists(pyprojectPath))
+        // If we got a name from pyproject.toml but no wheels, use it
+        if (expectedName is not null)
         {
-            try
-            {
-                var content = File.ReadAllText(pyprojectPath);
-
-                // Match name = "..." only within the [project] table section.
-                // The pattern finds [project], then scans for name = before the next table header.
-                var match = System.Text.RegularExpressions.Regex.Match(
-                    content,
-                    @"^\[project\]\s*$.*?^name\s*=\s*[""']([^""']+)[""']",
-                    System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Singleline);
-                if (match.Success)
-                {
-                    var name = match.Groups[1].Value;
-                    _logger.LogDebug("Detected package name from pyproject.toml: {Name}", name);
-                    return name;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse pyproject.toml when detecting package name");
-            }
+            _logger.LogDebug("No wheels found, using package name from pyproject.toml: {Name}", expectedName);
+            return expectedName;
         }
 
         // Fail fast rather than falling back to installing from the source tree
