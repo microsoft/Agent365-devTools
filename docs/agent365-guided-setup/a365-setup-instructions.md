@@ -599,9 +599,8 @@ Provide the user with the following instructions:
 
 1. **Get your blueprint ID** by running:
    ```bash
-   a365 config display -g
+   a365 config display -g --field agentBlueprintId
    ```
-   Copy the `agentBlueprintId` value from the output.
 
 2. **Navigate to Developer Portal** by opening your browser and going to:
    ```
