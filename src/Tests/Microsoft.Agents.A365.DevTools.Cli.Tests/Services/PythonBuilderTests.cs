@@ -48,8 +48,10 @@ public class PythonBuilderTests : IDisposable
         File.Exists(requirementsTxt).Should().BeTrue();
 
         var content = await File.ReadAllTextAsync(requirementsTxt);
+        content.Should().Contain("--no-index");
         content.Should().Contain("--find-links dist");
         content.Should().Contain("--pre");
+        content.Should().Contain("test-project", "should detect package name from pyproject.toml");
         content.Should().NotContain("-e .", "wheel install should not use editable install");
         content.Should().NotContain("flask==2.0.0", "wheel install should replace original requirements.txt");
     }
@@ -67,6 +69,11 @@ public class PythonBuilderTests : IDisposable
         File.WriteAllText(Path.Combine(projectDir, "requirements.txt"), "django==3.2.0\ncelery==5.2.0");
         File.WriteAllText(Path.Combine(projectDir, "app.py"), "print('hello')");
 
+        // Create a pre-built wheel in dist/ so DetectPackageName can find it
+        var distDir = Path.Combine(projectDir, "dist");
+        Directory.CreateDirectory(distDir);
+        File.WriteAllText(Path.Combine(distDir, "test-1.0.0-py3-none-any.whl"), "");
+
         // Mock Python and pip executables
         MockPythonEnvironment();
 
@@ -78,8 +85,10 @@ public class PythonBuilderTests : IDisposable
         File.Exists(requirementsTxt).Should().BeTrue();
 
         var content = await File.ReadAllTextAsync(requirementsTxt);
+        content.Should().Contain("--no-index");
         content.Should().Contain("--find-links dist");
         content.Should().Contain("--pre");
+        content.Should().Contain("test", "should detect package name from wheel filename");
         content.Should().NotContain("-e .", "wheel install should not use editable install");
         content.Should().NotContain("django==3.2.0", "wheel install should replace original requirements.txt");
     }
@@ -139,8 +148,10 @@ public class PythonBuilderTests : IDisposable
         File.Exists(requirementsTxt).Should().BeTrue();
 
         var content = await File.ReadAllTextAsync(requirementsTxt);
+        content.Should().Contain("--no-index");
         content.Should().Contain("--find-links dist");
         content.Should().Contain("--pre");
+        content.Should().Contain("test-project", "should detect package name from pyproject.toml");
         content.Should().NotContain("-e .", "wheel install should not use editable install");
         content.Should().NotContain("fastapi==0.95.0", "should not copy requirements.txt when pyproject.toml exists");
     }
