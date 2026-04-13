@@ -253,9 +253,14 @@ internal static class BlueprintSubcommand
             // Handle --endpoint-only flag
             if (endpointOnly)
             {
-                logger.LogInformation("Endpoint registration via the CLI is not supported for blueprint-based agents.");
-                logger.LogInformation("Configure the messaging endpoint directly in the Teams Developer Portal:");
-                logger.LogInformation("  https://learn.microsoft.com/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal");
+                await RegisterEndpointAndSyncAsync(
+                    config.FullName,
+                    logger,
+                    configService,
+                    botConfigurator,
+                    platformDetector,
+                    correlationId: correlationId,
+                    cancellationToken: ct);
                 return;
             }
 
@@ -1976,15 +1981,6 @@ internal static class BlueprintSubcommand
         if (setupConfig.NeedDeployment && string.IsNullOrWhiteSpace(setupConfig.WebAppName))
         {
             logger.LogError("Web App Name not found. Run 'a365 setup infrastructure' first.");
-            Environment.Exit(1);
-        }
-
-        // Location is required by the endpoint registration API for both Azure and external hosting
-        if (string.IsNullOrWhiteSpace(setupConfig.Location))
-        {
-            logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
-            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            logger.LogInformation(ErrorMessages.EndpointLocationExample);
             Environment.Exit(1);
         }
 

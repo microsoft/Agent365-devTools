@@ -51,14 +51,6 @@ public class BotConfigurator : IBotConfigurator
         _logger.LogDebug("   Messaging Endpoint: {Endpoint}", messagingEndpoint);
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
-        if (string.IsNullOrWhiteSpace(location))
-        {
-            _logger.LogError(ErrorMessages.EndpointLocationRequiredForCreate);
-            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
-            return EndpointRegistrationResult.Failed;
-        }
-
         try
         {
             // Load config first to get tenant ID — avoids az CLI subprocess for account info.
@@ -89,17 +81,12 @@ public class BotConfigurator : IBotConfigurator
 
                 // Determine the audience (App ID) based on the environment
                 var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
-                var normalizedLocation = NormalizeLocation(location);
                 var createEndpointBody = new JsonObject
                 {
-                    ["AzureBotServiceInstanceName"] = endpointName,
+                    ["AgentIdentityBlueprintId"] = agentBlueprintId,
+                    ["CallbackUri"] = messagingEndpoint,
                     ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
-                    ["MessagingEndpoint"] = messagingEndpoint,
-                    ["Description"] = agentDescription,
-                    ["Location"] = normalizedLocation,
-                    ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
-                    ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
 
                 // Attempt the request up to twice: first with a cached token, then with a
@@ -123,7 +110,7 @@ public class BotConfigurator : IBotConfigurator
 
                     using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                    _logger.LogInformation("Making request to create endpoint (Location: {Location}).", normalizedLocation);
+                    _logger.LogInformation("Making request to set backend configuration for blueprint '{BlueprintId}'.", agentBlueprintId);
 
                     using var response = await httpClient.PostAsync(createEndpointUrl,
                         new StringContent(createEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
@@ -183,12 +170,6 @@ public class BotConfigurator : IBotConfigurator
                         return EndpointRegistrationResult.Failed;
                     }
 
-                    if (errorContent.Contains("Failed to provision bot resource via Azure Management API. Status: BadRequest", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogError("Please ensure that the Agent 365 CLI is supported in the selected region ('{Location}') and that your web app name ('{EndpointName}') is globally unique.", location, endpointName);
-                        return EndpointRegistrationResult.Failed;
-                    }
-
                     _logger.LogError("Error response: {Error}", errorContent);
                     _logger.LogError("");
                     _logger.LogError("To resolve this issue:");
@@ -228,17 +209,8 @@ public class BotConfigurator : IBotConfigurator
         string agentBlueprintId,
         string? correlationId = null)
     {
-        _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
-        _logger.LogInformation("   Endpoint Name: {EndpointName}", endpointName);
+        _logger.LogInformation("Clearing backend configuration for Agent Blueprint...");
         _logger.LogInformation("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
-
-        if (string.IsNullOrWhiteSpace(location))
-        {
-            _logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
-            _logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            _logger.LogInformation(ErrorMessages.EndpointLocationExample);
-            return false;
-        }
 
         try
         {
@@ -255,8 +227,8 @@ public class BotConfigurator : IBotConfigurator
                 ?? await _authService.ResolveLoginHintFromCacheAsync();
             _logger.LogDebug("ATG token request — current user: {CurrentUser}", currentUser ?? "(null)");
 
-            // Delete endpoint with agent blueprint identity
-            _logger.LogInformation("Deleting endpoint with Agent Blueprint Identity...");
+            // Clear backend configuration via Teams Graph
+            _logger.LogInformation("Clearing backend configuration...");
 
             try
             {
@@ -271,23 +243,16 @@ public class BotConfigurator : IBotConfigurator
 
                 _logger.LogInformation("Environment: {Environment}, Audience: {Audience}", config.Environment, audience);
 
-                var normalizedLocation = NormalizeLocation(location);
                 var deleteEndpointBody = new JsonObject
                 {
-                    ["AzureBotServiceInstanceName"] = endpointName,
+                    ["AgentIdentityBlueprintId"] = agentBlueprintId,
                     ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
-                    ["Location"] = normalizedLocation,
-                    ["Environment"] = EndpointHelper.GetDeploymentEnvironment(config.Environment),
-                    ["ClusterCategory"] = EndpointHelper.GetClusterCategory(config.Environment)
                 };
 
                 _logger.LogInformation("Delete request payload:");
-                _logger.LogInformation("   AzureBotServiceInstanceName: {Name}", endpointName);
-                _logger.LogInformation("   AppId: {AppId}", agentBlueprintId);
+                _logger.LogInformation("   AgentIdentityBlueprintId: {Id}", agentBlueprintId);
                 _logger.LogInformation("   TenantId: {TenantId}", tenantId);
-                _logger.LogInformation("   Location: {Location}", normalizedLocation);
-                _logger.LogInformation("   Environment: {Environment}", EndpointHelper.GetDeploymentEnvironment(config.Environment));
 
                 // Attempt the request up to twice: first with a cached token, then with a
                 // force-refreshed token if ATG rejects with 401 Unauthorized (stale/wrong-user token).
@@ -307,7 +272,7 @@ public class BotConfigurator : IBotConfigurator
 
                     using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                    _logger.LogInformation("Making request to delete endpoint (Location: {Location}).", normalizedLocation);
+                    _logger.LogInformation("Making request to clear backend configuration for blueprint '{BlueprintId}'.", agentBlueprintId);
 
                     using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl);
                     request.Content = new StringContent(deleteEndpointBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json");

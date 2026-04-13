@@ -856,17 +856,7 @@ public class CleanupCommand
             return false;
         }
 
-        // Defense-in-depth: BotConfigurator also validates location, but catching it here gives
-        // the user a clearer error before any authentication or HTTP work is attempted.
-        if (string.IsNullOrWhiteSpace(config.Location))
-        {
-            logger.LogError(ErrorMessages.EndpointLocationRequiredForDelete);
-            logger.LogInformation(ErrorMessages.EndpointLocationAddToConfig);
-            logger.LogInformation(ErrorMessages.EndpointLocationExample);
-            return false;
-        }
-
-        logger.LogInformation("Deleting messaging endpoint registration...");
+        logger.LogInformation("Clearing backend configuration...");
         var endpointName = ResolveEndpointName(config);
 
         var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
