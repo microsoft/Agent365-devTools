@@ -548,7 +548,7 @@ public class PythonBuilder : IPlatformBuilder
 
     /// <summary>
     /// Creates requirements.txt for Azure deployment.
-    /// For projects with pyproject.toml or setup.py, uses editable install (-e .).
+    /// For projects with pyproject.toml or setup.py, installs from a pre-built wheel in dist/.
     /// For projects with only requirements.txt, copies the existing file to preserve dependencies.
     /// </summary>
     private async Task CreateAzureRequirementsTxt(string projectDir, string publishPath, bool verbose)
@@ -581,7 +581,7 @@ public class PythonBuilder : IPlatformBuilder
             var packageName = DetectPackageName(publishPath, publishDist);
 
             _logger.LogInformation("Detected pyproject.toml or setup.py - using wheel install approach");
-            var content = $"--find-links dist\n--pre\n{packageName}\n";
+            var content = $"--no-index\n--find-links dist\n--pre\n{packageName}\n";
             await File.WriteAllTextAsync(requirementsTxt, content);
             _logger.LogInformation("Created requirements.txt to install {Package} from local wheel", packageName);
         }
@@ -634,6 +634,16 @@ public class PythonBuilder : IPlatformBuilder
             var wheels = Directory.GetFiles(publishDist, "*.whl");
             if (wheels.Length > 0)
             {
+                Array.Sort(wheels, StringComparer.Ordinal);
+
+                if (wheels.Length > 1)
+                {
+                    _logger.LogWarning(
+                        "Multiple wheel files found in {PublishDist}; using the first wheel in deterministic filename order: {Wheel}",
+                        publishDist,
+                        Path.GetFileName(wheels[0]));
+                }
+
                 var wheelName = Path.GetFileNameWithoutExtension(wheels[0]);
                 // Wheel format: {name}-{version}-{python}-{abi}-{platform}
                 var parts = wheelName.Split('-');
@@ -646,23 +656,38 @@ public class PythonBuilder : IPlatformBuilder
             }
         }
 
-        // Fallback: try to read name from pyproject.toml
+        // Fallback: try to read name from pyproject.toml [project] table (PEP 621)
         var pyprojectPath = Path.Combine(publishPath, "pyproject.toml");
         if (File.Exists(pyprojectPath))
         {
-            var content = File.ReadAllText(pyprojectPath);
-            var match = System.Text.RegularExpressions.Regex.Match(content, @"name\s*=\s*""([^""]+)""");
-            if (match.Success)
+            try
             {
-                var name = match.Groups[1].Value;
-                _logger.LogDebug("Detected package name from pyproject.toml: {Name}", name);
-                return name;
+                var content = File.ReadAllText(pyprojectPath);
+
+                // Match name = "..." only within the [project] table section.
+                // The pattern finds [project], then scans for name = before the next table header.
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    content,
+                    @"^\[project\]\s*$.*?^name\s*=\s*[""']([^""']+)[""']",
+                    System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Singleline);
+                if (match.Success)
+                {
+                    var name = match.Groups[1].Value;
+                    _logger.LogDebug("Detected package name from pyproject.toml: {Name}", name);
+                    return name;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse pyproject.toml when detecting package name");
             }
         }
 
-        // Last resort fallback
-        _logger.LogWarning("Could not detect package name, using '.' as fallback");
-        return ".";
+        // Fail fast rather than falling back to installing from the source tree
+        _logger.LogError("Could not detect package name from wheel metadata or pyproject.toml");
+        throw new DeployAppException(
+            "Could not detect Python package name from the built wheel or pyproject.toml. " +
+            "Ensure a wheel is present in the publish dist directory or that pyproject.toml contains a valid [project] name.");
     }
 
     private async Task CreateDeploymentFile(string publishPath)
