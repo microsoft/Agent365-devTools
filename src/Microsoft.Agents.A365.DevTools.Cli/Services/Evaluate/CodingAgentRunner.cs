@@ -77,7 +77,9 @@ internal class CodingAgentRunner
     }
 
     /// <summary>
-    /// Launches Claude Code with prompt piped via stdin (-p -).
+    /// Launches Claude Code to evaluate semantic checks.
+    /// On Windows, prompt is written to a temp file (cmd.exe /c does not forward stdin).
+    /// On Unix, prompt is piped via stdin (-p -).
     /// Removes CLAUDECODE env var so Claude CLI works inside a Claude Code session.
     /// </summary>
     private async Task<bool> LaunchClaudeCodeAsync(
@@ -86,12 +88,65 @@ internal class CodingAgentRunner
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        var (fileName, fileArguments) = WrapForPlatform("claude", "-p - --allowedTools Read,Edit");
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return await LaunchClaudeCodeViaFileAsync(prompt, workingDirectory, timeout, cancellationToken);
+        }
 
+        return await LaunchClaudeCodeViaStdinAsync(prompt, workingDirectory, timeout, cancellationToken);
+    }
+
+    /// <summary>
+    /// Windows path: writes prompt to a temp file since cmd.exe /c does not forward stdin.
+    /// </summary>
+    private async Task<bool> LaunchClaudeCodeViaFileAsync(
+        string prompt,
+        string workingDirectory,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var promptFile = Path.Combine(workingDirectory, $".eval_prompt_{Guid.NewGuid():N}.txt");
+        try
+        {
+            await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
+
+            var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
+            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --allowedTools Read,Edit");
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = fileArguments,
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            startInfo.Environment.Remove(ClaudeCodeEnvVar);
+
+            return await RunProcessAsync(startInfo, EvalEngine.ClaudeCode, timeout, cancellationToken: cancellationToken);
+        }
+        finally
+        {
+            try { File.Delete(promptFile); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Unix path: pipes prompt via stdin (-p -).
+    /// </summary>
+    private async Task<bool> LaunchClaudeCodeViaStdinAsync(
+        string prompt,
+        string workingDirectory,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
         var startInfo = new ProcessStartInfo
         {
-            FileName = fileName,
-            Arguments = fileArguments,
+            FileName = "claude",
+            Arguments = "-p - --allowedTools Read,Edit",
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -100,9 +155,6 @@ internal class CodingAgentRunner
             CreateNoWindow = true
         };
 
-        // Remove CLAUDECODE from child process env so Claude CLI
-        // doesn't refuse to start inside a Claude Code session.
-        // ProcessStartInfo.Environment is a copy -- parent process is unaffected.
         startInfo.Environment.Remove(ClaudeCodeEnvVar);
 
         return await RunProcessAsync(startInfo, EvalEngine.ClaudeCode, timeout, stdinContent: prompt, cancellationToken: cancellationToken);

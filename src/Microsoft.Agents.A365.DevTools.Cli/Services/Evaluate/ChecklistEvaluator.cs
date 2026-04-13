@@ -37,7 +37,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     public async Task<ChecklistEvaluationResult> EvaluateAsync(
         EvaluationChecklist checklist,
         string checklistPath,
-        EvalEngine engine)
+        EvalEngine engine,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(checklist);
         ArgumentException.ThrowIfNullOrWhiteSpace(checklistPath);
@@ -46,14 +47,23 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var json = JsonSerializer.Serialize(checklist, WriteOptions);
         var dir = Path.GetDirectoryName(checklistPath) ?? ".";
         Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(checklistPath, json);
+        await File.WriteAllTextAsync(checklistPath, json, cancellationToken);
         _logger.LogInformation("Checklist written to {Path}", checklistPath);
 
+        // Count unevaluated semantic checks before starting
+        int totalUnevaluatedBefore = CountTotalUnevaluatedSemanticChecks(checklist);
+
         // Build the list of engines to try
-        var enginesToTry = await BuildEngineList(engine);
+        var enginesToTry = await BuildEngineList(engine, cancellationToken);
 
         if (enginesToTry.Count == 0)
         {
+            // If nothing was unevaluated to begin with, that's success (all already scored)
+            if (totalUnevaluatedBefore == 0)
+            {
+                return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = true };
+            }
+
             LogManualEvaluationInstructions(checklistPath);
             return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
         }
@@ -69,6 +79,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         // agent evaluate it, then merge the results back into the checklist.
         for (int i = 0; i < checklist.Tools.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var tool = checklist.Tools[i];
             var unevaluated = CountUnevaluatedSemanticChecks(tool);
             if (unevaluated == 0)
@@ -79,7 +91,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             _logger.LogInformation("[{Current}/{Total}] Evaluating \"{ToolName}\" ({CheckCount} semantic checks)...",
                 i + 1, checklist.Tools.Count, tool.Name, unevaluated);
 
-            var success = await EvaluateToolChecks(tool, dir, enginesToTry);
+            var success = await EvaluateToolChecks(tool, dir, enginesToTry, cancellationToken);
             if (success)
             {
                 toolsEvaluated++;
@@ -96,21 +108,23 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         if (serverUnevaluated > 0)
         {
             _logger.LogInformation("Evaluating server-level checks ({CheckCount} semantic checks)...", serverUnevaluated);
-            await EvaluateServerChecks(checklist, dir, enginesToTry);
+            await EvaluateServerChecks(checklist, dir, enginesToTry, cancellationToken);
         }
 
         // Write the updated checklist back (with all merged results)
         var updatedJson = JsonSerializer.Serialize(checklist, WriteOptions);
-        await File.WriteAllTextAsync(checklistPath, updatedJson);
+        await File.WriteAllTextAsync(checklistPath, updatedJson, cancellationToken);
 
         var semanticCount = CountEvaluatedSemanticChecks(checklist);
         _logger.LogInformation("Evaluation complete: {Evaluated} tools succeeded, {Failed} failed, {SemanticCount} semantic checks scored",
             toolsEvaluated, toolsFailed, semanticCount);
 
+        // Completed if nothing needed evaluation OR at least one tool was evaluated
+        var allAlreadyScored = totalUnevaluatedBefore == 0;
         return new ChecklistEvaluationResult
         {
             Checklist = checklist,
-            SemanticEvaluationCompleted = toolsEvaluated > 0
+            SemanticEvaluationCompleted = allAlreadyScored || toolsEvaluated > 0
         };
     }
 
@@ -121,18 +135,19 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     private async Task<bool> EvaluateToolChecks(
         ToolChecklist tool,
         string workingDir,
-        List<EvalEngine> engines)
+        List<EvalEngine> engines,
+        CancellationToken cancellationToken)
     {
         var tempFile = Path.Combine(workingDir, $".eval_tool_{Guid.NewGuid():N}.json");
         try
         {
             // Write just this tool to a small temp file
             var toolJson = JsonSerializer.Serialize(tool, WriteOptions);
-            await File.WriteAllTextAsync(tempFile, toolJson);
+            await File.WriteAllTextAsync(tempFile, toolJson, cancellationToken);
 
             var fullPath = Path.GetFullPath(tempFile);
             var prompt = SemanticCheckPrompts.BuildToolEvaluationPrompt(fullPath, tool.Name);
-            var success = await TryEvaluateWithFallthrough(engines, tempFile, prompt, CodingAgentRunner.PerToolTimeout);
+            var success = await TryEvaluateWithFallthrough(engines, tempFile, prompt, CodingAgentRunner.PerToolTimeout, cancellationToken);
 
             if (!success)
             {
@@ -140,7 +155,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             }
 
             // Re-read the evaluated tool and merge scores back
-            var updatedJson = await File.ReadAllTextAsync(tempFile);
+            var updatedJson = await File.ReadAllTextAsync(tempFile, cancellationToken);
             var updatedTool = JsonSerializer.Deserialize<ToolChecklist>(updatedJson, WriteOptions);
 
             if (updatedTool is not null)
@@ -173,7 +188,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     private async Task<bool> EvaluateServerChecks(
         EvaluationChecklist checklist,
         string workingDir,
-        List<EvalEngine> engines)
+        List<EvalEngine> engines,
+        CancellationToken cancellationToken)
     {
         var tempFile = Path.Combine(workingDir, $".eval_server_{Guid.NewGuid():N}.json");
         try
@@ -185,11 +201,11 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 server_checks = checklist.ServerChecks
             };
             var dataJson = JsonSerializer.Serialize(serverData, WriteOptions);
-            await File.WriteAllTextAsync(tempFile, dataJson);
+            await File.WriteAllTextAsync(tempFile, dataJson, cancellationToken);
 
             var fullPath = Path.GetFullPath(tempFile);
             var prompt = SemanticCheckPrompts.BuildServerChecksEvaluationPrompt(fullPath);
-            var success = await TryEvaluateWithFallthrough(engines, tempFile, prompt, CodingAgentRunner.PerToolTimeout);
+            var success = await TryEvaluateWithFallthrough(engines, tempFile, prompt, CodingAgentRunner.PerToolTimeout, cancellationToken);
 
             if (!success)
             {
@@ -197,7 +213,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             }
 
             // Re-read and merge server check scores
-            var updatedJson = await File.ReadAllTextAsync(tempFile);
+            var updatedJson = await File.ReadAllTextAsync(tempFile, cancellationToken);
             using var doc = JsonDocument.Parse(updatedJson);
             if (doc.RootElement.TryGetProperty("server_checks", out var checksElement))
             {
@@ -245,11 +261,12 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         List<EvalEngine> engines,
         string filePath,
         string prompt,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         foreach (var candidate in engines)
         {
-            var success = await _agentRunner.EvaluateChecklistAsync(filePath, prompt, candidate, timeout);
+            var success = await _agentRunner.EvaluateChecklistAsync(filePath, prompt, candidate, timeout, cancellationToken);
             if (success)
             {
                 return true;
@@ -267,7 +284,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// For a specific engine: just that one.
     /// For None: empty list.
     /// </summary>
-    private async Task<List<EvalEngine>> BuildEngineList(EvalEngine requested)
+    private async Task<List<EvalEngine>> BuildEngineList(EvalEngine requested, CancellationToken cancellationToken = default)
     {
         if (requested == EvalEngine.None)
         {
@@ -285,7 +302,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var available = new List<EvalEngine>();
         foreach (var engine in EnginePriority)
         {
-            if (await _agentRunner.IsEngineAvailableAsync(engine))
+            if (await _agentRunner.IsEngineAvailableAsync(engine, cancellationToken))
             {
                 _logger.LogDebug("Detected {Engine}", engine);
                 available.Add(engine);
@@ -302,6 +319,17 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         }
 
         return available;
+    }
+
+    private static int CountTotalUnevaluatedSemanticChecks(EvaluationChecklist checklist)
+    {
+        int count = 0;
+        foreach (var tool in checklist.Tools)
+        {
+            count += CountUnevaluatedSemanticChecks(tool);
+        }
+        count += checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
+        return count;
     }
 
     private static int CountUnevaluatedSemanticChecks(ToolChecklist tool)

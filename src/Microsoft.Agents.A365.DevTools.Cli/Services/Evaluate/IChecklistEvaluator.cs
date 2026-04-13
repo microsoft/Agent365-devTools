@@ -18,8 +18,9 @@ public interface IChecklistEvaluator
     /// <param name="checklist">The checklist with deterministic checks already scored.</param>
     /// <param name="checklistPath">Path where the checklist JSON file will be written for the agent to read.</param>
     /// <param name="engine">The evaluation engine to use for semantic checks.</param>
+    /// <param name="cancellationToken">Token to cancel the evaluation.</param>
     /// <returns>Result containing the checklist and whether semantic evaluation completed.</returns>
-    Task<ChecklistEvaluationResult> EvaluateAsync(EvaluationChecklist checklist, string checklistPath, EvalEngine engine);
+    Task<ChecklistEvaluationResult> EvaluateAsync(EvaluationChecklist checklist, string checklistPath, EvalEngine engine, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

@@ -90,14 +90,13 @@ public class EvaluateCommandTests
     }
 
     [Fact]
-    public void CreateCommand_HasVerboseOption()
+    public void CreateCommand_HasAuthTokenOption()
     {
         var command = CreateCommand();
 
-        var option = command.Options.FirstOrDefault(o => o.Name == "verbose");
+        var option = command.Options.FirstOrDefault(o => o.Name == "auth-token");
         option.Should().NotBeNull();
-        option!.Aliases.Should().Contain("--verbose");
-        option.Aliases.Should().Contain("-v");
+        option!.Aliases.Should().Contain("--auth-token");
     }
 
     [Fact]

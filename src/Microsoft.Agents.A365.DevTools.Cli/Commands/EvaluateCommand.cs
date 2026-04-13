@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models.Evaluate;
@@ -18,11 +17,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 /// </summary>
 public static class EvaluateCommand
 {
-    private static readonly JsonSerializerOptions ChecklistSerializerOptions = new()
-    {
-        WriteIndented = true
-    };
-
     /// <summary>
     /// Creates the evaluate command with options for server URL, output directory, and eval engine.
     /// </summary>
@@ -55,17 +49,18 @@ public static class EvaluateCommand
             "--auth-token",
             "Bearer token for MCP server authentication");
 
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            "Enable verbose logging");
-
         command.AddOption(outputDirOption);
         command.AddOption(evalEngineOption);
         command.AddOption(authTokenOption);
-        command.AddOption(verboseOption);
 
-        command.SetHandler(async (serverUrl, outputDir, evalEngine, authToken, verbose) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var serverUrl = context.ParseResult.GetValueForArgument(serverUrlArg);
+            var outputDir = context.ParseResult.GetValueForOption(outputDirOption)!;
+            var evalEngine = context.ParseResult.GetValueForOption(evalEngineOption)!;
+            var authToken = context.ParseResult.GetValueForOption(authTokenOption);
+            var ct = context.GetCancellationToken();
+
             try
             {
                 // Parse eval engine
@@ -83,7 +78,7 @@ public static class EvaluateCommand
                 // Step 3: Evaluate (writes checklist to file, invokes coding agent, re-reads)
                 var checklistPath = Path.Combine(outputDir, $"{serverName}_checklist.json");
                 logger.LogInformation("Evaluating checklist...");
-                var evalResult = await checklistEvaluator.EvaluateAsync(checklist, checklistPath, engine);
+                var evalResult = await checklistEvaluator.EvaluateAsync(checklist, checklistPath, engine, ct);
                 checklist = evalResult.Checklist;
 
                 if (!evalResult.SemanticEvaluationCompleted && engine != EvalEngine.None)
@@ -111,15 +106,11 @@ public static class EvaluateCommand
             }
             catch (EvaluationException)
             {
-                // EvaluationException is an Agent365Exception and will be handled
-                // by the global exception handler in Program.cs
-                Environment.ExitCode = 1;
                 throw;
             }
             catch (Exception ex) when (ex is not Agent365Exception)
             {
                 logger.LogError(ex, "Evaluation failed unexpectedly: {Message}", ex.Message);
-                Environment.ExitCode = 1;
                 throw new EvaluationException(
                     ErrorCodes.EvaluationFailed,
                     "Evaluation failed unexpectedly.",
@@ -127,12 +118,11 @@ public static class EvaluateCommand
                     mitigationSteps: new List<string>
                     {
                         "Verify the MCP server is running and accessible.",
-                        "Check the output directory is writable.",
-                        "Run with --verbose for more details."
+                        "Check the output directory is writable."
                     },
                     innerException: ex);
             }
-        }, serverUrlArg, outputDirOption, evalEngineOption, authTokenOption, verboseOption);
+        });
 
         return command;
     }
