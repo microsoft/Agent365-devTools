@@ -98,7 +98,7 @@ if ($Mode -ne "V1") {
         $manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
         $resolvedV2AppIds = @(
             $manifest.mcpServers |
-                Where-Object { $_.scope -eq "Tools.ListInvoke.All" -and $_.audience -match '^[0-9a-f]{8}-' } |
+                Where-Object { $_.scope -eq "Tools.ListInvoke.All" -and $_.audience -match '(?i)^[0-9a-f]{8}-' } |
                 Select-Object -ExpandProperty audience -Unique
         )
         Write-Host "  Found $($resolvedV2AppIds.Count) V2 AppId(s) in manifest." -ForegroundColor Cyan
