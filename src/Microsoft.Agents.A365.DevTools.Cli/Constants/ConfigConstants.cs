@@ -81,7 +81,7 @@ public static class ConfigConstants
     /// Note: the orchestrator grants "user_impersonation" + ObservabilityApiOtelWriteScope via OAuth2
     /// permission grants; this scope is the consent-URL-facing name for the same resource.
     /// </summary>
-    public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
+    public const string ObservabilityApiAdminConsentScope = "Agent365.ReadWrite.All";
 
     /// <summary>
     /// Observability API scope for writing OpenTelemetry data.
