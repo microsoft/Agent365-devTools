@@ -99,13 +99,12 @@ public static class DevelopCommand
                 return;
             }
 
-            // Try direct endpoint call only (DiscoverEndpointUrl fallback disabled for testing)
             var success = await CallDiscoverToolServersAsync(configService, skipAuth, logger, authService);
 
             if (!success)
             {
                 logger.LogError("Direct endpoint call failed. Please check your configuration.");
-                return; // Exit without fallback
+                return;
             }
 
 
@@ -182,8 +181,12 @@ public static class DevelopCommand
 
             logger.LogInformation("Successfully received response from discoverToolServers endpoint");
 
+            // Normalize before parsing: V2 returns a bare array; V1 returns a wrapped object.
+            // Both WriteCatalog and the display loop below expect the wrapped {"mcpServers":[...]} shape.
+            var normalizedContent = Services.Internal.McpServerCatalogWriter.Normalize(responseContent);
+
             // Parse and display the MCP servers
-            using var responseDoc = JsonDocument.Parse(responseContent);
+            using var responseDoc = JsonDocument.Parse(normalizedContent);
             var responseRoot = responseDoc.RootElement;
 
             var catalogPath = Services.Internal.McpServerCatalogWriter.WriteCatalog(responseContent);
@@ -795,13 +798,14 @@ public static class DevelopCommand
                         logger.LogInformation("Updated existing server: {Server}", existingServerName);
 
                         // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
-                        var resolvedAudience = string.IsNullOrWhiteSpace(audience) ||
-                            audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase)
+                        var resolvedAudience = (string.IsNullOrWhiteSpace(audience) ||
+                            audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
                             ? McpConstants.WorkIQToolsProdAppId
                             : audience;
                         if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
                         {
-                            logger.LogWarning("{Server} uses legacy ATG audience. Re-run add-mcp-servers after V2 endpoint is live.", existingServerName);
+                            logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", existingServerName);
                         }
                     }
                     else
@@ -865,14 +869,17 @@ public static class DevelopCommand
             var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience, publisher);
             updatedServers.Add(serverObject);
 
-            // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
-            var resolvedAudienceForNew = string.IsNullOrWhiteSpace(audience) ||
-                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase)
+            // Warn when the resolved audience is still the legacy ATG AppId (V1 entry).
+            // Mirrors the same fallback logic in ManifestHelper.GetScopesByAudienceAsync:
+            // null/whitespace, "api://" prefix, and literal "default" all map to the shared ATG AppId.
+            var resolvedAudienceForNew = (string.IsNullOrWhiteSpace(audience) ||
+                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
                 ? McpConstants.WorkIQToolsProdAppId
                 : audience;
             if (string.Equals(resolvedAudienceForNew, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
             {
-                logger.LogWarning("{Server} uses legacy ATG audience. Re-run add-mcp-servers after V2 endpoint is live.", serverName);
+                logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", serverName);
             }
         }
 

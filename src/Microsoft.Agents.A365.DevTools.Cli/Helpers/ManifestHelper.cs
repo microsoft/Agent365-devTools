@@ -387,9 +387,12 @@ public static class ManifestHelper
             if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
                 audience = audienceEl.GetString();
 
+            // Skip all forms that resolve to the shared ATG audience — these are handled via the
+            // shared BEARER_TOKEN env var, not per-server BEARER_TOKEN_{AUDIENCE} entries.
             if (string.IsNullOrWhiteSpace(audience) ||
                 audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
+                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(audience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var uniqueName = ExtractUniqueServerName(element);

@@ -127,10 +127,19 @@ internal static class PermissionsSubcommand
             // Confirmation gate for --remove-legacy-scopes — requires explicit opt-in
             if (removeLegacyScopes && !dryRun)
             {
-                logger.LogWarning("--remove-legacy-scopes will remove the shared ATG audience ({AtgAppId}) " +
-                                  "from the blueprint. Agents still on V1 SDK will lose tool access. " +
-                                  "Only proceed after V2 SDK is confirmed deployed.",
-                                  McpConstants.WorkIQToolsProdAppId);
+                logger.LogWarning(
+                    "WARNING: --remove-legacy-scopes will permanently remove the shared ATG audience ({AtgAppId}) " +
+                    "from the agent blueprint. Any agent instances still using the old SDK will immediately lose " +
+                    "access to MCP tools. Ensure all agent instances have been upgraded to the new SDK before proceeding.",
+                    McpConstants.WorkIQToolsProdAppId);
+
+                if (Console.IsInputRedirected)
+                {
+                    logger.LogError("--remove-legacy-scopes requires interactive confirmation. " +
+                                    "Run this command in an interactive terminal, not from a script or pipeline.");
+                    return;
+                }
+
                 Console.Write("Continue? [y/N]: ");
                 var confirm = Console.ReadLine()?.Trim();
                 if (!string.Equals(confirm, "y", StringComparison.OrdinalIgnoreCase))
