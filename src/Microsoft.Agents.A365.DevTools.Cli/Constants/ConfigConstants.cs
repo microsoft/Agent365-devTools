@@ -36,8 +36,8 @@ public static class ConfigConstants
     /// <summary>
     /// Agent 365 Tools Discover endpoint URL (V2)
     /// </summary>
-    public const string ProductionDiscoverEndpointUrl = "https://test.agent365.svc.cloud.dev.microsoft/agents/v2/discoverMCPServers";
-  //public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers";
+
+   public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers";
 
     /// <summary>
     /// Production Agent 365 Tools Create endpoint URL
