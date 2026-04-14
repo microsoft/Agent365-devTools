@@ -395,15 +395,21 @@ public static class ManifestHelper
                 string.Equals(audience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var uniqueName = ExtractUniqueServerName(element);
-            if (string.IsNullOrWhiteSpace(uniqueName)) continue;
+            var serverName = ExtractUniqueServerName(element);
+            if (string.IsNullOrWhiteSpace(serverName) &&
+                element.TryGetProperty("mcpServerName", out var serverNameEl))
+            {
+                serverName = serverNameEl.GetString();
+            }
+
+            if (string.IsNullOrWhiteSpace(serverName)) continue;
 
             if (!result.TryGetValue(audience, out var names))
             {
                 names = new List<string>();
                 result[audience] = names;
             }
-            names.Add(uniqueName);
+            names.Add(serverName);
         }
 
         return result;
