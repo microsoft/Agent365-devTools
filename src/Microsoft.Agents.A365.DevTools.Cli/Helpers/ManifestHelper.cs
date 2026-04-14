@@ -352,11 +352,7 @@ public static class ManifestHelper
                 scopesByAudience[audience] = scopeSet;
             }
 
-            foreach (var s in scope.Split(' ',
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                scopeSet.Add(s);
-            }
+            AddScopeString(scopeSet, scope);
         }
 
         return ToDictionary(scopesByAudience);
