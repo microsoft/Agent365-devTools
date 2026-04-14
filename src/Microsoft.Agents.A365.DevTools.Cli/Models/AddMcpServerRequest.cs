@@ -88,10 +88,10 @@ public class ExternalIdpDetails
 public class AddMcpServerAuthMetadata
 {
     /// <summary>
-    /// First client application ID
+    /// First client application ID (Entra app GUID)
     /// </summary>
     [JsonPropertyName("clientApp1Id")]
-    public Guid ClientApp1Id { get; set; }
+    public string? ClientApp1Id { get; set; }
 
     /// <summary>
     /// First client application secret
@@ -100,10 +100,10 @@ public class AddMcpServerAuthMetadata
     public string? ClientApp1Secret { get; set; }
 
     /// <summary>
-    /// Second client application ID
+    /// Second client application ID (Entra app GUID or external IDP client ID string)
     /// </summary>
     [JsonPropertyName("clientApp2Id")]
-    public Guid ClientApp2Id { get; set; }
+    public string? ClientApp2Id { get; set; }
 
     /// <summary>
     /// Second client application secret

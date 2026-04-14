@@ -149,6 +149,9 @@ public static class ConfigConstants
         return environment?.ToLower() switch
         {
             "prod" => ProductionDiscoverEndpointUrl,
+            "test" => $"https://{McpConstants.Agent365TestDomain}/agents/discoverToolServers",
+            "preprod" or "ppe" => $"https://{McpConstants.Agent365PreProdDomain}/agents/discoverToolServers",
+            "local" => "http://localhost:52857/agents/discoverToolServers",
             _ => ProductionDiscoverEndpointUrl
         };
     }

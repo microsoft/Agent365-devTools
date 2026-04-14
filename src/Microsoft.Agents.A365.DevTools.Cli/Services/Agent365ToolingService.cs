@@ -165,7 +165,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         // Get from ConfigConstants to leverage existing URL construction logic
         var discoverUrl = ConfigConstants.GetDiscoverEndpointUrl(environment);
         var uri = new Uri(discoverUrl);
-        return $"{uri.Scheme}://{uri.Host}";
+        return $"{uri.Scheme}://{uri.Authority}";
     }
 
     /// <summary>
@@ -248,8 +248,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     /// <returns>Full URL for add MCP server endpoint</returns>
     private string BuildAddMcpServerUrl(string environment)
     {
-        // TODO: Revert to BuildAgent365ToolsBaseUrl(environment) once backend is deployed
-        var baseUrl = "http://localhost:52857";
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
         return $"{baseUrl}/agents/mcpServers/add";
     }
 
@@ -261,8 +260,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     /// <returns>Full URL for provision identity endpoint</returns>
     private string BuildProvisionIdentityUrl(string environment, string serverName)
     {
-        // TODO: Revert to BuildAgent365ToolsBaseUrl(environment) once backend is deployed
-        var baseUrl = "http://localhost:52857";
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
         return $"{baseUrl}/agents/mcpServers/{serverName}/provisionIdentity";
     }
 
