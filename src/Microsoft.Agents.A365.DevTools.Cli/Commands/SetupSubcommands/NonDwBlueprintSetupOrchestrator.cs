@@ -142,17 +142,10 @@ internal static class NonDwBlueprintSetupOrchestrator
             ctx.Logger.LogInformation("  - {Permission}", p);
 
         ctx.Logger.LogInformation("");
-        Console.Write("Grant admin consent for these permissions now? [y/N]: ");
-        var answer = Console.ReadLine();
-
-        // null means stdin was closed (Ctrl+C / EOF) — exit immediately.
-        // ThrowIfCancellationRequested handles the case where the CT fired asynchronously
-        // slightly after ReadLine returned a non-null value.
-        if (answer is null)
-            throw new OperationCanceledException("User cancelled at consent prompt.");
+        var confirmed = await ctx.ConfirmationProvider.ConfirmAsync("Grant admin consent for these permissions now? [y/N]: ");
         ctx.CancellationToken.ThrowIfCancellationRequested();
 
-        if (!string.Equals(answer?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+        if (!confirmed)
         {
             ctx.Logger.LogWarning("Admin consent not granted. Setup may fail if these permissions are required.");
             return;
@@ -191,7 +184,6 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogDebug("TraceId: {TraceId}", ctx.CorrelationId);
 
         List<ResourcePermissionSpec> specs = [];
-        bool blueprintAdminConsentGranted = false;
 
         try
         {
@@ -209,173 +201,60 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Still check and prompt for consent even when skipping other steps — consent
                 // is required for the registration call and may have been missed in a prior run.
                 await EnsureConsentWithPromptAsync(ctx);
-                goto createAgentIdentity;
-            }
-
-            ctx.Results.PrerequisitesSkipped = ctx.SkipRequirements;
-            ctx.Results.InfrastructureSkipped = !ctx.Config.NeedDeployment || ctx.SkipInfrastructure;
-
-            // Step 1: Requirements validation
-            if (!ctx.SkipRequirements)
-            {
-                var includeInfra = !ctx.SkipInfrastructure && ctx.Config.NeedDeployment;
-                var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfra, isBootstrap: ctx.IsBootstrap);
-                try
-                {
-                    await RequirementsSubcommand.RunChecksOrExitAsync(checks, ctx.Config, ctx.Logger, ctx.CancellationToken);
-                }
-                catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
-                {
-                    ctx.Logger.LogError("Requirements check failed: {Message}", reqEx.Message);
-                    ctx.Logger.LogDebug(reqEx, "Requirements check exception details");
-                    ctx.Logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
-                    return 1;
-                }
+                await ExecuteAgentIdentityAndRegistrationAsync(ctx, specs);
             }
             else
             {
-                ctx.Logger.LogInformation("Requirements validation skipped (--skip-requirements flag used)");
-            }
+                ctx.Results.PrerequisitesSkipped = ctx.SkipRequirements;
+                ctx.Results.InfrastructureSkipped = !ctx.Config.NeedDeployment || ctx.SkipInfrastructure;
 
-            // Step 1.5: Consent check — detect missing consent for required permissions and prompt.
-            await EnsureConsentWithPromptAsync(ctx);
-
-            // Step 2: Infrastructure (shared with DW, skipped when NeedDeployment=false or --skip-infrastructure)
-            await AllSubcommand.ExecuteInfrastructureStepAsync(ctx);
-
-            // Step 3: Blueprint creation (shared with DW)
-            await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
-
-            // Step 4: Batch permissions — non-DW path stamps only Observability API and Power Platform API.
-            // Microsoft Graph, Agent 365 Tools (MCP), and Messaging Bot API are excluded.
-            var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx, isDw: false);
-            specs = buildResult.specs;
-            var mcpResourceAppId = buildResult.mcpResourceAppId;
-
-            await AllSubcommand.ExecuteBatchPermissionsStepAsync(ctx, specs);
-            blueprintAdminConsentGranted = ctx.Results.AdminConsentGranted;
-
-            SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, graphScopes: [], mcpScopes: [], isDw: false);
-
-            // Save state after permissions (before agent identity creation, so progress
-            // is not lost if subsequent steps fail).
-            await ctx.ConfigService.SaveStateAsync(ctx.Config);
-
-            // Step 5: Create Agent Identity via Agent Identity Graph API.
-            createAgentIdentity:
-            ctx.Logger.LogInformation("");
-
-            if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
-            {
-                ctx.Logger.LogInformation("Agent identity already created (ID: {AgentId}). Skipping.", ctx.Config.AgenticAppId);
-                ctx.Results.AgentIdentityCreated = true;
-                ctx.Results.AgentIdentityId = ctx.Config.AgenticAppId;
-                ctx.Results.AgentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName;
-            }
-            else
-            {
-                var agentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName
-                    ?? ctx.Config.WebAppName
-                    ?? "Agent";
-
-                // Agent identity creation via delegated flow (AgentIdentity.Create.All).
-                // Agent ID Developer role is sufficient — client credentials are not required.
-                ctx.Logger.LogInformation("Creating agent identity...");
-                var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
-                    ctx.Config.TenantId!,
-                    ctx.Config.AgentBlueprintId!,
-                    agentIdentityDisplayName,
-                    ctx.CancellationToken);
-
-                if (agentId is not null)
+                // Step 1: Requirements validation
+                if (!ctx.SkipRequirements)
                 {
-                    ctx.Config.AgenticAppId = agentId;
-                    await ctx.ConfigService.SaveStateAsync(ctx.Config);
-                    ctx.Results.AgentIdentityCreated = true;
-                    ctx.Results.AgentIdentityId = agentId;
-                    ctx.Results.AgentIdentityDisplayName = agentIdentityDisplayName;
-                    using (ctx.Logger.Indent())
-                        ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
-                    ctx.Logger.LogInformation("");
-                }
-                else if (!ctx.Results.AgentIdentityFailed)
-                {
-                    ctx.Results.AgentIdentityFailed = true;
-                    ctx.Results.Warnings.Add("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
-                    ctx.Logger.LogWarning("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
-                }
-            }
-
-            // Step 5a: Grant permissions to the agent identity (non-admin path only).
-            // If the batch permissions step already granted AllPrincipals admin consent, skip this.
-            if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId) && !blueprintAdminConsentGranted)
-            {
-                await GrantAgentIdentityPermissionsAsync(ctx, specs);
-            }
-
-            // Step 6: Register Agent via AgentX Agent Registration API V2.
-
-            // AgentX registration represents the agent itself, not the Entra identity.
-            // Strip " Identity" suffix so the registry entry reads "<name> Agent", not "<name> Identity".
-            var agentDisplayName = ctx.Config.AgentIdentityDisplayName
-                ?? ctx.Config.WebAppName
-                ?? "Agent";
-            if (agentDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
-                agentDisplayName = agentDisplayName[..^" Identity".Length].TrimEnd() + " Agent";
-
-            ctx.Logger.LogInformation("");
-            if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
-            {
-                ctx.Logger.LogInformation("Registering agent...");
-                using (ctx.Logger.Indent())
-                    ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", ctx.Config.AgentRegistrationId);
-                ctx.Logger.LogInformation("");
-                ctx.Results.AgentInstanceRegistered = true;
-                ctx.Results.AgentInstanceId = ctx.Config.AgentRegistrationId;
-                ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
-            }
-            else
-            {
-                ctx.Logger.LogInformation("Registering agent...");
-
-                var registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
-                    ctx.Config.TenantId!,
-                    agentDisplayName,
-                    ctx.Config.AgentDescription,
-                    ctx.Config.AgentBlueprintId,
-                    ctx.Config.AgenticAppId,
-                    ctx.Config.ClientAppId,
-                    ctx.CancellationToken);
-
-                if (registrationId is not null)
-                {
-                    ctx.Config.AgentRegistrationId = registrationId;
-                    await ctx.ConfigService.SaveStateAsync(ctx.Config);
-                    ctx.Results.AgentInstanceRegistered = true;
-                    ctx.Results.AgentInstanceId = registrationId;
-                    ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
-                    using (ctx.Logger.Indent())
-                        ctx.Logger.LogInformation("Agent registered (ID: {RegistrationId})", registrationId);
-                    ctx.Logger.LogInformation("");
+                    var includeInfra = !ctx.SkipInfrastructure && ctx.Config.NeedDeployment;
+                    var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfra, isBootstrap: ctx.IsBootstrap);
+                    try
+                    {
+                        await RequirementsSubcommand.RunChecksOrExitAsync(checks, ctx.Config, ctx.Logger, ctx.CancellationToken);
+                    }
+                    catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
+                    {
+                        ctx.Logger.LogError("Requirements check failed: {Message}", reqEx.Message);
+                        ctx.Logger.LogDebug(reqEx, "Requirements check exception details");
+                        ctx.Logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
+                        return 1;
+                    }
                 }
                 else
                 {
-                    ctx.Results.AgentRegistrationFailed = true;
-                    ctx.Results.Warnings.Add("Agent registration failed via AgentX V2 API.");
-                    ctx.Logger.LogWarning("Agent registration failed via AgentX V2 API.");
+                    ctx.Logger.LogInformation("Requirements validation skipped (--skip-requirements flag used)");
                 }
-            }
 
-            // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
-            ctx.Logger.LogInformation("Updating project settings...");
-            using (ctx.Logger.Indent())
-            {
-                // Pass ctx.Config directly so AgentDescription and AgentIdentityDisplayName
-                // derived from --agent-name are written rather than stale values from disk.
-                await ProjectSettingsSyncHelper.ExecuteAsync(
-                    ctx.ConfigFile.FullName, ctx.Config,
-                    ctx.PlatformDetector, ctx.Logger);
-                ctx.Results.ProjectSettingsWritten = true;
+                // Step 1.5: Consent check — detect missing consent for required permissions and prompt.
+                await EnsureConsentWithPromptAsync(ctx);
+
+                // Step 2: Infrastructure (shared with DW, skipped when NeedDeployment=false or --skip-infrastructure)
+                await AllSubcommand.ExecuteInfrastructureStepAsync(ctx);
+
+                // Step 3: Blueprint creation (shared with DW)
+                await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
+
+                // Step 4: Batch permissions — non-DW path stamps only Observability API and Power Platform API.
+                // Microsoft Graph, Agent 365 Tools (MCP), and Messaging Bot API are excluded.
+                var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx, isDw: false);
+                specs = buildResult.specs;
+                var mcpResourceAppId = buildResult.mcpResourceAppId;
+
+                await AllSubcommand.ExecuteBatchPermissionsStepAsync(ctx, specs);
+
+                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, graphScopes: [], mcpScopes: [], isDw: false);
+
+                // Save state after permissions (before agent identity creation, so progress
+                // is not lost if subsequent steps fail).
+                await ctx.ConfigService.SaveStateAsync(ctx.Config);
+
+                // Steps 5-8: Agent identity creation, permission grants, registration, project settings.
+                await ExecuteAgentIdentityAndRegistrationAsync(ctx, specs);
             }
         }
         catch (Agent365Exception ex)
@@ -406,6 +285,132 @@ internal static class NonDwBlueprintSetupOrchestrator
         SetupHelpers.DisplaySetupSummary(ctx.Results, ctx.Logger, isDw: false);
 
         return ctx.Results.HasErrors ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Executes Steps 5-8: agent identity creation, permission grants, AgentX registration,
+    /// and project settings sync. Called from both the normal path and the --agent-instance-only
+    /// shortcut path.
+    /// </summary>
+    private static async Task ExecuteAgentIdentityAndRegistrationAsync(
+        SetupContext ctx,
+        List<ResourcePermissionSpec> specs)
+    {
+        // Step 5: Create Agent Identity via Agent Identity Graph API.
+        ctx.Logger.LogInformation("");
+
+        if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
+        {
+            ctx.Logger.LogInformation("Agent identity already created (ID: {AgentId}). Skipping.", ctx.Config.AgenticAppId);
+            ctx.Results.AgentIdentityCreated = true;
+            ctx.Results.AgentIdentityId = ctx.Config.AgenticAppId;
+            ctx.Results.AgentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName;
+        }
+        else
+        {
+            var agentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName
+                ?? ctx.Config.WebAppName
+                ?? "Agent";
+
+            // Agent identity creation via delegated flow (AgentIdentity.Create.All).
+            // Agent ID Developer role is sufficient — client credentials are not required.
+            ctx.Logger.LogInformation("Creating agent identity...");
+            var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
+                ctx.Config.TenantId!,
+                ctx.Config.AgentBlueprintId!,
+                agentIdentityDisplayName,
+                ctx.CancellationToken);
+
+            if (agentId is not null)
+            {
+                ctx.Config.AgenticAppId = agentId;
+                await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                ctx.Results.AgentIdentityCreated = true;
+                ctx.Results.AgentIdentityId = agentId;
+                ctx.Results.AgentIdentityDisplayName = agentIdentityDisplayName;
+                using (ctx.Logger.Indent())
+                    ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
+                ctx.Logger.LogInformation("");
+            }
+            else if (!ctx.Results.AgentIdentityFailed)
+            {
+                ctx.Results.AgentIdentityFailed = true;
+                ctx.Results.Warnings.Add("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
+                ctx.Logger.LogWarning("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
+            }
+        }
+
+        // Step 5a: Grant permissions to the agent identity (non-admin path only).
+        // If the batch permissions step already granted AllPrincipals admin consent, skip this.
+        if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId) && !ctx.Results.AdminConsentGranted)
+        {
+            await GrantAgentIdentityPermissionsAsync(ctx, specs);
+        }
+
+        // Step 6: Register Agent via AgentX Agent Registration API V2.
+
+        // AgentX registration represents the agent itself, not the Entra identity.
+        // Strip " Identity" suffix so the registry entry reads "<name> Agent", not "<name> Identity".
+        var agentDisplayName = ctx.Config.AgentIdentityDisplayName
+            ?? ctx.Config.WebAppName
+            ?? "Agent";
+        if (agentDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase))
+            agentDisplayName = agentDisplayName[..^" Identity".Length].TrimEnd() + " Agent";
+
+        ctx.Logger.LogInformation("");
+        if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
+        {
+            ctx.Logger.LogInformation("Registering agent...");
+            using (ctx.Logger.Indent())
+                ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", ctx.Config.AgentRegistrationId);
+            ctx.Logger.LogInformation("");
+            ctx.Results.AgentInstanceRegistered = true;
+            ctx.Results.AgentInstanceId = ctx.Config.AgentRegistrationId;
+            ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
+        }
+        else
+        {
+            ctx.Logger.LogInformation("Registering agent...");
+
+            var registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
+                ctx.Config.TenantId!,
+                agentDisplayName,
+                ctx.Config.AgentDescription,
+                ctx.Config.AgentBlueprintId,
+                ctx.Config.AgenticAppId,
+                ctx.Config.ClientAppId,
+                ctx.CancellationToken);
+
+            if (registrationId is not null)
+            {
+                ctx.Config.AgentRegistrationId = registrationId;
+                await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                ctx.Results.AgentInstanceRegistered = true;
+                ctx.Results.AgentInstanceId = registrationId;
+                ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
+                using (ctx.Logger.Indent())
+                    ctx.Logger.LogInformation("Agent registered (ID: {RegistrationId})", registrationId);
+                ctx.Logger.LogInformation("");
+            }
+            else
+            {
+                ctx.Results.AgentRegistrationFailed = true;
+                ctx.Results.Warnings.Add("Agent registration failed via AgentX V2 API.");
+                ctx.Logger.LogWarning("Agent registration failed via AgentX V2 API.");
+            }
+        }
+
+        // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
+        ctx.Logger.LogInformation("Updating project settings...");
+        using (ctx.Logger.Indent())
+        {
+            // Pass ctx.Config directly so AgentDescription and AgentIdentityDisplayName
+            // derived from --agent-name are written rather than stale values from disk.
+            await ProjectSettingsSyncHelper.ExecuteAsync(
+                ctx.ConfigFile.FullName, ctx.Config,
+                ctx.PlatformDetector, ctx.Logger);
+            ctx.Results.ProjectSettingsWritten = true;
+        }
     }
 
     /// <summary>

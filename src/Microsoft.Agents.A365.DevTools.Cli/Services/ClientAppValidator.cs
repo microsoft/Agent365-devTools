@@ -1197,40 +1197,49 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         // Require a tenant-wide (AllPrincipals) grant. A per-user (Principal) grant only covers the
         // specific admin who consented; other users see "Need admin approval" during interactive auth.
-        var hasAllPrincipalsGraphGrant = grants
-            .Select(grant => grant?.AsObject())
-            .Where(grantObj => string.Equals(
+        // Graph may split permissions across multiple grants (e.g. one per resource SP), so accumulate
+        // consented scopes across all AllPrincipals grants before comparing.
+        var consentedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var grant in grants)
+        {
+            var grantObj = grant?.AsObject();
+            if (!string.Equals(
                 grantObj?["consentType"]?.GetValue<string>(),
                 "AllPrincipals",
                 StringComparison.OrdinalIgnoreCase))
-            .Select(grantObj => grantObj?["scope"]?.GetValue<string>())
-            .Where(scope => !string.IsNullOrWhiteSpace(scope))
-            .Any(scope =>
+                continue;
+
+            var scope = grantObj?["scope"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(scope)) continue;
+
+            foreach (var s in scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                consentedScopes.Add(s);
+        }
+
+        var foundPermissions = AuthenticationConstants.RequiredClientAppPermissions
+            .Intersect(consentedScopes, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        bool hasAllPrincipalsGraphGrant;
+        if (foundPermissions.Count == AuthenticationConstants.RequiredClientAppPermissions.Length)
+        {
+            _logger.LogDebug("Admin consent (AllPrincipals) verified for all {Count} required permissions", foundPermissions.Count);
+            hasAllPrincipalsGraphGrant = true;
+        }
+        else
+        {
+            if (foundPermissions.Count > 0)
             {
-                var grantedScopes = scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                var foundPermissions = AuthenticationConstants.RequiredClientAppPermissions
-                    .Intersect(grantedScopes, StringComparer.OrdinalIgnoreCase)
+                var missingPermissions = AuthenticationConstants.RequiredClientAppPermissions
+                    .Except(foundPermissions, StringComparer.OrdinalIgnoreCase)
                     .ToList();
-
-                if (foundPermissions.Count == AuthenticationConstants.RequiredClientAppPermissions.Length)
-                {
-                    _logger.LogDebug("Admin consent (AllPrincipals) verified for all {Count} required permissions", foundPermissions.Count);
-                    return true;
-                }
-
-                if (foundPermissions.Count > 0)
-                {
-                    var missingPermissions = AuthenticationConstants.RequiredClientAppPermissions
-                        .Except(foundPermissions, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    _logger.LogDebug(
-                        "Admin consent grant found but missing {MissingCount} permission(s): {Missing}",
-                        missingPermissions.Count,
-                        string.Join(", ", missingPermissions));
-                }
-
-                return false;
-            });
+                _logger.LogDebug(
+                    "Admin consent grants found but missing {MissingCount} permission(s): {Missing}",
+                    missingPermissions.Count,
+                    string.Join(", ", missingPermissions));
+            }
+            hasAllPrincipalsGraphGrant = false;
+        }
 
         if (!hasAllPrincipalsGraphGrant)
         {

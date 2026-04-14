@@ -666,15 +666,33 @@ public class ConfigService : IConfigService
 
     /// <summary>
     /// Patches only the clientAppId field in a365.config.json, preserving all other fields and formatting.
+    /// Uses targeted regex replacement so JSON property order and any comments are kept intact.
+    /// Falls back to deserialize/re-serialize if the field is not found (e.g., first-time write).
     /// </summary>
     private static async Task PatchClientAppIdInConfigFileAsync(string configPath, string newClientAppId, CancellationToken ct)
     {
         var json = await File.ReadAllTextAsync(configPath, ct);
-        var dict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)
+        var escapedValue = JsonSerializer.Serialize(newClientAppId); // produces "\"value\""
+
+        // Replace the clientAppId value in-place, preserving property order and comments.
+        var patched = Regex.Replace(
+            json,
+            @"(""clientAppId""\s*:\s*)""[^""\\]*(?:\\.[^""\\]*)*""",
+            $"$1{escapedValue}",
+            RegexOptions.None);
+
+        if (patched != json)
+        {
+            await File.WriteAllTextAsync(configPath, patched, ct);
+            return;
+        }
+
+        // Field not present — fall back to deserialize/re-serialize (first-time write).
+        var dict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            json, new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip })
             ?? throw new JsonException("Failed to parse config file for patching.");
 
         dict["clientAppId"] = JsonSerializer.SerializeToElement(newClientAppId);
-
         var updated = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(configPath, updated, ct);
     }

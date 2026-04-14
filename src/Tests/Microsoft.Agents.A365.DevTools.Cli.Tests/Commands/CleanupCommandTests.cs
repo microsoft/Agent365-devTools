@@ -403,7 +403,10 @@ public class CleanupCommandTests
         await spyService.DidNotReceive().DeleteAgentUserAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
 
-        // Agent identity is deleted because AgenticAppId is set (data-driven, no flag required)
+        // Requirement: CleanupCommand must always delete the agent identity when AgenticAppId is present,
+        // regardless of DW/non-DW path — deletion is data-driven (config presence), not flag-based.
+        // Previously this test asserted DidNotReceive; the requirement changed when the non-DW blueprint
+        // path was added and identity deletion was unified across both paths.
         await spyService.Received(1).DeleteAgentIdentityAsync(
             config.TenantId, expectedIdentityId, Arg.Any<CancellationToken>());
 

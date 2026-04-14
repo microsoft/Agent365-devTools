@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation.
+﻿// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
@@ -270,7 +270,7 @@ internal static class AdminSubcommand
                 setupResults.AdminConsentGranted = grantsConfigured;
 
                 // Agent instance registration: config-dir path only — display name not available in blueprint-id mode.
-                // This requires 'Agent Registry Administrator' role —� separate from Global Administrator.
+                // This requires 'Agent Registry Administrator' role -- separate from Global Administrator.
                 // The admin running this command may or may not hold that role. We attempt it and report.
                 if (!isBlueprintIdMode && setupConfig.IsNonDwBlueprint)
                 {
@@ -284,7 +284,7 @@ internal static class AdminSubcommand
                     {
                         logger.LogInformation("");
                         logger.LogInformation("Non-DW blueprint flow: attempting agent instance registration...");
-                        logger.LogInformation("NOTE: This step requires 'Agent Registry Administrator' role � separate from Global Administrator.");
+                        logger.LogInformation("NOTE: This step requires 'Agent Registry Administrator' role - separate from Global Administrator.");
 
                         var agentDisplayName = setupConfig.AgentIdentityDisplayName
                             ?? setupConfig.WebAppName
@@ -307,7 +307,7 @@ internal static class AdminSubcommand
                         else
                         {
                             logger.LogWarning(
-                                "Agent instance registration failed � 'Agent Registry Administrator' role is not assigned " +
+                                "Agent instance registration failed - 'Agent Registry Administrator' role is not assigned " +
                                 "for this account. The developer must get that role assigned by a tenant admin and run: " +
                                 "a365 setup all --aiteammate false --agent-instance-only");
                         }

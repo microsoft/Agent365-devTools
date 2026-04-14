@@ -109,22 +109,7 @@ The skill uses **Claude Code directly** for semantic code analysis (same as revi
 2. Claude Code reads `.github/copilot-instructions.md` for coding standards
 3. Claude Code gets staged files: `git diff --staged --name-only`
 4. Claude Code gets staged changes: `git diff --staged`
-5. **Always run skill sync** before analysis — it is fast and idempotent:
-   ```bash
-   node .vscode-extension/scripts/sync-skills.js
-   ```
-   Then stage the generated files:
-   ```bash
-   git add .vscode-extension/skills/ .github/prompts/
-   ```
-   Inform the user: "Skills synced to `.vscode-extension/skills/` and `.github/prompts/` and staged."
-
-   > Rationale: sync must run unconditionally because any of three paths may be out of sync:
-   > - `.claude/skills/**` changed → prompts and extension skills need update
-   > - `.vscode-extension/skills/**` changed directly → may have drifted from source
-   > - `.github/prompts/**` changed directly → may have drifted from source
-   > Running sync always re-derives both targets from the single source of truth.
-6. **Claude Code reads the complete current content of every staged file** (not just diff lines) to enable full-file semantic analysis. This is critical for catching issues that exist in unchanged sections of modified files, such as:
+5. **Claude Code reads the complete current content of every staged file** (not just diff lines) to enable full-file semantic analysis. This is critical for catching issues that exist in unchanged sections of modified files, such as:
    - Duplicate hardcoded constants or magic values that already exist elsewhere
    - Parallel code structures that should be consolidated (e.g., a method building the same spec list as a shared helper)
    - Unused or dead code that was already there but not touched by the diff
@@ -166,15 +151,7 @@ Any line showing `[X s]` where X ≥ 1 is a slow test. Report all such tests in 
 
 4. **Re-review if needed**: `/review-staged`
 
-5. **Sync skills** — always run before committing (fast, idempotent):
-   ```bash
-   node .vscode-extension/scripts/sync-skills.js
-   git add .vscode-extension/skills/ .github/prompts/
-   ```
-   This ensures `.vscode-extension/skills/` and `.github/prompts/` are always derived
-   from `.claude/skills/` — regardless of which of the three paths was edited.
-
-6. **Commit**: `git commit -m "your message"`
+5. **Commit**: `git commit -m "your message"`
 
 ## When to Use
 

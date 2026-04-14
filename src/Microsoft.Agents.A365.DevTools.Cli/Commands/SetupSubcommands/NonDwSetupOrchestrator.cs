@@ -50,6 +50,10 @@ internal static class NonDwSetupOrchestrator
                 ? $"https://{config.WebAppName}.azurewebsites.net/api/messages"
                 : "<messaging-endpoint>";
 
+        logger.LogWarning(
+            "Non-AI Teammate setup (classic App Registration path) is not yet fully implemented. " +
+            "Use --use-blueprint for the blueprint-based non-DW setup path.");
+        logger.LogInformation("");
         logger.LogInformation("Non-DW Setup Plan (dry run — no changes will be made)");
         logger.LogInformation("");
 

@@ -120,13 +120,13 @@ public class CreateInstanceCommand
                 ) ?? throw new InvalidOperationException($"Service Principal not found for agentic app Id {instanceConfig.AgenticAppId}");
 
                 var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(instanceConfig.Environment);
-                var Agent365ToolsResourceSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(instanceConfig.TenantId, resourceAppId)
+                var agent365ToolsResourceSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(instanceConfig.TenantId, resourceAppId)
                     ?? throw new InvalidOperationException("Agent 365 Tools Service Principal not found for appId " + resourceAppId);
 
                 var response = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
                     instanceConfig.TenantId,
                     agenticAppSpObjectId,
-                    Agent365ToolsResourceSpObjectId,
+                    agent365ToolsResourceSpObjectId,
                     scopesForAgent
                 );
 

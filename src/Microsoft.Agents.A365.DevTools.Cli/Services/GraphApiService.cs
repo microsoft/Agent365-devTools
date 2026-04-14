@@ -1130,8 +1130,7 @@ public class GraphApiService
         if (!string.IsNullOrWhiteSpace(agentBlueprintId))
             payload["agentIdentityBlueprintId"] = agentBlueprintId;
 
-        _logger.LogInformation("POST https://graph.microsoft.com/beta/agentRegistry/agentInstances");
-        _logger.LogInformation("Body: {{\"ownerIds\":[\"{UserId}\"],\"displayName\":\"{DisplayName}\",\"agentIdentityBlueprintId\":\"{BlueprintId}\"}}",
+        _logger.LogDebug("POST /beta/agentRegistry/agentInstances: ownerIds=[{UserId}], displayName={DisplayName}, agentIdentityBlueprintId={BlueprintId}",
             currentUserId, displayName, agentBlueprintId ?? "(none)");
 
         // AgentInstance.ReadWrite.All is a user-delegated scope (no admin consent required).
@@ -1172,8 +1171,10 @@ public class GraphApiService
             return null;
         }
 
-        // On 403: the 'Agent Registry Administrator' role may not have propagated yet. Retry once.
-        _logger.LogInformation("403 from agent registry — 'Agent Registry Administrator' role may not have propagated yet. Retrying once...");
+        // On 403: the 'Agent Registry Administrator' role may not have propagated yet.
+        // Wait 30s before retrying — an immediate retry always returns another 403.
+        _logger.LogInformation("403 from agent registry — 'Agent Registry Administrator' role may not have propagated yet. Waiting 30s before retry...");
+        await Task.Delay(TimeSpan.FromSeconds(30), ct);
 
         var retryResponse = await GraphPostWithResponseAsync(tenantId, "/beta/agentRegistry/agentInstances", payload, ct, registrationScopes);
 

@@ -91,7 +91,8 @@ internal static class AllSubcommand
         IClientAppValidator clientAppValidator,
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
-        ArmApiService? armApiService = null)
+        ArmApiService? armApiService = null,
+        IConfirmationProvider? confirmationProvider = null)
     {
         var command = new Command("all",
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -284,7 +285,8 @@ internal static class AllSubcommand
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
                     agentInstanceOnly: agentInstanceOnly,
-                    isBootstrap: isBootstrap);
+                    isBootstrap: isBootstrap,
+                    confirmationProvider: confirmationProvider);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;

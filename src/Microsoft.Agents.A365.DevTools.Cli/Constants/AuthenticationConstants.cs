@@ -224,10 +224,9 @@ public static class AuthenticationConstants
         "Directory.Read.All",
         "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
         // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
-        // Create uses blueprint client credentials (AgentIdentity.CreateAsManager automatic).
         // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
-        // AgentIdentity.Create.All is app-only (not a delegated scope) — cannot be granted on a client app.
-        // Agent identity creation uses blueprint client credentials (app-only) which get AgentIdentity.CreateAsManager automatically.
+        // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
+        // (POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity). Requires Agent ID Developer role.
         "AgentIdentityBlueprint.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Blueprint application
         "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
         "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment

@@ -57,6 +57,12 @@ internal sealed class SetupContext
     /// </summary>
     public Func<Task<string?>>? LoginHintResolver { get; }
 
+    /// <summary>
+    /// Handles interactive yes/no prompts. Defaults to <see cref="ConsoleConfirmationProvider"/>;
+    /// inject a <see cref="NonInteractiveConfirmationProvider"/> in tests to avoid console I/O.
+    /// </summary>
+    public IConfirmationProvider ConfirmationProvider { get; }
+
     public CancellationToken CancellationToken { get; }
 
     // Services
@@ -93,7 +99,8 @@ internal sealed class SetupContext
         IClientAppValidator clientAppValidator,
         bool agentInstanceOnly = false,
         bool isBootstrap = false,
-        Func<Task<string?>>? loginHintResolver = null)
+        Func<Task<string?>>? loginHintResolver = null,
+        IConfirmationProvider? confirmationProvider = null)
     {
         Config = config;
         Results = results;
@@ -117,5 +124,6 @@ internal sealed class SetupContext
         FederatedCredentialService = federatedCredentialService;
         ClientAppValidator = clientAppValidator;
         LoginHintResolver = loginHintResolver;
+        ConfirmationProvider = confirmationProvider ?? new ConsoleConfirmationProvider();
     }
 }
