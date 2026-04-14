@@ -201,7 +201,18 @@ public static class AuthenticationConstants
     {
         "Application.ReadWrite.All",
         "DelegatedPermissionGrant.ReadWrite.All",
-        "AgentIdentityBlueprint.UpdateAuthProperties.All"
+        "AgentIdentityBlueprint.UpdateAuthProperties.All",
+    };
+
+    /// <summary>
+    /// Additional scopes required only on Global Administrator paths that grant S2S app role
+    /// assignments. Kept separate from <see cref="RequiredPermissionGrantScopes"/> so that
+    /// non-admin flows (deploy, setup permissions) do not request an admin-only scope and
+    /// trigger unexpected consent prompts.
+    /// </summary>
+    public static readonly string[] RequiredS2SGrantScopes = new[]
+    {
+        "AppRoleAssignment.ReadWrite.All",
     };
 
     /// <summary>

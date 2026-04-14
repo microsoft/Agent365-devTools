@@ -38,7 +38,8 @@ internal static class AdminSubcommand
         IConfigService configService,
         AzureAuthValidator authValidator,
         GraphApiService graphApiService,
-        IConfirmationProvider confirmationProvider)
+        IConfirmationProvider confirmationProvider,
+        AgentBlueprintService? blueprintService = null)
     {
         var command = new Command(
             "admin",
@@ -215,7 +216,8 @@ internal static class AdminSubcommand
                         graphApiService, setupConfig,
                         setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                         specs, logger, setupResults, ct,
-                        knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+                        knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
+                        blueprintService: blueprintService);
 
                 setupResults.AdminConsentGranted = grantsConfigured;
 

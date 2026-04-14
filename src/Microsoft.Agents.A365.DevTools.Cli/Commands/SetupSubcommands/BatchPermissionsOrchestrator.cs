@@ -171,6 +171,13 @@ internal static class BatchPermissionsOrchestrator
                 var grantsOk = await ConfigureOauth2GrantsAsync(
                     graph, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, ct);
 
+                // S2S runs after delegated grants, regardless of their success, using elevated scopes.
+                var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
+                if (!string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId))
+                    await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
+                else if (setupResults is not null)
+                    setupResults.S2SAppRoleGranted = true;
+
                 logger.LogInformation("");
                 if (grantsOk)
                 {
@@ -389,6 +396,7 @@ internal static class BatchPermissionsOrchestrator
     /// Phase 2b: Creates AllPrincipals (tenant-wide) OAuth2 permission grants for all specs.
     /// Requires Global Administrator. Only called when the current user is confirmed GA.
     /// Returns true if all grants succeeded, false if any grant failed.
+    /// S2S app role assignments are handled separately by <see cref="PerformS2SGrantsAsync"/>.
     /// </summary>
     private static async Task<bool> ConfigureOauth2GrantsAsync(
         GraphApiService graph,
@@ -441,6 +449,60 @@ internal static class BatchPermissionsOrchestrator
         }
 
         return allGrantsOk;
+    }
+
+    /// <summary>
+    /// Grants S2S app role assignments for all specs that carry <see cref="ResourcePermissionSpec.AppRoleScopes"/>.
+    /// Idempotent: skips roles already assigned. Sets <see cref="SetupResults.S2SAppRoleGranted"/> on completion.
+    /// Requires Global Administrator and <see cref="AuthenticationConstants.RequiredS2SGrantScopes"/>.
+    /// </summary>
+    private static async Task PerformS2SGrantsAsync(
+        AgentBlueprintService blueprintService,
+        string tenantId,
+        string blueprintSpObjectId,
+        IEnumerable<ResourcePermissionSpec> specs,
+        string[] s2sScopes,
+        ILogger logger,
+        SetupResults? setupResults,
+        CancellationToken ct)
+    {
+        var s2sSpecs = specs.Where(s => s.AppRoleScopes is { Length: > 0 }).ToList();
+        if (s2sSpecs.Count == 0)
+        {
+            if (setupResults is not null) setupResults.S2SAppRoleGranted = true;
+            return;
+        }
+
+        logger.LogInformation("");
+        logger.LogInformation("Configuring S2S app role assignments...");
+
+        var allS2SOk = true;
+        foreach (var spec in s2sSpecs)
+        {
+            logger.LogDebug(
+                "   - App role assignment: blueprint -> {ResourceName} [{AppRoles}]",
+                spec.ResourceName, string.Join(' ', spec.AppRoleScopes!));
+
+            var s2sOk = await blueprintService.GrantAppRoleAssignmentAsync(
+                tenantId,
+                blueprintSpObjectId,
+                spec.ResourceAppId,
+                spec.AppRoleScopes!,
+                requiredScopes: s2sScopes,
+                ct: ct);
+
+            if (s2sOk)
+                logger.LogInformation("   - S2S app role assigned for {ResourceName}", spec.ResourceName);
+            else
+            {
+                logger.LogWarning("   - Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
+                setupResults?.Warnings.Add($"S2S app role assignment failed for {spec.ResourceName}. Re-run 'a365 setup admin' to retry.");
+                allS2SOk = false;
+            }
+        }
+
+        if (setupResults is not null)
+            setupResults.S2SAppRoleGranted = allS2SOk;
     }
 
     /// <summary>
@@ -535,6 +597,9 @@ internal static class BatchPermissionsOrchestrator
         // we performed a role check and found the user lacks the GA role.
         if (adminCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
+            var s2sSpecs = specs.Where(s => s.AppRoleScopes is { Length: > 0 }).ToList();
+            if (s2sSpecs.Count > 0 && setupResults is not null)
+                setupResults.S2SAppRoleGranted = false;
             return (false, consentUrl);
         }
 
@@ -678,7 +743,8 @@ internal static class BatchPermissionsOrchestrator
         ILogger logger,
         SetupResults setupResults,
         CancellationToken ct,
-        string? knownBlueprintSpObjectId = null)
+        string? knownBlueprintSpObjectId = null,
+        AgentBlueprintService? blueprintService = null)
     {
         if (specs.Count == 0)
         {
@@ -689,8 +755,14 @@ internal static class BatchPermissionsOrchestrator
         var effectiveSpecs = specs.Where(s => s.Scopes.Length > 0).ToList();
         if (effectiveSpecs.Count == 0)
         {
-            logger.LogInformation("All permission specs have empty scope lists — nothing to grant.");
-            return (true, null);
+            var hasS2SSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
+            if (!hasS2SSpecs)
+            {
+                logger.LogInformation("All permission specs have empty scope and app role lists — nothing to grant.");
+                setupResults.S2SAppRoleGranted = true;
+                return (true, null);
+            }
+            logger.LogDebug("No delegated scopes to grant — proceeding with S2S app role assignments.");
         }
 
         var permScopes = AuthenticationConstants.RequiredPermissionGrantScopes;
@@ -699,11 +771,17 @@ internal static class BatchPermissionsOrchestrator
         logger.LogInformation("");
         logger.LogInformation("Resolving service principals...");
 
+        // When delegated specs are empty but S2S specs exist, resolve SPs from S2S specs instead
+        // so the blueprint SP object ID is available for app role assignment.
+        var specsForPhase1 = effectiveSpecs.Count > 0
+            ? (IReadOnlyList<ResourcePermissionSpec>)effectiveSpecs
+            : specs.Where(s => s.AppRoleScopes is { Length: > 0 }).ToList();
+
         BlueprintPermissionsResult? phase1Result = null;
         try
         {
             phase1Result = await UpdateBlueprintPermissionsAsync(
-                graph, blueprintAppId, tenantId, effectiveSpecs, permScopes, logger, ct,
+                graph, blueprintAppId, tenantId, specsForPhase1, permScopes, logger, ct,
                 knownBlueprintSpObjectId);
         }
         catch (Exception ex)
@@ -757,6 +835,13 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogInformation("   - OAuth2 grant configured for {ResourceName}", spec.ResourceName);
             }
         }
+
+        // S2S: Grant app role assignments for specs that carry AppRoleScopes.
+        var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
+        if (blueprintService is not null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
+            await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
+        else
+            setupResults.S2SAppRoleGranted = true; // M-003: no service or unresolved SP — mark not applicable
 
         return (allGrantsOk, phase1Result.BlueprintSpObjectId);
     }

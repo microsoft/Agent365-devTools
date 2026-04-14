@@ -16,6 +16,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class SetupHelpers
 {
+    internal const int DryRunValCol = 30;
+    internal static string DryRunRow(string label) => ("  " + label).PadRight(DryRunValCol);
+    internal static string DryRunRow(int step, string label) => $"  {step}. {label}".PadRight(DryRunValCol);
+
     /// <summary>
     /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
     /// agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
@@ -31,8 +35,9 @@ internal static class SetupHelpers
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
-            setInheritable),
+            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+            setInheritable,
+            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             "Power Platform API",
@@ -105,61 +110,90 @@ internal static class SetupHelpers
     {
         logger.LogInformation("");
         logger.LogInformation("Setup Summary");
+        logger.LogInformation("");
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
 
-        // Completed steps — [OK] only
-        logger.LogInformation("Completed Steps:");
+        // Numbered step rows — az CLI style: label padded to fixed column, then status word
+        var step = 0;
+
         if (results.InfrastructureCreated)
         {
-            var status = results.InfrastructureAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Infrastructure {Status}", status);
+            step++;
+            logger.LogInformation(DryRunRow(step, "Azure hosting") + (results.InfrastructureAlreadyExisted ? "reused" : "provisioned"));
         }
+
         if (results.BlueprintCreated)
         {
-            var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
+            step++;
+            var bpStatus = results.BlueprintAlreadyExisted ? "reused" : "created";
+            logger.LogInformation(DryRunRow(step, "Blueprint") + "{Status}   ID: {Id}", bpStatus, results.BlueprintId ?? "unknown");
         }
+
         if (results.BatchPermissionsPhase2Completed)
         {
-            logger.LogInformation("  [OK] Inheritable permissions configured and verified");
-            if (results.AdminConsentGranted)
-                logger.LogInformation("  [OK] OAuth2 grants and admin consent configured");
+            step++;
+            var grantStatus = results.AdminConsentGranted ? "ok" : "PENDING";
+            logger.LogInformation(DryRunRow(step, "Permissions") + grantStatus);
         }
+
         if (results.MessagingEndpointRegistered)
         {
-            var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
+            step++;
+            logger.LogInformation(DryRunRow(step, "Messaging endpoint") + (results.EndpointAlreadyExisted ? "reused" : "registered"));
         }
 
-        // Action required — shown as its own section so it isn't conflated with completed work
-        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
+        // Action required — one numbered section with inline instructions
+        var pendingS2SAction = results.S2SAppRoleGranted == false;
+        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction;
         if (hasActionRequired)
         {
+            var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
+            var consentUrl = results.CombinedConsentUrl ?? results.AdminConsentUrl;
+            var itemNum = 0;
+
             logger.LogInformation("");
             logger.LogInformation("Action Required:");
+
             if (results.ClientSecretManualActionRequired)
-                logger.LogInformation("  Client secret - must be created manually in Entra ID and added to a365.generated.config.json (see instructions above)");
-            if (pendingAdminAction)
-                logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
+            {
+                itemNum++;
+                logger.LogInformation("  {N}. Client secret — create manually in Entra ID and add to a365.generated.config.json (see instructions above)", itemNum);
+            }
+
+            if (pendingAdminAction && !string.IsNullOrWhiteSpace(consentUrl))
+            {
+                itemNum++;
+                logger.LogInformation("  {N}. OAuth2 permission grants — share this URL with your Global Administrator:", itemNum);
+                logger.LogInformation("       {ConsentUrl}", consentUrl);
+            }
+
+            if (pendingS2SAction)
+            {
+                itemNum++;
+                logger.LogInformation("  {N}. Observability API S2S app role — run as Global Administrator (PowerShell):", itemNum);
+                logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All'");
+                logger.LogInformation("       $bp  = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
+                logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
+                logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $obs.Id -AppRoleId $rid");
+            }
         }
 
-        // Failed steps
         if (results.Errors.Count > 0)
         {
             logger.LogInformation("");
-            logger.LogInformation("Failed Steps:");
+            logger.LogInformation("Errors:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
-        // Warnings
         if (results.Warnings.Count > 0)
         {
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogInformation("  {Warning}", warning);
         }
 
         logger.LogInformation("");
@@ -175,25 +209,6 @@ internal static class SetupHelpers
             if (!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction))
             {
                 logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
-            }
-        }
-
-        if (pendingAdminAction)
-        {
-            logger.LogInformation("");
-            logger.LogInformation("Next Steps — Global Administrator action required:");
-            logger.LogInformation("  OAuth2 permission grants require a Global Administrator.");
-            logger.LogInformation("  Option 1 — Run the CLI as a Global Administrator:");
-            logger.LogInformation("    a365 setup admin --config-dir \"<path-to-config-folder>\"");
-            if (!string.IsNullOrWhiteSpace(results.CombinedConsentUrl))
-            {
-                logger.LogInformation("  Option 2 — Share a single consent URL with your Global Administrator:");
-                logger.LogInformation("    {ConsentUrl}", results.CombinedConsentUrl);
-            }
-            else if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
-            {
-                logger.LogInformation("  Alternatively, a Global Administrator can grant Graph consent at:");
-                logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
             }
         }
 
@@ -315,7 +330,7 @@ internal static class SetupHelpers
             urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
 
         urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
-        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
+        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
@@ -338,7 +353,7 @@ internal static class SetupHelpers
         foreach (var s in mcpScopes)
             allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
         allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
-        allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
+        allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
     }
@@ -354,19 +369,28 @@ internal static class SetupHelpers
     {
         logger.LogInformation("");
         logger.LogInformation("Admin Setup Summary");
-        logger.LogInformation("Completed Steps:");
+        logger.LogInformation("");
+
+        var adminStep = 0;
 
         if (results.AdminConsentGranted)
         {
-            logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
+            adminStep++;
+            logger.LogInformation(DryRunRow(adminStep, "Permission grants") + "ok (tenant-wide)");
+        }
+
+        if (results.S2SAppRoleGranted == true)
+        {
+            adminStep++;
+            logger.LogInformation(DryRunRow(adminStep, "S2S app role") + "ok ({Scope})", ConfigConstants.ObservabilityApiOtelWriteScope);
         }
 
         if (results.Errors.Count > 0)
         {
             logger.LogInformation("");
-            logger.LogInformation("Failed Steps:");
+            logger.LogInformation("Errors:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
         if (results.Warnings.Count > 0)
@@ -374,7 +398,7 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogInformation("  {Warning}", warning);
         }
 
         logger.LogInformation("");

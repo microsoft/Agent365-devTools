@@ -18,4 +18,5 @@ internal record ResourcePermissionSpec(
     string ResourceAppId,
     string ResourceName,
     string[] Scopes,
-    bool SetInheritable);
+    bool SetInheritable,
+    string[]? AppRoleScopes = null);
