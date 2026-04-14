@@ -189,7 +189,7 @@ public static class DevelopCommand
             using var responseDoc = JsonDocument.Parse(normalizedContent);
             var responseRoot = responseDoc.RootElement;
 
-            var catalogPath = Services.Internal.McpServerCatalogWriter.WriteCatalog(responseContent);
+            var catalogPath = Services.Internal.McpServerCatalogWriter.WriteCatalog(normalizedContent);
             logger.LogInformation("Catalog saved to {CatalogPath}", catalogPath);
 
             // Display available MCP servers
