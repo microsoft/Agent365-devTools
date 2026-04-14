@@ -884,7 +884,7 @@ public static class DevelopMcpCommand
                 DisplayName = displayName,
                 Description = description,
                 Instructions = instructions,
-                SelectedBaseTools = selectedBaseTools?.Length > 0 ? selectedBaseTools : null,
+                SelectedBaseTools = selectedBaseTools?.Length > 0 ? string.Join(",", selectedBaseTools) : null,
                 EnvironmentId = string.IsNullOrWhiteSpace(environmentId) ? null : environmentId
             };
 

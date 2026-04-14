@@ -10,12 +10,13 @@ public static class McpConstants
 {
 
     // WorkIQ Tools App ID
-    public const string WorkIQToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
+    //public const string WorkIQToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
+    public const string WorkIQToolsProdAppId = "05879165-0320-489e-b644-f72b33f3edf0";
 
     /// <summary>
     /// Agent 365 Tools identifier URI (used for admin consent URL construction).
     /// </summary>
-    public const string Agent365ToolsIdentifierUri = "https://agent365.svc.cloud.microsoft";
+    public const string Agent365ToolsIdentifierUri = "https://test.agent365.svc.cloud.microsoft";
 
     /// <summary>
     /// Name of the tooling manifest file

@@ -41,10 +41,11 @@ public class CreateCustomMcpServerRequest
     public required string BaseServerId { get; set; }
 
     /// <summary>
-    /// Optional subset of tools to select from the base server
+    /// Optional subset of tools to select from the base server.
+    /// Comma-separated string matching the MCPManagement server's expected format.
     /// </summary>
     [JsonPropertyName("selectedBaseTools")]
-    public string[]? SelectedBaseTools { get; set; }
+    public string? SelectedBaseTools { get; set; }
 
     /// <summary>
     /// Optional additional tools from other sources (Graph, Connector, etc.)

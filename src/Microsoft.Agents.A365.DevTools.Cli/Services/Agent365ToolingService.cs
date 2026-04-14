@@ -139,7 +139,8 @@ public class Agent365ToolingService : IAgent365ToolingService
         // Get from ConfigConstants to leverage existing URL construction logic
         var discoverUrl = ConfigConstants.GetDiscoverEndpointUrl(environment);
         var uri = new Uri(discoverUrl);
-        return $"{uri.Scheme}://{uri.Host}";
+        // return $"{uri.Scheme}://{uri.Host}";
+        return "http://localhost:52857";
     }
 
     /// <summary>
@@ -639,11 +640,15 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <summary>
-    /// Builds URL for the MCPManagement server endpoint
+    /// Builds URL for the MCPManagement server endpoint.
+    /// Uses environment-scoped route when environmentId is provided so the server
+    /// can extract it from the route via RequestContextExtractor.
     /// </summary>
-    private string BuildMcpManagementUrl(string environment)
+    private string BuildMcpManagementUrl(string environment, string? environmentId = null)
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        if (!string.IsNullOrWhiteSpace(environmentId))
+            return $"{baseUrl}/mcp/environments/{environmentId}/servers/MCPManagement";
         return $"{baseUrl}/agents/servers/MCPManagement";
     }
 
@@ -655,7 +660,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         if (request == null)
             throw new ArgumentNullException(nameof(request));
 
-        var endpointUrl = BuildMcpManagementUrl(_environment);
+        var endpointUrl = BuildMcpManagementUrl(_environment, request.EnvironmentId);
         var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
         _logger.LogInformation("Creating custom MCP server '{Name}' (CorrelationId: {CorrelationId})", request.Name, correlationId);
@@ -709,6 +714,7 @@ public class Agent365ToolingService : IAgent365ToolingService
 
         var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
         _logger.LogInformation("Successfully received response from MCPManagement endpoint");
+        _logger.LogDebug("Raw MCPManagement response: {Response}", responseContent);
 
         // Parse SSE response: join all "data: ..." lines
         var dataJson = string.Concat(
@@ -724,10 +730,22 @@ public class Agent365ToolingService : IAgent365ToolingService
             return null;
         }
 
-        var content = root["result"]?["content"]?.AsArray();
+        var rpcResult = root["result"];
+        var isError = rpcResult?["isError"]?.GetValue<bool>() ?? false;
+
+        var content = rpcResult?["content"]?.AsArray();
         if (content == null)
         {
             _logger.LogError("Missing result.content in MCPManagement response");
+            return null;
+        }
+
+        if (isError)
+        {
+            var errorText = content
+                .Select(n => n?["text"]?.GetValue<string>())
+                .FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
+            _logger.LogError("MCPManagement returned an error: {Error}", errorText ?? "(no error text)");
             return null;
         }
 
