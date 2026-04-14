@@ -464,9 +464,194 @@ public class AgentBlueprintServiceTests
         // Pass a no-op login hint resolver to skip the real 'az account show' process spawned by
         // AzCliHelper.ResolveLoginHintAsync — that static call bypasses the mocked CommandExecutor
         // and causes each test to wait several seconds for the real az CLI.
-        var graphService = new GraphApiService(_mockGraphLogger, executor, Substitute.For<IAuthenticationService>(), handler, _mockTokenProvider,
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, _mockTokenProvider,
             loginHintResolver: () => Task.FromResult<string?>(null));
         return (new AgentBlueprintService(_mockLogger, graphService), handler);
+    }
+
+    // ── GrantAppRoleAssignmentAsync tests ──────────────────────────────────────
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenResourceSpNotFound_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup returns empty value array
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenRoleNotFoundOnResourceSp_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP has no matching app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[]}")
+            });
+            // Existing assignments
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenRoleAlreadyAssigned_ReturnsTrueWithoutPost()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — role already assigned
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"resourceId\":\"resource-sp-id\",\"appRoleId\":\"role-id-1\"}]}")
+            });
+            // No POST should be queued — if the handler is called a 4th time it returns 404
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenPostSucceeds_ReturnsTrue()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent("{\"id\":\"assignment-id\"}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenPostFails_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST fails
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WithEmptyRoleNames_ReturnsTrue()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // Act — no HTTP calls should be made for an empty role list
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                Array.Empty<string>());
+
+            // Assert
+            result.Should().BeTrue();
+        }
     }
 }
 

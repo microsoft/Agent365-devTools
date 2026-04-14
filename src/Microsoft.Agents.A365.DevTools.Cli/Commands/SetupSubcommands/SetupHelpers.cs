@@ -55,8 +55,9 @@ internal static class SetupHelpers
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
-            setInheritable),
+            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+            setInheritable,
+            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             "Power Platform API",
@@ -220,6 +221,7 @@ internal static class SetupHelpers
         logger.LogInformation("");
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
+        var pendingS2SAction = results.S2SAppRoleGranted == false;
 
         // ── Numbered step rows — mirrors the dry-run step list ─────────────────
 
@@ -294,9 +296,12 @@ internal static class SetupHelpers
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
 
         // ── Action Required ────────────────────────────────────────────────────
-        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
+        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction;
         if (hasActionRequired)
         {
+            var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
+            var consentUrl = results.CombinedConsentUrl ?? results.AdminConsentUrl;
+
             logger.LogInformation("");
             logger.LogInformation("Action Required:");
             int actionCount = 0;
@@ -315,9 +320,6 @@ internal static class SetupHelpers
                 {
                     logger.LogInformation("  {N}. Permission Grants — a Global Administrator must run:", actionCount);
                     logger.LogInformation("     a365 setup admin --blueprint-id {BlueprintId}", adminCmdBlueprintId);
-                    var consentUrl = !string.IsNullOrWhiteSpace(results.CombinedConsentUrl)
-                        ? results.CombinedConsentUrl
-                        : results.AdminConsentUrl;
                     if (!string.IsNullOrWhiteSpace(consentUrl))
                     {
                         logger.LogInformation("     Or share this URL with the administrator to grant consent via browser:");
@@ -330,6 +332,24 @@ internal static class SetupHelpers
                     LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId);
                 }
             }
+            if (pendingS2SAction)
+            {
+                actionCount++;
+                logger.LogInformation("  {N}. Observability API S2S app role — run as Global Administrator (PowerShell):", actionCount);
+                logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All'");
+                logger.LogInformation("       $bp  = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
+                logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
+                logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $obs.Id -AppRoleId $rid");
+            }
+        }
+
+        if (results.Errors.Count > 0)
+        {
+            logger.LogInformation("");
+            logger.LogInformation("Errors:");
+            foreach (var error in results.Errors)
+                logger.LogError("  {Error}", error);
         }
 
         // ── Warnings ───────────────────────────────────────────────────────────
@@ -484,6 +504,9 @@ internal static class SetupHelpers
             urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
         }
 
+        if (!isDw)
+            urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
+
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
@@ -566,6 +589,8 @@ internal static class SetupHelpers
         else
             logger.LogInformation(DryRunRow(2, "Blueprint") + "resolved");
         logger.LogInformation(DryRunRow(3, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "failed"));
+        if (results.S2SAppRoleGranted == true)
+            logger.LogInformation(DryRunRow(4, "S2S app role") + "ok ({Scope})", ConfigConstants.ObservabilityApiOtelWriteScope);
 
         if (results.Errors.Count > 0)
         {

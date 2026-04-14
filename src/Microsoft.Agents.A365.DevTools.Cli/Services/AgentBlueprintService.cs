@@ -948,6 +948,149 @@ public class AgentBlueprintService
         return blueprintAppId;
     }
 
+    /// <summary>
+    /// Grants application role assignments (appRoleAssignments) on the blueprint's service principal
+    /// for each named app role on the given resource. This enables S2S (service-to-service) access
+    /// where the blueprint identity calls the resource using a client-credentials token with no user
+    /// context. Idempotent: existing assignments for the same role are skipped.
+    /// Requires Global Administrator.
+    /// </summary>
+    /// <param name="tenantId">Tenant ID.</param>
+    /// <param name="blueprintSpObjectId">Object ID of the blueprint's service principal.</param>
+    /// <param name="resourceAppId">Application ID of the resource (e.g. Observability API).</param>
+    /// <param name="appRoleNames">Names of the app roles to assign (e.g. "Agent365.Observability.OtelWrite").</param>
+    /// <param name="requiredScopes">Graph scopes required to perform the operation.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>True when all assignments succeeded or already existed; false if any failed.</returns>
+    public virtual async Task<bool> GrantAppRoleAssignmentAsync(
+        string tenantId,
+        string blueprintSpObjectId,
+        string resourceAppId,
+        IEnumerable<string> appRoleNames,
+        IEnumerable<string>? requiredScopes = null,
+        CancellationToken ct = default)
+    {
+        // De-dup upfront: duplicate names map to the same role ID and would cause a redundant POST.
+        var roleNames = appRoleNames?
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? new List<string>();
+        if (roleNames.Count == 0) return true;
+
+        try
+        {
+            // Resolve the resource service principal.
+            var resourceSpId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
+                tenantId, resourceAppId, ct, requiredScopes);
+            if (string.IsNullOrWhiteSpace(resourceSpId))
+            {
+                _logger.LogWarning("Resource SP not found for app ID {ResourceAppId} — S2S app role assignment skipped.", resourceAppId);
+                return false;
+            }
+
+            // Fetch the resource SP's app roles to map names -> IDs.
+            using var resourceSpDoc = await _graphApiService.GraphGetAsync(
+                tenantId, $"/v1.0/servicePrincipals/{resourceSpId}?$select=appRoles", ct,
+                scopes: requiredScopes);
+            if (resourceSpDoc == null)
+            {
+                _logger.LogError("Failed to retrieve app roles for resource SP {ResourceSpId}.", resourceSpId);
+                return false;
+            }
+
+            // Build a name -> id map from the resource SP's appRoles array.
+            var roleIdByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (resourceSpDoc.RootElement.TryGetProperty("appRoles", out var appRolesEl) &&
+                appRolesEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var role in appRolesEl.EnumerateArray())
+                {
+                    if (role.TryGetProperty("value", out var valEl) &&
+                        role.TryGetProperty("id", out var idEl))
+                    {
+                        var name = valEl.GetString();
+                        var id = idEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id))
+                            roleIdByName[name] = id;
+                    }
+                }
+            }
+
+            // Fetch existing assignments on the blueprint SP to avoid duplicates.
+            var existingRoleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var existingDoc = await _graphApiService.GraphGetAsync(
+                tenantId,
+                $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
+                ct, scopes: requiredScopes);
+            if (existingDoc != null &&
+                existingDoc.RootElement.TryGetProperty("value", out var existingArr) &&
+                existingArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var assignment in existingArr.EnumerateArray())
+                {
+                    if (assignment.TryGetProperty("resourceId", out var resId) &&
+                        resId.GetString()?.Equals(resourceSpId, StringComparison.OrdinalIgnoreCase) == true &&
+                        assignment.TryGetProperty("appRoleId", out var roleIdEl))
+                    {
+                        var id = roleIdEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(id)) existingRoleIds.Add(id);
+                    }
+                }
+            }
+
+            var allOk = true;
+            foreach (var roleName in roleNames)
+            {
+                if (!roleIdByName.TryGetValue(roleName, out var appRoleId))
+                {
+                    _logger.LogWarning("App role '{RoleName}' not found on resource {ResourceAppId} — assignment skipped.", roleName, resourceAppId);
+                    allOk = false;
+                    continue;
+                }
+
+                if (existingRoleIds.Contains(appRoleId))
+                {
+                    _logger.LogDebug("App role '{RoleName}' already assigned on blueprint SP {BpSpId}.", roleName, blueprintSpObjectId);
+                    continue;
+                }
+
+                var payload = new
+                {
+                    principalId = blueprintSpObjectId,
+                    resourceId = resourceSpId,
+                    appRoleId = appRoleId
+                };
+
+                var resp = await _graphApiService.GraphPostWithResponseAsync(
+                    tenantId,
+                    $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
+                    payload,
+                    ct,
+                    requiredScopes);
+
+                if (resp.IsSuccess)
+                {
+                    _logger.LogDebug("App role '{RoleName}' assigned to blueprint SP {BpSpId}.", roleName, blueprintSpObjectId);
+                    existingRoleIds.Add(appRoleId); // prevent duplicate POST if same ID appears again
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Failed to assign app role '{RoleName}': HTTP {Status} {Reason} — {Body}",
+                        roleName, (int)resp.StatusCode, resp.ReasonPhrase, resp.Body);
+                    allOk = false;
+                }
+            }
+
+            return allOk;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception granting app role assignments on {ResourceAppId}: {Message}", resourceAppId, ex.Message);
+            return false;
+        }
+    }
+
     private static List<string> ParseInheritableScopesFromJson(JsonElement entry)
     {
         var scopesList = new List<string>();

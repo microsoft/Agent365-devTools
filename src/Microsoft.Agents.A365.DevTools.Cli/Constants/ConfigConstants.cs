@@ -80,7 +80,8 @@ public static class ConfigConstants
     /// Observability API scope used in admin consent URLs.
     /// This is the only scope published by the Observability API resource app manifest
     /// that is valid for the /v2.0/adminconsent endpoint.
-    /// Note: OtelWrite is granted separately via OAuth2PermissionGrants.
+    /// Note: OtelWrite causes AADSTS650053 in the consent URL flow; OtelWrite is granted
+    /// separately via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
 

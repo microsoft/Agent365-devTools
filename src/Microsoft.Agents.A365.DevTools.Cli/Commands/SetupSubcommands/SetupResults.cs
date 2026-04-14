@@ -37,6 +37,12 @@ public class SetupResults
     public bool AdminConsentGranted { get; set; }
 
     /// <summary>
+    /// True when all S2S app role assignments were successfully granted. False means pending
+    /// (non-admin user; Global Administrator action required). Null means not attempted.
+    /// </summary>
+    public bool? S2SAppRoleGranted { get; set; }
+
+    /// <summary>
     /// Error message when Microsoft Graph inheritable permissions fail to configure.
     /// Non-null indicates failure. This is critical for agent token exchange functionality.
     /// </summary>

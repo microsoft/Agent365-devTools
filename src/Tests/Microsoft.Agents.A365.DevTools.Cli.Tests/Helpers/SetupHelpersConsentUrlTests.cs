@@ -221,7 +221,7 @@ public class SetupHelpersConsentUrlTests
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"),
             because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"),
-            because: "Maven.ReadWrite.All is the only scope valid for /v2.0/adminconsent on the Observability API resource");
+            because: "Maven.ReadWrite.All is the only scope valid for /v2.0/adminconsent on the Observability API resource — OtelWrite causes AADSTS650053");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
     }
 
