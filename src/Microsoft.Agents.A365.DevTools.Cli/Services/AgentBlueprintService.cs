@@ -388,9 +388,20 @@ public class AgentBlueprintService
                     }
                 };
 
-                var patched = await _graphApiService.GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
+                var patched = false;
+                try
+                {
+                    patched = await _graphApiService.GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
+                }
+                catch (Exception patchEx)
+                {
+                    _logger.LogError(patchEx, "Exception during PATCH of inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                    return (ok: false, alreadyExists: false, error: patchEx.Message);
+                }
+
                 if (!patched)
                 {
+                    _logger.LogWarning("PATCH request to update inheritable permissions failed for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
                     return (ok: false, alreadyExists: false, error: "PATCH failed");
                 }
 
@@ -429,7 +440,7 @@ public class AgentBlueprintService
         }
         catch (Exception ex)
         {
-            _logger.LogError("Failed to set inheritable permissions: {Error}", ex.Message);
+            _logger.LogError(ex, "Failed to set inheritable permissions for blueprint {Blueprint} resource {Resource}: {Error}", blueprintId, resourceAppId, ex.Message);
             return (ok: false, alreadyExists: false, error: ex.Message);
         }
     }
