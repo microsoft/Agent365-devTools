@@ -262,7 +262,7 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
                 logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
-                logger.LogInformation("  - Observability API: user_impersonation");
+                logger.LogInformation("  - Observability API: user_impersonation, {OtelScope}", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 return;
             }
@@ -515,24 +515,7 @@ internal static class PermissionsSubcommand
 
         try
         {
-            var specs = new List<ResourcePermissionSpec>
-            {
-                new ResourcePermissionSpec(
-                    ConfigConstants.MessagingBotApiAppId,
-                    "Messaging Bot API",
-                    new[] { "Authorization.ReadWrite", "user_impersonation" },
-                    SetInheritable: true),
-                new ResourcePermissionSpec(
-                    ConfigConstants.ObservabilityApiAppId,
-                    "Observability API",
-                    new[] { "user_impersonation" },
-                    SetInheritable: true),
-                new ResourcePermissionSpec(
-                    PowerPlatformConstants.PowerPlatformApiResourceAppId,
-                    "Power Platform API",
-                    new[] { "Connectivity.Connections.Read" },
-                    SetInheritable: true),
-            };
+            var specs = new List<ResourcePermissionSpec>(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
 
             var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 graphService, blueprintService, setupConfig,

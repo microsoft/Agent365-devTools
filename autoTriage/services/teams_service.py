@@ -74,14 +74,14 @@ class TeamsService:
 
     def _create_daily_digest_card(self, digest: DailyDigestResult) -> dict:
         """Create Adaptive Card for daily digest (FR35-FR37)."""
-        status_text = "🔴 STANDUP NEEDED" if digest.standup_needed else "🟢 No standup needed today"
+        status_text = "[WARNING] STANDUP NEEDED" if digest.standup_needed else "[OK] No standup needed today"
         status_color = "attention" if digest.standup_needed else "good"
 
         # Build body elements
         body = [
             {
                 "type": "TextBlock",
-                "text": f"📋 Daily Digest - {digest.date}",
+                "text": f"[INFO] Daily Digest - {digest.date}",
                 "weight": "bolder",
                 "size": "large"
             },
@@ -114,7 +114,7 @@ class TeamsService:
         if digest.decision_items:
             body.append({
                 "type": "TextBlock",
-                "text": "📌 **Discussion Agenda:**",
+                "text": "**Discussion Agenda:**",
                 "weight": "bolder",
                 "spacing": "medium"
             })
@@ -130,7 +130,7 @@ class TeamsService:
         if digest.highlights:
             body.append({
                 "type": "TextBlock",
-                "text": "✨ **Highlights:**",
+                "text": "**Highlights:**",
                 "weight": "bolder",
                 "spacing": "medium"
             })
@@ -146,7 +146,7 @@ class TeamsService:
         if digest.attention_items:
             body.append({
                 "type": "TextBlock",
-                "text": "👀 **Watch Items:**",
+                "text": "**Watch Items:**",
                 "weight": "bolder",
                 "spacing": "medium"
             })
@@ -176,9 +176,9 @@ class TeamsService:
     def _create_weekly_summary_card(self, plan: WeeklyPlanResult) -> dict:
         """Create Adaptive Card for weekly summary."""
         if plan.meeting_needed:
-            status_text = f"🔴 PLANNING MEETING RECOMMENDED ({plan.suggested_duration_minutes} min)"
+            status_text = f"[WARNING] PLANNING MEETING RECOMMENDED ({plan.suggested_duration_minutes} min)"
         else:
-            status_text = "🟢 No meeting needed - review async"
+            status_text = "[OK] No meeting needed - review async"
 
         return {
             "type": "message",
@@ -192,7 +192,7 @@ class TeamsService:
                         "body": [
                             {
                                 "type": "TextBlock",
-                                "text": f"📅 Weekly Planning - Week of {plan.week_of}",
+                                "text": f"[INFO] Weekly Planning - Week of {plan.week_of}",
                                 "weight": "bolder",
                                 "size": "large"
                             },
@@ -232,19 +232,19 @@ class TeamsService:
         processed_count = len(results)
         
         if processed_count == 0:
-            status_text = "✅ No untriaged issues found"
+            status_text = "[OK] No untriaged issues found"
             status_color = "good"
         else:
-            status_text = f"🔍 Triaged {processed_count} issue(s)"
+            status_text = f"[INFO] Triaged {processed_count} issue(s)"
             status_color = "accent"
 
-        mode_text = "✅ Changes Applied" if applied_changes else "📝 Dry Run (Preview Only)"
+        mode_text = "[OK] Changes Applied" if applied_changes else "[INFO] Dry Run (Preview Only)"
 
         # Build body elements
         body = [
             {
                 "type": "TextBlock",
-                "text": "🤖 Issue Intake Triage Report",
+                "text": "Issue Intake Triage Report",
                 "weight": "bolder",
                 "size": "large"
             },
@@ -271,7 +271,7 @@ class TeamsService:
         if results:
             body.append({
                 "type": "TextBlock",
-                "text": "📋 **Triage Summary:**",
+                "text": "**Triage Summary:**",
                 "weight": "bolder",
                 "spacing": "medium"
             })
@@ -296,7 +296,7 @@ class TeamsService:
             # List individual issues (limit to 10)
             body.append({
                 "type": "TextBlock",
-                "text": "📌 **Issues Triaged:**",
+                "text": "**Issues Triaged:**",
                 "weight": "bolder",
                 "spacing": "medium"
             })
@@ -306,8 +306,8 @@ class TeamsService:
                 issue_num = issue.get("issue_number", "?")
                 priority = issue.get("priority", "?")
                 issue_type = issue.get("issue_type", "unknown")
-                copilot = "🤖" if issue.get("is_copilot_fixable") else ""
-                applied = "✅" if result.get("applied") else "⏸️"
+                copilot = "[COPILOT]" if issue.get("is_copilot_fixable") else ""
+                applied = "[OK]" if result.get("applied") else "[SKIP]"
                 
                 body.append({
                     "type": "TextBlock",

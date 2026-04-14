@@ -182,7 +182,8 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
-        "Directory.Read.All"
+        "Directory.Read.All",
+        "User.ReadWrite.All"  // Required for agent user creation, usage location update, and license assignment
         // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
         // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
         // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded

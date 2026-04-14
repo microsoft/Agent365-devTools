@@ -18,7 +18,7 @@ import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from services.llm_service import LlmService
+from services.llm_service import LlmService, RateLimiter
 from models.team_config import PriorityRules, CopilotFixableConfig
 
 
@@ -450,3 +450,48 @@ class TestSecurityKeywordWordBoundaries:
             security_keywords
         )
         assert result["is_security"] is True
+
+
+
+class TestRateLimiter:
+    """Tests for the RateLimiter class."""
+
+    def test_allows_calls_under_limit(self):
+        """Calls within the limit complete without sleeping."""
+        from unittest.mock import patch
+        limiter = RateLimiter(max_calls_per_minute=5)
+        with patch("time.sleep") as mock_sleep:
+            for _ in range(5):
+                limiter.wait_if_needed()
+            mock_sleep.assert_not_called()
+
+    def test_blocks_when_limit_reached(self):
+        """wait_if_needed sleeps when the rolling window is full."""
+        import time
+        from unittest.mock import patch
+        limiter = RateLimiter(max_calls_per_minute=2)
+        now = time.monotonic()
+        limiter._calls = [now - 1, now - 0.5]
+        with patch("time.sleep") as mock_sleep:
+            with patch("time.monotonic", return_value=now):
+                limiter.wait_if_needed()
+            mock_sleep.assert_called_once()
+            sleep_arg = mock_sleep.call_args[0][0]
+            assert sleep_arg > 0, "sleep_time must be positive when limit is hit"
+
+    def test_thread_safe_has_lock(self):
+        """RateLimiter exposes a threading.Lock attribute."""
+        import threading
+        limiter = RateLimiter(max_calls_per_minute=10)
+        assert hasattr(limiter, "_lock")
+        assert isinstance(limiter._lock, type(threading.Lock()))
+
+    def test_window_clears_after_expiry(self):
+        """Timestamps older than 60 seconds are evicted before checking the limit."""
+        import time
+        from unittest.mock import patch
+        limiter = RateLimiter(max_calls_per_minute=2)
+        limiter._calls = [time.monotonic() - 61, time.monotonic() - 65]
+        with patch("time.sleep") as mock_sleep:
+            limiter.wait_if_needed()
+        mock_sleep.assert_not_called()

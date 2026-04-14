@@ -57,6 +57,9 @@ param(
     [string[]]$V2AppIds = @()
 )
 
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
 # V1: shared ATG AppId (WorkIQToolsProdAppId) — all V1 servers share this resource
 $v1AppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
 
@@ -82,8 +85,8 @@ Write-Host "Service Principal Creation for Agent 365 MCP Servers (Admin Only)" -
 Write-Host "  Mode: $Mode" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "⚠ IMPORTANT: This requires admin permissions!" -ForegroundColor Yellow
-Write-Host "⚠ Safe to re-run — existing Service Principals are skipped, not re-created." -ForegroundColor Yellow
+Write-Host "WARNING: This requires admin permissions!" -ForegroundColor Yellow
+Write-Host "WARNING: Safe to re-run — existing Service Principals are skipped, not re-created." -ForegroundColor Yellow
 Write-Host ""
 
 # --- Resolve V2 AppIds ---
@@ -105,7 +108,7 @@ if ($Mode -ne "V1") {
         $resolvedV2AppIds = $V2AppIds
     }
     elseif ($Mode -eq "V2") {
-        Write-Host "✗ ERROR: -Mode V2 requires -ManifestPath or -V2AppIds." -ForegroundColor Red
+        Write-Host "ERROR: -Mode V2 requires -ManifestPath or -V2AppIds." -ForegroundColor Red
         exit 1
     }
 }
@@ -114,15 +117,16 @@ if ($Mode -ne "V1") {
 Write-Host "Checking for Microsoft.Graph module..." -ForegroundColor Cyan
 if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Applications)) {
     Write-Host "Microsoft.Graph.Applications module not found. Installing..." -ForegroundColor Yellow
-    Install-Module Microsoft.Graph.Applications -Scope CurrentUser -Force
+    Install-Module Microsoft.Graph.Applications -Scope CurrentUser -Force -ErrorAction Stop
 }
 if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
     Write-Host "Microsoft.Graph.Authentication module not found. Installing..." -ForegroundColor Yellow
-    Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force
+    Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force -ErrorAction Stop
 }
 
-Import-Module Microsoft.Graph.Applications
-Import-Module Microsoft.Graph.Authentication
+# Import required modules
+Import-Module Microsoft.Graph.Applications -ErrorAction Stop
+Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 
 # --- Connect to Microsoft Graph ---
 Write-Host ""

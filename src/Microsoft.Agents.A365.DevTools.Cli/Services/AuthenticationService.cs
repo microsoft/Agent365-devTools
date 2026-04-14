@@ -143,7 +143,7 @@ public class AuthenticationService : IAuthenticationService
         }
 
         // Authenticate interactively with specific tenant and scopes
-        _logger.LogInformation("Authentication required for Agent 365 Tools");
+        _logger.LogInformation("Authentication required for Work IQ Tools");
         var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
 
         // Cache the token with the appropriate cache key

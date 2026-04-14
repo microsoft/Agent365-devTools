@@ -79,10 +79,16 @@ public static class ConfigConstants
 
     /// <summary>
     /// Observability API scope used for admin consent URL construction.
-    /// Note: the orchestrator grants "user_impersonation" via OAuth2 permission grants; this
-    /// scope is the consent-URL-facing name for the same resource.
+    /// Note: the orchestrator grants "user_impersonation" + ObservabilityApiOtelWriteScope via OAuth2
+    /// permission grants; this scope is the consent-URL-facing name for the same resource.
     /// </summary>
     public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
+
+    /// <summary>
+    /// Observability API scope for writing OpenTelemetry data.
+    /// Granted alongside "user_impersonation" to all provisioned agent identities.
+    /// </summary>
+    public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
 
     /// <summary>
     /// Production deployment environment
@@ -107,7 +113,9 @@ public static class ConfigConstants
         "Chat.Read",
         "Chat.ReadWrite",
         "Files.Read.All",
-        "Sites.Read.All"
+        "Sites.Read.All",
+        "ChannelMessage.Read.All",
+        "ChannelMessage.Send",
     };
 
     /// <summary>
@@ -132,7 +140,10 @@ public static class ConfigConstants
         "Mail.Send",
         "Chat.ReadWrite",
         "User.Read.All",
-        "Sites.Read.All"
+        "Sites.Read.All",
+        "Files.ReadWrite.All",
+        "ChannelMessage.Read.All",
+        "ChannelMessage.Send",
     };
 
 
