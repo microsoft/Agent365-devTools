@@ -970,7 +970,11 @@ public class AgentBlueprintService
         IEnumerable<string>? requiredScopes = null,
         CancellationToken ct = default)
     {
-        var roleNames = appRoleNames?.ToList() ?? new List<string>();
+        // De-dup upfront: duplicate names map to the same role ID and would cause a redundant POST.
+        var roleNames = appRoleNames?
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? new List<string>();
         if (roleNames.Count == 0) return true;
 
         try
@@ -1067,6 +1071,7 @@ public class AgentBlueprintService
                 if (resp.IsSuccess)
                 {
                     _logger.LogDebug("App role '{RoleName}' assigned to blueprint SP {BpSpId}.", roleName, blueprintSpObjectId);
+                    existingRoleIds.Add(appRoleId); // prevent duplicate POST if same ID appears again
                 }
                 else
                 {

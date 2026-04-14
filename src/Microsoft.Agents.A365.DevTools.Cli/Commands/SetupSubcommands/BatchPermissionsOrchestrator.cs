@@ -175,8 +175,7 @@ internal static class BatchPermissionsOrchestrator
                 var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
                 if (!string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId))
                     await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
-                else if (setupResults is not null)
-                    setupResults.S2SAppRoleGranted = true;
+                // else: blueprint SP was not resolved — leave S2SAppRoleGranted = null (not attempted)
 
                 logger.LogInformation("");
                 if (grantsOk)
@@ -840,8 +839,7 @@ internal static class BatchPermissionsOrchestrator
         var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
         if (blueprintService is not null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
             await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
-        else
-            setupResults.S2SAppRoleGranted = true; // M-003: no service or unresolved SP — mark not applicable
+        // else: blueprint service unavailable or SP not resolved — leave S2SAppRoleGranted = null (not attempted)
 
         return (allGrantsOk, phase1Result.BlueprintSpObjectId);
     }

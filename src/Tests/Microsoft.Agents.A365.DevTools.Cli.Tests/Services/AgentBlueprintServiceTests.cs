@@ -476,19 +476,22 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-        // SP lookup returns empty value array
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        using (handler)
         {
-            Content = new StringContent("{\"value\":[]}")
-        });
+            // SP lookup returns empty value array
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
 
-        // Act
-        var result = await service.GrantAppRoleAssignmentAsync(
-            "tenant-id", "blueprint-sp-id", "resource-app-id",
-            new[] { "Agent365.Observability.OtelWrite" });
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
 
-        // Assert
-        result.Should().BeFalse();
+            // Assert
+            result.Should().BeFalse();
+        }
     }
 
     [Fact]
@@ -496,29 +499,32 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-        // SP lookup succeeds
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        using (handler)
         {
-            Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
-        });
-        // Resource SP has no matching app roles
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"appRoles\":[]}")
-        });
-        // Existing assignments
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[]}")
-        });
+            // SP lookup succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP has no matching app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[]}")
+            });
+            // Existing assignments
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
 
-        // Act
-        var result = await service.GrantAppRoleAssignmentAsync(
-            "tenant-id", "blueprint-sp-id", "resource-app-id",
-            new[] { "Agent365.Observability.OtelWrite" });
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
 
-        // Assert
-        result.Should().BeFalse();
+            // Assert
+            result.Should().BeFalse();
+        }
     }
 
     [Fact]
@@ -526,30 +532,33 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-        // SP lookup
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        using (handler)
         {
-            Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
-        });
-        // Resource SP app roles
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
-        });
-        // Existing assignments — role already assigned
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[{\"resourceId\":\"resource-sp-id\",\"appRoleId\":\"role-id-1\"}]}")
-        });
-        // No POST should be queued — if the handler is called a 4th time it returns 404
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — role already assigned
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"resourceId\":\"resource-sp-id\",\"appRoleId\":\"role-id-1\"}]}")
+            });
+            // No POST should be queued — if the handler is called a 4th time it returns 404
 
-        // Act
-        var result = await service.GrantAppRoleAssignmentAsync(
-            "tenant-id", "blueprint-sp-id", "resource-app-id",
-            new[] { "Agent365.Observability.OtelWrite" });
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
 
-        // Assert
-        result.Should().BeTrue();
+            // Assert
+            result.Should().BeTrue();
+        }
     }
 
     [Fact]
@@ -557,34 +566,37 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-        // SP lookup
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        using (handler)
         {
-            Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
-        });
-        // Resource SP app roles
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
-        });
-        // Existing assignments — none
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[]}")
-        });
-        // POST succeeds
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
-        {
-            Content = new StringContent("{\"id\":\"assignment-id\"}")
-        });
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent("{\"id\":\"assignment-id\"}")
+            });
 
-        // Act
-        var result = await service.GrantAppRoleAssignmentAsync(
-            "tenant-id", "blueprint-sp-id", "resource-app-id",
-            new[] { "Agent365.Observability.OtelWrite" });
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
 
-        // Assert
-        result.Should().BeTrue();
+            // Assert
+            result.Should().BeTrue();
+        }
     }
 
     [Fact]
@@ -592,34 +604,37 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
-        // SP lookup
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        using (handler)
         {
-            Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
-        });
-        // Resource SP app roles
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
-        });
-        // Existing assignments — none
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[]}")
-        });
-        // POST fails
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
-        {
-            Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
-        });
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST fails
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
+            });
 
-        // Act
-        var result = await service.GrantAppRoleAssignmentAsync(
-            "tenant-id", "blueprint-sp-id", "resource-app-id",
-            new[] { "Agent365.Observability.OtelWrite" });
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
 
-        // Assert
-        result.Should().BeFalse();
+            // Assert
+            result.Should().BeFalse();
+        }
     }
 
     [Fact]
@@ -627,14 +642,16 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // Act — no HTTP calls should be made for an empty role list
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                Array.Empty<string>());
 
-        // Act — no HTTP calls should be made for an empty role list
-        var result = await service.GrantAppRoleAssignmentAsync(
-            "tenant-id", "blueprint-sp-id", "resource-app-id",
-            Array.Empty<string>());
-
-        // Assert
-        result.Should().BeTrue();
+            // Assert
+            result.Should().BeTrue();
+        }
     }
 }
 
