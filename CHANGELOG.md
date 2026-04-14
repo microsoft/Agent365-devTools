@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Re-enabled `a365 create-instance` command (previously deprecated) — creates agent identity, agent user, and assigns licenses in a single command. The custom client app now requires the `User.ReadWrite.All` delegated permission for user creation and license assignment; existing users may need to update admin consent on their client app.
-- `Agent365.Observability.OtelWrite` scope now granted to all provisioned agent identities on the Observability API alongside `user_impersonation`, enabling agents to write OpenTelemetry data to the Agent 365 observability service
+- `Agent365.Observability.OtelWrite` granted to all provisioned agent identities on the Observability API as both a **delegated** permission (OAuth2 grant) and an **application** permission (S2S app role assignment), enabling agents to write OpenTelemetry data to the Agent 365 observability service
+- S2S app role assignment support in `a365 setup permissions` and `a365 setup admin` — the CLI now automatically grants application-type (`appRoleAssignments`) permissions on the blueprint service principal when a `ResourcePermissionSpec` defines `AppRoleScopes`. Global Administrator is required for S2S grants; non-admin users receive actionable PowerShell fallback instructions
 - `ChannelMessage.Read.All` and `ChannelMessage.Send` added to default blueprint Microsoft Graph delegated scopes (`agentIdentityScopes`)
 - `Files.ReadWrite.All`, `ChannelMessage.Read.All`, and `ChannelMessage.Send` added to default blueprint Microsoft Graph application scopes (`agentApplicationScopes`)
 - Server-driven notice system: security advisories and critical upgrade prompts are displayed at startup when a maintainer updates `notices.json`. Notices are suppressed once the user upgrades past the specified `minimumVersion`. Results are cached locally for 4 hours to avoid network calls on every invocation.
@@ -22,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `A365CreateInstanceRunner` sponsor handling: sponsor is now required (Graph API rejects requests without one) — removed fallback that silently stripped the sponsor on retry, which caused `BadRequest` errors
 - Intermittent `ConnectionResetError (10054)` failures on corporate networks with TLS inspection proxies (Zscaler, Netskope) — Graph and ARM API calls now use direct MSAL.NET token acquisition instead of `az account get-access-token` subprocesses, bypassing the Python HTTP stack that triggered proxy resets (#321)
 - `a365 cleanup` blueprint deletion now succeeds for Global Administrators even when the blueprint was created by a different user
+- Admin consent URL for the Observability API used the non-existent scope `Maven.ReadWrite.All` (AADSTS650053) — replaced with the correct delegated scope `Agent365.Observability.OtelWrite`
+- `AppRoleAssignment.ReadWrite.All` (admin-only) was incorrectly included in `RequiredPermissionGrantScopes`, causing it to be requested on non-admin paths (`a365 deploy`, `setup permissions`) — moved to a dedicated `RequiredS2SGrantScopes` constant used only on Global Administrator paths
 - `a365 setup all` no longer times out for non-admin users — the CLI immediately surfaces a consent URL to share with an administrator instead of waiting for a browser prompt
 - `a365 setup all` requests admin consent once for all resources instead of prompting once per resource
 - Browser and WAM authentication blocked by Conditional Access Policy (AADSTS53003, AADSTS53000) now automatically falls back to device code flow (#294)
