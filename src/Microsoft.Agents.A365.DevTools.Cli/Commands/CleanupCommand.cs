@@ -856,6 +856,13 @@ public class CleanupCommand
             return false;
         }
 
+        // Location is not required for needDeployment:false configs — skip endpoint cleanup
+        if (string.IsNullOrWhiteSpace(config.Location))
+        {
+            logger.LogWarning("Location not set — skipping endpoint deletion (not required for endpoint-only configs).");
+            return true;
+        }
+
         logger.LogInformation("Clearing backend configuration...");
         var endpointName = ResolveEndpointName(config);
 

@@ -785,7 +785,7 @@ internal static class SetupHelpers
 
         var endpointResult = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
             endpointName: endpointName,
-            location: string.Empty,
+            location: setupConfig.Location,
             messagingEndpoint: messagingEndpoint,
             agentDescription: "Agent 365 messaging endpoint for automated interactions",
             agentBlueprintId: setupConfig.AgentBlueprintId,

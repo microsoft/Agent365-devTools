@@ -85,7 +85,6 @@ public class BotConfigurator : IBotConfigurator
                 {
                     ["AgentIdentityBlueprintId"] = agentBlueprintId,
                     ["CallbackUri"] = messagingEndpoint,
-                    ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
                 };
 
@@ -246,7 +245,6 @@ public class BotConfigurator : IBotConfigurator
                 var deleteEndpointBody = new JsonObject
                 {
                     ["AgentIdentityBlueprintId"] = agentBlueprintId,
-                    ["AppId"] = agentBlueprintId,
                     ["TenantId"] = tenantId,
                 };
 
