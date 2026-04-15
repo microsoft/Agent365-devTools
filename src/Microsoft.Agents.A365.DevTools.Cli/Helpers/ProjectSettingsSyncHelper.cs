@@ -459,6 +459,19 @@ public static class ProjectSettingsSyncHelper
         };
         root["ConnectionsMap"] = connectionsMap;
 
+        // -- Agent365Observability --
+        root["EnableAgent365Exporter"] ??= false;
+        var obsSection = RequireObj(root, "Agent365Observability");
+        if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
+        {
+            obsSection["AgentId"]          = pkgConfig.AgentBlueprintId;
+            obsSection["AgentBlueprintId"] = pkgConfig.AgentBlueprintId;
+        }
+        if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
+            obsSection["TenantId"] = pkgConfig.TenantId;
+        obsSection["AgentName"]        ??= "";
+        obsSection["AgentDescription"] ??= "";
+
         var updated = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(appsettingsPath, updated, new UTF8Encoding(false));
     }
@@ -512,6 +525,9 @@ public static class ProjectSettingsSyncHelper
         Set("CONNECTIONSMAP__0__SERVICEURL", "*");
         Set("CONNECTIONSMAP__0__CONNECTION", "SERVICE_CONNECTION");
 
+        // --- Agent365 Observability ---
+        Set("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
+
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }
 
@@ -563,6 +579,9 @@ public static class ProjectSettingsSyncHelper
         Set("agentic_altBlueprintConnectionName", "service_connection");
         Set("agentic_scopes", DEFAULT_USER_AUTHORIZATION_SCOPE);
         Set("agentic_connectionName", "AgenticAuthConnection");
+
+        // --- Agent365 Observability ---
+        Set("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
 
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }

@@ -185,6 +185,9 @@ public class ProjectSettingsSyncHelperTests : IDisposable
 
         AssertHas("CONNECTIONSMAP__0__SERVICEURL", "*");
         AssertHas("CONNECTIONSMAP__0__CONNECTION", "SERVICE_CONNECTION");
+
+        // Observability
+        AssertHas("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
     }
 
     [Fact]
@@ -239,6 +242,9 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         AssertHas("agentic_altBlueprintConnectionName", "service_connection");
         AssertHas("agentic_scopes", "https://graph.microsoft.com/.default");
         AssertHas("agentic_connectionName", "AgenticAuthConnection");
+
+        // Observability
+        AssertHas("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
     }
 
     [Fact]
@@ -554,5 +560,48 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         var clientSecret = svcSettings["ClientSecret"]!.GetValue<string>();
 
         Assert.Equal(plaintextSecret, clientSecret);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DotNet_WritesAgent365ObservabilitySection()
+    {
+        // Arrange
+        var projectDir = Path.Combine(_tempRoot, "dotnet_obs");
+        Directory.CreateDirectory(projectDir);
+
+        WriteFile(projectDir, "MyAgent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var appsettingsPath = WriteFile(projectDir, "appsettings.json", "{}");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+            AgentBlueprintClientSecret = "secret"
+        };
+
+        var configService = MockConfigService(cfg).Object;
+        var platformDetector = CreatePlatformDetector();
+        var logger = CreateLogger();
+
+        // Act
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+
+        // Assert
+        var j = ReadJson(appsettingsPath);
+
+        // EnableAgent365Exporter written at root level, defaulting to false
+        Assert.False(j["EnableAgent365Exporter"]!.GetValue<bool>());
+
+        // Agent365Observability section present with correct values
+        var obs = j["Agent365Observability"]!.AsObject();
+        Assert.Equal(cfg.AgentBlueprintId, obs["AgentId"]!.GetValue<string>());
+        Assert.Equal(cfg.AgentBlueprintId, obs["AgentBlueprintId"]!.GetValue<string>());
+        Assert.Equal(cfg.TenantId, obs["TenantId"]!.GetValue<string>());
+        Assert.Equal("", obs["AgentName"]!.GetValue<string>());
+        Assert.Equal("", obs["AgentDescription"]!.GetValue<string>());
     }
 }

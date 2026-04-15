@@ -171,7 +171,16 @@ internal static class SetupHelpers
             if (pendingS2SAction)
             {
                 itemNum++;
-                logger.LogInformation("  {N}. Observability API S2S app role — run as Global Administrator (PowerShell):", itemNum);
+                logger.LogInformation("  {N}. Observability API permissions — Global Administrator action required:", itemNum);
+                logger.LogInformation("");
+                logger.LogInformation("     Option A — Entra portal (covers delegated + application in one step):");
+                logger.LogInformation("       1. Entra portal > App registrations > Blueprint app > API permissions");
+                logger.LogInformation("       2. Add a permission > APIs my organization uses > search {ObsApiAppId}", ConfigConstants.ObservabilityApiAppId);
+                logger.LogInformation("       3. Delegated permissions > select {ObsScope} > Add permissions", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("       4. Repeat step 2, Application permissions > select {ObsScope} > Add permissions", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("       5. Grant admin consent for <tenant>");
+                logger.LogInformation("");
+                logger.LogInformation("     Option B — PowerShell (application permission only; also complete Option A steps 2-5 for delegated):");
                 logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All'");
                 logger.LogInformation("       $bp  = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
                 logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);

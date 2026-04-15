@@ -211,7 +211,7 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
                 logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
-                logger.LogInformation("  - Observability API: user_impersonation, {OtelScope}", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 return;
             }
