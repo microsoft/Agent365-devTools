@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `a365 publish` updates manifest IDs, creates `manifest.zip`, and prints concise upload instructions for Microsoft 365 Admin Center (Agents > All agents > Upload custom agent). Interactive prompts only occur in interactive terminals; redirect stdin to suppress them in scripts.
 
 ### Fixed
+- `AgentBlueprintService.SetInheritablePermissionsAsync` no longer crashes when the Graph PATCH call throws a transient exception (#366) — the exception is caught, logged, and surfaced as a structured error result
+- `AgentBlueprintService.SetInheritablePermissionsAsync` now correctly propagates `OperationCanceledException` when the user cancels (Ctrl+C), instead of masking cancellation as a generic error
 - `A365CreateInstanceRunner` sponsor handling: sponsor is now required (Graph API rejects requests without one) — removed fallback that silently stripped the sponsor on retry, which caused `BadRequest` errors
 - Intermittent `ConnectionResetError (10054)` failures on corporate networks with TLS inspection proxies (Zscaler, Netskope) — Graph and ARM API calls now use direct MSAL.NET token acquisition instead of `az account get-access-token` subprocesses, bypassing the Python HTTP stack that triggered proxy resets (#321)
 - `a365 cleanup` blueprint deletion now succeeds for Global Administrators even when the blueprint was created by a different user

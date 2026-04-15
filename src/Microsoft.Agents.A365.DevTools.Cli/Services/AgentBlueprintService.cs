@@ -339,10 +339,11 @@ public class AgentBlueprintService
         // Normalize into array form expected by Graph (each element is a single scope string)
         var desiredArray = desiredSet.ToArray();
 
+        string? blueprintObjectId = null;
         try
         {
             // Resolve blueprintId to object ID if needed
-            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
+            blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
 
             // Retrieve existing inheritable permissions
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
@@ -395,6 +396,7 @@ public class AgentBlueprintService
                 }
                 catch (Exception patchEx)
                 {
+                    if (patchEx is OperationCanceledException && ct.IsCancellationRequested) throw;
                     _logger.LogError(patchEx, "Exception during PATCH of inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
                     return (ok: false, alreadyExists: false, error: patchEx.Message);
                 }
@@ -402,7 +404,7 @@ public class AgentBlueprintService
                 if (!patched)
                 {
                     _logger.LogWarning("PATCH request to update inheritable permissions failed for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
-                    return (ok: false, alreadyExists: false, error: "PATCH failed");
+                    return (ok: false, alreadyExists: false, error: $"Graph PATCH returned false for blueprint {blueprintObjectId} resource {resourceAppId}");
                 }
 
                 _logger.LogDebug("Patched inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
@@ -440,7 +442,8 @@ public class AgentBlueprintService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to set inheritable permissions for blueprint {Blueprint} resource {Resource}: {Error}", blueprintId, resourceAppId, ex.Message);
+            if (ex is OperationCanceledException && ct.IsCancellationRequested) throw;
+            _logger.LogError(ex, "Failed to set inheritable permissions for blueprint {Blueprint} resource {Resource}: {Error}", blueprintObjectId ?? blueprintId, resourceAppId, ex.Message);
             return (ok: false, alreadyExists: false, error: ex.Message);
         }
     }
