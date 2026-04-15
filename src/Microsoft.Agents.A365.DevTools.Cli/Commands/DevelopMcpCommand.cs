@@ -1189,6 +1189,9 @@ public static class DevelopMcpCommand
                 };
             }
 
+            // Track warnings for non-fatal failures during registration
+            var warnings = new List<string>();
+
             // Step 2: Call Add MCP server API
             logger.LogDebug("Adding MCP server {ServerName}...", serverName);
             var addRequest = new Models.AddMcpServerRequest
@@ -1213,7 +1216,17 @@ public static class DevelopMcpCommand
                 RemoteServerScopes = remoteScopes,
             };
 
-            var addResponse = await toolingService.AddMcpServerAsync(addRequest);
+            Models.AddMcpServerResponse? addResponse;
+            try
+            {
+                addResponse = await toolingService.AddMcpServerAsync(addRequest);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError("Failed to register MCP server '{ServerName}': {Error}", serverName, ex.Message);
+                logger.LogDebug("Exception details: {Exception}", ex.ToString());
+                return;
+            }
 
             if (addResponse == null || !addResponse.IsSuccess)
             {
@@ -1227,36 +1240,59 @@ public static class DevelopMcpCommand
             var a365RedirectUri = addResponse.Server?.A365ProxyRedirectUri;
             var remoteRedirectUri = addResponse.Server?.RemoteMCPServerProxyRedirectUri;
 
-            // Step 3: Update redirect URIs on Entra apps (skip for NoAuth/APIKey)
-            if (!isNoAuth && !isApiKey && !string.IsNullOrWhiteSpace(a365RedirectUri) && a365AppObjectId != null)
+            // Step 3: Update redirect URIs on Entra apps
+            // A365 Proxy always uses Entra AAD auth, so it always needs the redirect URI
+            if (!string.IsNullOrWhiteSpace(a365RedirectUri) && a365AppObjectId != null)
             {
-                var a365OriginalUri = RemoveTcPrefix(a365RedirectUri);
-                var a365Uris = a365OriginalUri != null ? new[] { a365RedirectUri, a365OriginalUri } : new[] { a365RedirectUri };
-                logger.LogDebug("A365 Proxy Redirect URIs: {RedirectUris}", string.Join(", ", a365Uris));
-                logger.LogDebug("Updating redirect URIs on A365 Proxy Entra app...");
-                await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, a365AppObjectId, a365Uris);
+                try
+                {
+                    var a365OriginalUri = RemoveTcPrefix(a365RedirectUri);
+                    var a365Uris = a365OriginalUri != null ? new[] { a365RedirectUri, a365OriginalUri } : new[] { a365RedirectUri };
+                    logger.LogDebug("A365 Proxy Redirect URIs: {RedirectUris}", string.Join(", ", a365Uris));
+                    logger.LogDebug("Updating redirect URIs on A365 Proxy Entra app...");
+                    await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, a365AppObjectId, a365Uris);
+                }
+                catch (Exception ex)
+                {
+                    var msg = $"Failed to update redirect URIs on A365 Proxy app: {ex.Message}";
+                    logger.LogWarning(msg);
+                    warnings.Add(msg);
+                }
             }
-            else if (!isNoAuth && !isApiKey)
+            else if (a365AppObjectId != null)
             {
-                logger.LogWarning("A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped for A365 Proxy app.");
+                var msg = "A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
+                logger.LogWarning(msg);
+                warnings.Add(msg);
             }
 
             if (isEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri) && remoteProxyAppObjectId != null)
             {
-                var remoteOriginalUri = RemoveTcPrefix(remoteRedirectUri);
-                var remoteUris = remoteOriginalUri != null ? new[] { remoteRedirectUri, remoteOriginalUri } : new[] { remoteRedirectUri };
-                logger.LogDebug("Remote MCP Proxy Redirect URIs: {RedirectUris}", string.Join(", ", remoteUris));
-                logger.LogDebug("Updating redirect URIs on Remote Proxy Entra app...");
-                await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, remoteProxyAppObjectId, remoteUris);
+                try
+                {
+                    var remoteOriginalUri = RemoveTcPrefix(remoteRedirectUri);
+                    var remoteUris = remoteOriginalUri != null ? new[] { remoteRedirectUri, remoteOriginalUri } : new[] { remoteRedirectUri };
+                    logger.LogDebug("Remote MCP Proxy Redirect URIs: {RedirectUris}", string.Join(", ", remoteUris));
+                    logger.LogDebug("Updating redirect URIs on Remote Proxy Entra app...");
+                    await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, remoteProxyAppObjectId, remoteUris);
+                }
+                catch (Exception ex)
+                {
+                    var msg = $"Failed to update redirect URIs on Remote Proxy app: {ex.Message}";
+                    logger.LogWarning(msg);
+                    warnings.Add(msg);
+                }
             }
             else if (isEntra)
             {
-                logger.LogWarning("Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped for Remote Proxy app.");
+                var msg = "Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
+                logger.LogWarning(msg);
+                warnings.Add(msg);
             }
 
-            // Step 4: Configure PPMI app scopes and A365 Proxy API permissions (skip for NoAuth/APIKey)
+            // Step 4: Configure PPMI app scopes and A365 Proxy API permissions
             var ppmiAppClientId = addResponse.Server?.PpmiAppClientId;
-            if (!isNoAuth && !isApiKey && !string.IsNullOrWhiteSpace(ppmiAppClientId))
+            if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
             {
                 logger.LogDebug("PPMI app provisioned: {PpmiAppClientId}", ppmiAppClientId);
                 logger.LogDebug("Waiting for PPMI app to replicate in Entra ID (this may take up to 60 seconds)...");
@@ -1266,23 +1302,52 @@ public static class DevelopMcpCommand
                 if (!string.IsNullOrWhiteSpace(ppmiObjectId))
                 {
                     // Set Application ID URI on the PPMI app
-                    var identifierUri = McpConstants.BuildPpmiIdentifierUri(toolingService.Environment, tenantId, serverName);
-                    logger.LogDebug("Setting Application ID URI: {Uri}", identifierUri);
-                    await graphApiService.SetIdentifierUriAsync(tenantId, ppmiObjectId, identifierUri);
+                    try
+                    {
+                        var identifierUri = McpConstants.BuildPpmiIdentifierUri(toolingService.Environment, tenantId, serverName);
+                        logger.LogDebug("Setting Application ID URI: {Uri}", identifierUri);
+                        await graphApiService.SetIdentifierUriAsync(tenantId, ppmiObjectId, identifierUri);
+                    }
+                    catch (Exception ex)
+                    {
+                        var msg = $"Failed to set Application ID URI on PPMI app: {ex.Message}";
+                        logger.LogWarning(msg);
+                        warnings.Add(msg);
+                    }
 
                     // Add user_impersonation scope (required for PPMI OBO token flow)
-                    logger.LogDebug("Adding 'user_impersonation' scope to PPMI app...");
-                    var uiScopeId = await graphApiService.AddOAuth2PermissionScopeAsync(
-                        tenantId,
-                        ppmiObjectId,
-                        "user_impersonation",
-                        "Allow the application to access resources on behalf of the signed-in user");
+                    Guid? uiScopeId = null;
+                    try
+                    {
+                        logger.LogDebug("Adding 'user_impersonation' scope to PPMI app...");
+                        uiScopeId = await graphApiService.AddOAuth2PermissionScopeAsync(
+                            tenantId,
+                            ppmiObjectId,
+                            "user_impersonation",
+                            "Allow the application to access resources on behalf of the signed-in user");
+                    }
+                    catch (Exception ex)
+                    {
+                        var msg = $"Failed to add 'user_impersonation' scope to PPMI app: {ex.Message}";
+                        logger.LogWarning(msg);
+                        warnings.Add(msg);
+                    }
 
                     // Add <serverName>.All scope to the PPMI app
+                    Guid? serverAllScopeId = null;
                     var scopeName = $"{serverName}.All";
-                    logger.LogDebug("Adding scope '{ScopeName}' to PPMI app...", scopeName);
-                    var serverAllScopeId = await graphApiService.AddOAuth2PermissionScopeAsync(
-                        tenantId, ppmiObjectId, scopeName, $"Full access to {serverName}");
+                    try
+                    {
+                        logger.LogDebug("Adding scope '{ScopeName}' to PPMI app...", scopeName);
+                        serverAllScopeId = await graphApiService.AddOAuth2PermissionScopeAsync(
+                            tenantId, ppmiObjectId, scopeName, $"Full access to {serverName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        var msg = $"Failed to add '{scopeName}' scope to PPMI app: {ex.Message}";
+                        logger.LogWarning(msg);
+                        warnings.Add(msg);
+                    }
 
                     // Add API permissions on A365 Proxy app for both PPMI scopes
                     var ppmiScopeIds = new List<Guid>();
@@ -1291,25 +1356,56 @@ public static class DevelopMcpCommand
 
                     if (ppmiScopeIds.Count > 0 && a365AppObjectId != null)
                     {
-                        logger.LogDebug("Adding API permissions on A365 Proxy app for PPMI scopes...");
-                        await graphApiService.AddRequiredResourceAccessAsync(
-                            tenantId, a365AppObjectId, ppmiAppClientId, ppmiScopeIds);
+                        try
+                        {
+                            logger.LogDebug("Adding API permissions on A365 Proxy app for PPMI scopes...");
+                            await graphApiService.AddRequiredResourceAccessAsync(
+                                tenantId, a365AppObjectId, ppmiAppClientId, ppmiScopeIds);
+                        }
+                        catch (Exception ex)
+                        {
+                            var msg = $"Failed to add API permissions on A365 Proxy app: {ex.Message}";
+                            logger.LogWarning(msg);
+                            warnings.Add(msg);
+                        }
                     }
-
+                    else if (a365AppObjectId != null)
+                    {
+                        var msg = "No PPMI scopes were created. API permissions not added to A365 Proxy app.";
+                        logger.LogWarning(msg);
+                        warnings.Add(msg);
+                    }
                 }
                 else
                 {
-                    logger.LogWarning("Could not find PPMI app {PpmiAppClientId} in Entra. Scope configuration skipped.", ppmiAppClientId);
+                    var msg = $"Could not find PPMI app {ppmiAppClientId} in Entra after waiting. Scope configuration skipped.";
+                    logger.LogWarning(msg);
+                    warnings.Add(msg);
                 }
             }
-            else if (!isNoAuth && !isApiKey)
+            else
             {
-                logger.LogWarning("PPMI app was not provisioned. Scope configuration skipped.");
+                var msg = "PPMI app was not provisioned by the server. Scope configuration skipped.";
+                logger.LogWarning(msg);
+                warnings.Add(msg);
             }
 
-            // Step 5: Show completion messages
+            // Step 5: Show completion summary
             logger.LogInformation("");
-            logger.LogInformation("MCP server '{ServerName}' has been registered successfully.", serverName);
+            if (warnings.Count == 0)
+            {
+                logger.LogInformation("MCP server '{ServerName}' has been registered successfully.", serverName);
+            }
+            else
+            {
+                logger.LogInformation("MCP server '{ServerName}' was registered with {Count} warning(s):", serverName, warnings.Count);
+                logger.LogInformation("");
+                foreach (var w in warnings)
+                {
+                    logger.LogWarning("  - {Warning}", w);
+                }
+            }
+
             logger.LogInformation("");
             var appNumber = 1;
             logger.LogInformation("The following Entra applications were created:");
