@@ -819,24 +819,31 @@ public static class DevelopMcpCommand
         var serverUrlOption = new Option<string?>(["--server-url", "-u"], description: "Remote MCP server URL");
         command.AddOption(serverUrlOption);
 
-        var authTypeOption = new Option<string?>(["--auth-type", "-a"], description: "Authentication type: Entra, ExternalIDP, or NoAuth");
+        var authTypeOption = new Option<string?>(["--auth-type", "-a"], description: "Authentication type: EntraOAuth, ExternalOAuth, APIKey, or NoAuth");
         command.AddOption(authTypeOption);
 
-        // ExternalIDP-specific options
-        var idpAuthUrlOption = new Option<string?>("--idp-authorization-url", description: "External IDP authorization URL (required for ExternalIDP)");
+        // ExternalOAuth-specific options
+        var idpAuthUrlOption = new Option<string?>("--idp-authorization-url", description: "External OAuth authorization URL (required for ExternalOAuth)");
         command.AddOption(idpAuthUrlOption);
 
-        var idpTokenUrlOption = new Option<string?>("--idp-token-url", description: "External IDP token URL (required for ExternalIDP)");
+        var idpTokenUrlOption = new Option<string?>("--idp-token-url", description: "External OAuth token URL (required for ExternalOAuth)");
         command.AddOption(idpTokenUrlOption);
 
-        var idpScopesOption = new Option<string?>("--idp-scopes", description: "External IDP scopes (required for ExternalIDP)");
+        var idpScopesOption = new Option<string?>("--idp-scopes", description: "External OAuth scopes (required for ExternalOAuth)");
         command.AddOption(idpScopesOption);
 
-        var idpClientIdOption = new Option<string?>("--idp-client-id", description: "External IDP client ID (required for ExternalIDP)");
+        var idpClientIdOption = new Option<string?>("--idp-client-id", description: "External OAuth client ID (required for ExternalOAuth)");
         command.AddOption(idpClientIdOption);
 
-        var idpClientSecretOption = new Option<string?>("--idp-client-secret", description: "External IDP client secret (required for ExternalIDP)");
+        var idpClientSecretOption = new Option<string?>("--idp-client-secret", description: "External OAuth client secret (required for ExternalOAuth)");
         command.AddOption(idpClientSecretOption);
+
+        // APIKey-specific options
+        var apiKeyLocationOption = new Option<string?>("--api-key-location", description: "API key location: Header or Query (required for APIKey)");
+        command.AddOption(apiKeyLocationOption);
+
+        var apiKeyNameOption = new Option<string?>("--api-key-name", description: "API key parameter/header name, e.g. 'X-API-Key' or 'token' (required for APIKey)");
+        command.AddOption(apiKeyNameOption);
 
         var toolsOption = new Option<string?>("--tools", description: "Comma-separated list of tool names exposed by this server (e.g., 'tool1,tool2,tool3')");
         command.AddOption(toolsOption);
@@ -869,6 +876,8 @@ public static class DevelopMcpCommand
             var idpScopes = context.ParseResult.GetValueForOption(idpScopesOption);
             var idpClientId = context.ParseResult.GetValueForOption(idpClientIdOption);
             var idpClientSecret = context.ParseResult.GetValueForOption(idpClientSecretOption);
+            var apiKeyLocation = context.ParseResult.GetValueForOption(apiKeyLocationOption);
+            var apiKeyName = context.ParseResult.GetValueForOption(apiKeyNameOption);
             var toolsInput = context.ParseResult.GetValueForOption(toolsOption);
             var remoteScopes = context.ParseResult.GetValueForOption(remoteScopesOption);
             var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
@@ -880,6 +889,7 @@ public static class DevelopMcpCommand
             var isEntra = false;
             var isExternalIdp = false;
             var isNoAuth = false;
+            var isApiKey = false;
             List<string>? toolList = null;
             Dictionary<string, string>? toolDescriptions = null;
 
@@ -921,50 +931,81 @@ public static class DevelopMcpCommand
                 // Validate auth type
                 if (string.IsNullOrWhiteSpace(authType))
                 {
-                    authType = InputValidator.PromptAndValidateRequiredInput("Enter authentication type (Entra, ExternalIDP, or NoAuth): ", "Auth type", 20);
+                    authType = InputValidator.PromptAndValidateRequiredInput("Enter authentication type (EntraOAuth, ExternalOAuth, APIKey, or NoAuth): ", "Auth type", 20);
                     if (string.IsNullOrWhiteSpace(authType)) { logger.LogError("Auth type is required"); return; }
                 }
 
-                isEntra = authType.Equals("Entra", StringComparison.OrdinalIgnoreCase);
-                isExternalIdp = authType.Equals("ExternalIDP", StringComparison.OrdinalIgnoreCase);
+                // Normalize legacy auth type names
+                if (authType.Equals("Entra", StringComparison.OrdinalIgnoreCase)) authType = "EntraOAuth";
+                if (authType.Equals("ExternalIDP", StringComparison.OrdinalIgnoreCase)) authType = "ExternalOAuth";
+
+                isEntra = authType.Equals("EntraOAuth", StringComparison.OrdinalIgnoreCase);
+                isExternalIdp = authType.Equals("ExternalOAuth", StringComparison.OrdinalIgnoreCase);
                 isNoAuth = authType.Equals("NoAuth", StringComparison.OrdinalIgnoreCase);
-                if (!isEntra && !isExternalIdp && !isNoAuth)
+                isApiKey = authType.Equals("APIKey", StringComparison.OrdinalIgnoreCase);
+                if (!isEntra && !isExternalIdp && !isNoAuth && !isApiKey)
                 {
-                    logger.LogError("Invalid auth type '{AuthType}'. Must be 'Entra', 'ExternalIDP', or 'NoAuth'", authType);
+                    logger.LogError("Invalid auth type '{AuthType}'. Must be 'EntraOAuth', 'ExternalOAuth', 'APIKey', or 'NoAuth'", authType);
                     return;
                 }
 
-                // For ExternalIDP, collect IDP details
+                // For ExternalOAuth, collect IDP details
                 if (isExternalIdp)
                 {
                     if (string.IsNullOrWhiteSpace(idpAuthUrl))
                     {
-                        idpAuthUrl = InputValidator.PromptAndValidateRequiredInput("Enter external IDP authorization URL: ", "Authorization URL", 500);
-                        if (string.IsNullOrWhiteSpace(idpAuthUrl)) { logger.LogError("Authorization URL is required for ExternalIDP"); return; }
+                        idpAuthUrl = InputValidator.PromptAndValidateRequiredInput("Enter external OAuth authorization URL: ", "Authorization URL", 500);
+                        if (string.IsNullOrWhiteSpace(idpAuthUrl)) { logger.LogError("Authorization URL is required for ExternalOAuth"); return; }
                     }
 
                     if (string.IsNullOrWhiteSpace(idpTokenUrl))
                     {
-                        idpTokenUrl = InputValidator.PromptAndValidateRequiredInput("Enter external IDP token URL: ", "Token URL", 500);
-                        if (string.IsNullOrWhiteSpace(idpTokenUrl)) { logger.LogError("Token URL is required for ExternalIDP"); return; }
+                        idpTokenUrl = InputValidator.PromptAndValidateRequiredInput("Enter external OAuth token URL: ", "Token URL", 500);
+                        if (string.IsNullOrWhiteSpace(idpTokenUrl)) { logger.LogError("Token URL is required for ExternalOAuth"); return; }
                     }
 
                     if (string.IsNullOrWhiteSpace(idpScopes))
                     {
-                        idpScopes = InputValidator.PromptAndValidateRequiredInput("Enter external IDP scopes: ", "Scopes", 500);
-                        if (string.IsNullOrWhiteSpace(idpScopes)) { logger.LogError("Scopes are required for ExternalIDP"); return; }
+                        idpScopes = InputValidator.PromptAndValidateRequiredInput("Enter external OAuth scopes: ", "Scopes", 500);
+                        if (string.IsNullOrWhiteSpace(idpScopes)) { logger.LogError("Scopes are required for ExternalOAuth"); return; }
                     }
 
                     if (string.IsNullOrWhiteSpace(idpClientId))
                     {
-                        idpClientId = InputValidator.PromptAndValidateRequiredInput("Enter external IDP client ID: ", "Client ID", 100);
-                        if (string.IsNullOrWhiteSpace(idpClientId)) { logger.LogError("Client ID is required for ExternalIDP"); return; }
+                        idpClientId = InputValidator.PromptAndValidateRequiredInput("Enter external OAuth client ID: ", "Client ID", 100);
+                        if (string.IsNullOrWhiteSpace(idpClientId)) { logger.LogError("Client ID is required for ExternalOAuth"); return; }
                     }
 
                     if (string.IsNullOrWhiteSpace(idpClientSecret))
                     {
-                        idpClientSecret = InputValidator.PromptAndValidateRequiredInput("Enter external IDP client secret: ", "Client secret", 500);
-                        if (string.IsNullOrWhiteSpace(idpClientSecret)) { logger.LogError("Client secret is required for ExternalIDP"); return; }
+                        idpClientSecret = InputValidator.PromptAndValidateRequiredInput("Enter external OAuth client secret: ", "Client secret", 500);
+                        if (string.IsNullOrWhiteSpace(idpClientSecret)) { logger.LogError("Client secret is required for ExternalOAuth"); return; }
+                    }
+                }
+
+                // For APIKey, collect key location and name
+                if (isApiKey)
+                {
+                    if (string.IsNullOrWhiteSpace(apiKeyLocation))
+                    {
+                        apiKeyLocation = InputValidator.PromptAndValidateRequiredInput("Enter API key location (Header or Query): ", "API key location", 10);
+                        if (string.IsNullOrWhiteSpace(apiKeyLocation)) { logger.LogError("API key location is required for APIKey"); return; }
+                    }
+
+                    if (!apiKeyLocation.Equals("Header", StringComparison.OrdinalIgnoreCase) &&
+                        !apiKeyLocation.Equals("Query", StringComparison.OrdinalIgnoreCase))
+                    {
+                        logger.LogError("Invalid API key location '{Location}'. Must be 'Header' or 'Query'", apiKeyLocation);
+                        return;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(apiKeyName))
+                    {
+                        var prompt = apiKeyLocation.Equals("Header", StringComparison.OrdinalIgnoreCase)
+                            ? "Enter API key header name (e.g., 'X-API-Key'): "
+                            : "Enter API key query parameter name (e.g., 'token'): ";
+                        apiKeyName = InputValidator.PromptAndValidateRequiredInput(prompt, "API key name", 100);
+                        if (string.IsNullOrWhiteSpace(apiKeyName)) { logger.LogError("API key name is required for APIKey"); return; }
                     }
                 }
 
@@ -997,8 +1038,8 @@ public static class DevelopMcpCommand
                 }
 
                 // Remote scopes are optional — if empty, the Remote Proxy connector uses NoAuth
-                // Skip for NoAuth since no scopes are needed
-                if (!isNoAuth && string.IsNullOrWhiteSpace(remoteScopes))
+                // Skip for NoAuth and APIKey since no scopes are needed
+                if (!isNoAuth && !isApiKey && string.IsNullOrWhiteSpace(remoteScopes))
                 {
                     Console.Write("Enter scopes for the remote MCP server (leave empty for no auth): ");
                     remoteScopes = Console.ReadLine()?.Trim() ?? string.Empty;
@@ -1018,12 +1059,7 @@ public static class DevelopMcpCommand
                 return;
             }
 
-            // Step 1: Create Entra app(s) and get secrets (skip for NoAuth)
-            if (!isNoAuth && graphApiService == null)
-            {
-                logger.LogError("Graph API service is not available. Cannot create Entra applications.");
-                return;
-            }
+            // Step 1: Create Entra app(s) and get secrets
 
             // Auto-detect tenant ID from az account if not provided
             var tenantId = userTenantId ?? string.Empty;
@@ -1075,31 +1111,42 @@ public static class DevelopMcpCommand
             string? remoteProxyAppObjectId = null;
             string? a365AppObjectId = null;
 
-            if (isNoAuth)
+            // A365 Proxy app is always created (including NoAuth — needed for the A365 Proxy connector)
+            if (graphApiService == null)
             {
-                logger.LogDebug("NoAuth mode: skipping Entra app creation");
+                logger.LogError("Graph API service is not available. Cannot create Entra applications.");
+                return;
+            }
+
+            logger.LogDebug("Creating Entra application for A365 Proxy...");
+            var a365App = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-A365Proxy", serviceTreeId: serviceTreeId);
+            if (a365App == null)
+            {
+                logger.LogError("Failed to create Entra application for A365 Proxy");
+                return;
+            }
+
+            var a365Secret = await graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId);
+            if (string.IsNullOrWhiteSpace(a365Secret))
+            {
+                logger.LogError("Failed to create secret for A365 Proxy Entra application");
+                return;
+            }
+
+            logger.LogDebug("Created A365 Proxy app: {ClientId}", a365App.Value.ClientId);
+            a365AppObjectId = a365App.Value.ObjectId;
+
+            if (isNoAuth || isApiKey)
+            {
+                // NoAuth/APIKey: only A365 Proxy app needed, no Remote Proxy app
+                authMetadata = new Models.AddMcpServerAuthMetadata
+                {
+                    ClientApp1Id = a365App.Value.ClientId,
+                    ClientApp1Secret = a365Secret,
+                };
             }
             else
             {
-                // A365 Proxy app (always created for Entra and ExternalIDP)
-                logger.LogDebug("Creating Entra application for A365 Proxy...");
-                var a365App = await graphApiService!.CreateEntraAppAsync(tenantId, $"{serverName}-A365Proxy", serviceTreeId: serviceTreeId);
-                if (a365App == null)
-                {
-                    logger.LogError("Failed to create Entra application for A365 Proxy");
-                    return;
-                }
-
-                var a365Secret = await graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId);
-                if (string.IsNullOrWhiteSpace(a365Secret))
-                {
-                    logger.LogError("Failed to create secret for A365 Proxy Entra application");
-                    return;
-                }
-
-                logger.LogDebug("Created A365 Proxy app: {ClientId}", a365App.Value.ClientId);
-                a365AppObjectId = a365App.Value.ObjectId;
-
                 string clientApp2Id;
                 string clientApp2Secret;
 
@@ -1158,6 +1205,11 @@ public static class DevelopMcpCommand
                     TokenUrl = idpTokenUrl,
                     Scopes = idpScopes,
                 } : null,
+                ApiKeyDetails = isApiKey ? new Models.ApiKeyDetails
+                {
+                    Location = apiKeyLocation,
+                    Name = apiKeyName,
+                } : null,
                 RemoteServerScopes = remoteScopes,
             };
 
@@ -1175,8 +1227,8 @@ public static class DevelopMcpCommand
             var a365RedirectUri = addResponse.Server?.A365ProxyRedirectUri;
             var remoteRedirectUri = addResponse.Server?.RemoteMCPServerProxyRedirectUri;
 
-            // Step 3: Update redirect URIs on Entra apps (skip for NoAuth)
-            if (!isNoAuth && !string.IsNullOrWhiteSpace(a365RedirectUri) && a365AppObjectId != null)
+            // Step 3: Update redirect URIs on Entra apps (skip for NoAuth/APIKey)
+            if (!isNoAuth && !isApiKey && !string.IsNullOrWhiteSpace(a365RedirectUri) && a365AppObjectId != null)
             {
                 var a365OriginalUri = RemoveTcPrefix(a365RedirectUri);
                 var a365Uris = a365OriginalUri != null ? new[] { a365RedirectUri, a365OriginalUri } : new[] { a365RedirectUri };
@@ -1184,7 +1236,7 @@ public static class DevelopMcpCommand
                 logger.LogDebug("Updating redirect URIs on A365 Proxy Entra app...");
                 await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, a365AppObjectId, a365Uris);
             }
-            else if (!isNoAuth)
+            else if (!isNoAuth && !isApiKey)
             {
                 logger.LogWarning("A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped for A365 Proxy app.");
             }
@@ -1202,9 +1254,9 @@ public static class DevelopMcpCommand
                 logger.LogWarning("Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped for Remote Proxy app.");
             }
 
-            // Step 4: Configure PPMI app scopes and A365 Proxy API permissions (skip for NoAuth)
+            // Step 4: Configure PPMI app scopes and A365 Proxy API permissions (skip for NoAuth/APIKey)
             var ppmiAppClientId = addResponse.Server?.PpmiAppClientId;
-            if (!isNoAuth && !string.IsNullOrWhiteSpace(ppmiAppClientId))
+            if (!isNoAuth && !isApiKey && !string.IsNullOrWhiteSpace(ppmiAppClientId))
             {
                 logger.LogDebug("PPMI app provisioned: {PpmiAppClientId}", ppmiAppClientId);
                 logger.LogDebug("Waiting for PPMI app to replicate in Entra ID (this may take up to 60 seconds)...");
@@ -1250,7 +1302,7 @@ public static class DevelopMcpCommand
                     logger.LogWarning("Could not find PPMI app {PpmiAppClientId} in Entra. Scope configuration skipped.", ppmiAppClientId);
                 }
             }
-            else if (!isNoAuth)
+            else if (!isNoAuth && !isApiKey)
             {
                 logger.LogWarning("PPMI app was not provisioned. Scope configuration skipped.");
             }
@@ -1258,27 +1310,30 @@ public static class DevelopMcpCommand
             // Step 5: Show completion messages
             logger.LogInformation("");
             logger.LogInformation("MCP server '{ServerName}' has been registered successfully.", serverName);
-            if (!isNoAuth)
+            logger.LogInformation("");
+            var appNumber = 1;
+            logger.LogInformation("The following Entra applications were created:");
+            logger.LogInformation("  {Num}. A365 Proxy:    {ClientId}  ({DisplayName})", appNumber++, authMetadata!.ClientApp1Id, $"{serverName}-A365Proxy");
+            if (isEntra)
+            {
+                logger.LogInformation("  {Num}. Remote Proxy:  {ClientId}  ({DisplayName})", appNumber++, authMetadata.ClientApp2Id, $"{serverName}-RemoteProxy");
+            }
+            if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
+            {
+                logger.LogInformation("  {Num}. PPMI App:      {ClientId}  ({DisplayName})", appNumber++, ppmiAppClientId, serverName);
+            }
+            logger.LogInformation("");
+            logger.LogInformation("Please ask your tenant admin to grant admin consent on all Entra applications listed above.");
+            if (isExternalIdp && !string.IsNullOrWhiteSpace(remoteRedirectUri))
             {
                 logger.LogInformation("");
-                logger.LogInformation("The following Entra applications were created:");
-                logger.LogInformation("  1. A365 Proxy:    {ClientId}  ({DisplayName})", authMetadata!.ClientApp1Id, $"{serverName}-A365Proxy");
-                if (isEntra)
-                {
-                    logger.LogInformation("  2. Remote Proxy:  {ClientId}  ({DisplayName})", authMetadata.ClientApp2Id, $"{serverName}-RemoteProxy");
-                }
-                if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
-                {
-                    logger.LogInformation("  {Num}. PPMI App:      {ClientId}  ({DisplayName})", isEntra ? "3" : "2", ppmiAppClientId, serverName);
-                }
+                logger.LogInformation("Redirect URI: {RedirectUri}", remoteRedirectUri);
+                logger.LogInformation("Please add this redirect URI to your external IDP application ({ClientId}).", idpClientId);
+            }
+            if (isApiKey)
+            {
                 logger.LogInformation("");
-                logger.LogInformation("Please ask your tenant admin to grant admin consent on all Entra applications listed above.");
-                if (isExternalIdp && !string.IsNullOrWhiteSpace(remoteRedirectUri))
-                {
-                    logger.LogInformation("");
-                    logger.LogInformation("Redirect URI: {RedirectUri}", remoteRedirectUri);
-                    logger.LogInformation("Please add this redirect URI to your external IDP application ({ClientId}).", idpClientId);
-                }
+                logger.LogInformation("API Key Authentication: {Location} ({Name})", apiKeyLocation, apiKeyName);
             }
         });
 

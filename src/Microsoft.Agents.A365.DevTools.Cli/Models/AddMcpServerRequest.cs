@@ -52,10 +52,16 @@ public class AddMcpServerRequest
     public string? RemoteServerScopes { get; set; }
 
     /// <summary>
-    /// External IDP details. Required when AuthType is "ExternalIDP".
+    /// External IDP details. Required when AuthType is "ExternalOAuth".
     /// </summary>
     [JsonPropertyName("externalIdp")]
     public ExternalIdpDetails? ExternalIdp { get; set; }
+
+    /// <summary>
+    /// API key details. Required when AuthType is "APIKey".
+    /// </summary>
+    [JsonPropertyName("apiKeyDetails")]
+    public ApiKeyDetails? ApiKeyDetails { get; set; }
 }
 
 /// <summary>
@@ -80,6 +86,24 @@ public class ExternalIdpDetails
     /// </summary>
     [JsonPropertyName("scopes")]
     public string? Scopes { get; set; }
+}
+
+/// <summary>
+/// API key details for BYO MCP servers using API key authentication
+/// </summary>
+public class ApiKeyDetails
+{
+    /// <summary>
+    /// Where the API key is sent: "Header" or "Query"
+    /// </summary>
+    [JsonPropertyName("location")]
+    public string? Location { get; set; }
+
+    /// <summary>
+    /// The header name or query parameter name for the API key
+    /// </summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
 }
 
 /// <summary>
