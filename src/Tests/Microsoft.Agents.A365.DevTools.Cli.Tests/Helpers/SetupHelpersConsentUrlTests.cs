@@ -68,7 +68,7 @@ public class SetupHelpersConsentUrlTests
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
         var obsUrl = urls.First(u => u.ResourceName == "Observability API").ConsentUrl;
 
-        obsUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"),
+        obsUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
     }
 
@@ -220,7 +220,8 @@ public class SetupHelpersConsentUrlTests
 
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"),
             because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
-        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"));
+        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
     }
 

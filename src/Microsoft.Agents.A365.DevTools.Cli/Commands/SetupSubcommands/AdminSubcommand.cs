@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
@@ -38,7 +39,8 @@ internal static class AdminSubcommand
         IConfigService configService,
         AzureAuthValidator authValidator,
         GraphApiService graphApiService,
-        IConfirmationProvider confirmationProvider)
+        IConfirmationProvider confirmationProvider,
+        AgentBlueprintService? blueprintService = null)
     {
         var command = new Command(
             "admin",
@@ -158,8 +160,7 @@ internal static class AdminSubcommand
                 var mcpManifestPath = Path.Combine(
                     setupConfig.DeploymentProjectPath ?? string.Empty,
                     McpConstants.ToolingManifestFileName);
-                var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
-                var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
 
                 var specs = new List<ResourcePermissionSpec>
                 {
@@ -168,12 +169,9 @@ internal static class AdminSubcommand
                         "Microsoft Graph",
                         setupConfig.AgentApplicationScopes.ToArray(),
                         SetInheritable: false),
-                    new ResourcePermissionSpec(
-                        mcpResourceAppId,
-                        "Agent 365 Tools",
-                        mcpScopes,
-                        SetInheritable: false),
                 };
+                specs.AddRange(scopesByAudience.Select(kvp =>
+                    new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: false)));
                 specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
 
                 foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -215,7 +213,8 @@ internal static class AdminSubcommand
                         graphApiService, setupConfig,
                         setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                         specs, logger, setupResults, ct,
-                        knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+                        knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
+                        blueprintService: blueprintService);
 
                 setupResults.AdminConsentGranted = grantsConfigured;
 

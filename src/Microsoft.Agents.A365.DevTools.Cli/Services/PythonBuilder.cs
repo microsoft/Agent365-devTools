@@ -548,7 +548,7 @@ public class PythonBuilder : IPlatformBuilder
 
     /// <summary>
     /// Creates requirements.txt for Azure deployment.
-    /// For projects with pyproject.toml or setup.py, uses editable install (-e .).
+    /// For projects with pyproject.toml or setup.py, installs from a pre-built wheel in dist/.
     /// For projects with only requirements.txt, copies the existing file to preserve dependencies.
     /// </summary>
     private async Task CreateAzureRequirementsTxt(string projectDir, string publishPath, bool verbose)
@@ -571,16 +571,19 @@ public class PythonBuilder : IPlatformBuilder
             {
                 _logger.LogWarning(
                     "Both pyproject.toml/setup.py and requirements.txt exist. " +
-                    "Using editable install approach (pyproject.toml takes precedence). " +
+                    "Using wheel install approach (pyproject.toml takes precedence). " +
                     "Dependencies from requirements.txt will be ignored - ensure they're declared in pyproject.toml instead.");
             }
 
-            // Use editable install approach for projects with pyproject.toml/setup.py
-            // This allows pip to install the project as a package
-            _logger.LogInformation("Detected pyproject.toml or setup.py - using editable install approach");
-            var content = "--find-links dist\n--pre\n-e .\n";
+            // Install from the pre-built wheel in dist/ rather than using editable install (-e .)
+            // Editable installs fail on Azure because Oryx builds in a different location than wwwroot
+            var publishDist = Path.Combine(publishPath, "dist");
+            var packageName = await DetectPackageName(publishPath, publishDist);
+
+            _logger.LogInformation("Detected pyproject.toml or setup.py - using wheel install approach");
+            var content = $"--no-index\n--find-links dist\n--pre\n{packageName}\n";
             await File.WriteAllTextAsync(requirementsTxt, content);
-            _logger.LogInformation("Created requirements.txt for editable install");
+            _logger.LogInformation("Created requirements.txt to install {Package} from local wheel", packageName);
         }
         else if (File.Exists(sourceRequirements))
         {
@@ -616,6 +619,104 @@ public class PythonBuilder : IPlatformBuilder
             var content = "# Auto-generated - add your dependencies here\n";
             await File.WriteAllTextAsync(requirementsTxt, content);
         }
+    }
+
+    /// <summary>
+    /// Detects the package name from the pre-built wheel filename or pyproject.toml.
+    /// Wheel filenames follow the format: {name}-{version}-{tags}.whl
+    /// where the distribution name uses underscores (PEP 427), but pip accepts hyphens.
+    /// </summary>
+    private async Task<string> DetectPackageName(string publishPath, string publishDist)
+    {
+        // Read the expected project name from pyproject.toml first, so we can use it
+        // to narrow wheel selection when multiple wheels exist.
+        string? expectedName = null;
+        var pyprojectPath = Path.Combine(publishPath, "pyproject.toml");
+        if (File.Exists(pyprojectPath))
+        {
+            try
+            {
+                var tomlContent = await File.ReadAllTextAsync(pyprojectPath);
+
+                // Extract the [project] table body up to the next table header (or end of file),
+                // then match name = "..." only within that section.
+                var projectSectionMatch = System.Text.RegularExpressions.Regex.Match(
+                    tomlContent,
+                    @"^\[project\]\s*$\r?\n(.*?)(?=^\[|\z)",
+                    System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Singleline);
+                if (projectSectionMatch.Success)
+                {
+                    var projectSection = projectSectionMatch.Groups[1].Value;
+                    var nameMatch = System.Text.RegularExpressions.Regex.Match(
+                        projectSection,
+                        @"^name\s*=\s*[""']([^""']+)[""']\s*$",
+                        System.Text.RegularExpressions.RegexOptions.Multiline);
+                    if (nameMatch.Success)
+                    {
+                        expectedName = nameMatch.Groups[1].Value;
+                        _logger.LogDebug("Detected expected package name from pyproject.toml: {Name}", expectedName);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse pyproject.toml when detecting package name");
+            }
+        }
+
+        // Try to extract from wheel filename
+        if (Directory.Exists(publishDist))
+        {
+            var wheels = Directory.GetFiles(publishDist, "*.whl");
+            if (wheels.Length > 0)
+            {
+                Array.Sort(wheels, StringComparer.Ordinal);
+
+                // If we know the expected project name, prefer the matching wheel
+                if (expectedName is not null && wheels.Length > 1)
+                {
+                    var normalizedExpected = expectedName.Replace('-', '_').ToLowerInvariant();
+                    var matched = wheels.FirstOrDefault(w =>
+                        Path.GetFileNameWithoutExtension(w).Split('-')[0].ToLowerInvariant() == normalizedExpected);
+                    if (matched is not null)
+                    {
+                        _logger.LogDebug("Selected wheel matching project name {Name}: {Wheel}", expectedName, Path.GetFileName(matched));
+                        wheels = new[] { matched };
+                    }
+                }
+
+                if (wheels.Length > 1)
+                {
+                    _logger.LogWarning(
+                        "Multiple wheel files found in {PublishDist}; using the first wheel in deterministic filename order: {Wheel}",
+                        publishDist,
+                        Path.GetFileName(wheels[0]));
+                }
+
+                var wheelName = Path.GetFileNameWithoutExtension(wheels[0]);
+                // Wheel format: {name}-{version}-{python}-{abi}-{platform}
+                var parts = wheelName.Split('-');
+                if (parts.Length >= 2)
+                {
+                    var name = parts[0].Replace('_', '-');
+                    _logger.LogDebug("Detected package name from wheel: {Name}", name);
+                    return name;
+                }
+            }
+        }
+
+        // If we got a name from pyproject.toml but no wheels, use it
+        if (expectedName is not null)
+        {
+            _logger.LogDebug("No wheels found, using package name from pyproject.toml: {Name}", expectedName);
+            return expectedName;
+        }
+
+        // Fail fast rather than falling back to installing from the source tree
+        _logger.LogError("Could not detect package name from wheel metadata or pyproject.toml");
+        throw new DeployAppException(
+            "Could not detect Python package name from the built wheel or pyproject.toml. " +
+            "Ensure a wheel is present in the publish dist directory or that pyproject.toml contains a valid [project] name.");
     }
 
     private async Task CreateDeploymentFile(string publishPath)

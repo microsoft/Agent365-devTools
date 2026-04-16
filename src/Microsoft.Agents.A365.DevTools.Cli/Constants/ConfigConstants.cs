@@ -34,9 +34,10 @@ public static class ConfigConstants
     public const string CustomClientAppRegistrationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration";
 
     /// <summary>
-    /// Production Agent 365 Tools Discover endpoint URL
+    /// Agent 365 Tools Discover endpoint URL (V2)
     /// </summary>
-    public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/discoverToolServers";
+
+    public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers";
 
     /// <summary>
     /// Production Agent 365 Tools Create endpoint URL
@@ -75,13 +76,6 @@ public static class ConfigConstants
     /// same resource and maps to the same effective consent.
     /// </summary>
     public const string MessagingBotApiAdminConsentScope = "AgentData.ReadWrite";
-
-    /// <summary>
-    /// Observability API scope used for admin consent URL construction.
-    /// Note: the orchestrator grants "user_impersonation" + ObservabilityApiOtelWriteScope via OAuth2
-    /// permission grants; this scope is the consent-URL-facing name for the same resource.
-    /// </summary>
-    public const string ObservabilityApiAdminConsentScope = "Agent365.ReadWrite.All";
 
     /// <summary>
     /// Observability API scope for writing OpenTelemetry data.
@@ -159,7 +153,6 @@ public static class ConfigConstants
         // Default to production endpoint
         return environment?.ToLower() switch
         {
-            "prod" => ProductionDiscoverEndpointUrl,
             _ => ProductionDiscoverEndpointUrl
         };
     }

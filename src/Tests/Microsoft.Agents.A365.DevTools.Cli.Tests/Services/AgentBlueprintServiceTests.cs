@@ -166,6 +166,100 @@ public class AgentBlueprintServiceTests
     }
 
     [Fact]
+    public async Task SetInheritablePermissionsAsync_ReturnsFalse_WhenPatchThrows()
+    {
+        // Arrange — use a subclass that overrides GraphPatchAsync to throw,
+        // simulating a transient network error during the PATCH call (#366 regression).
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new ThrowingOnPatchGraphApiService(_mockGraphLogger, executor, FakeAuth(), handler);
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // ResolveBlueprintObjectIdAsync: 404 → resolve via appId filter
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // GET existing permissions — returns an entry so the merge+PATCH path is taken
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[] { new { resourceAppId = "resAppId", inheritableScopes = new { scopes = new[] { "scope1" } } } }
+            }))
+        });
+
+        // Act
+        var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
+
+        // Assert — must not throw; must surface the failure gracefully
+        ok.Should().BeFalse(because: "GraphPatchAsync threw an exception and the caller must not crash");
+        already.Should().BeFalse();
+        err.Should().Be("Network error during PATCH");
+    }
+
+    [Fact]
+    public async Task SetInheritablePermissionsAsync_ReturnsFalse_WhenPatchReturnsFalse()
+    {
+        // Arrange — GraphPatchAsync succeeds at the HTTP level but returns a non-2xx status,
+        // causing GraphPatchAsync to return false. The method must return (ok: false) without throwing.
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // ResolveBlueprintObjectIdAsync: 404 → resolve via appId filter
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // GET existing permissions — returns an entry so the PATCH path is taken
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[] { new { resourceAppId = "resAppId", inheritableScopes = new { scopes = new[] { "scope1" } } } }
+            }))
+        });
+
+        // PATCH returns 400 Bad Request — GraphPatchAsync returns false
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("{\"error\":{\"code\":\"BadRequest\",\"message\":\"Invalid payload\"}}")
+        });
+
+        // Act
+        var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
+
+        // Assert — must not throw; must surface the failure gracefully
+        ok.Should().BeFalse(because: "GraphPatchAsync returned false (HTTP 400)");
+        already.Should().BeFalse();
+        err.Should().Contain("Graph PATCH returned false", because: "error message must identify the failing operation");
+    }
+
+    [Fact]
     public async Task DeleteAgentIdentityAsync_WithValidIdentity_ReturnsTrue()
     {
         // Arrange
@@ -440,6 +534,25 @@ public class AgentBlueprintServiceTests
         }
     }
 
+    // Test helper — overrides GraphPatchAsync to throw, simulating a transient network failure.
+    private sealed class ThrowingOnPatchGraphApiService : GraphApiService
+    {
+        public ThrowingOnPatchGraphApiService(
+            ILogger<GraphApiService> logger,
+            CommandExecutor executor,
+            IAuthenticationService authService,
+            HttpMessageHandler handler)
+            : base(logger, executor, authService, handler) { }
+
+        public override Task<bool> GraphPatchAsync(
+            string tenantId,
+            string relativePath,
+            object payload,
+            CancellationToken ct = default,
+            IEnumerable<string>? scopes = null)
+            => Task.FromException<bool>(new HttpRequestException("Network error during PATCH"));
+    }
+
     private static IAuthenticationService FakeAuth()
     {
         var mock = Substitute.For<IAuthenticationService>();
@@ -464,9 +577,194 @@ public class AgentBlueprintServiceTests
         // Pass a no-op login hint resolver to skip the real 'az account show' process spawned by
         // AzCliHelper.ResolveLoginHintAsync — that static call bypasses the mocked CommandExecutor
         // and causes each test to wait several seconds for the real az CLI.
-        var graphService = new GraphApiService(_mockGraphLogger, executor, Substitute.For<IAuthenticationService>(), handler, _mockTokenProvider,
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, _mockTokenProvider,
             loginHintResolver: () => Task.FromResult<string?>(null));
         return (new AgentBlueprintService(_mockLogger, graphService), handler);
+    }
+
+    // ── GrantAppRoleAssignmentAsync tests ──────────────────────────────────────
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenResourceSpNotFound_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup returns empty value array
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenRoleNotFoundOnResourceSp_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP has no matching app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[]}")
+            });
+            // Existing assignments
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenRoleAlreadyAssigned_ReturnsTrueWithoutPost()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — role already assigned
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"resourceId\":\"resource-sp-id\",\"appRoleId\":\"role-id-1\"}]}")
+            });
+            // No POST should be queued — if the handler is called a 4th time it returns 404
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenPostSucceeds_ReturnsTrue()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent("{\"id\":\"assignment-id\"}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenPostFails_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST fails
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WithEmptyRoleNames_ReturnsTrue()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // Act — no HTTP calls should be made for an empty role list
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                Array.Empty<string>());
+
+            // Assert
+            result.Should().BeTrue();
+        }
     }
 }
 

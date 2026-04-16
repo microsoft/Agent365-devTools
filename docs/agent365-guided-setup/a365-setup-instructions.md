@@ -597,21 +597,23 @@ For complete details, see [Create agent instances](https://learn.microsoft.com/e
 
 Provide the user with the following instructions:
 
-1. **Get your blueprint app ID** by running:
+1. **Get your blueprint ID** by running:
    ```bash
-   a365 config display -g
+   a365 config display -g --field agentBlueprintId
    ```
-   Copy the `agentBlueprintAppId` value from the output.
 
 2. **Navigate to Developer Portal** by opening your browser and going to:
    ```
-   https://dev.teams.microsoft.com/tools/agent-blueprint/<your-blueprint-app-id>/configuration
+   https://dev.teams.microsoft.com/tools/agent-blueprint/<your-blueprint-id>/configuration
    ```
-   Replace `<your-blueprint-app-id>` with the value you copied.
+   Replace `<your-blueprint-id>` with the value you copied.
 
 3. **Configure the agent** in the Developer Portal:
-   - Set **Agent Type** to `Bot Based`
-   - Set **Bot ID** to your `agentBlueprintAppId` value
+   - Set **Agent Type** to `API Based`
+   - Set **Notification URL** to your agent's messaging endpoint. Get the value by running:
+     ```bash
+     a365 config display -g --field messagingEndpoint
+     ```
    - Select **Save**
 
 > **Note:** If the user doesn't have access to the Developer Portal, they should contact their tenant administrator to grant access or complete this configuration on their behalf.

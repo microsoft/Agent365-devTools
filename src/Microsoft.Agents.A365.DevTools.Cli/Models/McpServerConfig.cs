@@ -39,7 +39,19 @@ public class McpServerConfig
     /// </summary>
     [JsonPropertyName("audience")]
     public string? Audience { get; set; }
-    
+
+    /// <summary>
+    /// The unique server identifier (V2 schema — GUID assigned by the platform)
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
+
+    /// <summary>
+    /// The publisher of this MCP server (V2 schema — e.g. "Microsoft")
+    /// </summary>
+    [JsonPropertyName("publisher")]
+    public string? Publisher { get; set; }
+
     /// <summary>
     /// Optional description of the MCP server's capabilities
     /// </summary>

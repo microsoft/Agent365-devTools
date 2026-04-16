@@ -25,6 +25,7 @@ public class PermissionsSubcommandTests
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _mockGraphApiService;
     private readonly AgentBlueprintService _mockBlueprintService;
+    private readonly IConfirmationProvider _mockConfirmationProvider;
 
     public PermissionsSubcommandTests()
     {
@@ -35,6 +36,7 @@ public class PermissionsSubcommandTests
         _mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
+        _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
     }
 
     #region Command Structure Tests
@@ -48,7 +50,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         // Assert
         var mcpSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "mcp");
@@ -64,7 +66,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         // Assert
         var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
@@ -80,7 +82,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         // Assert
         command.Description.Should().Contain("Global Administrator");
@@ -95,7 +97,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         // Assert
         command.Subcommands.Should().HaveCount(4);
@@ -114,7 +116,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         // Assert
         command.Should().NotBeNull();
@@ -135,7 +137,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -152,7 +154,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -172,7 +174,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -192,7 +194,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -211,7 +213,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
 
@@ -233,7 +235,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -250,7 +252,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -270,7 +272,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -290,7 +292,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -309,7 +311,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -326,7 +328,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
 
@@ -464,6 +466,154 @@ public class PermissionsSubcommandTests
             because: "McpServersMetadata.Read.All is always included even when the ToolingManifest is missing, so the method proceeds to configure permissions and returns true (pending admin consent)");
     }
 
+    [Fact]
+    public async Task ConfigureMcpPermissionsAsync_UnknownScope_ReturnsFalse()
+    {
+        // Arrange — manifest with a scope that is neither V1 (McpServers.*.All),
+        // V2 (Tools.ListInvoke.All), nor the metadata scope
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var manifestPath = Path.Combine(tempDir, "ToolingManifest.json");
+            File.WriteAllText(manifestPath, """
+                {
+                  "mcpServers": [
+                    {
+                      "mcpServerName": "mcp_WeirdServer",
+                      "scope": "Unknown.ScopeValue.NotRecognized",
+                      "audience": "99999999-0000-0000-0000-000000000000"
+                    }
+                  ]
+                }
+                """);
+
+            var config = new Agent365Config
+            {
+                TenantId = "00000000-0000-0000-0000-000000000000",
+                AgentBlueprintId = "blueprint-123",
+                DeploymentProjectPath = tempDir
+            };
+
+            // Act
+            var result = await PermissionsSubcommand.ConfigureMcpPermissionsAsync(
+                "config.json",
+                _mockLogger,
+                _mockConfigService,
+                _mockExecutor,
+                _mockGraphApiService,
+                _mockBlueprintService,
+                config,
+                false);
+
+            // Assert — unknown scope blocks the operation
+            result.Should().BeFalse("unknown scopes must be rejected to prevent misconfigured blueprints");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ConfigureMcpPermissionsAsync_V1AndMetadataScopes_AreKnownAndProceed()
+    {
+        // Arrange — manifest with only valid V1 scopes (should pass validation and attempt permissions)
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var manifestPath = Path.Combine(tempDir, "ToolingManifest.json");
+            File.WriteAllText(manifestPath, $$"""
+                {
+                  "mcpServers": [
+                    {
+                      "mcpServerName": "mcp_MailTools",
+                      "scope": "McpServers.Mail.All",
+                      "audience": "{{Microsoft.Agents.A365.DevTools.Cli.Constants.McpConstants.WorkIQToolsProdAppId}}"
+                    }
+                  ]
+                }
+                """);
+
+            var config = new Agent365Config
+            {
+                TenantId = "00000000-0000-0000-0000-000000000000",
+                AgentBlueprintId = "blueprint-123",
+                DeploymentProjectPath = tempDir
+            };
+
+            // Act — proceeds past validation; may fail at Graph API (no real connection)
+            // but must NOT return false due to unknown-scope validation
+            Func<Task> act = () => PermissionsSubcommand.ConfigureMcpPermissionsAsync(
+                "config.json",
+                _mockLogger,
+                _mockConfigService,
+                _mockExecutor,
+                _mockGraphApiService,
+                _mockBlueprintService,
+                config,
+                false);
+
+            // Assert — passes scope validation (any exception is from Graph/blueprint, not scope guard)
+            await act.Should().NotThrowAsync<InvalidOperationException>(
+                "V1 scopes are known and must pass scope validation");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ConfigureMcpPermissionsAsync_V2Scope_IsKnownAndPassesValidation()
+    {
+        // Arrange — manifest with V2 scope (Tools.ListInvoke.All) should pass validation
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var manifestPath = Path.Combine(tempDir, "ToolingManifest.json");
+            File.WriteAllText(manifestPath, """
+                {
+                  "mcpServers": [
+                    {
+                      "mcpServerName": "mcp_TeamsServer",
+                      "scope": "Tools.ListInvoke.All",
+                      "audience": "2cc60bb0-1024-48c8-95f0-1fce211a04d8"
+                    }
+                  ]
+                }
+                """);
+
+            var config = new Agent365Config
+            {
+                TenantId = "00000000-0000-0000-0000-000000000000",
+                AgentBlueprintId = "blueprint-123",
+                DeploymentProjectPath = tempDir
+            };
+
+            // Act
+            Func<Task> act = () => PermissionsSubcommand.ConfigureMcpPermissionsAsync(
+                "config.json",
+                _mockLogger,
+                _mockConfigService,
+                _mockExecutor,
+                _mockGraphApiService,
+                _mockBlueprintService,
+                config,
+                false);
+
+            // Assert — V2 scope is known; validation passes (any failure is from Graph, not scope guard)
+            await act.Should().NotThrowAsync<InvalidOperationException>(
+                "V2 scope Tools.ListInvoke.All is known and must pass scope validation");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     #endregion
 
     #region ConfigureBotPermissionsAsync Tests
@@ -523,7 +673,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
 
@@ -544,7 +694,7 @@ public class PermissionsSubcommandTests
             _mockAuthValidator,
             _mockConfigService,
             _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
+            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
 
         var botSubcommand = command.Subcommands.FirstOrDefault(s => s.Name == "bot");
 
