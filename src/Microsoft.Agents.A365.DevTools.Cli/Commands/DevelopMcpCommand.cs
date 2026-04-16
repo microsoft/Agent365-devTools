@@ -3,6 +3,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
@@ -15,11 +16,22 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public static class DevelopMcpCommand
 {
     /// <summary>
-    /// Creates the develop-mcp command with subcommands for MCP server management in Dataverse
+    /// Creates the develop-mcp command with subcommands for MCP server management in Dataverse.
+    /// This overload excludes the evaluate subcommand.
     /// </summary>
     public static Command CreateCommand(
-        ILogger logger, 
+        ILogger logger,
         IAgent365ToolingService toolingService)
+        => CreateCommand(logger, toolingService, null);
+
+    /// <summary>
+    /// Creates the develop-mcp command with subcommands for MCP server management in Dataverse,
+    /// including the evaluate subcommand when the pipeline service is provided.
+    /// </summary>
+    public static Command CreateCommand(
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        IEvaluationPipelineService? evaluationPipelineService)
     {
         var developMcpCommand = new Command("develop-mcp", "Manage MCP servers in Dataverse environments");
 
@@ -39,7 +51,54 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
 
+        if (evaluationPipelineService is not null)
+        {
+            developMcpCommand.AddCommand(CreateEvaluateSubcommand(evaluationPipelineService));
+        }
+
         return developMcpCommand;
+    }
+
+    /// <summary>
+    /// Creates the evaluate subcommand for MCP server tool schema quality evaluation.
+    /// </summary>
+    private static Command CreateEvaluateSubcommand(IEvaluationPipelineService pipelineService)
+    {
+        var command = new Command("evaluate", "Evaluate MCP server tool schema quality and generate an HTML report");
+
+        var serverUrlArg = new Argument<string>("server-url", "MCP server Streamable HTTP endpoint URL");
+        command.AddArgument(serverUrlArg);
+
+        var outputDirOption = new Option<string>(
+            ["--output-dir", "-o"],
+            getDefaultValue: () => ".",
+            "Output directory for evaluation artifacts");
+
+        var evalEngineOption = new Option<string>(
+            "--eval-engine",
+            getDefaultValue: () => "auto",
+            "Coding agent for semantic evaluation (auto, github-copilot, claude-code, none)");
+
+        var authTokenOption = new Option<string?>(
+            "--auth-token",
+            "Bearer token for MCP server authentication");
+
+        command.AddOption(outputDirOption);
+        command.AddOption(evalEngineOption);
+        command.AddOption(authTokenOption);
+
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
+        {
+            var serverUrl = context.ParseResult.GetValueForArgument(serverUrlArg);
+            var outputDir = context.ParseResult.GetValueForOption(outputDirOption)!;
+            var evalEngine = context.ParseResult.GetValueForOption(evalEngineOption)!;
+            var authToken = context.ParseResult.GetValueForOption(authTokenOption);
+            var ct = context.GetCancellationToken();
+
+            await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct);
+        });
+
+        return command;
     }
 
     /// <summary>

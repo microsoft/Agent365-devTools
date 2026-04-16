@@ -145,9 +145,11 @@ class Program
             var processService = serviceProvider.GetRequiredService<IProcessService>();
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
 
+            var evaluationPipelineService = serviceProvider.GetRequiredService<IEvaluationPipelineService>();
+
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
@@ -165,17 +167,6 @@ class Program
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService));
-
-            // Register evaluate command
-            var evaluateLogger = loggerFactory.CreateLogger("EvaluateCommand");
-            var schemaDiscoveryService = serviceProvider.GetRequiredService<ISchemaDiscoveryService>();
-            var checklistGenerator = serviceProvider.GetRequiredService<IChecklistGenerator>();
-            var checklistEvaluator = serviceProvider.GetRequiredService<IChecklistEvaluator>();
-            var evaluationAnalyzer = serviceProvider.GetRequiredService<IEvaluationAnalyzer>();
-            var reportGenerator = serviceProvider.GetRequiredService<IReportGenerator>();
-            rootCommand.AddCommand(EvaluateCommand.CreateCommand(
-                evaluateLogger, schemaDiscoveryService, checklistGenerator,
-                checklistEvaluator, evaluationAnalyzer, reportGenerator));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
@@ -342,6 +333,7 @@ class Program
         services.AddSingleton<IChecklistEvaluator, ChecklistEvaluator>();
         services.AddSingleton<IEvaluationAnalyzer, EvaluationAnalyzer>();
         services.AddSingleton<IReportGenerator, ReportGenerator>();
+        services.AddSingleton<IEvaluationPipelineService, EvaluationPipelineService>();
     }
 
     public static string GetDisplayVersion()
