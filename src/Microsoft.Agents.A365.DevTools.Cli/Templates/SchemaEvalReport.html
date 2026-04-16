@@ -331,11 +331,23 @@ function renderMaturity() {
   var nextEntry = D.maturity.level < 4 ? ML[D.maturity.level + 1] : null;
   var nextLbl = nextEntry ? nextEntry.label : null;
 
+  var box;
+  if (reqs && nextLbl) {
+    box = '<div class="next-box"><h3>To reach Level '+(D.maturity.level+1)+' ('+esc(nextLbl)+'):</h3><ul>'+reqs+'</ul></div>';
+  } else if (!nextEntry) {
+    box = '<div class="next-box"><h3>You\'ve reached the top.</h3>'
+      + '<p>This server has reached <strong>'+esc(curEntry.label)+'</strong> maturity — '
+      + 'the highest level in the model. Focus on maintaining quality as you add new tools '
+      + 'and review the action items below for any remaining refinements.</p></div>';
+  } else {
+    box = '';
+  }
+
   return '<div class="section">'
     + '<h2>Where You Stand</h2>'
     + '<p class="section-intro">The maturity model tracks how ready your server is for AI agents, from basic functionality to production-grade quality. You are currently at <strong>Level '+D.maturity.level+'</strong>: '+esc(curDesc)+'.</p>'
     + '<div class="journey-track">'+steps+'</div>'
-    + (reqs && nextLbl ? '<div class="next-box"><h3>To reach Level '+(D.maturity.level+1)+' ('+esc(nextLbl)+'):</h3><ul>'+reqs+'</ul></div>' : '')
+    + box
     + '</div>';
 }
 
