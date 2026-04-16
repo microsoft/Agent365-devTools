@@ -102,7 +102,7 @@ public static class ActionItemGenerator
         CheckCategory.ParamDescription => "param_description",
         CheckCategory.SchemaStructure => "schema_structure",
         CheckCategory.ToolsetDesign => "toolset_design",
-        _ => "schema_structure",
+        _ => "unknown",
     };
 
     /// <summary>

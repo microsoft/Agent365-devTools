@@ -14,7 +14,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 /// them to evaluate semantic checks in an MCP tool schema checklist.
 ///
 /// Detection order: GitHub Copilot first, then Claude Code.
-/// Prompt is piped via stdin to avoid shell escaping issues.
+/// Prompt delivery: Claude Code pipes via stdin on Unix and uses a temp file on
+/// Windows (cmd.exe /c doesn't forward stdin); GitHub Copilot always uses a
+/// temp file since it doesn't support stdin piping.
 /// </summary>
 internal class CodingAgentRunner
 {
