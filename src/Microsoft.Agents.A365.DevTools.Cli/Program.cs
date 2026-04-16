@@ -327,7 +327,7 @@ class Program
         services.AddSingleton<IConfirmationProvider, ConsoleConfirmationProvider>();
 
         // Register evaluate pipeline services
-        services.AddHttpClient<ISchemaDiscoveryService, SchemaDiscoveryService>();
+        services.AddSingleton<ISchemaDiscoveryService, SchemaDiscoveryService>();
         services.AddSingleton<IChecklistGenerator, ChecklistGenerator>();
         services.AddSingleton<CodingAgentRunner>();
         services.AddSingleton<IChecklistEvaluator, ChecklistEvaluator>();

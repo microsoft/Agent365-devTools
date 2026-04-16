@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models.Evaluate;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
@@ -29,12 +30,11 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService
     private readonly ILogger<SchemaDiscoveryService> _logger;
     private readonly HttpClient _httpClient;
 
-    public SchemaDiscoveryService(ILogger<SchemaDiscoveryService> logger, HttpClient httpClient)
+    public SchemaDiscoveryService(ILogger<SchemaDiscoveryService> logger, HttpMessageHandler? handler = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
-        ArgumentNullException.ThrowIfNull(httpClient);
         _logger = logger;
-        _httpClient = httpClient;
+        _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
     }
 
     /// <inheritdoc />
