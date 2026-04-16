@@ -2,32 +2,64 @@
 
 ---
 
-> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Create exactly 2 todos (Todo 1 and Todo 2 only — the remaining todos are created at the end of Step 2 once your path is determined). Mark Todo 1 in-progress and jump to Step 1. **Do NOT read further. Do NOT run any commands. Do NOT gather values. Do NOT ask questions.**
->
-> - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
-> - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
+> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the two path-determination questions below. Do NOT create todos, run commands, or read further until the user has answered both questions. After both answers are received, create all todos for the determined path and mark Todo 1 in-progress.
 
-**RULE 1 — CREATE 3 OR 5 TODOS DEPENDING ON PATH (determined at end of Step 2).**
+**RULE 1 — ASK TWO QUESTIONS FIRST, THEN CREATE ALL TODOS.**
 
-Do NOT create all todos upfront. Create only Todo 1 and Todo 2 now. At the end of Step 2, you will ask the user which path they are on, then create the remaining todos:
+Before creating any todos or running any commands, ask the user these two questions (one at a time, wait for each response):
 
-**AI Teammate path (5 todos total):**
+**Question 1: Which of the following best describes your agent?**
+
+1. M365 custom engine agent — Entra app ID
+2. M365 custom engine agent — Blueprint
+3. All other agents
+
+Wait for the answer. Store as `agentType` (1, 2, or 3).
+
+**Question 2: What capabilities do you want to enable?**
+
+Present only the options that apply to the user's `agentType`:
+
+- **If `agentType = 1`** (M365 custom engine — Entra app ID):
+  1. Observability
+  2. Observability and Work IQ
+- **If `agentType = 2`** (M365 custom engine — Blueprint):
+  1. AI Teammate
+- **If `agentType = 3`** (All other agents — Blueprint):
+  1. Discoverability
+  2. Discoverability and Observability
+  3. AI Teammate
+
+Wait for the answer. Store as `capabilities`.
+
+> **Note:** The setup automatically includes all prerequisite capabilities for your selection.
+
+After both questions are answered, set `isAITeammate = true` if `capabilities = AI Teammate`, else `isAITeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
+
+**AI Teammate path** — `isAITeammate = true` (5 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
 - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
 - Todo 3: `Step 3: Configure the Agent 365 CLI (Initialize Configuration)`
 - Todo 4: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 - Todo 5: `Step 5: Publish and Deploy the Agent Application`
 
-**Standard path (3 todos total):**
+**Standard path** — `agentType = 3, isAITeammate = false` (3 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
 - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
 - Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 
-**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the AI Teammate path — it is skipped entirely on the Standard path.
+**Entra app ID path** — `agentType = 1` (3 todos total):
+- Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
+- Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
+- Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
+
+> **Note for Entra app ID agents (`agentType = 1`):** Steps 3 and 5 (Blueprint configuration and publish/deploy) do not apply. Follow Steps 1, 2, and 4 only.
+
+**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the AI Teammate path (`isAITeammate = true`) — it is skipped entirely on all other paths.
 
 **RULE 3 — SUB-SECTIONS ARE NOT SEPARATE TODOS.** Each `## Step` has internal sub-sections — these are tasks WITHIN that step, NOT separate todos.
 
-**RULE 4 — ONE STEP AT A TIME.** Complete each step fully. Mark its todo in-progress when starting, complete when done. Do NOT run `az account show`, ask about deployment type, gather Azure values, or ask about AI Teammate mode — those belong to Steps 3 and 2 respectively.
+**RULE 4 — ONE STEP AT A TIME.** Complete each step fully. Mark its todo in-progress when starting, complete when done. Do NOT run `az account show`, ask about deployment type, or gather Azure values — those belong to Steps 3 and 2 respectively. The path determination questions (`agentType`, `capabilities`) were already answered before Step 1.
 
 **RULE 6 — SILENT EXECUTION.** Work silently. Do NOT narrate what you are about to do, announce step transitions ("Proceeding to Step 2", "CLI installed, moving on"), print todo state, emoji checklists, or step completion summaries. Only speak to the user when you need input, have an error to report, or need confirmation before a destructive action.
 
@@ -167,56 +199,21 @@ pip --version
 
 ### Step 2 completion
 
-> **BEFORE MOVING ON:** Mark Todo 2 (Step 2) as **completed** now. Summarize to the user what was validated. Then proceed to the path determination section below — do NOT jump to Step 3 yet.
-
----
-
-### Determine your setup path (REQUIRED before proceeding)
-
-**STOP. Ask the user the following question and wait for their response before doing anything else:**
-
----
-
-**Is this agent being set up as an AI Teammate (Digital Worker)?**
-
-- **Yes (AI Teammate)** — the agent will be registered as a managed Digital Worker in your tenant.
-- **No (Standard agent)** — a regular agent that shows up in Agent Registry.
-
-Reply with **yes** or **no**.
-
----
-
-> **STOP. Do NOT proceed until the user has answered.**
-
-**If the user answers yes (AI Teammate path):**
-
-Store `isAITeammate = true`. Create todos 3, 4, and 5:
-- Todo 3: `Step 3: Configure the Agent 365 CLI (Initialize Configuration)`
-- Todo 4: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
-- Todo 5: `Step 5: Publish and Deploy the Agent Application`
-
-Mark Todo 3 in-progress. Proceed to Step 3.
-
-> **VERIFY YOUR TODO STATE (AI Teammate path):**
-> - Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
-
-**If the user answers no (Standard path):**
-
-Store `isAITeammate = false`. Create todo 3:
-- Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
-
-Mark Todo 3 in-progress. **Skip Step 3 entirely. Jump directly to Step 4.**
-
-> **VERIFY YOUR TODO STATE (Standard path):**
-> - Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress**
+> **BEFORE MOVING ON:** Mark Todo 2 (Step 2) as **completed** now. Summarize to the user what was validated. Then proceed based on your path:
+> - **AI Teammate path** (`isAITeammate = true`): Mark Todo 3 in-progress and proceed to Step 3.
+> - **All other paths** (`isAITeammate = false`): Skip Step 3 entirely. Mark Todo 3 in-progress and jump directly to Step 4.
+>
+> **VERIFY YOUR TODO STATE:**
+> - AI Teammate path: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
+> - All other paths: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress**
 
 ---
 
 ## Step 3: Configure the Agent 365 CLI (Initialize Configuration)
 
-> **AI TEAMMATE PATH ONLY.**
+> **AI TEAMMATE PATH ONLY** (`capabilities = AI Teammate`, `isAITeammate = true`).
 >
-> If `isAITeammate = false` (Standard path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
+> If `isAITeammate = false` (Standard or Entra app ID path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
 >
 > If `isAITeammate = true`, continue below.
 
