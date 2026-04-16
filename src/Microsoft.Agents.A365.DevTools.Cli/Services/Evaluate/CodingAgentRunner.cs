@@ -23,6 +23,10 @@ internal class CodingAgentRunner
 
     private const string ClaudeCodeEnvVar = "CLAUDECODE";
 
+    // Copilot requires an exact model ID (no aliases like "haiku").
+    // Update this when a newer Haiku version becomes available.
+    private const string CopilotModel = "claude-haiku-4.5";
+
     private readonly CommandExecutor _executor;
     private readonly ILogger<CodingAgentRunner> _logger;
 
@@ -111,7 +115,7 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --allowedTools Read,Edit");
+            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --allowedTools Read,Edit");
 
             var startInfo = new ProcessStartInfo
             {
@@ -146,7 +150,7 @@ internal class CodingAgentRunner
         var startInfo = new ProcessStartInfo
         {
             FileName = "claude",
-            Arguments = "-p - --allowedTools Read,Edit",
+            Arguments = "-p - --model haiku --allowedTools Read,Edit",
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -178,7 +182,7 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            var (fileName, fileArguments) = WrapForPlatform("copilot", $"-p \"{metaPrompt}\" --allow-all-tools");
+            var (fileName, fileArguments) = WrapForPlatform("copilot", $"-p \"{metaPrompt}\" --model {CopilotModel} --allow-all-tools");
 
             var startInfo = new ProcessStartInfo
             {

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.A365.DevTools.Cli.Models.Evaluate;
 using Microsoft.Extensions.Logging;
 
@@ -21,6 +22,13 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     private static readonly EvalEngine[] EnginePriority = [EvalEngine.GithubCopilot, EvalEngine.ClaudeCode];
 
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+
+    // Tolerant reader options: coding agents sometimes produce trailing commas or comments
+    private static readonly JsonSerializerOptions ReadOptions = new()
+    {
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip
+    };
 
     private readonly CodingAgentRunner _agentRunner;
     private readonly ILogger<ChecklistEvaluator> _logger;
@@ -154,9 +162,10 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 return false;
             }
 
-            // Re-read the evaluated tool and merge scores back
-            var updatedJson = await File.ReadAllTextAsync(tempFile, cancellationToken);
-            var updatedTool = JsonSerializer.Deserialize<ToolChecklist>(updatedJson, WriteOptions);
+            // Re-read the evaluated tool and merge scores back.
+            // Coding agents sometimes produce slightly malformed JSON (missing commas, trailing commas).
+            var updatedJson = RepairJson(await File.ReadAllTextAsync(tempFile, cancellationToken));
+            var updatedTool = JsonSerializer.Deserialize<ToolChecklist>(updatedJson, ReadOptions);
 
             if (updatedTool is not null)
             {
@@ -213,11 +222,16 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             }
 
             // Re-read and merge server check scores
-            var updatedJson = await File.ReadAllTextAsync(tempFile, cancellationToken);
-            using var doc = JsonDocument.Parse(updatedJson);
+            var updatedJson = RepairJson(await File.ReadAllTextAsync(tempFile, cancellationToken));
+            var docOptions = new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            };
+            using var doc = JsonDocument.Parse(updatedJson, docOptions);
             if (doc.RootElement.TryGetProperty("server_checks", out var checksElement))
             {
-                var updatedChecks = JsonSerializer.Deserialize<List<ChecklistItem>>(checksElement.GetRawText(), WriteOptions);
+                var updatedChecks = JsonSerializer.Deserialize<List<ChecklistItem>>(checksElement.GetRawText(), ReadOptions);
                 if (updatedChecks is not null)
                 {
                     MergeScores(checklist.ServerChecks, updatedChecks);
@@ -252,6 +266,19 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 item.Reason = updated.Reason;
             }
         }
+    }
+
+    /// <summary>
+    /// Attempts to repair common JSON issues produced by coding agents:
+    /// missing commas between properties/array elements, trailing commas.
+    /// </summary>
+    private static string RepairJson(string json)
+    {
+        // Insert missing commas: a value-ending token followed by whitespace then a
+        // value-starting token, with no comma in between.
+        // Value endings:  }  ]  "  true  false  null  digits
+        // Value beginnings: {  [  "
+        return Regex.Replace(json, @"([\}\]""]|true|false|null|\d)(\s*\n\s*)([\{\[""])", "$1,$2$3");
     }
 
     /// <summary>
