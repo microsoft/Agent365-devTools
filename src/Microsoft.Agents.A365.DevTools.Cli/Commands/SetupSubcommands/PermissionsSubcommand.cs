@@ -46,14 +46,15 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IConfirmationProvider confirmationProvider)
     {
         var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
-        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider));
         permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
@@ -70,7 +71,8 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IConfirmationProvider confirmationProvider)
     {
         var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
@@ -133,16 +135,8 @@ internal static class PermissionsSubcommand
                     "access to MCP tools. Ensure all agent instances have been upgraded to the new SDK before proceeding.",
                     McpConstants.WorkIQToolsProdAppId);
 
-                if (Console.IsInputRedirected)
-                {
-                    logger.LogError("--remove-legacy-scopes requires interactive confirmation. " +
-                                    "Run this command in an interactive terminal, not from a script or pipeline.");
-                    return;
-                }
-
-                Console.Write("Continue? [y/N]: ");
-                var confirm = Console.ReadLine()?.Trim();
-                if (!string.Equals(confirm, "y", StringComparison.OrdinalIgnoreCase))
+                var confirmed = await confirmationProvider.ConfirmAsync("Continue? [y/N]: ");
+                if (!confirmed)
                 {
                     logger.LogInformation("Aborted.");
                     return;
