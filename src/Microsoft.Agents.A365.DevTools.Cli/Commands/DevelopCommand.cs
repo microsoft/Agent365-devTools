@@ -117,7 +117,7 @@ public static class DevelopCommand
     }
 
     /// <summary>
-    /// Call the discoverToolServers endpoint directly
+    /// Call the discoverMCPServers endpoint directly
     /// </summary>
     private static async Task<bool> CallDiscoverToolServersAsync(IConfigService configService, bool skipAuth, ILogger logger, AuthenticationService authService, bool skipLogs = false)
     {
@@ -129,7 +129,7 @@ public static class DevelopCommand
             var config = configService.LoadAsync().Result;
             var discoverEndpointUrl = ConfigConstants.GetDiscoverEndpointUrl(config.Environment);
 
-            logger.LogInformation("Calling discoverToolServers endpoint directly (CorrelationId: {CorrelationId})...", correlationId);
+            logger.LogInformation("Calling discoverMCPServers endpoint directly (CorrelationId: {CorrelationId})...", correlationId);
             logger.LogInformation("Environment: {Env}", config.Environment);
             logger.LogInformation("Endpoint URL: {Url}", discoverEndpointUrl);
 
@@ -179,7 +179,7 @@ public static class DevelopCommand
 
             var responseContent = await response.Content.ReadAsStringAsync();
 
-            logger.LogInformation("Successfully received response from discoverToolServers endpoint");
+            logger.LogInformation("Successfully received response from discoverMCPServers endpoint");
 
             // Normalize before parsing: V2 returns a bare array; V1 returns a wrapped object.
             // Both WriteCatalog and the display loop below expect the wrapped {"mcpServers":[...]} shape.
@@ -248,7 +248,7 @@ public static class DevelopCommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to call discoverToolServers endpoint directly");
+            logger.LogError(ex, "Failed to call discoverMCPServers endpoint directly");
             return false;
         }
     }
@@ -798,11 +798,7 @@ public static class DevelopCommand
                         logger.LogInformation("Updated existing server: {Server}", existingServerName);
 
                         // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
-                        var resolvedAudience = (string.IsNullOrWhiteSpace(audience) ||
-                            audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
-                            ? McpConstants.WorkIQToolsProdAppId
-                            : audience;
+                        var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience);
                         if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
                         {
                             logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", existingServerName);
@@ -870,13 +866,7 @@ public static class DevelopCommand
             updatedServers.Add(serverObject);
 
             // Warn when the resolved audience is still the legacy ATG AppId (V1 entry).
-            // Mirrors the same fallback logic in ManifestHelper.GetScopesByAudienceAsync:
-            // null/whitespace, "api://" prefix, and literal "default" all map to the shared ATG AppId.
-            var resolvedAudienceForNew = (string.IsNullOrWhiteSpace(audience) ||
-                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
-                ? McpConstants.WorkIQToolsProdAppId
-                : audience;
+            var resolvedAudienceForNew = McpConstants.ResolveAudienceOrAtgFallback(audience);
             if (string.Equals(resolvedAudienceForNew, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", serverName);

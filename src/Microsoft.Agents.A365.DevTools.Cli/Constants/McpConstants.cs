@@ -50,6 +50,23 @@ public static class McpConstants
         scope.StartsWith("McpServers.", StringComparison.OrdinalIgnoreCase) &&
         scope.EndsWith(".All", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Resolves an audience string to a concrete App ID, mapping legacy and unset values to the
+    /// shared ATG AppId (<see cref="WorkIQToolsProdAppId"/>). The following inputs all fall back to ATG:
+    /// <list type="bullet">
+    ///   <item>null, empty, or whitespace</item>
+    ///   <item>values starting with <c>api://</c> (V1 legacy format)</item>
+    ///   <item>the literal string <c>"default"</c></item>
+    /// </list>
+    /// All other values are returned unchanged.
+    /// </summary>
+    public static string ResolveAudienceOrAtgFallback(string? audience) =>
+        string.IsNullOrWhiteSpace(audience) ||
+        audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase)
+            ? WorkIQToolsProdAppId
+            : audience;
+
     // HTTP Headers
     public static class MediaTypes
     {

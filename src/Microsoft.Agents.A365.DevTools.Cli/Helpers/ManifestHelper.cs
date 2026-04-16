@@ -275,8 +275,10 @@ public static class ManifestHelper
     /// <summary>
     /// Reads ToolingManifest.json and returns scopes grouped by their audience (resourceAppId).
     /// Supports V1 (shared ATG AppId), V2 (per-server AppId), and mixed manifests.
-    /// Fallback rules when audience is missing or in legacy api:// format:
-    ///   → falls back to <see cref="McpConstants.WorkIQToolsProdAppId"/> (ATG AppId).
+    /// Fallback rules — the following audience values all resolve to <see cref="McpConstants.WorkIQToolsProdAppId"/> (ATG AppId):
+    ///   • missing / null / whitespace
+    ///   • any value starting with <c>api://</c> (legacy V1 format)
+    ///   • the literal string <c>"default"</c>
     /// </summary>
     /// <param name="manifestPath">Path to ToolingManifest.json</param>
     /// <param name="excludeLegacyAtg">
@@ -333,12 +335,7 @@ public static class ManifestHelper
             if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
                 audience = audienceEl.GetString();
 
-            if (string.IsNullOrWhiteSpace(audience) ||
-                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase))
-            {
-                audience = atgAppId;
-            }
+            audience = McpConstants.ResolveAudienceOrAtgFallback(audience);
 
             if (excludeLegacyAtg &&
                 string.Equals(audience, atgAppId, StringComparison.OrdinalIgnoreCase))
@@ -390,25 +387,17 @@ public static class ManifestHelper
 
             // Skip all forms that resolve to the shared ATG audience — these are handled via the
             // shared BEARER_TOKEN env var, not per-server BEARER_TOKEN_{AUDIENCE} entries.
-            if (string.IsNullOrWhiteSpace(audience) ||
-                audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(audience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+            var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience);
+            if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var serverName = ExtractUniqueServerName(element);
-            if (string.IsNullOrWhiteSpace(serverName) &&
-                element.TryGetProperty("mcpServerName", out var serverNameEl))
-            {
-                serverName = serverNameEl.GetString();
-            }
-
+            var serverName = ExtractServerName(element);
             if (string.IsNullOrWhiteSpace(serverName)) continue;
 
-            if (!result.TryGetValue(audience, out var names))
+            if (!result.TryGetValue(resolvedAudience, out var names))
             {
                 names = new List<string>();
-                result[audience] = names;
+                result[resolvedAudience] = names;
             }
             names.Add(serverName);
         }

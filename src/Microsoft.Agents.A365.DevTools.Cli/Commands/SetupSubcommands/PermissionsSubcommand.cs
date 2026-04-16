@@ -158,9 +158,11 @@ internal static class PermissionsSubcommand
 
                 if (removeLegacyScopes)
                 {
-                    // Show what would be removed (ATG audience entries only)
+                    // Parse once, then split into removed (ATG) vs remaining (non-ATG) in memory.
                     var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false);
-                    var remainingScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: true);
+                    var remainingScopes = allScopes
+                        .Where(kvp => !string.Equals(kvp.Key, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
                     var removedAudiences = allScopes.Keys
                         .Where(k => !remainingScopes.ContainsKey(k))
                         .ToList();
