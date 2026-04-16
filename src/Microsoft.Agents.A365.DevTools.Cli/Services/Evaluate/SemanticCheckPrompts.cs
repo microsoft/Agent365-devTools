@@ -116,43 +116,6 @@ internal static class SemanticCheckPrompts
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Builds the command string to invoke Claude Code in non-interactive (print) mode
-    /// with the evaluation prompt. Only the Read and Edit tools are allowed so the agent
-    /// can read and update the checklist file without performing other actions.
-    /// </summary>
-    /// <param name="prompt">The evaluation prompt returned by <see cref="BuildEvaluationPrompt"/>.</param>
-    /// <returns>A shell command string to execute via <c>CommandExecutor</c>.</returns>
-    public static string BuildClaudeCodeCommand(string prompt)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
-
-        // Escape double quotes and backslashes for safe shell embedding.
-        string escaped = prompt
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"");
-
-        return $"claude -p \"{escaped}\" --allowedTools Read,Edit";
-    }
-
-    /// <summary>
-    /// Builds the command string to invoke GitHub Copilot CLI in non-interactive
-    /// prompt mode with the evaluation prompt.
-    /// </summary>
-    /// <param name="prompt">The evaluation prompt returned by <see cref="BuildEvaluationPrompt"/>.</param>
-    /// <returns>A shell command string to execute via <c>CommandExecutor</c>.</returns>
-    public static string BuildGithubCopilotCommand(string prompt)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
-
-        // Escape double quotes and backslashes for safe shell embedding.
-        string escaped = prompt
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"");
-
-        return $"copilot -p \"{escaped}\" --allow-all-tools";
-    }
-
     private static void AppendInstructions(StringBuilder sb, string checklistPath)
     {
         sb.AppendLine("TASK:");

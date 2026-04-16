@@ -13,68 +13,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 public static class ActionItemGenerator
 {
     /// <summary>
-    /// Generates action items from failed checks, sorted by priority (P0 first).
-    /// For each check with Score == false, creates an ActionItem with calculated
-    /// score impact and resolved smell impact descriptions.
-    /// </summary>
-    /// <param name="checks">All checks for the scope (tool or toolset).</param>
-    /// <param name="toolName">Tool name, or null for toolset-level checks.</param>
-    /// <param name="paramName">Parameter name, or null for tool-level checks.</param>
-    /// <param name="categoryWeights">Category weight mapping (category name to weight 0-1).</param>
-    /// <param name="totalChecksInCategory">
-    /// Total number of checks in the category. Used to compute per-check score impact.
-    /// </param>
-    /// <returns>Action items sorted by priority (P0, P1, P2, P3).</returns>
-    public static List<ActionItem> GenerateFromChecks(
-        List<ChecklistItem> checks,
-        string? toolName,
-        string? paramName,
-        Dictionary<string, float> categoryWeights,
-        int totalChecksInCategory)
-    {
-        if (checks is null || checks.Count == 0)
-        {
-            return [];
-        }
-
-        categoryWeights ??= [];
-
-        var items = new List<ActionItem>();
-
-        foreach (var check in checks)
-        {
-            if (check.Score != false)
-            {
-                continue;
-            }
-
-            string categoryKey = CategoryToKey(check.Category);
-            float weight = categoryWeights.GetValueOrDefault(categoryKey, 0.15f);
-            int effectiveTotal = Math.Max(totalChecksInCategory, 1);
-            float scoreImpact = MathF.Round((weight * 100f) / effectiveTotal, 1);
-
-            List<string> issueLeadsTo = ResolveSmellImpacts(check.SmellIds);
-
-            items.Add(new ActionItem
-            {
-                ToolName = toolName,
-                ParamName = paramName,
-                Priority = check.Severity,
-                Title = check.Prompt,
-                Description = check.Reason ?? string.Empty,
-                SmellIds = check.SmellIds,
-                ImpactAreas = check.ImpactAreas,
-                Remediation = check.Remediation,
-                ScoreImpact = scoreImpact,
-                IssueLeadsTo = issueLeadsTo,
-            });
-        }
-
-        items.Sort(CompareByPriority);
-        return items;
-    }
-
-    /// <summary>
     /// Generates action items for a flat list of checks, computing category-level
     /// score impacts. Groups checks by category to determine per-check weight.
     /// </summary>
