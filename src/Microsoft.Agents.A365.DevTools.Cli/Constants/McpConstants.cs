@@ -9,7 +9,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 public static class McpConstants
 {
 
-    // WorkIQ Tools App ID
+    // Agent 365 Tools App IDs for different environments
     public const string WorkIQToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
 
     /// <summary>
@@ -36,6 +36,36 @@ public static class McpConstants
     /// Name of the ListToolServers tool
     /// </summary>
     public const string ListToolServersToolName = "ListToolServers";
+
+    /// <summary>
+    /// Scope value used by all V2 MCP server entries (per-server AppId model)
+    /// </summary>
+    public const string V2ScopeValue = "Tools.ListInvoke.All";
+
+    /// <summary>
+    /// Returns true when the scope matches the V1 pattern McpServers.*.All (shared ATG AppId model)
+    /// </summary>
+    public static bool IsV1Scope(string? scope) =>
+        !string.IsNullOrEmpty(scope) &&
+        scope.StartsWith("McpServers.", StringComparison.OrdinalIgnoreCase) &&
+        scope.EndsWith(".All", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves an audience string to a concrete App ID, mapping legacy and unset values to the
+    /// shared ATG AppId (<see cref="WorkIQToolsProdAppId"/>). The following inputs all fall back to ATG:
+    /// <list type="bullet">
+    ///   <item>null, empty, or whitespace</item>
+    ///   <item>values starting with <c>api://</c> (V1 legacy format)</item>
+    ///   <item>the literal string <c>"default"</c></item>
+    /// </list>
+    /// All other values are returned unchanged.
+    /// </summary>
+    public static string ResolveAudienceOrAtgFallback(string? audience) =>
+        string.IsNullOrWhiteSpace(audience) ||
+        audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase)
+            ? WorkIQToolsProdAppId
+            : audience;
 
     // HTTP Headers
     public static class MediaTypes
@@ -70,6 +100,8 @@ public static class McpConstants
         public const string Url = "url";
         public const string Scope = "scope";
         public const string Audience = "audience";
+        public const string Id = "id";
+        public const string Publisher = "publisher";
     }
 
     // MCP Server to Entra Scope mappings

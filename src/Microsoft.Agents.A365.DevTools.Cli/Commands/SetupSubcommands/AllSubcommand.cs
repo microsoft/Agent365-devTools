@@ -624,8 +624,10 @@ internal static class AllSubcommand
         var mcpManifestPath = Path.Combine(
             ctx.Config.DeploymentProjectPath ?? string.Empty,
             McpConstants.ToolingManifestFileName);
-        var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, ctx.Logger);
+        var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
+        // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
+        var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
         List<ResourcePermissionSpec> specs;
         if (isDw)
@@ -637,12 +639,9 @@ internal static class AllSubcommand
                     "Microsoft Graph",
                     ctx.Config.AgentApplicationScopes.ToArray(),
                     SetInheritable: true),
-                new ResourcePermissionSpec(
-                    mcpResourceAppId,
-                    "Agent 365 Tools",
-                    mcpScopes,
-                    SetInheritable: true),
             ];
+            specs.AddRange(scopesByAudience.Select(kvp =>
+                new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: true)));
             specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
         }
         else

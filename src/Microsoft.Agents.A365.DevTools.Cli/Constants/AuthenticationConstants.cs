@@ -324,6 +324,14 @@ public static class AuthenticationConstants
     public const string AgentXAccessScope = $"api://{AgentXAppId}/AgentX.Access";
 
     /// <summary>
+    /// Returns the per-server bearer token env var name for a given MCP server unique name.
+    /// e.g. "mcp_WordServer" -> "BEARER_TOKEN_MCP_WORDSERVER"
+    /// Takes precedence over <see cref="BearerTokenEnvironmentVariable"/> for V2 per-audience tokens.
+    /// </summary>
+    public static string GetPerServerBearerTokenEnvVar(string serverUniqueName) =>
+        $"BEARER_TOKEN_{serverUniqueName.ToUpperInvariant().Replace('-', '_')}";
+
+    /// <summary>
     /// AADSTS53003: Access blocked by Conditional Access Policy.
     /// MSAL throws MsalServiceException with ErrorCode "access_denied" and this code in the Message.
     /// Device code flow may succeed depending on your tenant's Conditional Access Policy configuration.

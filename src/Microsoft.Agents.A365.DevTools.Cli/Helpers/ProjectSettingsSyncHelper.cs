@@ -139,7 +139,8 @@ public static class ProjectSettingsSyncHelper
     public static async Task SaveBearerTokenToPlatformConfigAsync(
         string token,
         Agent365Config config,
-        ILogger logger)
+        ILogger logger,
+        string? serverUniqueName = null)
     {
         try
         {
@@ -172,11 +173,11 @@ public static class ProjectSettingsSyncHelper
             // Handle token saving based on platform type
             if (platform == ProjectPlatform.DotNet)
             {
-                await SaveBearerTokenToLaunchSettingsAsync(token, projectDir, logger);
+                await SaveBearerTokenToLaunchSettingsAsync(token, projectDir, logger, serverUniqueName);
             }
             else if (platform == ProjectPlatform.Python || platform == ProjectPlatform.NodeJs)
             {
-                await SaveBearerTokenToDotEnvAsync(token, projectDir, platform, logger);
+                await SaveBearerTokenToDotEnvAsync(token, projectDir, platform, logger, serverUniqueName);
             }
             else
             {
@@ -197,40 +198,46 @@ public static class ProjectSettingsSyncHelper
         string token,
         string projectDir,
         ProjectPlatform platform,
-        ILogger logger)
+        ILogger logger,
+        string? serverUniqueName = null)
     {
         var envPath = Path.Combine(projectDir, ".env");
-        
+
+        // Determine the env var key: per-server if name provided, shared fallback otherwise
+        var envVarKey = !string.IsNullOrWhiteSpace(serverUniqueName)
+            ? AuthenticationConstants.GetPerServerBearerTokenEnvVar(serverUniqueName)
+            : AuthenticationConstants.BearerTokenEnvironmentVariable;
+
         if (!File.Exists(envPath))
         {
             logger.LogDebug(".env file not found at {Path}, skipping token update for {Platform} project", envPath, platform);
             logger.LogInformation("To use the bearer token in your {Platform} application, add it to .env file:", platform);
-            logger.LogInformation("  Create .env file in your project directory with: BEARER_TOKEN=<your bearer token>");
+            logger.LogInformation("  Create .env file in your project directory with: {Key}=<your bearer token>", envVarKey);
             return;
         }
 
         // Read existing .env content
         var lines = (await File.ReadAllLinesAsync(envPath)).ToList();
 
-        // Update or add BEARER_TOKEN
-        var bearerTokenLine = $"{AuthenticationConstants.BearerTokenEnvironmentVariable}={token}";
-        var existingIndex = lines.FindIndex(l => 
-            l.StartsWith($"{AuthenticationConstants.BearerTokenEnvironmentVariable}=", StringComparison.OrdinalIgnoreCase));
+        // Update or add the token line
+        var tokenLine = $"{envVarKey}={token}";
+        var existingIndex = lines.FindIndex(l =>
+            l.StartsWith($"{envVarKey}=", StringComparison.OrdinalIgnoreCase));
 
         if (existingIndex >= 0)
         {
-            lines[existingIndex] = bearerTokenLine;
-            logger.LogInformation("Updated BEARER_TOKEN in {Path}", envPath);
+            lines[existingIndex] = tokenLine;
+            logger.LogInformation("Updated {Key} in {Path}", envVarKey, envPath);
         }
         else
         {
-            lines.Add(bearerTokenLine);
-            logger.LogInformation("Added BEARER_TOKEN to {Path}", envPath);
+            lines.Add(tokenLine);
+            logger.LogInformation("Added {Key} to {Path}", envVarKey, envPath);
         }
 
         // Write back to .env file
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
-        
+
         logger.LogInformation("Bearer token saved to .env file for {Platform} sample", platform);
         logger.LogInformation("  Path: {Path}", envPath);
         logger.LogInformation("  The token can now be used by your {Platform} application", platform);
@@ -242,16 +249,21 @@ public static class ProjectSettingsSyncHelper
     private static async Task SaveBearerTokenToLaunchSettingsAsync(
         string token,
         string projectDir,
-        ILogger logger)
+        ILogger logger,
+        string? serverUniqueName = null)
     {
         // Check for Properties/launchSettings.json
         var launchSettingsPath = Path.Combine(projectDir, "Properties", "launchSettings.json");
-        
+
+        var envVarKey = !string.IsNullOrWhiteSpace(serverUniqueName)
+            ? AuthenticationConstants.GetPerServerBearerTokenEnvVar(serverUniqueName)
+            : AuthenticationConstants.BearerTokenEnvironmentVariable;
+
         if (!File.Exists(launchSettingsPath))
         {
             logger.LogDebug("launchSettings.json not found at {Path}, skipping token update for .NET project", launchSettingsPath);
             logger.LogInformation("To use the bearer token in your .NET application, add it to launchSettings.json:");
-            logger.LogInformation("  Properties/launchSettings.json > profiles > [profile-name] > environmentVariables > BEARER_TOKEN");
+            logger.LogInformation("  Properties/launchSettings.json > profiles > [profile-name] > environmentVariables > {Key}", envVarKey);
             return;
         }
 
@@ -267,8 +279,8 @@ public static class ProjectSettingsSyncHelper
                 return;
             }
 
-            // Check if any profile has BEARER_TOKEN defined
-            var profilesWithBearerToken = new List<string>();
+            // Check if any profile has the target env var defined
+            var profilesWithKey = new List<string>();
             foreach (var profile in profiles.EnumerateObject())
             {
                 if (profile.Value.TryGetProperty("environmentVariables", out var envVars) &&
@@ -276,49 +288,52 @@ public static class ProjectSettingsSyncHelper
                 {
                     foreach (var envVar in envVars.EnumerateObject())
                     {
-                        if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
+                        if (string.Equals(envVar.Name, envVarKey, StringComparison.OrdinalIgnoreCase))
                         {
-                            profilesWithBearerToken.Add(profile.Name);
+                            profilesWithKey.Add(profile.Name);
                             break;
                         }
                     }
                 }
             }
 
-            if (profilesWithBearerToken.Count == 0)
+            if (profilesWithKey.Count == 0)
             {
-                logger.LogInformation("No profiles found with BEARER_TOKEN in {Path}", launchSettingsPath);
-                logger.LogInformation("To use the bearer token, add BEARER_TOKEN to a profile's environmentVariables:");
-                logger.LogInformation("  \"environmentVariables\": {{ \"BEARER_TOKEN\": \"\" }}");
+                logger.LogInformation("No profiles found with {Key} in {Path}", envVarKey, launchSettingsPath);
+                logger.LogInformation("To use the bearer token, add {Key} to a profile's environmentVariables:", envVarKey);
+                logger.LogInformation("  \"environmentVariables\": {{ \"{Key}\": \"\" }}", envVarKey);
                 return;
             }
 
-            // Build updated JSON with BEARER_TOKEN in environment variables
-            var updatedJson = UpdateLaunchSettingsWithToken(launchSettings, token);
+            // Build updated JSON with the token in environment variables
+            var updatedJson = UpdateLaunchSettingsWithToken(launchSettings, token, envVarKey);
 
             // Write back to file with indentation
             var options = new JsonSerializerOptions { WriteIndented = true };
             var updatedJsonText = JsonSerializer.Serialize(updatedJson, options);
             await File.WriteAllTextAsync(launchSettingsPath, updatedJsonText, new UTF8Encoding(false));
 
-            logger.LogInformation("Updated BEARER_TOKEN in {Path}", launchSettingsPath);
+            logger.LogInformation("Updated {Key} in {Path}", envVarKey, launchSettingsPath);
             logger.LogInformation("Bearer token saved to launchSettings.json for .NET sample");
             logger.LogInformation("  Path: {Path}", launchSettingsPath);
-            logger.LogInformation("  Updated {Count} profile(s): {Profiles}", 
-                profilesWithBearerToken.Count, 
-                string.Join(", ", profilesWithBearerToken));
+            logger.LogInformation("  Updated {Count} profile(s): {Profiles}",
+                profilesWithKey.Count,
+                string.Join(", ", profilesWithKey));
         }
         catch (JsonException ex)
         {
             logger.LogWarning(ex, "Failed to parse launchSettings.json: {Message}", ex.Message);
-            logger.LogInformation("You can manually add BEARER_TOKEN to launchSettings.json environmentVariables");
+            logger.LogInformation("You can manually add {Key} to launchSettings.json environmentVariables", envVarKey);
         }
     }
 
     /// <summary>
-    /// Updates the launchSettings JSON structure with the bearer token only in profiles that already have BEARER_TOKEN defined
+    /// Updates the launchSettings JSON structure with the bearer token only in profiles that already have the target env var defined
     /// </summary>
-    private static JsonElement UpdateLaunchSettingsWithToken(JsonElement launchSettings, string token)
+    private static JsonElement UpdateLaunchSettingsWithToken(
+        JsonElement launchSettings,
+        string token,
+        string envVarKey = AuthenticationConstants.BearerTokenEnvironmentVariable)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
@@ -332,7 +347,7 @@ public static class ProjectSettingsSyncHelper
                     writer.WritePropertyName("profiles");
                     writer.WriteStartObject();
 
-                    // only update BEARER_TOKEN if it already exists
+                    // only update the token env var if it already exists in the profile
                     foreach (var profile in property.Value.EnumerateObject())
                     {
                         writer.WritePropertyName(profile.Name);
@@ -346,13 +361,12 @@ public static class ProjectSettingsSyncHelper
                                 writer.WritePropertyName("environmentVariables");
                                 writer.WriteStartObject();
 
-                                // Copy existing environment variables, updating BEARER_TOKEN only if it exists
+                                // Copy existing environment variables, updating the target key only if it exists
                                 foreach (var envVar in profileProp.Value.EnumerateObject())
                                 {
-                                    if (envVar.Name == AuthenticationConstants.BearerTokenEnvironmentVariable)
+                                    if (string.Equals(envVar.Name, envVarKey, StringComparison.OrdinalIgnoreCase))
                                     {
-                                        // Update BEARER_TOKEN with new value
-                                        writer.WriteString(AuthenticationConstants.BearerTokenEnvironmentVariable, token);
+                                        writer.WriteString(envVarKey, token);
                                     }
                                     else
                                     {
@@ -491,6 +505,7 @@ public static class ProjectSettingsSyncHelper
         root["ConnectionsMap"] = connectionsMap;
 
         // -- Agent365Observability --
+        root["EnableAgent365Exporter"] ??= false;
         var obsAgentId = ResolveObservabilityAgentId(pkgConfig);
         if (!string.IsNullOrWhiteSpace(obsAgentId) || !string.IsNullOrWhiteSpace(pkgConfig.TenantId))
         {
@@ -571,7 +586,8 @@ public static class ProjectSettingsSyncHelper
         Set("CONNECTIONSMAP__0__SERVICEURL", "*");
         Set("CONNECTIONSMAP__0__CONNECTION", "SERVICE_CONNECTION");
 
-        // --- Agent365Observability ---
+        // --- Agent365 Observability ---
+        Set("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
         Set("AGENT365OBSERVABILITY__AGENTID", ResolveObservabilityAgentId(pkgConfig));
         Set("AGENT365OBSERVABILITY__AGENTNAME", pkgConfig.AgentIdentityDisplayName);
         Set("AGENT365OBSERVABILITY__AGENTDESCRIPTION", pkgConfig.AgentDescription);
@@ -639,7 +655,8 @@ public static class ProjectSettingsSyncHelper
         Set("agentic_scopes", DEFAULT_USER_AUTHORIZATION_SCOPE);
         Set("agentic_connectionName", "AgenticAuthConnection");
 
-        // --- Agent365Observability ---
+        // --- Agent365 Observability ---
+        Set("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
         Set("agent365Observability__agentId", ResolveObservabilityAgentId(pkgConfig));
         Set("agent365Observability__agentName", pkgConfig.AgentIdentityDisplayName);
         Set("agent365Observability__agentDescription", pkgConfig.AgentDescription);

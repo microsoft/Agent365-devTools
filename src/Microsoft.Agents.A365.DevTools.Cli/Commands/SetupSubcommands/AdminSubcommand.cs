@@ -206,12 +206,11 @@ internal static class AdminSubcommand
                         return;
                     }
 
-                    // Build the spec list using dynamic config values.
-                    var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                    // Build the spec list using dynamic config values (V1/V2 manifest-aware).
                     var mcpManifestPath = Path.Combine(
                         setupConfig.DeploymentProjectPath ?? string.Empty,
                         McpConstants.ToolingManifestFileName);
-                    var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
+                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
 
                     specs = new List<ResourcePermissionSpec>
                     {
@@ -220,12 +219,9 @@ internal static class AdminSubcommand
                             "Microsoft Graph",
                             setupConfig.AgentApplicationScopes.ToArray(),
                             SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            mcpResourceAppId,
-                            "Agent 365 Tools",
-                            mcpScopes,
-                            SetInheritable: false),
                     };
+                    specs.AddRange(scopesByAudience.Select(kvp =>
+                        new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: false)));
                     specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
 
                     foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
