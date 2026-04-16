@@ -598,7 +598,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
 
         // Agent365Observability section present with correct values
         var obs = j["Agent365Observability"]!.AsObject();
-        Assert.Equal(cfg.AgentBlueprintId, obs["AgentId"]!.GetValue<string>());
+        Assert.Null(obs["AgentId"]);
         Assert.Equal(cfg.AgentBlueprintId, obs["AgentBlueprintId"]!.GetValue<string>());
         Assert.Equal(cfg.TenantId, obs["TenantId"]!.GetValue<string>());
         Assert.Equal("", obs["AgentName"]!.GetValue<string>());

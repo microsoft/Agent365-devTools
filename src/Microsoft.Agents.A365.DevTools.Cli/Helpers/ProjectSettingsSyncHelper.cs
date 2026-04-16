@@ -464,7 +464,6 @@ public static class ProjectSettingsSyncHelper
         var obsSection = RequireObj(root, "Agent365Observability");
         if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
         {
-            obsSection["AgentId"]          = pkgConfig.AgentBlueprintId;
             obsSection["AgentBlueprintId"] = pkgConfig.AgentBlueprintId;
         }
         if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))

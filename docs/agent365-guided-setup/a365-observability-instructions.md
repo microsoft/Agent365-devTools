@@ -18,7 +18,7 @@ The agent will follow the MS Learn reference above to:
 1. Install the observability SDK packages for your project type (.NET, Python, or Node.js)
 2. Register the exporter and tracing in startup code
 3. Wire up the token resolver in the agent's turn handler
-4. Enable the exporter in configuration (`EnableAgent365Exporter` / `ENABLE_A365_OBSERVABILITY_EXPORTER`)
+4. Add the exporter configuration setting (`EnableAgent365Exporter` / `ENABLE_A365_OBSERVABILITY_EXPORTER`) and leave it disabled by default
 
 After completing the above steps, the agent **must** ask the user:
 
