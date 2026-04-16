@@ -99,13 +99,12 @@ public static class DevelopCommand
                 return;
             }
 
-            // Try direct endpoint call only (DiscoverEndpointUrl fallback disabled for testing)
             var success = await CallDiscoverToolServersAsync(configService, skipAuth, logger, authService);
 
             if (!success)
             {
                 logger.LogError("Direct endpoint call failed. Please check your configuration.");
-                return; // Exit without fallback
+                return;
             }
 
 
@@ -118,7 +117,7 @@ public static class DevelopCommand
     }
 
     /// <summary>
-    /// Call the discoverToolServers endpoint directly
+    /// Call the discoverMCPServers endpoint directly
     /// </summary>
     private static async Task<bool> CallDiscoverToolServersAsync(IConfigService configService, bool skipAuth, ILogger logger, AuthenticationService authService, bool skipLogs = false)
     {
@@ -130,7 +129,7 @@ public static class DevelopCommand
             var config = configService.LoadAsync().Result;
             var discoverEndpointUrl = ConfigConstants.GetDiscoverEndpointUrl(config.Environment);
 
-            logger.LogInformation("Calling discoverToolServers endpoint directly (CorrelationId: {CorrelationId})...", correlationId);
+            logger.LogInformation("Calling discoverMCPServers endpoint directly (CorrelationId: {CorrelationId})...", correlationId);
             logger.LogInformation("Environment: {Env}", config.Environment);
             logger.LogInformation("Endpoint URL: {Url}", discoverEndpointUrl);
 
@@ -172,7 +171,7 @@ public static class DevelopCommand
 
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogError("Failed to call discoverToolServers endpoint. Status: {Status}", response.StatusCode);
+                logger.LogError("Failed to call discoverMCPServers endpoint. Status: {Status}", response.StatusCode);
                 var errorContent = await response.Content.ReadAsStringAsync();
                 logger.LogError("Error response: {Error}", errorContent);
                 return false;
@@ -180,13 +179,17 @@ public static class DevelopCommand
 
             var responseContent = await response.Content.ReadAsStringAsync();
 
-            logger.LogInformation("Successfully received response from discoverToolServers endpoint");
+            logger.LogInformation("Successfully received response from discoverMCPServers endpoint");
+
+            // Normalize before parsing: V2 returns a bare array; V1 returns a wrapped object.
+            // Both WriteCatalog and the display loop below expect the wrapped {"mcpServers":[...]} shape.
+            var normalizedContent = Services.Internal.McpServerCatalogWriter.Normalize(responseContent);
 
             // Parse and display the MCP servers
-            using var responseDoc = JsonDocument.Parse(responseContent);
+            using var responseDoc = JsonDocument.Parse(normalizedContent);
             var responseRoot = responseDoc.RootElement;
 
-            var catalogPath = Services.Internal.McpServerCatalogWriter.WriteCatalog(responseContent);
+            var catalogPath = Services.Internal.McpServerCatalogWriter.WriteCatalog(normalizedContent);
             logger.LogInformation("Catalog saved to {CatalogPath}", catalogPath);
 
             // Display available MCP servers
@@ -217,7 +220,8 @@ public static class DevelopCommand
                         if (server.TryGetProperty("scope", out var scopeElement))
                         {
                             var scope = scopeElement.GetString();
-                            if (!string.IsNullOrWhiteSpace(scope))
+                            if (!string.IsNullOrWhiteSpace(scope) &&
+                                !string.Equals(scope, "null", StringComparison.OrdinalIgnoreCase))
                             {
                                 Console.WriteLine($"     Required Scope: {scope}");
                             }
@@ -244,7 +248,7 @@ public static class DevelopCommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to call discoverToolServers endpoint directly");
+            logger.LogError(ex, "Failed to call discoverMCPServers endpoint directly");
             return false;
         }
     }
@@ -384,7 +388,17 @@ public static class DevelopCommand
                         if (string.IsNullOrWhiteSpace(audience)) audience = mappedAudience ?? "";
                     }
 
+                    var publisher = serverElement.TryGetProperty(McpConstants.ManifestProperties.Publisher, out var publisherElement)
+                        ? publisherElement.GetString() ?? ""
+                        : "";
+
+                    // Derive protocol version from scope
+                    var version = McpConstants.IsV1Scope(scope) ? "V1"
+                        : string.Equals(scope, McpConstants.V2ScopeValue, StringComparison.OrdinalIgnoreCase) ? "V2"
+                        : "Unknown";
+
                     logger.LogInformation("  {Name}", serverName);
+                    logger.LogInformation("     Version: {Version}", version);
                     logger.LogInformation("     URL: {Url}", serverUrl);
 
                     if (!string.IsNullOrWhiteSpace(scope))
@@ -403,6 +417,11 @@ public static class DevelopCommand
                     else
                     {
                         logger.LogInformation("     Audience: Not specified");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(publisher))
+                    {
+                        logger.LogInformation("     Publisher: {Publisher}", publisher);
                     }
 
                     logger.LogInformation(""); // Empty line for readability
@@ -454,6 +473,12 @@ public static class DevelopCommand
                 // Call the fetch logic (reuse from list-available, but no output)
                 logger.LogInformation("Fetching latest MCP server catalog...");
                 await CallDiscoverToolServersAsync(configService, false, logger, authService, skipLogs: true);
+            }
+
+            if (!File.Exists(catalogPath))
+            {
+                logger.LogError("MCP server catalog is not available. Run 'a365 develop list-available' to fetch the catalog.");
+                return;
             }
 
             var catalogJson = await File.ReadAllTextAsync(catalogPath);
@@ -762,13 +787,22 @@ public static class DevelopCommand
                     if (catalogEntry.ValueKind != JsonValueKind.Undefined)
                     {
                         var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
-                        var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+                        var scopeRaw = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+                        var scope = string.Equals(scopeRaw, "null", StringComparison.OrdinalIgnoreCase) ? null : scopeRaw;
                         var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
+                        var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
-                        var updatedServerObject = ManifestHelper.CreateCompleteServerObject(existingServerName, existingServerName, url, scope, audience);
+                        var updatedServerObject = ManifestHelper.CreateCompleteServerObject(existingServerName, existingServerName, url, scope, audience, publisher);
                         updatedServers.Add(updatedServerObject);
                         updatedCount++;
                         logger.LogInformation("Updated existing server: {Server}", existingServerName);
+
+                        // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
+                        var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience);
+                        if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", existingServerName);
+                        }
                     }
                     else
                     {
@@ -823,11 +857,20 @@ public static class DevelopCommand
             }
 
             var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
-            var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+            var scopeRaw = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+            var scope = string.Equals(scopeRaw, "null", StringComparison.OrdinalIgnoreCase) ? null : scopeRaw;
             var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
+            var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
-            var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience);
+            var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience, publisher);
             updatedServers.Add(serverObject);
+
+            // Warn when the resolved audience is still the legacy ATG AppId (V1 entry).
+            var resolvedAudienceForNew = McpConstants.ResolveAudienceOrAtgFallback(audience);
+            if (string.Equals(resolvedAudienceForNew, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", serverName);
+            }
         }
 
         return (updatedServers, addedCount, updatedCount);

@@ -182,7 +182,8 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
-        "Directory.Read.All"
+        "Directory.Read.All",
+        "User.ReadWrite.All"  // Required for agent user creation, usage location update, and license assignment
         // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
         // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
         // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded
@@ -200,7 +201,18 @@ public static class AuthenticationConstants
     {
         "Application.ReadWrite.All",
         "DelegatedPermissionGrant.ReadWrite.All",
-        "AgentIdentityBlueprint.UpdateAuthProperties.All"
+        "AgentIdentityBlueprint.UpdateAuthProperties.All",
+    };
+
+    /// <summary>
+    /// Additional scopes required only on Global Administrator paths that grant S2S app role
+    /// assignments. Kept separate from <see cref="RequiredPermissionGrantScopes"/> so that
+    /// non-admin flows (deploy, setup permissions) do not request an admin-only scope and
+    /// trigger unexpected consent prompts.
+    /// </summary>
+    public static readonly string[] RequiredS2SGrantScopes = new[]
+    {
+        "AppRoleAssignment.ReadWrite.All",
     };
 
     /// <summary>
@@ -209,6 +221,14 @@ public static class AuthenticationConstants
     /// for testing purposes only. It should NOT be deployed to production Azure environments.
     /// </summary>
     public const string BearerTokenEnvironmentVariable = "BEARER_TOKEN";
+
+    /// <summary>
+    /// Returns the per-server bearer token env var name for a given MCP server unique name.
+    /// e.g. "mcp_WordServer" → "BEARER_TOKEN_MCP_WORDSERVER"
+    /// Takes precedence over <see cref="BearerTokenEnvironmentVariable"/> for V2 per-audience tokens.
+    /// </summary>
+    public static string GetPerServerBearerTokenEnvVar(string serverUniqueName) =>
+        $"BEARER_TOKEN_{serverUniqueName.ToUpperInvariant().Replace('-', '_')}";
 
     /// <summary>
     /// AADSTS53003: Access blocked by Conditional Access Policy.

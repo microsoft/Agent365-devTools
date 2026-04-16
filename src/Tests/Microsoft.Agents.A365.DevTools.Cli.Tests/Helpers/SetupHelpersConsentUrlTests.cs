@@ -68,7 +68,7 @@ public class SetupHelpersConsentUrlTests
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
         var obsUrl = urls.First(u => u.ResourceName == "Observability API").ConsentUrl;
 
-        obsUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"),
+        obsUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
     }
 
@@ -127,7 +127,7 @@ public class SetupHelpersConsentUrlTests
         };
         var mcpScopes = new[] { "McpServers.Mail.All" };
 
-        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.Agent365ToolsProdAppId, mcpScopes);
+        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.WorkIQToolsProdAppId, mcpScopes);
 
         names.Should().NotBeEmpty();
         config.ResourceConsents.Should().NotBeEmpty();
@@ -143,7 +143,7 @@ public class SetupHelpersConsentUrlTests
             AgentBlueprintId = BlueprintClientId,
         };
 
-        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.Agent365ToolsProdAppId, new[] { "scope" });
+        var names = SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.WorkIQToolsProdAppId, new[] { "scope" });
 
         names.Should().BeEquivalentTo(config.ResourceConsents.Select(rc => rc.ResourceName));
     }
@@ -163,7 +163,7 @@ public class SetupHelpersConsentUrlTests
             ConsentUrl = "https://old-url"
         });
 
-        SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.Agent365ToolsProdAppId, new[] { "scope" });
+        SetupHelpers.PopulateAdminConsentUrls(config, McpConstants.WorkIQToolsProdAppId, new[] { "scope" });
 
         var botConsent = config.ResourceConsents.First(rc => rc.ResourceName == "Messaging Bot API");
         botConsent.ConsentUrl.Should().NotBe("https://old-url",
@@ -220,7 +220,8 @@ public class SetupHelpersConsentUrlTests
 
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}"),
             because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
-        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}"));
+        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
     }
 
