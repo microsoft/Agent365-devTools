@@ -69,7 +69,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             (IMicrosoftGraphTokenProvider?)null,
             noOpLoginHint,
             (string?)null,
-            (RetryHelper?)null);
+            (RetryHelper?)null,
+            (TimeSpan?)TimeSpan.Zero);
 
         var blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
             Substitute.For<ILogger<AgentBlueprintService>>(),

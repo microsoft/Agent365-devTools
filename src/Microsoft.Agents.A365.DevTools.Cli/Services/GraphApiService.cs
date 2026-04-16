@@ -40,6 +40,15 @@ public class GraphApiService
     // Injectable via constructor so unit tests can bypass the real az process.
     private readonly Func<Task<string?>> _loginHintResolver;
 
+    // Delay before retrying a 403 from the agent registry (role propagation lag).
+    // Injectable so unit tests can pass TimeSpan.Zero and avoid the real 30s wait.
+    private readonly TimeSpan _agentRegistryRetryDelay;
+
+    // Graph path for the copilot agent registrations endpoint.
+    // Both RegisterAgentInstanceAsyncV2 and DeleteAgentRegistrationAsync use this path.
+    // TODO: change from stagingbeta to beta before merging to main.
+    private const string AgentRegistrationsPath = "/stagingbeta/copilot/agentRegistrations";
+
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
     /// When set, this will be passed to Connect-MgGraph -ClientId parameter.
@@ -70,7 +79,7 @@ public class GraphApiService
     // Allow injecting a custom HttpMessageHandler for unit testing.
     // loginHintResolver: optional override for login-hint resolution.
     // Pass () => Task.FromResult<string?>(null) in unit tests to skip login-hint resolution.
-    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, IAuthenticationService authService, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null, Func<Task<string?>>? loginHintResolver = null, string? graphBaseUrl = null, RetryHelper? retryHelper = null)
+    public GraphApiService(ILogger<GraphApiService> logger, CommandExecutor executor, IAuthenticationService authService, HttpMessageHandler? handler = null, IMicrosoftGraphTokenProvider? tokenProvider = null, Func<Task<string?>>? loginHintResolver = null, string? graphBaseUrl = null, RetryHelper? retryHelper = null, TimeSpan? agentRegistryRetryDelay = null)
     {
         _logger = logger;
         _executor = executor;
@@ -81,6 +90,7 @@ public class GraphApiService
         // Default: try az CLI first (if present), fall back to JWT cache in AuthenticationService.
         _loginHintResolver = loginHintResolver ?? (() => ResolveLoginHintWithFallbackAsync(authService));
         _graphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl;
+        _agentRegistryRetryDelay = agentRegistryRetryDelay ?? TimeSpan.FromSeconds(30);
     }
 
     // Parameterless constructor to ease test mocking/substitution frameworks which may
@@ -1173,8 +1183,8 @@ public class GraphApiService
 
         // On 403: the 'Agent Registry Administrator' role may not have propagated yet.
         // Wait 30s before retrying — an immediate retry always returns another 403.
-        _logger.LogInformation("403 from agent registry — 'Agent Registry Administrator' role may not have propagated yet. Waiting 30s before retry...");
-        await Task.Delay(TimeSpan.FromSeconds(30), ct);
+        _logger.LogInformation("403 from agent registry — 'Agent Registry Administrator' role may not have propagated yet. Waiting {Delay}s before retry...", (int)_agentRegistryRetryDelay.TotalSeconds);
+        await Task.Delay(_agentRegistryRetryDelay, ct);
 
         var retryResponse = await GraphPostWithResponseAsync(tenantId, "/beta/agentRegistry/agentInstances", payload, ct, registrationScopes);
 
@@ -1211,11 +1221,11 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Registers an agent instance via the AgentX Agent Registration API V2
-    /// (POST https://agentxppe.microsoft.com/api/a365/agents/registration).
-    /// Acquires a bearer token via the token provider (delegated, AgentX.Access scope) when
-    /// configured, or falls back to az CLI for the AgentX resource.
-    /// Returns the new agent instance ID on success (202 Accepted), or null on failure.
+    /// Registers an agent instance via the Microsoft Graph copilot/agentRegistrations endpoint
+    /// (POST <see cref="AgentRegistrationsPath"/>).
+    /// Acquires a delegated Graph token via the custom app token provider (.default scope) so the
+    /// token includes AgentRegistration.ReadWrite.All, or falls back to the az CLI Graph token.
+    /// Returns the new agent registration ID on success (200 OK), or null on failure.
     /// </summary>
     public virtual async Task<string?> RegisterAgentInstanceAsyncV2(
         string tenantId,
@@ -1230,42 +1240,17 @@ public class GraphApiService
         var currentUserId = await GetCurrentUserObjectIdAsync(tenantId, ct);
         if (string.IsNullOrWhiteSpace(currentUserId))
         {
-            _logger.LogError("Failed to retrieve current user ID — required for agent registration V2.");
+            _logger.LogError("Failed to retrieve current user ID — required for agent registration.");
             return null;
         }
 
-        // Acquire AgentX token — prefer delegated (token provider) over az CLI.
-        string? token = null;
-
-        var agentXScopes = new[] { Constants.AuthenticationConstants.AgentXAccessScope };
-
-        if (_tokenProvider != null)
-        {
-            var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, agentXScopes, false, CustomClientAppId, ct, loginHint);
-
-            if (string.IsNullOrWhiteSpace(token))
-                _logger.LogWarning("Delegated token acquisition for AgentX failed — falling back to az CLI.");
-        }
-
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            var loginHint2 = await ResolveLoginHintAsync();
-            // AgentX resource does not support WAM broker (IncorrectConfiguration error).
-            // Use device code / non-interactive path to avoid WAM entirely.
-            token = await _authService.GetAccessTokenAsync(
-                Constants.AuthenticationConstants.AgentXResource, tenantId, userId: loginHint2,
-                useInteractiveBrowser: false);
-        }
-
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            _logger.LogError("Failed to acquire AgentX access token. Ensure the custom app has 'AgentX.Access' consented and authentication is completed.");
-            return null;
-        }
-
-        token = token.ReplaceLineEndings(string.Empty).Trim();
+        // Use the custom app token provider with .default so the token is issued to the "Agent 365 CLI"
+        // app (7277bd3e-...) which has AgentRegistration.ReadWrite.All consented. Requesting the scope
+        // by name causes AADSTS650053 with the az CLI public client; .default includes all consented
+        // permissions for the resource without enumerating them.
+        IEnumerable<string>? registrationScopes = _tokenProvider != null
+            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            : null;
 
         var now = DateTimeOffset.UtcNow.ToString("o");
         var payload = new Dictionary<string, object?>
@@ -1274,8 +1259,8 @@ public class GraphApiService
             ["displayName"] = displayName,
             ["ownerIds"] = new[] { currentUserId },
             ["createdBy"] = currentUserId,
-            ["createdDateTime"] = now,
-            ["lastModifiedDateTime"] = now,
+            ["sourceCreatedDateTime"] = now,
+            ["sourceLastModifiedDateTime"] = now,
         };
 
         if (!string.IsNullOrWhiteSpace(description))
@@ -1287,174 +1272,69 @@ public class GraphApiService
         payload["sourceAgentId"] = !string.IsNullOrWhiteSpace(agentIdentityId) ? agentIdentityId : blueprintId ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(agentIdentityId))
             payload["agentIdentityId"] = agentIdentityId;
-        // managedBy must be the AgentX service app ID, not the CLI client app ID.
+        // managedByAppId must be the AgentX service app ID, not the CLI client app ID.
         // Using the CLI client app ID causes 424 "You do not have permission to create
         // an agent registration managed by another AppId."
-        payload["managedBy"] = Constants.AuthenticationConstants.AgentXAppId;
+        payload["managedByAppId"] = Constants.AuthenticationConstants.AgentXAppId;
 
-        var json = JsonSerializer.Serialize(payload);
-        var url = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration";
+        _logger.LogDebug("POST {Url}", AgentRegistrationsPath);
+        _logger.LogDebug("Body: {Body}", JsonSerializer.Serialize(payload));
 
-        _logger.LogDebug("POST {Url} (AgentX V2)", url);
-        _logger.LogDebug("Body: {Body}", json);
+        var response = await GraphPostWithResponseAsync(tenantId, AgentRegistrationsPath, payload, ct, registrationScopes);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        // Log token claims so scope/audience issues are visible in -v output.
+        var registrationToken = _httpClient.DefaultRequestHeaders.Authorization?.Parameter;
+        if (!string.IsNullOrWhiteSpace(registrationToken))
+            LogJwtClaims(registrationToken, "agent registration token");
 
-        try
+        if (response.IsSuccess)
         {
-            using var response = await _httpClient.SendAsync(request, ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogDebug("Agent registration response body: {Body}", response.Body);
 
-            _logger.LogDebug("AgentX V2 response: {StatusCode} {Reason}", (int)response.StatusCode, response.ReasonPhrase);
+            string? registrationId = null;
+            if (response.Json != null && response.Json.RootElement.TryGetProperty("id", out var idProp))
+                registrationId = idProp.GetString();
+            registrationId ??= payload["id"]?.ToString();
 
-            if ((int)response.StatusCode == 202 || response.IsSuccessStatusCode)
-            {
-                _logger.LogDebug("AgentX V2 response body: {Body}", body);
-
-                // Extract the registration ID from the 202 response body, or fall back to our generated ID.
-                string? registrationId = null;
-                if (!string.IsNullOrWhiteSpace(body))
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(body);
-                        if (doc.RootElement.TryGetProperty("id", out var idProp))
-                            registrationId = idProp.GetString();
-                    }
-                    catch (JsonException) { }
-                }
-                registrationId ??= payload["id"]?.ToString();
-
-                // 202 = accepted for async processing. Poll GET up to 3 times (10s apart)
-                // to confirm the registration is fully committed and visible in MAC.
-                if (!string.IsNullOrWhiteSpace(registrationId))
-                {
-                    var getUrl = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration/{registrationId}";
-                    const int maxAttempts = 3;
-                    const int delaySeconds = 10;
-                    bool confirmed = false;
-
-                    for (int attempt = 1; attempt <= maxAttempts && !confirmed; attempt++)
-                    {
-                        try
-                        {
-                            _logger.LogDebug("GET {Url} (status check {Attempt}/{Max})", getUrl, attempt, maxAttempts);
-                            using var getRequest = new HttpRequestMessage(HttpMethod.Get, getUrl);
-                            getRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                            using var getResponse = await _httpClient.SendAsync(getRequest, ct);
-                            _logger.LogDebug("AgentX GET response: {StatusCode} {Reason}", (int)getResponse.StatusCode, getResponse.ReasonPhrase);
-
-                            if (getResponse.IsSuccessStatusCode)
-                            {
-                                confirmed = true;
-                                _logger.LogDebug("Agent registration confirmed visible (attempt {Attempt})", attempt);
-                            }
-                            else if (attempt < maxAttempts)
-                            {
-                                _logger.LogDebug("Not yet visible (HTTP {StatusCode}), retrying in {Delay}s...", (int)getResponse.StatusCode, delaySeconds);
-                                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("Agent registration accepted but not yet visible after {Total}s — it may appear in MAC shortly.", maxAttempts * delaySeconds);
-                            }
-                        }
-                        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-                        {
-                            _logger.LogDebug("AgentX GET status check attempt {Attempt} failed (non-fatal): {Message}", attempt, ex.Message);
-                            break;
-                        }
-                    }
-                }
-
-                return registrationId;
-            }
-
-            _logger.LogDebug("AgentX agent registration failed with HTTP {StatusCode}. Body: {Body}", (int)response.StatusCode, body);
-            if ((int)response.StatusCode == 403)
-                _logger.LogError("AgentX agent registration failed (403 Forbidden). This is a backend service issue — no role or permission change on your side will resolve it.");
-            else
-                _logger.LogError("AgentX agent registration failed with HTTP {StatusCode}.", (int)response.StatusCode);
-            return null;
+            response.Json?.Dispose();
+            return registrationId;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            _logger.LogError(ex, "AgentX agent registration request failed: {Message}", ex.Message);
-            return null;
-        }
+
+        if (response.StatusCode == 403)
+            _logger.LogError(
+                "Agent registration failed (403 Forbidden). " +
+                "Ensure the signed-in user has the required Entra role (e.g., Agent Registry Administrator) " +
+                "and the tenant is enrolled in the required preview program. Response: {Body}", response.Body);
+        else
+            _logger.LogError("Agent registration failed with HTTP {StatusCode}. Body: {Body}", response.StatusCode, response.Body);
+        response.Json?.Dispose();
+        return null;
     }
 
     /// <summary>
-    /// Deletes an agent registration via the AgentX Agent Registration API V2
-    /// (DELETE https://agentxppe.microsoft.com/api/a365/agents/registration/{id}).
-    /// Returns true on success (204) or if the registration was already deleted (404).
+    /// Deletes an agent registration via the Microsoft Graph copilot/agentRegistrations endpoint
+    /// (DELETE <see cref="AgentRegistrationsPath"/>/{id}).
+    /// Returns true on success or if the registration was already deleted (404).
     /// </summary>
     public virtual async Task<bool> DeleteAgentRegistrationAsync(
         string tenantId,
         string registrationId,
         CancellationToken ct = default)
     {
-        // Acquire AgentX token — prefer delegated (token provider) over az CLI.
-        string? token = null;
-        var agentXScopes = new[] { Constants.AuthenticationConstants.AgentXAccessScope };
+        // Use the custom app token provider with .default so the token includes AgentRegistration.ReadWrite.All
+        // (consented on the "Agent 365 CLI" app). .default avoids AADSTS650053 from explicit scope names.
+        IEnumerable<string>? scopes = _tokenProvider != null
+            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            : null;
 
-        if (_tokenProvider != null)
-        {
-            var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, agentXScopes, false, CustomClientAppId, ct, loginHint);
-        }
+        _logger.LogInformation("DELETE https://graph.microsoft.com{Path}/{RegistrationId}", AgentRegistrationsPath, registrationId);
 
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            var loginHint2 = await ResolveLoginHintAsync();
-            // AgentX resource does not support WAM broker (IncorrectConfiguration error).
-            // Use device code / non-interactive path to avoid WAM entirely.
-            token = await _authService.GetAccessTokenAsync(
-                Constants.AuthenticationConstants.AgentXResource, tenantId, userId: loginHint2,
-                useInteractiveBrowser: false);
-        }
-
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            _logger.LogError("Failed to acquire AgentX access token for delete.");
-            return false;
-        }
-
-        token = token.ReplaceLineEndings(string.Empty).Trim();
-        LogJwtClaims(token, "AgentX delete token");
-        var url = $"{Constants.AuthenticationConstants.AgentXBaseUrl}/api/a365/agents/registration/{registrationId}";
-        _logger.LogInformation("DELETE {Url} (AgentX V2)", url);
-
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Delete, url);
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-            using var response = await _httpClient.SendAsync(request, ct);
-            _logger.LogInformation("AgentX delete response: {StatusCode} {Reason}", (int)response.StatusCode, response.ReasonPhrase);
-
-            if (response.StatusCode == System.Net.HttpStatusCode.NoContent ||
-                response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                return true;
-
-            var body = await response.Content.ReadAsStringAsync(ct);
-            var allHeaders = string.Join("; ", response.Headers.Select(h => $"{h.Key}: {string.Join(", ", h.Value)}"));
-
-            _logger.LogError(
-                "AgentX agent delete failed with HTTP {StatusCode}. Body: {Body} | Response headers: {Headers}",
-                (int)response.StatusCode,
-                string.IsNullOrWhiteSpace(body) ? "(empty)" : body,
-                string.IsNullOrWhiteSpace(allHeaders) ? "(none)" : allHeaders);
-            return false;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            _logger.LogError(ex, "AgentX agent delete request failed: {Message}", ex.Message);
-            return false;
-        }
+        return await GraphDeleteAsync(
+            tenantId,
+            $"{AgentRegistrationsPath}/{registrationId}",
+            ct,
+            treatNotFoundAsSuccess: true,
+            scopes: scopes);
     }
 
     /// <summary>

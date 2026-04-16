@@ -255,7 +255,7 @@ public class CleanupCommand
                     }
                     else
                     {
-                        logger.LogInformation("Deleting agent registration {RegistrationId} via AgentX V2 API...", config.AgentRegistrationId);
+                        logger.LogInformation("Deleting agent registration {RegistrationId} via Graph API...", config.AgentRegistrationId);
                         var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
                             config.TenantId,
                             config.AgentRegistrationId,
@@ -748,7 +748,7 @@ public class CleanupCommand
                 }
                 else
                 {
-                    logger.LogInformation("Deleting agent registration {RegistrationId} via AgentX V2 API...", config.AgentRegistrationId);
+                    logger.LogInformation("Deleting agent registration {RegistrationId} via Graph API...", config.AgentRegistrationId);
                     var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
                         config.TenantId,
                         config.AgentRegistrationId,

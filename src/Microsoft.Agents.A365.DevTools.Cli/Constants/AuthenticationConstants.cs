@@ -222,7 +222,13 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
-        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
+        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (AdminSubcommand, PublishCommand)
+        // AgentRegistration.ReadWrite.All (resource: 00000003-0000-0000-c000-000000000000, ID: 20f263bf-7d50-4e66-912c-16b4b4194fd4)
+        // is required for POST/DELETE /stagingbeta/copilot/agentRegistrations. It is acquired via .default
+        // on the custom app token provider (not enumerated explicitly) to avoid AADSTS650053.
+        // This permission must be configured on the custom app via the portal but is not validated here
+        // because ClientAppValidator queries /v1.0/oauth2PermissionGrants which only returns consented
+        // delegated scopes in the same resource app bundle as the existing permissions.
         // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
         // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
         // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
