@@ -34,7 +34,7 @@ public class EvaluationAnalyzerTests
         bool? score,
         CheckCategory category,
         Priority severity = Priority.P1,
-        List<int>? smellIds = null)
+        List<int>? issueIds = null)
     {
         return new ChecklistItem
         {
@@ -45,7 +45,7 @@ public class EvaluationAnalyzerTests
             Reason = score == false ? $"Failed: {id}" : null,
             Severity = severity,
             Category = category,
-            SmellIds = smellIds ?? [],
+            IssueIds = issueIds ?? [],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = $"Fix {id}",
         };
@@ -368,29 +368,29 @@ public class EvaluationAnalyzerTests
     }
 
     // -----------------------------------------------------------------------
-    // Smell summary counts are correct
+    // Issue summary counts are correct
     // -----------------------------------------------------------------------
 
     [Fact]
-    public void Analyze_SmellSummaryCounts_MatchFailedCheckSmellIds()
+    public void Analyze_IssueSummaryCounts_MatchFailedCheckIssueIds()
     {
-        var tool = CreateToolWithUniformChecks("smelly_tool", score: false);
+        var tool = CreateToolWithUniformChecks("problem_tool", score: false);
         var checklist = CreateChecklist([tool]);
 
         var result = _analyzer.Analyze(checklist, "None");
 
-        // The uniform failing tool has smell IDs: [4] on tn1, [5] on td1, [9] on pd1
-        result.SmellSummary.Should().NotBeEmpty();
+        // The uniform failing tool has issue ids: [4] on tn1, [5] on td1, [9] on pd1
+        result.IssueSummary.Should().NotBeEmpty();
 
-        // Verify total smell occurrences match what we created
-        int totalSmells = result.SmellSummary.Values.Sum();
-        totalSmells.Should().BeGreaterThan(0);
+        // Verify total issue occurrences match what we created
+        int totalIssues = result.IssueSummary.Values.Sum();
+        totalIssues.Should().BeGreaterThan(0);
     }
 
     [Fact]
-    public void Analyze_SmellSummary_CountsMultipleOccurrencesOfSameSmell()
+    public void Analyze_IssueSummary_CountsMultipleOccurrencesOfSameIssue()
     {
-        // Create two tools that both fail with the same smell ID
+        // Create two tools that both fail with the same issue id
         var tool1 = new ToolChecklist
         {
             Name = "tool1",
@@ -399,7 +399,7 @@ public class EvaluationAnalyzerTests
             {
                 ToolName =
                 [
-                    CreateCheck("t1_tn1", false, CheckCategory.ToolName, smellIds: [4]),
+                    CreateCheck("t1_tn1", false, CheckCategory.ToolName, issueIds: [4]),
                 ],
                 ToolDescription = [],
                 SchemaStructure = [],
@@ -414,7 +414,7 @@ public class EvaluationAnalyzerTests
             {
                 ToolName =
                 [
-                    CreateCheck("t2_tn1", false, CheckCategory.ToolName, smellIds: [4]),
+                    CreateCheck("t2_tn1", false, CheckCategory.ToolName, issueIds: [4]),
                 ],
                 ToolDescription = [],
                 SchemaStructure = [],
@@ -425,10 +425,10 @@ public class EvaluationAnalyzerTests
 
         var result = _analyzer.Analyze(checklist, "None");
 
-        // Smell 4 = "Missing purpose statement"
-        var smell4Name = "Missing purpose statement";
-        result.SmellSummary.Should().ContainKey(smell4Name);
-        result.SmellSummary[smell4Name].Should().Be(2);
+        // Issue 4 = "Missing purpose statement"
+        var issue4Name = "Missing purpose statement";
+        result.IssueSummary.Should().ContainKey(issue4Name);
+        result.IssueSummary[issue4Name].Should().Be(2);
     }
 
     // -----------------------------------------------------------------------

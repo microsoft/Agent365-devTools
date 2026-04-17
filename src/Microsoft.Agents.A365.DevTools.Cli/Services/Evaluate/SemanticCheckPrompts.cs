@@ -126,7 +126,7 @@ internal static class SemanticCheckPrompts
         sb.AppendLine("4. Set \"reason\" to a single sentence explaining your judgment.");
         sb.AppendLine("5. Do NOT modify any item where \"score\" is already set (true or false).");
         sb.AppendLine("   Those are deterministic checks that have already been evaluated.");
-        sb.AppendLine("6. Do NOT modify any other fields (id, type, severity, category, smell_ids,");
+        sb.AppendLine("6. Do NOT modify any other fields (id, type, severity, category, issue_ids,");
         sb.AppendLine("   impact_areas, remediation, prompt).");
         sb.AppendLine("7. Write the updated JSON back to the SAME file path.");
         sb.AppendLine("8. Preserve the exact JSON formatting: 2-space indentation, UTF-8 encoding.");

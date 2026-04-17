@@ -58,8 +58,8 @@ internal sealed class EvaluationAnalyzer : IEvaluationAnalyzer
         allActionItems.AddRange(toolsetResult.ActionItems);
         allActionItems.Sort((a, b) => a.Priority.CompareTo(b.Priority));
 
-        // Step 6: Compute smell summary (smell ID to count of occurrences)
-        var smellSummary = ComputeSmellSummary(allActionItems);
+        // Step 6: Compute issue summary (issue ID to count of occurrences)
+        var issueSummary = ComputeIssueSummary(allActionItems);
 
         // Step 7: Compute action items by priority
         var actionItemsByPriority = ComputeActionItemsByPriority(allActionItems);
@@ -84,14 +84,14 @@ internal sealed class EvaluationAnalyzer : IEvaluationAnalyzer
             AllActionItems = allActionItems,
             CategoryAverages = categoryAverages,
             ActionItemsByPriority = actionItemsByPriority,
-            SmellSummary = smellSummary,
+            IssueSummary = issueSummary,
             EvalEngine = evalEngine,
         };
     }
 
     /// <summary>
     /// Analyzes a single tool's checklist, computing category scores, tool score,
-    /// action items, and detected smells.
+    /// action items, and detected issues.
     /// </summary>
     private static ToolEvalResult AnalyzeTool(ToolChecklist tool)
     {
@@ -124,9 +124,9 @@ internal sealed class EvaluationAnalyzer : IEvaluationAnalyzer
         // Generate action items from all checks
         var actionItems = ActionItemGenerator.GenerateFromAllChecks(allChecks, tool.Name);
 
-        // Collect unique smell IDs from action items, sorted
-        var smellsDetected = actionItems
-            .SelectMany(a => a.SmellIds)
+        // Collect unique issue ids from action items, sorted
+        var issuesDetected = actionItems
+            .SelectMany(a => a.IssueIds)
             .Distinct()
             .OrderBy(id => id)
             .ToList();
@@ -143,7 +143,7 @@ internal sealed class EvaluationAnalyzer : IEvaluationAnalyzer
             CategoryScores = categoryScores,
             Checks = allChecks,
             ActionItems = actionItems,
-            SmellsDetected = smellsDetected,
+            IssuesDetected = issuesDetected,
             InputSchema = tool.InputSchema,
         };
     }
@@ -196,26 +196,26 @@ internal sealed class EvaluationAnalyzer : IEvaluationAnalyzer
     }
 
     /// <summary>
-    /// Computes a summary of smell occurrences across all action items.
-    /// Returns a dictionary of smell name to occurrence count.
+    /// Computes a summary of issue occurrences across all action items.
+    /// Returns a dictionary of issue name to occurrence count.
     /// </summary>
-    private static Dictionary<string, int> ComputeSmellSummary(List<ActionItem> actionItems)
+    private static Dictionary<string, int> ComputeIssueSummary(List<ActionItem> actionItems)
     {
-        var smellCounts = new Dictionary<int, int>();
+        var issueCounts = new Dictionary<int, int>();
         foreach (var item in actionItems)
         {
-            foreach (int smellId in item.SmellIds)
+            foreach (int issueId in item.IssueIds)
             {
-                smellCounts[smellId] = smellCounts.GetValueOrDefault(smellId) + 1;
+                issueCounts[issueId] = issueCounts.GetValueOrDefault(issueId) + 1;
             }
         }
 
         var summary = new Dictionary<string, int>();
-        foreach (var (smellId, count) in smellCounts.OrderByDescending(kvp => kvp.Value))
+        foreach (var (issueId, count) in issueCounts.OrderByDescending(kvp => kvp.Value))
         {
-            string name = SmellTaxonomy.Definitions.TryGetValue(smellId, out var smell)
-                ? smell.Name
-                : smellId.ToString(CultureInfo.InvariantCulture);
+            string name = IssueTaxonomy.Definitions.TryGetValue(issueId, out var issue)
+                ? issue.Name
+                : issueId.ToString(CultureInfo.InvariantCulture);
             summary[name] = count;
         }
 

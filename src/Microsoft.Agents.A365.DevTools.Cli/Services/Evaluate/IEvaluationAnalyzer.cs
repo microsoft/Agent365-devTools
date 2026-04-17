@@ -8,7 +8,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 /// <summary>
 /// Analyzes an evaluated checklist and produces the final <see cref="SchemaEvalResult"/>.
 /// This is Step 4 of the evaluation pipeline: scoring, maturity determination,
-/// action item generation, and smell aggregation.
+/// action item generation, and issue aggregation.
 /// </summary>
 public interface IEvaluationAnalyzer
 {

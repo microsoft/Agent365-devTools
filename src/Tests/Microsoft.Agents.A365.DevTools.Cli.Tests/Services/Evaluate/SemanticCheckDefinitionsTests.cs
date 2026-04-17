@@ -64,10 +64,10 @@ public class SemanticCheckDefinitionsTests
     }
 
     [Fact]
-    public void GetToolLevelChecks_AllHaveNonEmptySmellIds()
+    public void GetToolLevelChecks_AllHaveNonEmptyIssueIds()
     {
         var checks = SemanticCheckDefinitions.GetToolLevelChecks();
-        checks.Should().AllSatisfy(c => c.SmellIds.Should().NotBeEmpty());
+        checks.Should().AllSatisfy(c => c.IssueIds.Should().NotBeEmpty());
     }
 
     [Fact]

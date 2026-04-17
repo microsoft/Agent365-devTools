@@ -16,13 +16,13 @@ public class EvalReportData
     public SchemaEvalResult Result { get; init; } = new();
 
     [JsonPropertyName("impact_map")]
-    public Dictionary<string, SmellImpactInfo> ImpactMap { get; init; } = [];
+    public Dictionary<string, IssueImpactInfo> ImpactMap { get; init; } = [];
 
     [JsonPropertyName("maturity_ladder")]
     public List<MaturityLadderEntry> MaturityLadder { get; init; } = [];
 }
 
-public class SmellImpactInfo
+public class IssueImpactInfo
 {
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;

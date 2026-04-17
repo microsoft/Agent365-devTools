@@ -32,8 +32,8 @@ public class ChecklistItem
     [JsonPropertyName("category")]
     public CheckCategory Category { get; init; }
 
-    [JsonPropertyName("smell_ids")]
-    public List<int> SmellIds { get; init; } = [];
+    [JsonPropertyName("issue_ids")]
+    public List<int> IssueIds { get; init; } = [];
 
     [JsonPropertyName("impact_areas")]
     public List<ImpactArea> ImpactAreas { get; init; } = [];

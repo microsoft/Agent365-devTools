@@ -53,7 +53,7 @@ internal sealed partial class ReportGenerator : IReportGenerator
         var reportData = new EvalReportData
         {
             Result = result,
-            ImpactMap = SmellTaxonomy.GetImpactMap(),
+            ImpactMap = IssueTaxonomy.GetImpactMap(),
             MaturityLadder = MaturityCalculator.GetMaturityLadder(result.Maturity.Level),
         };
 

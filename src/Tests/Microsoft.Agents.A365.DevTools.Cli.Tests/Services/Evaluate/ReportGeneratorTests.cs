@@ -69,7 +69,7 @@ public class ReportGeneratorTests : IDisposable
                     },
                     Checks = [],
                     ActionItems = [],
-                    SmellsDetected = [],
+                    IssuesDetected = [],
                 },
             ],
             ToolsetResult = new ToolsetEvalResult
@@ -91,7 +91,7 @@ public class ReportGeneratorTests : IDisposable
                 ["P2"] = 0,
                 ["P3"] = 0,
             },
-            SmellSummary = [],
+            IssueSummary = [],
             EvalEngine = "None",
         };
     }

@@ -8,7 +8,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 /// <summary>
 /// Generates prioritized action items from failed evaluation checks.
 /// Each failed check produces an action item with calculated score impact
-/// and mapped smell impact descriptions from the taxonomy.
+/// and mapped issue impact descriptions from the taxonomy.
 /// </summary>
 public static class ActionItemGenerator
 {
@@ -50,7 +50,7 @@ public static class ActionItemGenerator
                 : 1;
             float scoreImpact = MathF.Round((weight * 100f) / Math.Max(categoryTotal, 1), 1);
 
-            List<string> issueLeadsTo = ResolveSmellImpacts(check.SmellIds);
+            List<string> issueLeadsTo = ResolveIssueImpacts(check.IssueIds);
 
             items.Add(new ActionItem
             {
@@ -59,7 +59,7 @@ public static class ActionItemGenerator
                 Priority = check.Severity,
                 Title = check.Prompt,
                 Description = check.Reason ?? string.Empty,
-                SmellIds = check.SmellIds,
+                IssueIds = check.IssueIds,
                 ImpactAreas = check.ImpactAreas,
                 Remediation = check.Remediation,
                 ScoreImpact = scoreImpact,
@@ -72,22 +72,22 @@ public static class ActionItemGenerator
     }
 
     /// <summary>
-    /// Resolves smell IDs to their human-readable impact descriptions
-    /// using the SmellTaxonomy definitions.
+    /// Resolves issue ids to their human-readable impact descriptions
+    /// using the IssueTaxonomy definitions.
     /// </summary>
-    private static List<string> ResolveSmellImpacts(List<int> smellIds)
+    private static List<string> ResolveIssueImpacts(List<int> issueIds)
     {
-        if (smellIds is null || smellIds.Count == 0)
+        if (issueIds is null || issueIds.Count == 0)
         {
             return [];
         }
 
         var impacts = new List<string>();
-        foreach (int smellId in smellIds)
+        foreach (int issueId in issueIds)
         {
-            if (SmellTaxonomy.Definitions.TryGetValue(smellId, out var smell))
+            if (IssueTaxonomy.Definitions.TryGetValue(issueId, out var issue))
             {
-                impacts.Add(smell.Impact);
+                impacts.Add(issue.Impact);
             }
         }
 

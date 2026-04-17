@@ -13,11 +13,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 /// Runs deterministic checks inline (structural/objective checks that do not require
 /// semantic judgment) and attaches semantic check placeholders for later evaluation
 /// by a coding agent.
-///
-/// Deterministic checks based on:
-/// - 18-smell taxonomy: Li et al. (arXiv:2602.18914)
-/// - 6-component framework: Hasan et al. (arXiv:2602.14878)
-/// - TAFC parameter study: arXiv:2601.18282
 /// </summary>
 internal sealed class ChecklistGenerator : IChecklistGenerator
 {
@@ -158,7 +153,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Reason = passed ? "Tool has a name." : "Tool name is empty or missing.",
             Severity = Priority.P0,
             Category = CheckCategory.ToolName,
-            SmellIds = [4],
+            IssueIds = [4],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : "Every tool must have a non-empty name.",
         };
@@ -187,7 +182,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Reason = passed ? $"Name uses {detected} convention." : $"Name '{name}' uses mixed casing.",
             Severity = Priority.P2,
             Category = CheckCategory.ToolName,
-            SmellIds = [17],
+            IssueIds = [17],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : "Use consistent snake_case (preferred) or camelCase for all tool names.",
         };
@@ -211,7 +206,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Name contains invalid characters: {string.Join(", ", badChars)}",
             Severity = Priority.P1,
             Category = CheckCategory.ToolName,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : "Remove special characters. Use only letters, numbers, underscores, hyphens, and dots.",
         };
@@ -232,7 +227,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Name length ({length}) outside 3-64 range.",
             Severity = Priority.P2,
             Category = CheckCategory.ToolName,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : "Keep tool names between 3 and 64 characters.",
         };
@@ -264,7 +259,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Reason = passed ? "Tool has a description." : "Tool description is empty or missing.",
             Severity = Priority.P0,
             Category = CheckCategory.ToolDescription,
-            SmellIds = [4, 5, 6, 7, 8],
+            IssueIds = [4, 5, 6, 7, 8],
             ImpactAreas = [ImpactArea.ToolSelection, ImpactArea.Completeness],
             Remediation = passed ? string.Empty : "Add a description explaining what this tool does, when to use it, and what it returns.",
         };
@@ -285,7 +280,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Description is too short ({length} chars, minimum 20).",
             Severity = Priority.P1,
             Category = CheckCategory.ToolDescription,
-            SmellIds = [4, 9],
+            IssueIds = [4, 9],
             ImpactAreas = [ImpactArea.ToolSelection, ImpactArea.Completeness],
             Remediation = passed ? string.Empty : "Expand the description to at least 20 characters with meaningful content.",
         };
@@ -306,7 +301,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Description is too long ({length} chars, max 2000). Risk of 16.67% regression.",
             Severity = Priority.P2,
             Category = CheckCategory.ToolDescription,
-            SmellIds = [14],
+            IssueIds = [14],
             ImpactAreas = [ImpactArea.Conciseness],
             Remediation = passed ? string.Empty : "Trim to under 2000 characters. Focus on purpose, guidelines, and limitations.",
         };
@@ -343,7 +338,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Reason = passed ? "Tool has an input schema." : "Tool has no input schema defined.",
             Severity = Priority.P0,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : "Define an inputSchema with type 'object' and properties for each parameter.",
         };
@@ -370,7 +365,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Schema root type is '{schemaType}', expected 'object'.",
             Severity = Priority.P0,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : "Set the inputSchema type to 'object' with 'properties' for parameters.",
         };
@@ -398,7 +393,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Schema nesting depth is {depth}. LLMs systematically flatten nested args at depth 4+.",
             Severity = severity,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : "Flatten nested structures. Split deeply nested parameters into separate tools.",
         };
@@ -432,7 +427,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Properties without type: {string.Join(", ", untyped)}. LLM cannot generate valid args.",
             Severity = Priority.P0,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Add 'type' to these properties: {string.Join(", ", untyped)}.",
         };
@@ -460,7 +455,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Arrays without items: {string.Join(", ", badArrays)}. Breaks OpenAI/Azure.",
             Severity = Priority.P0,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Add 'items' with a type definition to: {string.Join(", ", badArrays)}.",
         };
@@ -490,7 +485,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Required fields not in properties: {string.Join(", ", orphans)}. Server will always reject.",
             Severity = Priority.P0,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [1],
+            IssueIds = [1],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Add these to 'properties' or remove from 'required': {string.Join(", ", orphans)}.",
         };
@@ -537,7 +532,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Reason = message,
             Severity = severity,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : "Split tool into multiple focused tools with fewer parameters each.",
         };
@@ -565,7 +560,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Object params without properties: {string.Join(", ", emptyObjects)}. LLM will hallucinate field names.",
             Severity = Priority.P1,
             Category = CheckCategory.SchemaStructure,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Define 'properties' for: {string.Join(", ", emptyObjects)}.",
         };
@@ -599,7 +594,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Parameter '{paramName}' is a single character.",
             Severity = Priority.P1,
             Category = CheckCategory.ParamName,
-            SmellIds = [9],
+            IssueIds = [9],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Rename '{paramName}' to a descriptive name.",
         };
@@ -620,7 +615,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Parameter '{paramName}' length ({length}) outside 2-40 range.",
             Severity = Priority.P3,
             Category = CheckCategory.ParamName,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : "Keep parameter names between 2 and 40 characters.",
         };
@@ -654,7 +649,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Parameter '{paramName}' uses {thisConvention} but other params use {dominant}.",
             Severity = Priority.P3,
             Category = CheckCategory.ParamName,
-            SmellIds = [17],
+            IssueIds = [17],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Rename to match the dominant {dominant} convention used by other parameters.",
         };
@@ -689,7 +684,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Parameter '{paramName}' has no description (38% more omission errors).",
             Severity = Priority.P0,
             Category = CheckCategory.ParamDescription,
-            SmellIds = [9],
+            IssueIds = [9],
             ImpactAreas = [ImpactArea.ParamAccuracy, ImpactArea.Completeness],
             Remediation = passed ? string.Empty : $"Add a description to '{paramName}' explaining what it represents and expected values.",
         };
@@ -713,7 +708,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"'{paramName}' description is too short ({wordCount} words, minimum 5).",
             Severity = Priority.P1,
             Category = CheckCategory.ParamDescription,
-            SmellIds = [9],
+            IssueIds = [9],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Expand '{paramName}' description to at least 5 words covering format and constraints.",
         };
@@ -738,7 +733,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"'{paramName}' lacks type/format guidance in both schema and description.",
             Severity = Priority.P2,
             Category = CheckCategory.ParamDescription,
-            SmellIds = [11],
+            IssueIds = [11],
             ImpactAreas = [ImpactArea.ParamAccuracy],
             Remediation = passed ? string.Empty : $"Add 'type' to schema for '{paramName}' or mention expected format in description.",
         };
@@ -800,7 +795,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Reason = message,
             Severity = severity,
             Category = CheckCategory.ToolsetDesign,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : count == 0
                 ? "Add at least one tool to the server."
@@ -838,7 +833,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Near-duplicate names (edit dist < 3): {dupeList}",
             Severity = Priority.P1,
             Category = CheckCategory.ToolsetDesign,
-            SmellIds = [17],
+            IssueIds = [17],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : "Rename tools to be clearly distinct.",
         };
@@ -876,7 +871,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Inconsistent naming: most use {dominant}, but outliers: {string.Join(", ", outliers)}",
             Severity = Priority.P2,
             Category = CheckCategory.ToolsetDesign,
-            SmellIds = [17],
+            IssueIds = [17],
             ImpactAreas = [ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : $"Rename outlier tools to match the dominant {dominant} convention.",
         };
@@ -908,7 +903,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 : $"Schema consumes ~{estimatedTokens:N0} tokens (>{budget:N0}). Reduces available context.",
             Severity = passed ? Priority.P3 : Priority.P1,
             Category = CheckCategory.ToolsetDesign,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [ImpactArea.Conciseness, ImpactArea.ToolSelection],
             Remediation = passed ? string.Empty : "Reduce schema size by trimming verbose descriptions, reducing tool count, or simplifying schemas.",
         };
@@ -1136,7 +1131,7 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Reason = reason,
             Severity = Priority.P3,
             Category = category,
-            SmellIds = [],
+            IssueIds = [],
             ImpactAreas = [],
             Remediation = string.Empty,
         };

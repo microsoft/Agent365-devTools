@@ -32,8 +32,8 @@ public class ToolEvalResult
     [JsonPropertyName("action_items")]
     public List<ActionItem> ActionItems { get; init; } = [];
 
-    [JsonPropertyName("smells_detected")]
-    public List<int> SmellsDetected { get; init; } = [];
+    [JsonPropertyName("issues_detected")]
+    public List<int> IssuesDetected { get; init; } = [];
 
     [JsonPropertyName("input_schema")]
     public JsonElement? InputSchema { get; init; }

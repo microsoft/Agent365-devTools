@@ -43,8 +43,8 @@ public class SchemaEvalResult
     [JsonPropertyName("action_items_by_priority")]
     public Dictionary<string, int> ActionItemsByPriority { get; init; } = [];
 
-    [JsonPropertyName("smell_summary")]
-    public Dictionary<string, int> SmellSummary { get; init; } = [];
+    [JsonPropertyName("issue_summary")]
+    public Dictionary<string, int> IssueSummary { get; init; } = [];
 
     [JsonPropertyName("eval_engine")]
     public string EvalEngine { get; init; } = string.Empty;

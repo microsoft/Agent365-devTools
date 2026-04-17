@@ -35,7 +35,7 @@ public enum ImpactArea
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
-public enum SmellCategory
+public enum IssueCategory
 {
     Accuracy,
     Functionality,
