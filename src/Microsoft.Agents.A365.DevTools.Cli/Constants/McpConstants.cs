@@ -12,6 +12,20 @@ public static class McpConstants
     // WorkIQ Tools App ID
     public const string WorkIQToolsProdAppId = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1";
 
+    public const string V2ScopeValue = "Tools.ListInvoke.All";
+
+    public static bool IsV1Scope(string? scope) =>
+        !string.IsNullOrEmpty(scope) &&
+        scope.StartsWith("McpServers.", StringComparison.OrdinalIgnoreCase) &&
+        scope.EndsWith(".All", StringComparison.OrdinalIgnoreCase);
+
+    public static string ResolveAudienceOrAtgFallback(string? audience) =>
+        string.IsNullOrWhiteSpace(audience) ||
+        audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase)
+            ? WorkIQToolsProdAppId
+            : audience;
+
     /// <summary>
     /// Agent 365 Tools identifier URI (used for admin consent URL construction).
     /// </summary>

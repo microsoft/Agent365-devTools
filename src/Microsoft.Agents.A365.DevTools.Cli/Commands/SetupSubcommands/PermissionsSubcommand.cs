@@ -363,14 +363,22 @@ internal static class PermissionsSubcommand
         try
         {
             var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
-            var toolingScopes = await ReadMcpScopesAsync(manifestPath, logger);
 
-            var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+            var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath);
 
-            var specs = new List<ResourcePermissionSpec>
+            if (scopesByAudience.Count == 0)
             {
-                new ResourcePermissionSpec(resourceAppId, "Agent 365 Tools", toolingScopes, SetInheritable: true),
-            };
+                logger.LogInformation("No MCP permissions to configure — manifest is empty or not found.");
+                return true;
+            }
+
+            var specs = scopesByAudience
+                .Select(kvp => new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: true))
+                .ToList();
+
+            logger.LogInformation("Configuring permissions for {Count} resource(s):", specs.Count);
+            foreach (var spec in specs)
+                logger.LogInformation("  {AppId} — {Scopes}", spec.ResourceAppId, string.Join(", ", spec.Scopes));
 
             var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 graphApiService, blueprintService, setupConfig,
@@ -487,6 +495,14 @@ internal static class PermissionsSubcommand
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };
+
+        // Protect V2 MCP audience GUIDs — these are managed by 'setup permissions mcp',
+        // not by custom-permission reconciliation. Without this, re-running 'setup blueprint'
+        // would treat them as stale and remove them.
+        var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
+        var mcpAudiences = await ManifestHelper.GetScopesByAudienceAsync(manifestPath);
+        foreach (var audienceId in mcpAudiences.Keys)
+            protectedIds.Add(audienceId);
 
         // Must match RequiredPermissionGrantScopes exactly so the PowerShell token acquired
         // for inheritable permissions is reused (same cache key) rather than triggering

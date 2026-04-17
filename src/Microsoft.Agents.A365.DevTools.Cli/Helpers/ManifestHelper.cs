@@ -205,6 +205,98 @@ public static class ManifestHelper
     }
 
     /// <summary>
+    /// Reads ToolingManifest.json and returns scopes grouped by their resolved audience (resourceAppId).
+    /// Supports V1 (shared ATG AppId), V2 (per-server AppId), and mixed manifests.
+    /// Fallback rules — the following audience values all resolve to <see cref="McpConstants.WorkIQToolsProdAppId"/>:
+    ///   - missing / null / whitespace
+    ///   - any value starting with <c>api://</c> (legacy V1 format)
+    ///   - the literal string <c>"default"</c>
+    /// </summary>
+    /// <param name="manifestPath">Path to ToolingManifest.json</param>
+    /// <param name="excludeLegacyAtg">
+    /// When true, omits all entries whose resolved audience is the shared ATG AppId.
+    /// Pass true only when removing V1/legacy scopes (--remove-legacy-scopes).
+    /// </param>
+    public static async Task<Dictionary<string, string[]>> GetScopesByAudienceAsync(
+        string manifestPath,
+        bool excludeLegacyAtg = false)
+    {
+        var atgAppId = McpConstants.WorkIQToolsProdAppId;
+        var scopesByAudience = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        // McpServersMetadata.Read.All is always required and belongs to the ATG AppId
+        if (!excludeLegacyAtg)
+        {
+            scopesByAudience[atgAppId] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "McpServersMetadata.Read.All"
+            };
+        }
+
+        var parsed = await ReadManifestAsync(manifestPath);
+        if (parsed is null)
+            return ToDictionary(scopesByAudience);
+
+        var (servers, _) = parsed.Value;
+
+        foreach (var element in servers)
+        {
+            // Resolve scope — prefer manifest field, fall back to static mapping
+            string? scope = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Scope, out var scopeEl) &&
+                scopeEl.ValueKind == JsonValueKind.String)
+            {
+                var raw = scopeEl.GetString();
+                if (!string.Equals(raw, "null", StringComparison.OrdinalIgnoreCase))
+                    scope = raw;
+            }
+            if (string.IsNullOrWhiteSpace(scope))
+            {
+                var serverName = ExtractServerName(element);
+                if (!string.IsNullOrWhiteSpace(serverName))
+                {
+                    var (mappedScope, _) = McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName);
+                    scope = mappedScope;
+                }
+            }
+            if (string.IsNullOrWhiteSpace(scope)) continue;
+
+            // Resolve audience — null/whitespace/api://-prefixed/"default" → ATG AppId
+            string? audience = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
+                audience = audienceEl.GetString();
+
+            audience = McpConstants.ResolveAudienceOrAtgFallback(audience);
+
+            if (excludeLegacyAtg &&
+                string.Equals(audience, atgAppId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!scopesByAudience.TryGetValue(audience, out var scopeSet))
+            {
+                scopeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                scopesByAudience[audience] = scopeSet;
+            }
+
+            foreach (var s in scope.Split(' ',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                scopeSet.Add(s);
+            }
+        }
+
+        return ToDictionary(scopesByAudience);
+
+        static Dictionary<string, string[]> ToDictionary(Dictionary<string, HashSet<string>> src) =>
+            src.ToDictionary(
+                k => k.Key,
+                v => v.Value.OrderBy(s => s).ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Reads ToolingManifest.json and returns the unique list of scopes required by all MCP servers.
     /// Strategy:
     ///  1) If a server entry has an explicit "scope" property, use it.
