@@ -343,11 +343,10 @@ internal static class AllSubcommand
                     var mcpManifestPath = Path.Combine(
                         setupConfig.DeploymentProjectPath ?? string.Empty,
                         McpConstants.ToolingManifestFileName);
-                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
-
                     // Derive ATG-AppId entry for consent URL helpers (V1 backward compat).
                     // V2-only manifests produce an empty array here, which is correct.
                     var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: mcpResourceAppId);
                     var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes)
                         ? atgScopes
                         : Array.Empty<string>();

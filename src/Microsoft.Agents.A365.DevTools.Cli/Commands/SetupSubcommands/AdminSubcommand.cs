@@ -160,7 +160,8 @@ internal static class AdminSubcommand
                 var mcpManifestPath = Path.Combine(
                     setupConfig.DeploymentProjectPath ?? string.Empty,
                     McpConstants.ToolingManifestFileName);
-                var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
+                var adminAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: adminAtgAppId);
 
                 var specs = new List<ResourcePermissionSpec>
                 {

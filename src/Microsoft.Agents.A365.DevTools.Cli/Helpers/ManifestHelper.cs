@@ -275,7 +275,7 @@ public static class ManifestHelper
     /// <summary>
     /// Reads ToolingManifest.json and returns scopes grouped by their audience (resourceAppId).
     /// Supports V1 (shared ATG AppId), V2 (per-server AppId), and mixed manifests.
-    /// Fallback rules — the following audience values all resolve to <see cref="McpConstants.WorkIQToolsProdAppId"/> (ATG AppId):
+    /// Fallback rules — the following audience values all resolve to <paramref name="resolvedAtgAppId"/>:
     ///   • missing / null / whitespace
     ///   • any value starting with <c>api://</c> (legacy V1 format)
     ///   • the literal string <c>"default"</c>
@@ -285,12 +285,18 @@ public static class ManifestHelper
     /// When true, omits all entries whose resolved audience is the shared ATG AppId.
     /// Only pass true when V2 SDK is confirmed live (--remove-legacy-scopes flag).
     /// </param>
+    /// <param name="resolvedAtgAppId">
+    /// Environment-resolved ATG resource app ID. Defaults to <see cref="McpConstants.WorkIQToolsProdAppId"/>
+    /// when null. Pass <c>ConfigConstants.GetAgent365ToolsResourceAppId(environment)</c> to respect
+    /// A365_MCP_APP_ID_* environment variable overrides.
+    /// </param>
     /// <returns>Dictionary of resourceAppId → ordered scopes array</returns>
     public static async Task<Dictionary<string, string[]>> GetScopesByAudienceAsync(
         string manifestPath,
-        bool excludeLegacyAtg = false)
+        bool excludeLegacyAtg = false,
+        string? resolvedAtgAppId = null)
     {
-        var atgAppId = McpConstants.WorkIQToolsProdAppId;
+        var atgAppId = resolvedAtgAppId ?? McpConstants.WorkIQToolsProdAppId;
         var scopesByAudience = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
         // McpServersMetadata.Read.All is always required and belongs to the ATG AppId
@@ -335,7 +341,7 @@ public static class ManifestHelper
             if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
                 audience = audienceEl.GetString();
 
-            audience = McpConstants.ResolveAudienceOrAtgFallback(audience);
+            audience = McpConstants.ResolveAudienceOrAtgFallback(audience, atgAppId);
 
             if (excludeLegacyAtg &&
                 string.Equals(audience, atgAppId, StringComparison.OrdinalIgnoreCase))
@@ -370,8 +376,11 @@ public static class ManifestHelper
     /// Reads ToolingManifest.json and returns a mapping of audience → server unique names.
     /// Used by get-token to associate each acquired token with the right per-server env var key.
     /// </summary>
-    public static async Task<Dictionary<string, List<string>>> GetServerNamesByAudienceAsync(string manifestPath)
+    public static async Task<Dictionary<string, List<string>>> GetServerNamesByAudienceAsync(
+        string manifestPath,
+        string? resolvedAtgAppId = null)
     {
+        var atgAppId = resolvedAtgAppId ?? McpConstants.WorkIQToolsProdAppId;
         var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         var parsed = await ReadManifestAsync(manifestPath);
@@ -387,8 +396,8 @@ public static class ManifestHelper
 
             // Skip all forms that resolve to the shared ATG audience — these are handled via the
             // shared BEARER_TOKEN env var, not per-server BEARER_TOKEN_{AUDIENCE} entries.
-            var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience);
-            if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+            var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience, atgAppId);
+            if (string.Equals(resolvedAudience, atgAppId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var serverName = ExtractServerName(element);

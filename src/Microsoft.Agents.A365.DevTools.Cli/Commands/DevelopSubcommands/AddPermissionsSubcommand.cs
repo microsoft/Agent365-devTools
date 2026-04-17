@@ -112,6 +112,9 @@ internal static class AddPermissionsSubcommand
                 var manifestPath = manifest?.FullName 
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, McpConstants.ToolingManifestFileName);
 
+                var environment = setupConfig?.Environment ?? "prod";
+                var atgResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+
                 // Determine which scopes to add.
                 // Explicit --scopes: single ATG call (no audience info available).
                 // Manifest: per-audience calls via GetScopesByAudienceAsync (V1 + V2 support).
@@ -140,7 +143,7 @@ internal static class AddPermissionsSubcommand
 
                     logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
 
-                    scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath);
+                    scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, resolvedAtgAppId: atgResourceAppId);
 
                     if (scopesByAudience.Count == 0)
                     {
@@ -154,9 +157,6 @@ internal static class AddPermissionsSubcommand
                     logger.LogInformation("Found {AudienceCount} audience(s) with {ScopeCount} unique scope(s) from manifest",
                         scopesByAudience.Count, totalScopes);
                 }
-
-                var environment = setupConfig?.Environment ?? "prod";
-                var atgResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
 
                 logger.LogInformation("");
 
