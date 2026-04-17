@@ -468,12 +468,6 @@ Once `a365 config init` completes without errors, you have a baseline configurat
 
 ## Step 4: Run Agent 365 Setup to Provision Prerequisites
 
-> **Skill tip:** If you have the Agent 365 devTools repository cloned and the Claude Code skills extension installed, you can use the `/provision` slash command instead of following steps 4.1–4.4. The skill is a packaged version of this exact flow. If `/provision` appears in your Claude Code slash commands, type `/provision <agent_name>` and follow the prompts — then skip the rest of this step.
->
-> If you do NOT have the skill installed, continue below. The inline flow is equivalent.
-
----
-
 ### 4.1 — Collect provisioning inputs
 
 **For the Standard path (`isAITeammate = false`):**

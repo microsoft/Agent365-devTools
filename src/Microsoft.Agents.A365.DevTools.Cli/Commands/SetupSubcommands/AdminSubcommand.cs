@@ -206,39 +206,7 @@ internal static class AdminSubcommand
                         return;
                     }
 
-                    // Build the spec list using dynamic config values (V1/V2 manifest-aware).
-                    var mcpManifestPath = Path.Combine(
-                        setupConfig.DeploymentProjectPath ?? string.Empty,
-                        McpConstants.ToolingManifestFileName);
-                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
-
-                    specs = new List<ResourcePermissionSpec>
-                    {
-                        new ResourcePermissionSpec(
-                            AuthenticationConstants.MicrosoftGraphResourceAppId,
-                            "Microsoft Graph",
-                            setupConfig.AgentApplicationScopes.ToArray(),
-                            SetInheritable: false),
-                    };
-                    specs.AddRange(scopesByAudience.Select(kvp =>
-                        new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: false)));
-                    specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
-
-                    foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-                    {
-                        var (isValid, _) = customPerm.Validate();
-                        if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
-                        {
-                            var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                                ? customPerm.ResourceAppId
-                                : customPerm.ResourceName;
-                            specs.Add(new ResourcePermissionSpec(
-                                customPerm.ResourceAppId,
-                                resourceName,
-                                customPerm.Scopes.ToArray(),
-                                SetInheritable: false));
-                        }
-                    }
+                    specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(setupConfig, setInheritable: false);
                 }
 
                 // Display what will be done and ask for confirmation (unless --yes is set).

@@ -1170,24 +1170,7 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger)
     {
         // Step 1: Resolve tenant ID
-        string? tenantId = tenantIdFlag;
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            logger.LogInformation("Detecting tenant from 'az account show'...");
-            var result = await executor.ExecuteAsync("az", "account show --output json", suppressErrorLogging: true);
-            if (result.Success && !string.IsNullOrWhiteSpace(result.StandardOutput))
-            {
-                try
-                {
-                    var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
-                    using var doc = JsonDocument.Parse(cleaned);
-                    if (doc.RootElement.TryGetProperty("tenantId", out var tid))
-                        tenantId = tid.GetString();
-                }
-                catch (Exception ex) { logger.LogDebug(ex, "Could not parse 'az account show' output for tenantId."); }
-            }
-        }
-
+        var tenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(tenantIdFlag, executor, logger);
         if (string.IsNullOrWhiteSpace(tenantId))
         {
             logger.LogError("Could not detect tenant ID. Sign in with 'az login' or pass --tenant-id.");
@@ -1197,37 +1180,12 @@ public class CleanupCommand
         // Step 2: Resolve client app ID.
         // Prefer a365.config.json when it exists locally and its tenant matches the current tenant.
         // Fall back to Entra lookup by well-known display name if the static config is absent or stale.
-        string? clientAppId = null;
-        var localStaticConfigPath = Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
-        if (File.Exists(localStaticConfigPath))
-        {
-            try
-            {
-                var staticJson = await File.ReadAllTextAsync(localStaticConfigPath);
-                using var staticDoc = JsonDocument.Parse(staticJson);
-                var staticRoot = staticDoc.RootElement;
-                var configTenantId = GetJsonString(staticRoot, "tenantId");
-                var configClientAppId = GetJsonString(staticRoot, "clientAppId");
-                if (string.Equals(configTenantId, tenantId, StringComparison.OrdinalIgnoreCase) &&
-                    !string.IsNullOrWhiteSpace(configClientAppId))
-                {
-                    clientAppId = configClientAppId;
-                    logger.LogDebug("Using client app ID from a365.config.json (tenant matches).");
-                }
-            }
-            catch (Exception ex) { logger.LogDebug(ex, "Could not parse {Path} for clientAppId — falling through to Entra lookup.", localStaticConfigPath); }
-        }
-
-        if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
-        {
-            clientAppId = await graphApiService.FindApplicationByDisplayNameAsync(
-                tenantId, AuthenticationConstants.WellKnownClientAppDisplayName);
-            if (!string.IsNullOrWhiteSpace(clientAppId))
-                logger.LogDebug("Resolved client app ID from Entra.");
-        }
-
-        // Configuring CustomClientAppId before Entra lookups ensures MSAL uses the correct app
-        // and avoids the PowerShell Connect-MgGraph fallback which uses the default app ID.
+        var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            tenantId,
+            graphApiService,
+            logger,
+            CancellationToken.None,
+            preferLocalConfig: true);
         if (!string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
             graphApiService.CustomClientAppId = clientAppId;
 
@@ -1261,14 +1219,14 @@ public class CleanupCommand
                 var json = await File.ReadAllTextAsync(generatedConfigPath);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
-                configBlueprintId = GetJsonString(root, "agentBlueprintId");
+                configBlueprintId = SetupHelpers.GetJsonString(root, "agentBlueprintId");
 
                 if (!string.IsNullOrWhiteSpace(resolvedBlueprintId) &&
                     string.Equals(resolvedBlueprintId, configBlueprintId, StringComparison.OrdinalIgnoreCase))
                 {
-                    agentRegistrationId = GetJsonString(root, "agentRegistrationId");
-                    agenticAppId = GetJsonString(root, "AgenticAppId");
-                    agentBlueprintSpObjectId = GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
+                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
+                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
+                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
                     logger.LogInformation("Loaded resource IDs from {Path}", generatedConfigPath);
                 }
                 else if (!string.IsNullOrWhiteSpace(configBlueprintId) && !string.IsNullOrWhiteSpace(resolvedBlueprintId))
@@ -1280,9 +1238,9 @@ public class CleanupCommand
                 else if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
                 {
                     // Entra lookup failed — fall back to file values for all IDs
-                    agentRegistrationId = GetJsonString(root, "agentRegistrationId");
-                    agenticAppId = GetJsonString(root, "AgenticAppId");
-                    agentBlueprintSpObjectId = GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
+                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
+                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
+                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
                     logger.LogInformation("Loaded resource IDs from {Path} (Entra lookup unavailable)", generatedConfigPath);
                 }
             }
@@ -1328,11 +1286,6 @@ public class CleanupCommand
 
         return config;
     }
-
-    private static string? GetJsonString(JsonElement element, string key)
-        => element.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String
-            ? val.GetString()
-            : null;
 
     private static async Task<Agent365Config?> LoadConfigAsync(
         FileInfo? configFile,
