@@ -1,5 +1,9 @@
 # Add Agent 365 Observability
 
+> **SCOPE — THIS FILE ONLY:** This file covers adding the Agent 365 observability SDK and tracing instrumentation to agent code. It does **NOT** cover provisioning, deployment, or CLI setup. If the user asked to "make their agent A365 compliant" or run setup, close this file and open `a365-setup-instructions.md` instead.
+>
+> **DO NOT use this file unless the user explicitly asked to add observability, telemetry, logging, or tracing.**
+
 Add Agent 365 observability to your agent at any point after `a365 setup all` has completed.
 
 > **Implementation reference:** [Agent observability — Microsoft Learn](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
