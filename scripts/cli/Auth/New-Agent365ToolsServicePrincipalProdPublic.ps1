@@ -159,12 +159,12 @@ if ($Mode -ne "V1") {
         Write-Host ""
     }
     else {
-        $resolvedV2AppIds = Get-V2AppIdsFromDiscoverEndpoint
-        if ($resolvedV2AppIds.Count -eq 0) {
-            Write-Host "  Discover endpoint returned no V2 AppIds. Falling back to hardcoded AppIds." -ForegroundColor Yellow
-            Write-Host ""
-            $resolvedV2AppIds = $v2FallbackAppIds
-        }
+        $liveAppIds = Get-V2AppIdsFromDiscoverEndpoint
+        # Always union live results with the hardcoded fallback so servers absent from
+        # the discover response (e.g. mcp_MeServer) are still provisioned.
+        $resolvedV2AppIds = @($liveAppIds + $v2FallbackAppIds | Select-Object -Unique)
+        Write-Host "  Total V2 AppIds to provision (live + fallback): $($resolvedV2AppIds.Count)" -ForegroundColor Cyan
+        Write-Host ""
     }
 }
 
