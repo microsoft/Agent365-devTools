@@ -844,17 +844,24 @@ public class CleanupCommand
                 }
             }
 
-            // 3. Delete agent identity service principal
+            // 3. Delete agent identity service principal(s).
+            // First delete the one recorded in config (fast path, no extra Graph query).
+            // Then query Entra for any additional identities linked to the blueprint that
+            // may not be in config — mirrors what 'cleanup blueprint' does, and handles the
+            // case where AgenticAppId is missing (e.g. bootstrap cleanup without --agent-name).
+            var deletedIdentityIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
             {
                 logger.LogInformation("Deleting agent identity service principal...");
 
                 var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
                     config.TenantId,
-                    config.AgenticAppId);
+                    config.AgenticAppId,
+                    ct);
 
                 if (deleted)
                 {
+                    deletedIdentityIds.Add(config.AgenticAppId);
                     logger.LogInformation("Agent identity service principal deleted successfully");
                 }
                 else
@@ -862,6 +869,44 @@ public class CleanupCommand
                     logger.LogWarning("Failed to delete agent identity service principal (will continue with other resources)");
                     logger.LogWarning("Local configuration will still be cleared at the end");
                     hasFailures = true;
+                }
+            }
+
+            // Discover any remaining linked identities via Entra (handles IDs missing from config).
+            if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId) && graphApiService != null)
+            {
+                try
+                {
+                    var linkedInstances = await agentBlueprintService.GetAgentInstancesForBlueprintAsync(
+                        config.TenantId, config.AgentBlueprintId, ct);
+
+                    foreach (var instance in linkedInstances)
+                    {
+                        if (string.IsNullOrWhiteSpace(instance.IdentitySpId) ||
+                            deletedIdentityIds.Contains(instance.IdentitySpId))
+                            continue;
+
+                        logger.LogInformation("Deleting linked agent identity SP {SpId} ({DisplayName})...",
+                            instance.IdentitySpId, instance.DisplayName ?? "(unnamed)");
+
+                        var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
+                            config.TenantId, instance.IdentitySpId, ct);
+
+                        if (deleted)
+                        {
+                            deletedIdentityIds.Add(instance.IdentitySpId);
+                            logger.LogInformation("Linked agent identity SP deleted");
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete linked agent identity SP {SpId}", instance.IdentitySpId);
+                            hasFailures = true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning("Could not query linked agent identities from Entra (non-fatal): {Message}", ex.Message);
                 }
             }
 

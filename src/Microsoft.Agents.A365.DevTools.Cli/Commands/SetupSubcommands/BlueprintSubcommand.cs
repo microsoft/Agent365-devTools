@@ -1013,12 +1013,28 @@ internal static class BlueprintSubcommand
             
             logger.LogDebug("Application object verified in directory");
 
-            // Update application with identifier URI
+            // Update application with identifier URI and expose the access_agent_as_user scope
+            // so callers can acquire tokens scoped to this blueprint via the OBO flow.
             var identifierUri = $"api://{appId}";
             var patchAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{objectId}";
             var patchBody = new JsonObject
             {
-                ["identifierUris"] = new JsonArray { identifierUri }
+                ["identifierUris"] = new JsonArray { identifierUri },
+                ["api"] = new JsonObject
+                {
+                    ["oauth2PermissionScopes"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["adminConsentDescription"] = "Allow the agent to act on behalf of the signed-in user.",
+                            ["adminConsentDisplayName"] = "Access agent on behalf of user",
+                            ["id"] = Guid.NewGuid().ToString(),
+                            ["isEnabled"] = true,
+                            ["type"] = "User",
+                            ["value"] = Constants.ConfigConstants.BlueprintOboScope
+                        }
+                    }
+                }
             };
 
             var patchResponse = await httpClient.PatchAsync(
@@ -1030,11 +1046,11 @@ internal static class BlueprintSubcommand
             {
                 var patchError = await patchResponse.Content.ReadAsStringAsync(ct);
                 logger.LogDebug("Waiting for application propagation before setting identifier URI...");
-                logger.LogDebug("Identifier URI update deferred (propagation delay): {Error}", patchError);
+                logger.LogDebug("Identifier URI / scope update deferred (propagation delay): {Error}", patchError);
             }
             else
             {
-                logger.LogDebug("Identifier URI set to: {Uri}", identifierUri);
+                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
             }
 
             // Create service principal
@@ -1300,9 +1316,17 @@ internal static class BlueprintSubcommand
         }
 
         // ========================================================================
+        // OBO Scope Reconciliation
+        // Ensure the blueprint exposes access_agent_as_user. Idempotent — skipped
+        // when the scope is already present. Runs for both new and existing blueprints
+        // so that re-runs of setup patch blueprints created before this feature.
+        // ========================================================================
+        await EnsureOboScopeAsync(graphApiService, tenantId, objectId, logger, ct);
+
+        // ========================================================================
         // Federated Identity Credential Validation/Creation
         // ========================================================================
-        
+
         // Create Federated Identity Credential ONLY when MSI is relevant (if managed identity provided)
         bool ficConfigured = false;
         string? ficError = null;
@@ -1413,6 +1437,82 @@ internal static class BlueprintSubcommand
         bool graphPermissionsFailed = !graphInheritablePermissionsConfigured;
         string? adminConsentUrl = !consentSuccess ? consentUrlGraph : null;
         return (true, appId, objectId, servicePrincipalId, alreadyExisted, consentSuccess, graphPermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl);
+    }
+
+    /// <summary>
+    /// Ensures the blueprint application exposes the <see cref="ConfigConstants.BlueprintOboScope"/>
+    /// delegated scope. Idempotent — no-op when the scope already exists.
+    /// Preserves any other scopes already configured on the application.
+    /// </summary>
+    private static async Task EnsureOboScopeAsync(
+        GraphApiService graphApiService,
+        string tenantId,
+        string objectId,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var appDoc = await graphApiService.GraphGetAsync(
+                tenantId, $"/v1.0/applications/{objectId}?$select=api", ct,
+                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+
+            var existingScopes = new JsonArray();
+
+            if (appDoc != null &&
+                appDoc.RootElement.TryGetProperty("api", out var apiProp) &&
+                apiProp.TryGetProperty("oauth2PermissionScopes", out var scopesEl))
+            {
+                foreach (var scope in scopesEl.EnumerateArray())
+                {
+                    if (scope.TryGetProperty("value", out var val) &&
+                        string.Equals(val.GetString(), ConfigConstants.BlueprintOboScope, StringComparison.OrdinalIgnoreCase))
+                    {
+                        logger.LogDebug("Blueprint already has {Scope} scope — skipping", ConfigConstants.BlueprintOboScope);
+                        return;
+                    }
+
+                    // Preserve existing scope in the PATCH body so we don't overwrite it.
+                    existingScopes.Add(JsonNode.Parse(scope.GetRawText()));
+                }
+            }
+
+            logger.LogInformation("Adding {Scope} scope to blueprint...", ConfigConstants.BlueprintOboScope);
+
+            existingScopes.Add(new JsonObject
+            {
+                ["adminConsentDescription"] = "Allow the agent to act on behalf of the signed-in user.",
+                ["adminConsentDisplayName"] = "Access agent on behalf of user",
+                ["id"] = Guid.NewGuid().ToString(),
+                ["isEnabled"] = true,
+                ["type"] = "User",
+                ["value"] = ConfigConstants.BlueprintOboScope
+            });
+
+            var patch = new JsonObject
+            {
+                ["api"] = new JsonObject
+                {
+                    ["oauth2PermissionScopes"] = existingScopes
+                }
+            };
+
+            var patched = await graphApiService.GraphPatchAsync(
+                tenantId, $"/v1.0/applications/{objectId}", patch, ct,
+                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+
+            if (patched)
+                logger.LogInformation("{Scope} scope added to blueprint", ConfigConstants.BlueprintOboScope);
+            else
+                logger.LogWarning(
+                    "Could not add {Scope} scope to blueprint. Add it manually: " +
+                    "Entra portal > App registrations > Expose an API.",
+                    ConfigConstants.BlueprintOboScope);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("OBO scope reconciliation failed (non-fatal): {Message}", ex.Message);
+        }
     }
 
     /// <summary>

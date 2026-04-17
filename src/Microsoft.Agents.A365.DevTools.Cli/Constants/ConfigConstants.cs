@@ -93,6 +93,12 @@ public static class ConfigConstants
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
 
     /// <summary>
+    /// Delegated scope value exposed on the blueprint app registration to enable
+    /// OBO (On-Behalf-Of) callers to acquire tokens scoped to the agent.
+    /// </summary>
+    public const string BlueprintOboScope = "access_agent_as_user";
+
+    /// <summary>
     /// Production deployment environment
     /// </summary>
     public const string ProductionDeploymentEnvironment = "prd";
