@@ -14,14 +14,14 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// <summary>
 /// Orchestrates setup for blueprint-based non-AI Teammate agent deployments.
 /// Runs the same steps as DW (infrastructure, blueprint, permissions) then appends
-/// two non-DW-only steps: Agent Identity creation and AgentX agent registration.
+/// two non-DW-only steps: Agent Identity creation and agent registration.
 ///
 /// Steps:
 ///   1. Requirements validation
 ///   2. Blueprint creation (shared with DW)
 ///   3. Batch permissions (shared with DW — dynamic scopes from config)
 ///   4. Agent Identity creation via POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity
-///   5. Agent registration via AgentX Agent Registration API V2
+///   5. Agent registration via Graph API (copilot/agentRegistrations)
 /// </summary>
 internal static class NonDwBlueprintSetupOrchestrator
 {
@@ -288,7 +288,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     }
 
     /// <summary>
-    /// Executes Steps 5-8: agent identity creation, permission grants, AgentX registration,
+    /// Executes Steps 5-8: agent identity creation, permission grants, agent registration,
     /// and project settings sync. Called from both the normal path and the --agent-instance-only
     /// shortcut path.
     /// </summary>
@@ -347,9 +347,9 @@ internal static class NonDwBlueprintSetupOrchestrator
             await GrantAgentIdentityPermissionsAsync(ctx, specs);
         }
 
-        // Step 6: Register Agent via AgentX Agent Registration API V2.
+        // Step 6: Register agent via Graph API (copilot/agentRegistrations).
 
-        // AgentX registration represents the agent itself, not the Entra identity.
+        // The agent registration represents the agent itself, not the Entra identity.
         // Strip " Identity" suffix so the registry entry reads "<name> Agent", not "<name> Identity".
         var agentDisplayName = ctx.Config.AgentIdentityDisplayName
             ?? ctx.Config.WebAppName
@@ -395,8 +395,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             else
             {
                 ctx.Results.AgentRegistrationFailed = true;
-                ctx.Results.Warnings.Add("Agent registration failed via AgentX V2 API.");
-                ctx.Logger.LogWarning("Agent registration failed via AgentX V2 API.");
+                ctx.Results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
+                ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
             }
         }
 
@@ -500,14 +500,14 @@ internal static class NonDwBlueprintSetupOrchestrator
                 continue;
             }
 
-            var granted = await ctx.GraphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+            var granted = await ctx.GraphApiService.CreatePrincipalOauth2PermissionGrantAsync(
                 ctx.Config.TenantId!,
                 agentIdentitySpObjectId,
                 resourceSpObjectId,
+                currentUserObjectId,
                 scopesToGrant,
                 ctx.CancellationToken,
-                Constants.AuthenticationConstants.RequiredPermissionGrantScopes,
-                principalId: currentUserObjectId);
+                Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
 
             if (granted)
                 ctx.Logger.LogDebug(

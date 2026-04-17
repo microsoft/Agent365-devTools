@@ -100,7 +100,7 @@ public class CleanupCommand
                 ? new NonInteractiveConfirmationProvider()
                 : confirmationProvider;
 
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, effectiveConfirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig);
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, effectiveConfirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig, ct: context.GetCancellationToken());
         });
 
         // Add subcommands for granular control
@@ -255,7 +255,7 @@ public class CleanupCommand
                     }
                     else
                     {
-                        logger.LogInformation("Deleting agent registration {RegistrationId} via AgentX V2 API...", config.AgentRegistrationId);
+                        logger.LogInformation("Deleting agent registration {RegistrationId} via Graph API...", config.AgentRegistrationId);
                         var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
                             config.TenantId,
                             config.AgentRegistrationId,
@@ -677,7 +677,8 @@ public class CleanupCommand
         FileInfo? configFile,
         GraphApiService? graphApiService = null,
         string? correlationId = null,
-        Agent365Config? configOverride = null)
+        Agent365Config? configOverride = null,
+        CancellationToken ct = default)
     {
         var cleanupSucceeded = false;
         var hasFailures = false;
@@ -748,11 +749,11 @@ public class CleanupCommand
                 }
                 else
                 {
-                    logger.LogInformation("Deleting agent registration {RegistrationId} via AgentX V2 API...", config.AgentRegistrationId);
+                    logger.LogInformation("Deleting agent registration {RegistrationId} via Graph API...", config.AgentRegistrationId);
                     var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
                         config.TenantId,
                         config.AgentRegistrationId,
-                        CancellationToken.None);
+                        ct);
 
                     if (registrationDeleted)
                     {
@@ -781,7 +782,7 @@ public class CleanupCommand
                     var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
                         config.TenantId,
                         config.AgentInstanceId,
-                        CancellationToken.None);
+                        ct);
 
                     if (instanceDeleted)
                     {
@@ -843,17 +844,24 @@ public class CleanupCommand
                 }
             }
 
-            // 3. Delete agent identity service principal
+            // 3. Delete agent identity service principal(s).
+            // First delete the one recorded in config (fast path, no extra Graph query).
+            // Then query Entra for any additional identities linked to the blueprint that
+            // may not be in config — mirrors what 'cleanup blueprint' does, and handles the
+            // case where AgenticAppId is missing (e.g. bootstrap cleanup without --agent-name).
+            var deletedIdentityIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
             {
                 logger.LogInformation("Deleting agent identity service principal...");
 
                 var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
                     config.TenantId,
-                    config.AgenticAppId);
+                    config.AgenticAppId,
+                    ct);
 
                 if (deleted)
                 {
+                    deletedIdentityIds.Add(config.AgenticAppId);
                     logger.LogInformation("Agent identity service principal deleted successfully");
                 }
                 else
@@ -861,6 +869,44 @@ public class CleanupCommand
                     logger.LogWarning("Failed to delete agent identity service principal (will continue with other resources)");
                     logger.LogWarning("Local configuration will still be cleared at the end");
                     hasFailures = true;
+                }
+            }
+
+            // Discover any remaining linked identities via Entra (handles IDs missing from config).
+            if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId) && graphApiService != null)
+            {
+                try
+                {
+                    var linkedInstances = await agentBlueprintService.GetAgentInstancesForBlueprintAsync(
+                        config.TenantId, config.AgentBlueprintId, ct);
+
+                    foreach (var instance in linkedInstances)
+                    {
+                        if (string.IsNullOrWhiteSpace(instance.IdentitySpId) ||
+                            deletedIdentityIds.Contains(instance.IdentitySpId))
+                            continue;
+
+                        logger.LogInformation("Deleting linked agent identity SP {SpId} ({DisplayName})...",
+                            instance.IdentitySpId, instance.DisplayName ?? "(unnamed)");
+
+                        var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
+                            config.TenantId, instance.IdentitySpId, ct);
+
+                        if (deleted)
+                        {
+                            deletedIdentityIds.Add(instance.IdentitySpId);
+                            logger.LogInformation("Linked agent identity SP deleted");
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete linked agent identity SP {SpId}", instance.IdentitySpId);
+                            hasFailures = true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning("Could not query linked agent identities from Entra (non-fatal): {Message}", ex.Message);
                 }
             }
 
@@ -1170,24 +1216,7 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger)
     {
         // Step 1: Resolve tenant ID
-        string? tenantId = tenantIdFlag;
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            logger.LogInformation("Detecting tenant from 'az account show'...");
-            var result = await executor.ExecuteAsync("az", "account show --output json", suppressErrorLogging: true);
-            if (result.Success && !string.IsNullOrWhiteSpace(result.StandardOutput))
-            {
-                try
-                {
-                    var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
-                    using var doc = JsonDocument.Parse(cleaned);
-                    if (doc.RootElement.TryGetProperty("tenantId", out var tid))
-                        tenantId = tid.GetString();
-                }
-                catch (Exception ex) { logger.LogDebug(ex, "Could not parse 'az account show' output for tenantId."); }
-            }
-        }
-
+        var tenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(tenantIdFlag, executor, logger);
         if (string.IsNullOrWhiteSpace(tenantId))
         {
             logger.LogError("Could not detect tenant ID. Sign in with 'az login' or pass --tenant-id.");
@@ -1197,37 +1226,12 @@ public class CleanupCommand
         // Step 2: Resolve client app ID.
         // Prefer a365.config.json when it exists locally and its tenant matches the current tenant.
         // Fall back to Entra lookup by well-known display name if the static config is absent or stale.
-        string? clientAppId = null;
-        var localStaticConfigPath = Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
-        if (File.Exists(localStaticConfigPath))
-        {
-            try
-            {
-                var staticJson = await File.ReadAllTextAsync(localStaticConfigPath);
-                using var staticDoc = JsonDocument.Parse(staticJson);
-                var staticRoot = staticDoc.RootElement;
-                var configTenantId = GetJsonString(staticRoot, "tenantId");
-                var configClientAppId = GetJsonString(staticRoot, "clientAppId");
-                if (string.Equals(configTenantId, tenantId, StringComparison.OrdinalIgnoreCase) &&
-                    !string.IsNullOrWhiteSpace(configClientAppId))
-                {
-                    clientAppId = configClientAppId;
-                    logger.LogDebug("Using client app ID from a365.config.json (tenant matches).");
-                }
-            }
-            catch (Exception ex) { logger.LogDebug(ex, "Could not parse {Path} for clientAppId — falling through to Entra lookup.", localStaticConfigPath); }
-        }
-
-        if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
-        {
-            clientAppId = await graphApiService.FindApplicationByDisplayNameAsync(
-                tenantId, AuthenticationConstants.WellKnownClientAppDisplayName);
-            if (!string.IsNullOrWhiteSpace(clientAppId))
-                logger.LogDebug("Resolved client app ID from Entra.");
-        }
-
-        // Configuring CustomClientAppId before Entra lookups ensures MSAL uses the correct app
-        // and avoids the PowerShell Connect-MgGraph fallback which uses the default app ID.
+        var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            tenantId,
+            graphApiService,
+            logger,
+            CancellationToken.None,
+            preferLocalConfig: true);
         if (!string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
             graphApiService.CustomClientAppId = clientAppId;
 
@@ -1261,14 +1265,14 @@ public class CleanupCommand
                 var json = await File.ReadAllTextAsync(generatedConfigPath);
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
-                configBlueprintId = GetJsonString(root, "agentBlueprintId");
+                configBlueprintId = SetupHelpers.GetJsonString(root, "agentBlueprintId");
 
                 if (!string.IsNullOrWhiteSpace(resolvedBlueprintId) &&
                     string.Equals(resolvedBlueprintId, configBlueprintId, StringComparison.OrdinalIgnoreCase))
                 {
-                    agentRegistrationId = GetJsonString(root, "agentRegistrationId");
-                    agenticAppId = GetJsonString(root, "AgenticAppId");
-                    agentBlueprintSpObjectId = GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
+                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
+                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
+                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
                     logger.LogInformation("Loaded resource IDs from {Path}", generatedConfigPath);
                 }
                 else if (!string.IsNullOrWhiteSpace(configBlueprintId) && !string.IsNullOrWhiteSpace(resolvedBlueprintId))
@@ -1280,9 +1284,9 @@ public class CleanupCommand
                 else if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
                 {
                     // Entra lookup failed — fall back to file values for all IDs
-                    agentRegistrationId = GetJsonString(root, "agentRegistrationId");
-                    agenticAppId = GetJsonString(root, "AgenticAppId");
-                    agentBlueprintSpObjectId = GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
+                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
+                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
+                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
                     logger.LogInformation("Loaded resource IDs from {Path} (Entra lookup unavailable)", generatedConfigPath);
                 }
             }
@@ -1328,11 +1332,6 @@ public class CleanupCommand
 
         return config;
     }
-
-    private static string? GetJsonString(JsonElement element, string key)
-        => element.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String
-            ? val.GetString()
-            : null;
 
     private static async Task<Agent365Config?> LoadConfigAsync(
         FileInfo? configFile,

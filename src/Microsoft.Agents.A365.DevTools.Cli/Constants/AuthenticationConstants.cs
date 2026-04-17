@@ -102,6 +102,12 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
 
     /// <summary>
+    /// Agent 365 manager application ID.
+    /// Set as the managerApplications value on blueprint creation to enable manageability for A365.
+    /// </summary>
+    public const string A365ManagerAppId = "e8be65d6-d430-4289-a665-51bf2a194bda";
+
+    /// <summary>
     /// Microsoft Graph identifier URI (used for admin consent URL construction).
     /// </summary>
     public const string MicrosoftGraphResourceUri = "https://graph.microsoft.com";
@@ -113,14 +119,6 @@ public static class AuthenticationConstants
     /// current role assignments and consented permissions.
     /// </summary>
     public const string MicrosoftGraphDefaultScope = "https://graph.microsoft.com/.default";
-
-    /// <summary>
-    /// Well-known application ID for the Microsoft Azure CLI.
-    /// All GraphApiService calls use az CLI's delegated token; scopes that need to appear
-    /// in that token's <c>scp</c> claim must be consented on this application, not only on
-    /// the custom client app registered by the user.
-    /// </summary>
-    public const string AzureCliAppId = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
 
     /// <summary>
     /// Redirect URI registered on the blueprint application to support the /v2.0/adminconsent flow.
@@ -222,7 +220,13 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
-        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (non-DW blueprint setup)
+        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (AdminSubcommand, PublishCommand)
+        // AgentRegistration.ReadWrite.All (resource: 00000003-0000-0000-c000-000000000000, ID: 20f263bf-7d50-4e66-912c-16b4b4194fd4)
+        // is required for POST/DELETE /stagingbeta/copilot/agentRegistrations. It is acquired via .default
+        // on the custom app token provider (not enumerated explicitly) to avoid AADSTS650053.
+        // This permission must be configured on the custom app via the portal but is not validated here
+        // because ClientAppValidator queries /v1.0/oauth2PermissionGrants which only returns consented
+        // delegated scopes in the same resource app bundle as the existing permissions.
         // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
         // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
         // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
@@ -316,6 +320,14 @@ public static class AuthenticationConstants
     /// This scope must be consented on the custom client app to use the V2 registration endpoint.
     /// </summary>
     public const string AgentXAccessScope = $"api://{AgentXAppId}/AgentX.Access";
+
+    /// <summary>
+    /// Returns the per-server bearer token env var name for a given MCP server unique name.
+    /// e.g. "mcp_WordServer" -> "BEARER_TOKEN_MCP_WORDSERVER"
+    /// Takes precedence over <see cref="BearerTokenEnvironmentVariable"/> for V2 per-audience tokens.
+    /// </summary>
+    public static string GetPerServerBearerTokenEnvVar(string serverUniqueName) =>
+        $"BEARER_TOKEN_{serverUniqueName.ToUpperInvariant().Replace('-', '_')}";
 
     /// <summary>
     /// AADSTS53003: Access blocked by Conditional Access Policy.

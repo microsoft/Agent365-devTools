@@ -206,43 +206,7 @@ internal static class AdminSubcommand
                         return;
                     }
 
-                    // Build the spec list using dynamic config values.
-                    var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
-                    var mcpManifestPath = Path.Combine(
-                        setupConfig.DeploymentProjectPath ?? string.Empty,
-                        McpConstants.ToolingManifestFileName);
-                    var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
-
-                    specs = new List<ResourcePermissionSpec>
-                    {
-                        new ResourcePermissionSpec(
-                            AuthenticationConstants.MicrosoftGraphResourceAppId,
-                            "Microsoft Graph",
-                            setupConfig.AgentApplicationScopes.ToArray(),
-                            SetInheritable: false),
-                        new ResourcePermissionSpec(
-                            mcpResourceAppId,
-                            "Agent 365 Tools",
-                            mcpScopes,
-                            SetInheritable: false),
-                    };
-                    specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
-
-                    foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-                    {
-                        var (isValid, _) = customPerm.Validate();
-                        if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
-                        {
-                            var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                                ? customPerm.ResourceAppId
-                                : customPerm.ResourceName;
-                            specs.Add(new ResourcePermissionSpec(
-                                customPerm.ResourceAppId,
-                                resourceName,
-                                customPerm.Scopes.ToArray(),
-                                SetInheritable: false));
-                        }
-                    }
+                    specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(setupConfig, setInheritable: false);
                 }
 
                 // Display what will be done and ask for confirmation (unless --yes is set).

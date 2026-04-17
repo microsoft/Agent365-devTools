@@ -185,7 +185,7 @@ internal static class AllSubcommand
                         // Dry-run: detect tenant only (no client app lookup needed for display)
                         var dryRunTenantId = tenantIdFlag;
                         if (string.IsNullOrWhiteSpace(dryRunTenantId))
-                            dryRunTenantId = await DetectTenantIdAsync(executor, logger, ct);
+                            dryRunTenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(null, executor, logger);
                         nonDwConfig = new Agent365Config
                         {
                             TenantId = dryRunTenantId ?? "(unknown — run 'az login' or pass --tenant-id)",
@@ -516,14 +516,26 @@ internal static class AllSubcommand
             // not exist on disk, so LoadAsync would throw ConfigFileNotFoundException.
             if (!ctx.IsBootstrap)
             {
-                // CRITICAL: Wait for file system to ensure config file is fully written
-                // Blueprint creation writes directly to disk and may not be immediately readable
-                ctx.Logger.LogDebug("Waiting for config file write to complete...");
-                await Task.Delay(2000, ctx.CancellationToken);
-
-                // Reload config to get blueprint ID and any other dynamic properties written to disk
+                // Reload config to get blueprint ID and any other dynamic properties written to disk.
+                // Retry up to 5 times with 500ms backoff to handle transient file-system flush delays.
                 var fullConfigPath = Path.GetFullPath(ctx.ConfigFile.FullName);
-                ctx.Config = await ctx.ConfigService.LoadAsync(fullConfigPath);
+                Agent365Config? reloaded = null;
+                for (var attempt = 0; attempt < 5; attempt++)
+                {
+                    await Task.Delay(500, ctx.CancellationToken);
+                    try
+                    {
+                        reloaded = await ctx.ConfigService.LoadAsync(fullConfigPath);
+                        if (!string.IsNullOrWhiteSpace(reloaded.AgentBlueprintId))
+                            break;
+                    }
+                    catch (Exception ex)
+                    {
+                        ctx.Logger.LogDebug(ex, "Config reload attempt {Attempt} failed; retrying", attempt + 1);
+                    }
+                }
+                if (reloaded is not null)
+                    ctx.Config = reloaded;
             }
             ctx.Results.BlueprintId = ctx.Config.AgentBlueprintId;
             ctx.Results.BlueprintDisplayName = ctx.Config.AgentBlueprintDisplayName;
@@ -624,26 +636,17 @@ internal static class AllSubcommand
         var mcpManifestPath = Path.Combine(
             ctx.Config.DeploymentProjectPath ?? string.Empty,
             McpConstants.ToolingManifestFileName);
-        var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, ctx.Logger);
+        var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
+        // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
+        var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
         List<ResourcePermissionSpec> specs;
         if (isDw)
         {
-            specs =
-            [
-                new ResourcePermissionSpec(
-                    AuthenticationConstants.MicrosoftGraphResourceAppId,
-                    "Microsoft Graph",
-                    ctx.Config.AgentApplicationScopes.ToArray(),
-                    SetInheritable: true),
-                new ResourcePermissionSpec(
-                    mcpResourceAppId,
-                    "Agent 365 Tools",
-                    mcpScopes,
-                    SetInheritable: true),
-            ];
-            specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
+            // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
+            // BuildConfiguredPermissionSpecsAsync also handles custom permissions.
+            specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(ctx.Config, setInheritable: true, scopesByAudience);
         }
         else
         {
@@ -652,52 +655,27 @@ internal static class AllSubcommand
             // To enable MCP or Messaging Bot API for non-DW, add them here and update
             // the isDw guards in BuildAdminConsentUrls / BuildCombinedConsentUrl.
             specs = [.. SetupHelpers.GetNonDwFixedApiPermissionSpecs(setInheritable: true)];
-        }
 
-        foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-        {
-            var (isValid, _) = customPerm.Validate();
-            if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+            // Non-DW: custom permissions are not included by GetNonDwFixedApiPermissionSpecs.
+            // DW: custom permissions are already included by BuildConfiguredPermissionSpecsAsync above.
+            foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
             {
-                var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                    ? customPerm.ResourceAppId
-                    : customPerm.ResourceName;
-                specs.Add(new ResourcePermissionSpec(
-                    customPerm.ResourceAppId,
-                    resourceName,
-                    customPerm.Scopes.ToArray(),
-                    SetInheritable: true));
+                var (isValid, _) = customPerm.Validate();
+                if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+                {
+                    var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                        ? customPerm.ResourceAppId
+                        : customPerm.ResourceName;
+                    specs.Add(new ResourcePermissionSpec(
+                        customPerm.ResourceAppId,
+                        resourceName,
+                        customPerm.Scopes.ToArray(),
+                        SetInheritable: true));
+                }
             }
         }
 
         return (specs, mcpResourceAppId, mcpScopes);
-    }
-
-    /// <summary>
-    /// Detects the current Azure tenant ID from <c>az account show</c>.
-    /// Returns <c>null</c> and logs guidance when not logged in.
-    /// </summary>
-    private static async Task<string?> DetectTenantIdAsync(
-        CommandExecutor executor, ILogger logger, CancellationToken ct)
-    {
-        var result = await executor.ExecuteAsync("az", "account show --output json", suppressErrorLogging: true);
-        if (result.Success && !string.IsNullOrWhiteSpace(result.StandardOutput))
-        {
-            try
-            {
-                var cleaned = JsonDeserializationHelper.CleanAzureCliJsonOutput(result.StandardOutput);
-                using var doc = JsonDocument.Parse(cleaned);
-                if (doc.RootElement.TryGetProperty("tenantId", out var tid))
-                    return tid.GetString();
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(ex, "Failed to parse az account show output");
-            }
-        }
-
-        logger.LogError("Could not detect tenant. Sign in with 'az login' or pass --tenant-id.");
-        return null;
     }
 
     /// <summary>
@@ -719,20 +697,17 @@ internal static class AllSubcommand
         CancellationToken ct)
     {
         // Resolve tenant ID
-        string? tenantId = tenantIdFlag;
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            logger.LogInformation("Detecting tenant from 'az account show'...");
-            tenantId = await DetectTenantIdAsync(executor, logger, ct);
-            if (tenantId is null)
-                return null;
-        }
+        var tenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(tenantIdFlag, executor, logger);
+        if (tenantId is null)
+            return null;
 
-        // Resolve ClientAppId from well-known display name
-        logger.LogInformation("Resolving client app by display name \"{Name}\"...",
-            AuthenticationConstants.WellKnownClientAppDisplayName);
-        var clientAppId = await graphApiService.FindApplicationByDisplayNameAsync(
-            tenantId, AuthenticationConstants.WellKnownClientAppDisplayName, ct);
+        var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            tenantId,
+            graphApiService,
+            logger,
+            ct);
+        if (!string.IsNullOrWhiteSpace(clientAppId))
+            graphApiService.CustomClientAppId = clientAppId;
 
         // Build minimal config and validate
         var config = new Agent365Config

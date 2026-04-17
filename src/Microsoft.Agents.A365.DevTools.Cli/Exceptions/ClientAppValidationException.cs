@@ -123,7 +123,9 @@ public sealed class ClientAppValidationException : Agent365Exception
 
         // Standard native-app redirect URI accepted by Entra ID for admin consent flows
         const string redirectUri = "https://login.microsoftonline.com/common/oauth2/nativeclient";
-        return $"https://login.microsoftonline.com/{tenantId}/adminconsent?client_id={clientAppId}&redirect_uri={redirectUri}";
+        var clientIdEncoded = Uri.EscapeDataString(clientAppId);
+        var redirectUriEncoded = Uri.EscapeDataString(redirectUri);
+        return $"https://login.microsoftonline.com/{tenantId}/adminconsent?client_id={clientIdEncoded}&redirect_uri={redirectUriEncoded}";
     }
 
     /// <summary>

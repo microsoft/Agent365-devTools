@@ -1,5 +1,7 @@
 # Agent 365 CLI Setup Instructions for AI Agents
 
+> **SCOPE — THIS FILE ONLY:** This file covers provisioning and deploying an agent using the Agent 365 CLI (`a365 setup`, `a365 publish`, `a365 deploy`). It does **NOT** cover adding observability, telemetry, or SDK integrations to the agent's code. If the user asked to add observability, close this file and open `a365-observability-instructions.md` instead.
+
 ---
 
 > **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the two path-determination questions below. Do NOT create todos, run commands, or read further until the user has answered both questions. After both answers are received, create all todos for the determined path and mark Todo 1 in-progress.
@@ -118,7 +120,23 @@ The CLI is under active development, and some commands may have changed in recen
 
 The Agent 365 CLI relies on Azure context for deploying resources and may use your Azure credentials. Verify that the Azure CLI (`az`) is installed by running `az --version`. If it's not available, install the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) for your platform or prompt the user to do so.
 
-If the Azure CLI is installed, ensure that you are logged in to the correct Azure account and tenant. Run `az login` (and `az account set -s <SubscriptionNameOrID>` if you need to select a specific subscription). If you cannot perform an interactive login directly, output a clear instruction for the user to log in (the user may need to follow a device-code login URL if running in a headless environment). The Agent 365 CLI will use this Azure authentication context to create resources.
+> **CRITICAL — Complete `az login` before any `a365` command.**
+>
+> The Agent 365 CLI authenticates to Microsoft Graph using **MSAL** with the token acquired by `az login`. If `az login` has not been completed successfully, the CLI will launch an interactive auth prompt (WAM on Windows, browser on Mac/Linux) that **you as a coding agent cannot interact with**. This will block setup indefinitely.
+>
+> **You must ensure `az login` is complete and `az account show` returns a valid account before proceeding past Step 2.**
+
+Run the following and verify the output shows a valid account:
+
+```bash
+az account show --query "{user:user.name, tenantId:tenantId, subscriptionId:id}" -o json
+```
+
+- If this succeeds: the login is active. Continue.
+- If this fails or returns no output: **STOP. Tell the user to run `az login` in their terminal and complete the login, then confirm back to you.** Do NOT proceed until `az account show` returns a valid account.
+- If they need to set a specific subscription: `az account set -s <SubscriptionNameOrID>`
+
+> **Why this matters:** After a successful `az login`, the CLI can acquire Graph tokens **silently** from the cache — no WAM dialog, no browser tab, no device code. Skipping this step is the most common cause of interactive auth prompts that block automated setup.
 
 ### Microsoft Entra ID (Azure AD) roles
 
@@ -311,7 +329,7 @@ Present the following fields in a single prompt:
 | **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
 | **App Service Plan** | Azure App Service Plan name | `{existingAppServicePlan}` |
 
-> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive the web app URL (`{name}-webapp.azurewebsites.net`), Agent Identity, Blueprint, and User Principal Name. Lowercase letters, numbers, hyphens only. Start with a letter. 3-20 chars recommended. Tip: include your org name.
+> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive the web app URL (`{name}-webapp.azurewebsites.net`), Agent Identity, Blueprint, and User Principal Name. Letters, numbers, hyphens only; any casing is accepted. Start with a letter. 3-20 chars recommended. Tip: include your org name.
 >
 > **Examples** show real values from your subscription. You can reuse existing resources or provide new names — the CLI will create them if they don't exist.
 >
@@ -330,7 +348,7 @@ Present the following fields in a single prompt:
 | **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
 | **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
 
-> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive Agent Identity, Blueprint, and User Principal Name. Lowercase letters, numbers, hyphens only. Start with a letter. 3-20 chars recommended. Tip: include your org name.
+> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive Agent Identity, Blueprint, and User Principal Name. Letters, numbers, hyphens only; any casing is accepted. Start with a letter. 3-20 chars recommended. Tip: include your org name.
 
 After collecting these inputs, proceed to Step 3.3.1 to determine the messaging endpoint.
 
@@ -465,12 +483,6 @@ Once `a365 config init` completes without errors, you have a baseline configurat
 
 ## Step 4: Run Agent 365 Setup to Provision Prerequisites
 
-> **Skill tip:** If you have the Agent 365 devTools repository cloned and the Claude Code skills extension installed, you can use the `/provision` slash command instead of following steps 4.1–4.4. The skill is a packaged version of this exact flow. If `/provision` appears in your Claude Code slash commands, type `/provision <agent_name>` and follow the prompts — then skip the rest of this step.
->
-> If you do NOT have the skill installed, continue below. The inline flow is equivalent.
-
----
-
 ### 4.1 — Collect provisioning inputs
 
 **For the Standard path (`isAITeammate = false`):**
@@ -479,11 +491,12 @@ Ask the user two questions (one at a time, wait for each response):
 
 1. **"What agent name should be used for provisioning?"**
    - Must be globally unique across Azure
-   - Lowercase letters, numbers, and hyphens only; start with a letter; 3–20 characters recommended
+   - Letters, numbers, and hyphens only; start with a letter; 3–20 characters recommended
+   - **No casing restriction** — mixed case is fine. `SunilsAgent1` is a valid name. Pass it to the CLI exactly as the user typed it.
    - Example: `contoso-support-agent`
    - If the user replies `default`, use `developer`
 
-   Store as `agent_name`.
+   Store as `agent_name`. Pass it to the CLI verbatim — do NOT normalize or change the casing.
 
 2. **"What is the project directory containing your agent code? Reply with a full path, or reply 'current' to use the current working directory."**
 
@@ -552,7 +565,20 @@ This command may take several minutes. Monitor output carefully:
 - **Quota limits:** An error like "Operation cannot be completed without additional quota" means the Azure subscription has hit a capacity limit for that region/SKU. Report this to the user and halt. If possible, update `location` in the config (AI Teammate path) or ask the user for a new region (Standard path) and retry.
 - **Region support:** If an Azure resource is not available in the selected region, update the location and retry. Agent 365 preview supports only certain regions.
 - **Graph API permission errors:** A "Forbidden" or "Authorization_RequestDenied" error during blueprint creation indicates insufficient directory role or missing admin consent. Stop and resolve the permission issue (refer back to Step 2). After fixing, re-run `a365 setup all`.
-- **Interactive authentication:** The CLI may launch a browser auth window for certain Graph calls. If running in a headless environment and this fails, see the Troubleshooting section below.
+- **Interactive authentication — WAM on Windows / browser on Mac/Linux (expected on first run):**
+  On the first run on a new machine the CLI's own token cache is empty. Even with `az login` done, the CLI may need the user to authenticate once to populate its cache. After that first auth, all subsequent runs are silent.
+
+  **Before you run `a365 setup all`, warn the user:**
+
+  > "The setup command may open a Windows sign-in dialog (WAM) or browser tab to authenticate to Microsoft Graph. Please watch your screen and complete any sign-in prompt that appears — the command will continue automatically once you do."
+
+  **While `a365 setup all` is running, monitor the output:**
+
+  - If you see `"Authenticating via Windows Account Manager..."`: the CLI is waiting for the user to complete a **native Windows dialog** that appeared on their screen. **Do NOT kill the process.** Send the user this message: "A Windows sign-in dialog has appeared on your screen. Please complete it — the setup will continue automatically." Then continue monitoring output and wait for the CLI to resume.
+  - If you see a browser URL printed (device code flow): the CLI is in device code mode. Share the URL and code with the user, tell them to visit it in a browser and sign in, then wait.
+  - If the CLI is silent for more than 3 minutes after one of these messages: ask the user whether they completed the dialog/code. If yes, the CLI may have an issue — cancel and re-run `a365 setup all`. If no, remind them to complete it.
+
+  Once the user completes auth once, the token is cached. Subsequent runs will be fully silent.
 - **Idempotency:** `a365 setup all` is safe to re-run after fixing an issue. It skips or reuses existing resources. Use `a365 cleanup` only as a last resort.
 
 ---
@@ -770,6 +796,22 @@ If any step results in an error, stop and analyze the error message carefully. F
 - Check log files: Windows `%APPDATA%/a365/logs/`, Linux/Mac `~/.config/a365/logs/`.
 - Most `a365` commands are idempotent — safe to re-run after fixing an issue.
 - Use `a365 cleanup azure` or `a365 cleanup blueprint` only as a last resort to remove created resources.
+
+### Windows Account Manager (WAM) authentication
+
+**What it is:** On Windows, the Agent 365 CLI uses the Windows Account Manager (WAM) broker instead of a browser for interactive Microsoft Graph authentication. WAM opens a native OS dialog — not a browser tab — so it is invisible to terminal output.
+
+**What the coding agent sees:** The log line `"Authenticating via Windows Account Manager..."` followed by silence. The CLI is not hung; it is waiting for the user to complete a dialog that appeared on their screen.
+
+**What to do:** Tell the user: "A Windows sign-in dialog has appeared on your screen. Please complete the authentication to continue the setup." Do not kill the process. Once the user completes the dialog, the CLI resumes automatically.
+
+**If the dialog doesn't appear or disappears:** Have the user check minimized windows and the taskbar. If no dialog appeared, the token may already be cached (setup continues silently) — wait 10–15 seconds before assuming it's stuck.
+
+**If running headless (no desktop, e.g. a remote VM without a display):** WAM cannot show a dialog. Workaround: have the user run `az login` in an interactive terminal session first. If az CLI has a cached token for the tenant and the correct account, the CLI will use it silently without needing WAM. If `az login` is not an option, the user must run the setup command from a machine with a desktop session.
+
+**WAM hangs with no dialog and no error (rare):** Kill the process (`Ctrl+C`), have the user run `az login --tenant <tenant-id>` to refresh the az CLI credential, then retry `a365 setup all`.
+
+---
 
 ### Dev tunnel issues
 

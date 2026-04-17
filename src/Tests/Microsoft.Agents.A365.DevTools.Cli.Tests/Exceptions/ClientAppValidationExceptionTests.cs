@@ -150,6 +150,23 @@ public class ClientAppValidationExceptionTests
             s.Contains(ConfigConstants.Agent365CliDocumentationUrl));
     }
 
+    [Fact]
+    public void BuildAdminConsentUrl_EncodesRedirectUri()
+    {
+        // Act
+        var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(TestClientAppId, TestTenantId);
+
+        // Assert
+        consentUrl.Should().NotBeNull();
+        consentUrl.Should().Contain($"client_id={TestClientAppId}", because: "the client ID must be preserved in the admin consent URL query string");
+        consentUrl.Should().Contain(
+            $"redirect_uri={Uri.EscapeDataString("https://login.microsoftonline.com/common/oauth2/nativeclient")}",
+            because: "redirect_uri is a URL-valued query parameter and must be encoded so the consent link remains valid when copied through shells, logs, and browsers");
+        consentUrl.Should().NotContain(
+            "&redirect_uri=https://login.microsoftonline.com/common/oauth2/nativeclient",
+            because: "an unescaped redirect URI contains reserved characters that can corrupt the admin consent query string");
+    }
+
     #endregion
 
     #region ValidationFailed Tests

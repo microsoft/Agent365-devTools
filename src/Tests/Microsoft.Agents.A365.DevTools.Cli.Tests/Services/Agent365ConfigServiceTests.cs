@@ -280,45 +280,32 @@ public class Agent365ConfigServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveStateAsync_SavesGloballyWhenNoStaticConfigExists()
+    public async Task SaveStateAsync_SavesLocallyEvenWhenNoStaticConfigExists()
     {
-        // Arrange - Use a directory without a static config
+        // Global config directory fallback was removed — SaveStateAsync always writes
+        // to the current directory regardless of whether a static config exists there.
         var tempDir = Path.Combine(Path.GetTempPath(), $"agent365-noproj-{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
-        
+
         try
         {
             var originalDir = Environment.CurrentDirectory;
             Environment.CurrentDirectory = tempDir;
-            
+
             try
             {
-                // Create a config to save
                 var config = new Agent365Config { TenantId = "12345678-1234-1234-1234-123456789012" };
                 config.AgentBlueprintId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
 
-                // Get global config path
-                var globalDir = ConfigService.GetGlobalConfigDirectory();
-                var globalStatePath = Path.Combine(globalDir, ConfigConstants.DefaultStateFileName);
-                
-                // Delete global state if it exists to ensure clean test
-                if (File.Exists(globalStatePath))
-                {
-                    File.Delete(globalStatePath);
-                }
-
-                // Act - Save state (should go to global directory, NOT local)
+                // Act
                 await _service.SaveStateAsync(config, ConfigConstants.DefaultStateFileName);
 
-                // Assert - State should be saved globally
-                Assert.True(File.Exists(globalStatePath), "Global state file should exist when no local config present");
-                
-                var globalContent = await File.ReadAllTextAsync(globalStatePath);
-                Assert.Contains("bbbbbbbb-cccc-dddd-eeee-ffffffffffff", globalContent);
-
-                // Assert - State should NOT be saved to current directory
+                // Assert — state is always saved to the current directory
                 var localStatePath = Path.Combine(tempDir, ConfigConstants.DefaultStateFileName);
-                Assert.False(File.Exists(localStatePath), "Local state file should NOT exist when no static config present");
+                Assert.True(File.Exists(localStatePath),
+                    "State file should always be saved to the current directory");
+                var content = await File.ReadAllTextAsync(localStatePath);
+                Assert.Contains("bbbbbbbb-cccc-dddd-eeee-ffffffffffff", content);
             }
             finally
             {
@@ -328,9 +315,7 @@ public class Agent365ConfigServiceTests : IDisposable
         finally
         {
             if (Directory.Exists(tempDir))
-            {
                 Directory.Delete(tempDir, recursive: true);
-            }
         }
     }
 

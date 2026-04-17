@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -86,6 +87,140 @@ internal static class SetupHelpers
             new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead },
             setInheritable),
     ];
+
+    /// <summary>
+    /// Builds the full resource permission spec list from config for the DW/config-dir flows.
+    /// Includes Microsoft Graph, manifest-derived Agent 365 Tools scopes, fixed platform APIs,
+    /// and any custom blueprint permissions.
+    /// <para>
+    /// Pass a pre-computed <paramref name="scopesByAudience"/> to avoid reading the MCP manifest
+    /// a second time when the caller already has it (e.g. <c>AllSubcommand.BuildPermissionSpecsAsync</c>).
+    /// When <c>null</c>, the manifest is read from <c>config.DeploymentProjectPath</c>.
+    /// </para>
+    /// </summary>
+    internal static async Task<List<ResourcePermissionSpec>> BuildConfiguredPermissionSpecsAsync(
+        Agent365Config config,
+        bool setInheritable,
+        Dictionary<string, string[]>? scopesByAudience = null)
+    {
+        if (scopesByAudience is null)
+        {
+            var mcpManifestPath = Path.Combine(
+                config.DeploymentProjectPath ?? string.Empty,
+                McpConstants.ToolingManifestFileName);
+            scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
+        }
+
+        var specs = new List<ResourcePermissionSpec>
+        {
+            new(
+                AuthenticationConstants.MicrosoftGraphResourceAppId,
+                "Microsoft Graph",
+                config.AgentApplicationScopes.ToArray(),
+                SetInheritable: setInheritable),
+        };
+
+        specs.AddRange(scopesByAudience.Select(kvp =>
+            new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: setInheritable)));
+        specs.AddRange(GetFixedApiPermissionSpecs(setInheritable));
+
+        foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+        {
+            var (isValid, _) = customPerm.Validate();
+            if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+            {
+                var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                    ? customPerm.ResourceAppId
+                    : customPerm.ResourceName;
+                specs.Add(new ResourcePermissionSpec(
+                    customPerm.ResourceAppId,
+                    resourceName,
+                    customPerm.Scopes.ToArray(),
+                    SetInheritable: setInheritable));
+            }
+        }
+
+        return specs;
+    }
+
+    /// <summary>
+    /// Resolves the tenant ID for config-free bootstrap flows.
+    /// Uses the explicit flag first, then falls back to the current Azure CLI context.
+    /// </summary>
+    internal static Task<string?> ResolveBootstrapTenantIdAsync(
+        string? tenantIdFlag,
+        CommandExecutor executor,
+        ILogger logger) =>
+        string.IsNullOrWhiteSpace(tenantIdFlag)
+            ? TenantDetectionHelper.DetectTenantIdAsync(null, logger, executor)
+            : Task.FromResult<string?>(tenantIdFlag);
+
+    /// <summary>
+    /// Resolves the client app ID for config-free bootstrap flows.
+    /// Optionally prefers a matching local <c>a365.config.json</c> value before falling back to
+    /// the well-known Entra display name lookup.
+    /// </summary>
+    internal static async Task<string?> ResolveBootstrapClientAppIdAsync(
+        string tenantId,
+        GraphApiService? graphApiService,
+        ILogger logger,
+        CancellationToken ct,
+        bool preferLocalConfig = false)
+    {
+        string? clientAppId = null;
+
+        if (preferLocalConfig)
+        {
+            clientAppId = await TryGetLocalClientAppIdAsync(tenantId, logger, ct);
+            if (!string.IsNullOrWhiteSpace(clientAppId))
+                logger.LogDebug("Using client app ID from local a365.config.json (tenant matches).");
+        }
+
+        if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
+        {
+            logger.LogInformation("Resolving client app by display name \"{Name}\"...",
+                AuthenticationConstants.WellKnownClientAppDisplayName);
+            clientAppId = await graphApiService.FindApplicationByDisplayNameAsync(
+                tenantId,
+                AuthenticationConstants.WellKnownClientAppDisplayName,
+                ct);
+        }
+
+        return clientAppId;
+    }
+
+    private static async Task<string?> TryGetLocalClientAppIdAsync(
+        string tenantId,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var localStaticConfigPath = Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
+        if (!File.Exists(localStaticConfigPath))
+            return null;
+
+        try
+        {
+            var staticJson = await File.ReadAllTextAsync(localStaticConfigPath, ct);
+            using var staticDoc = JsonDocument.Parse(staticJson);
+            var staticRoot = staticDoc.RootElement;
+            var configTenantId = GetJsonString(staticRoot, "tenantId");
+            var configClientAppId = GetJsonString(staticRoot, "clientAppId");
+            return string.Equals(configTenantId, tenantId, StringComparison.OrdinalIgnoreCase) &&
+                   !string.IsNullOrWhiteSpace(configClientAppId)
+                ? configClientAppId
+                : null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not parse {Path} for clientAppId.", localStaticConfigPath);
+            return null;
+        }
+    }
+
+    internal static string? GetJsonString(JsonElement element, string key) =>
+        element.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String
+            ? val.GetString()
+            : null;
 
     /// <summary>
     /// Fixed permission specs for the non-DW admin consent flow.
@@ -501,12 +636,10 @@ internal static class SetupHelpers
                 urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
 
             urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
-            urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
         }
 
-        if (!isDw)
-            urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
-
+        // Observability API is required for both DW and non-DW paths.
+        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;

@@ -171,12 +171,8 @@ public class ConfigService : IConfigService
             var localTime = localUpdated.GetDateTime();
             var globalTime = globalUpdated.GetDateTime();
             
-            // Only warn if the content timestamps differ (meaning they're from different save operations)
-            // TODO: Current design uses local folder data even if it's older than %LocalAppData%.
-            // This needs to be revisited to determine if we should:
-            // 1. Always prefer %LocalAppData% as authoritative source
-            // 2. Prompt user to choose which config to use
-            // 3. Auto-sync from newer to older location
+            // Warn when the local config is older — the user may have newer state in the global
+            // directory from a previous CLI version that still wrote there.
             if (globalTime > localTime)
             {
                 var msg = $"Warning: The local generated config (at {localPath}) is older than the global config (at {globalPath}). You may be using stale configuration. Consider syncing or running setup again.";
@@ -370,32 +366,18 @@ public class ConfigService : IConfigService
             }
         }
 
-        // For relative paths, check if we're in a project directory (has local static config)
-        var staticConfigPath = Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
-        bool hasLocalStaticConfig = File.Exists(staticConfigPath);
-        
-        if (hasLocalStaticConfig)
+        // Always save relative to the current directory.
+        // Global directory fallback has been removed — config is always project-local.
+        var currentDirPath = Path.Combine(Environment.CurrentDirectory, statePath);
+        try
         {
-            // We're in a project directory - save state locally only
-            // This ensures each project maintains its own independent configuration
-            var currentDirPath = Path.Combine(Environment.CurrentDirectory, statePath);
-            try
-            {
-                await File.WriteAllTextAsync(currentDirPath, json);
-                _logger?.LogDebug("Saved dynamic state to local project directory: {StatePath}", currentDirPath);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "Failed to save dynamic state to: {StatePath}", currentDirPath);
-                throw;
-            }
+            await File.WriteAllTextAsync(currentDirPath, json);
+            _logger?.LogDebug("Saved dynamic state to: {StatePath}", currentDirPath);
         }
-        else
+        catch (Exception ex)
         {
-            // Not in a project directory - save to global directory for portability
-            // This allows CLI commands to work when run from any directory
-            await SyncConfigToGlobalDirectoryAsync(statePath, json, throwOnError: true);
-            _logger?.LogDebug("Saved dynamic state to global directory (no local static config found)");
+            _logger?.LogError(ex, "Failed to save dynamic state to: {StatePath}", currentDirPath);
+            throw;
         }
     }
 
@@ -548,41 +530,32 @@ public class ConfigService : IConfigService
     #region Config File Resolution
 
     /// <summary>
-    /// Searches for a config file in multiple standard locations.
+    /// Searches for a config file in the current working directory only.
+    /// Global config directory lookup has been removed to prevent stale config in one
+    /// project directory from contaminating commands run in a different directory
+    /// (e.g. a leftover global a365.config.json interfering with --agent-name bootstrap).
     /// </summary>
     /// <param name="fileName">The config file name to search for</param>
-    /// <returns>The full path to the config file if found, otherwise null</returns>
+    /// <returns>The full path to the config file if found in the current directory, otherwise null</returns>
     private static string? FindConfigFile(string fileName)
     {
-        // 1. Current directory
         var currentDirPath = Path.Combine(Environment.CurrentDirectory, fileName);
-        if (File.Exists(currentDirPath))
-            return currentDirPath;
-
-        // 2. Global config directory (use consistent path resolution)
-        var globalConfigPath = Path.Combine(GetGlobalConfigDirectory(), fileName);
-        if (File.Exists(globalConfigPath))
-            return globalConfigPath;
-
-        // Not found
-        return null;
+        return File.Exists(currentDirPath) ? currentDirPath : null;
     }
-    
+
     /// <summary>
-    /// Gets the path to the static configuration file (a365.config.json).
-    /// Searches current directory first, then global config directory.
+    /// Gets the path to the static configuration file (a365.config.json) in the current directory.
     /// </summary>
-    /// <returns>Full path if found, otherwise null</returns>
+    /// <returns>Full path if found in the current directory, otherwise null</returns>
     public static string? GetConfigFilePath()
     {
         return FindConfigFile("a365.config.json");
     }
-    
+
     /// <summary>
-    /// Gets the path to the generated configuration file (a365.generated.config.json).
-    /// Searches current directory first, then global config directory.
+    /// Gets the path to the generated configuration file (a365.generated.config.json) in the current directory.
     /// </summary>
-    /// <returns>Full path if found, otherwise null</returns>
+    /// <returns>Full path if found in the current directory, otherwise null</returns>
     public static string? GetGeneratedConfigFilePath()
     {
         return FindConfigFile("a365.generated.config.json");

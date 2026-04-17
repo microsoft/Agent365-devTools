@@ -185,6 +185,9 @@ public class ProjectSettingsSyncHelperTests : IDisposable
 
         AssertHas("CONNECTIONSMAP__0__SERVICEURL", "*");
         AssertHas("CONNECTIONSMAP__0__CONNECTION", "SERVICE_CONNECTION");
+
+        // Observability
+        AssertHas("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
     }
 
     [Fact]
@@ -239,6 +242,9 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         AssertHas("agentic_altBlueprintConnectionName", "service_connection");
         AssertHas("agentic_scopes", "https://graph.microsoft.com/.default");
         AssertHas("agentic_connectionName", "AgenticAuthConnection");
+
+        // Observability
+        AssertHas("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
     }
 
     [Fact]
@@ -575,6 +581,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         var genPath = WriteFile(_tempRoot, "a365.generated.obs_nondw.json", "{}");
         var cfgPath = WriteFile(_tempRoot, "a365.obs_nondw.config.json", "{}");
 
+
         var cfg = new Agent365Config
         {
             DeploymentProjectPath = projectDir,
@@ -628,12 +635,15 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
             MockConfigService(cfg).Object, CreatePlatformDetector(), CreateLogger());
 
-        var obs = ReadJson(appsettingsPath)["Agent365Observability"]!.AsObject();
+        var j = ReadJson(appsettingsPath);
+        var obs = j["Agent365Observability"]!.AsObject();
         // DW must fall back to Blueprint app ID when AgenticAppId is absent
         Assert.Equal("blueprint-dw-id", obs["AgentId"]!.GetValue<string>());
         Assert.Equal("tenant-dw-id", obs["TenantId"]!.GetValue<string>());
         Assert.Equal("blueprint-dw-id", obs["AgentBlueprintId"]!.GetValue<string>());
         Assert.Equal("blueprint-dw-id", obs["ClientId"]!.GetValue<string>());
+        // EnableAgent365Exporter is written to false by default
+        Assert.False(j["EnableAgent365Exporter"]!.GetValue<bool>());
     }
 
     /// <summary>
@@ -678,6 +688,7 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal("blueprint-py-id", Val("AGENT365OBSERVABILITY__AGENTBLUEPRINTID"));
         Assert.Equal("blueprint-py-id", Val("AGENT365OBSERVABILITY__CLIENTID"));
         Assert.Equal("py-secret", Val("AGENT365OBSERVABILITY__CLIENTSECRET"));
+        Assert.Contains(lines, l => l.StartsWith("ENABLE_A365_OBSERVABILITY_EXPORTER=", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -722,5 +733,6 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal("blueprint-node-id", Val("agent365Observability__agentBlueprintId"));
         Assert.Equal("blueprint-node-id", Val("agent365Observability__clientId"));
         Assert.Equal("node-secret", Val("agent365Observability__clientSecret"));
+        Assert.Contains(lines, l => l.StartsWith("ENABLE_A365_OBSERVABILITY_EXPORTER=", StringComparison.OrdinalIgnoreCase));
     }
 }

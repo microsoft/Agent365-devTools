@@ -53,7 +53,8 @@ public class GraphApiServiceRegisterAgentInstanceTests
             authService,
             handler,
             tokenProvider: null,
-            loginHintResolver: () => Task.FromResult<string?>(null));
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            agentRegistryRetryDelay: TimeSpan.Zero);
     }
 
     [Fact]
