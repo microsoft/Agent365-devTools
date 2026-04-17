@@ -424,12 +424,6 @@ internal static class PermissionsSubcommand
             var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(
                 manifestPath, excludeLegacyAtg: removeLegacyAtgScopes);
 
-            if (scopesByAudience.Count == 0)
-            {
-                logger.LogInformation("No MCP permissions to configure — manifest is empty or not found.");
-                return true;
-            }
-
             // Validate all scopes are known: V1 pattern, V2 value, or metadata scope
             var unknownScopes = scopesByAudience.Values
                 .SelectMany(s => s)
