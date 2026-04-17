@@ -102,6 +102,12 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
 
     /// <summary>
+    /// Agent 365 manager application ID.
+    /// Set as the managerApplications value on blueprint creation to enable manageability for A365.
+    /// </summary>
+    public const string A365ManagerAppId = "e8be65d6-d430-4289-a665-51bf2a194bda";
+
+    /// <summary>
     /// Microsoft Graph identifier URI (used for admin consent URL construction).
     /// </summary>
     public const string MicrosoftGraphResourceUri = "https://graph.microsoft.com";
