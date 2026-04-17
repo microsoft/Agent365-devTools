@@ -60,8 +60,10 @@ internal sealed partial class ReportGenerator : IReportGenerator
         // Step 3: Read HTML template from embedded resource
         string template = await ReadEmbeddedTemplateAsync().ConfigureAwait(false);
 
-        // Step 4: Inject report data into template
-        string reportDataJson = JsonSerializer.Serialize(reportData, s_jsonOptions);
+        // Step 4: Inject report data into template.
+        // Escape sequences that can break out of the inline <script> block (</script>, <!--, -->, <!)
+        // since the JSON contains untrusted strings from the MCP server.
+        string reportDataJson = EscapeForInlineScript(JsonSerializer.Serialize(reportData, s_jsonOptions));
         string htmlContent = template.Replace(TemplatePlaceholder, reportDataJson, StringComparison.Ordinal);
 
         // Step 5: Write HTML report
@@ -110,11 +112,14 @@ internal sealed partial class ReportGenerator : IReportGenerator
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                startInfo = new ProcessStartInfo("open", htmlPath);
+                // Use ArgumentList so paths with spaces or shell-significant characters are passed intact.
+                startInfo = new ProcessStartInfo("open");
+                startInfo.ArgumentList.Add(htmlPath);
             }
             else
             {
-                startInfo = new ProcessStartInfo("xdg-open", htmlPath);
+                startInfo = new ProcessStartInfo("xdg-open");
+                startInfo.ArgumentList.Add(htmlPath);
             }
 
             using var process = Process.Start(startInfo);
@@ -124,6 +129,24 @@ internal sealed partial class ReportGenerator : IReportGenerator
         {
             _logger.LogWarning(ex, "Could not open HTML report in browser. Please open manually: {HtmlPath}", htmlPath);
         }
+    }
+
+    /// <summary>
+    /// Escapes sequences that would break out of an inline &lt;script&gt; block.
+    /// The HTML parser sees different characters, but JSON.parse still recovers
+    /// the original strings via the standard escape sequences (\/ and \uXXXX).
+    /// </summary>
+    internal static string EscapeForInlineScript(string json)
+    {
+        if (string.IsNullOrEmpty(json))
+        {
+            return json;
+        }
+
+        return json
+            .Replace("</", "<\\/", StringComparison.Ordinal)
+            .Replace("<!--", "\\u003c!--", StringComparison.Ordinal)
+            .Replace("-->", "--\\u003e", StringComparison.Ordinal);
     }
 
     /// <summary>

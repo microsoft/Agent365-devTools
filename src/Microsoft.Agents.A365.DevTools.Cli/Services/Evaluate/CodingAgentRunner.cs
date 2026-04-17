@@ -52,8 +52,8 @@ internal class CodingAgentRunner
 
     /// <summary>
     /// Runs the specified coding agent to evaluate semantic checks in the checklist file.
-    /// Claude Code: prompt is piped via stdin (-p -).
-    /// GitHub Copilot: prompt is written to a temp file and referenced via -p.
+    /// Claude Code: prompt is piped via stdin (-p -) on Unix, written to a temp file on Windows.
+    /// GitHub Copilot: prompt is always written to a temp file and referenced via -p.
     /// </summary>
     public async Task<bool> EvaluateChecklistAsync(
         string checklistPath,

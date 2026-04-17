@@ -149,7 +149,7 @@ internal static class SemanticCheckPrompts
         sb.AppendLine("          \"tool_description\": [ ... ],");
         sb.AppendLine("          \"schema_structure\": [ ... ],");
         sb.AppendLine("          \"parameters\": {");
-        sb.AppendLine("            \"param_name\": {");
+        sb.AppendLine("            \"<parameterName>\": {");
         sb.AppendLine("              \"param_name\": [ ... ],");
         sb.AppendLine("              \"param_description\": [ ... ]");
         sb.AppendLine("            }");
