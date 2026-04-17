@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models.Evaluate;
@@ -57,38 +58,52 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
                 _logger.LogInformation("If neither is installed, the run will stop after generating the checklist and print steps to score it with your own LLM.");
                 _logger.LogInformation("");
             }
-            else if (engine == EvalEngine.None)
-            {
-                _logger.LogInformation("Semantic scoring disabled (--eval-engine none). Reading pre-scored checklist (if present) and generating the report.");
-                _logger.LogInformation("");
-            }
 
-            // Step 1: Schema Discovery
-            _logger.LogInformation("[1/5] Discovering tools from {ServerUrl}", serverUrl);
-            var tools = await _discoveryService.DiscoverToolsAsync(serverUrl, authToken, cancellationToken);
-            _logger.LogInformation("      Found {ToolCount} tool{Plural}", tools.Count, tools.Count == 1 ? "" : "s");
-
-            // Step 2: Checklist Generation
+            // Derive checklist path first so we can detect an in-progress evaluation.
             var serverName = DeriveServerName(serverUrl);
-            var checklist = _checklistGenerator.Generate(tools, serverName, serverUrl);
             var checklistPath = Path.Combine(outputDir, $"{serverName}_checklist.json");
-            var totalSemanticChecks = CountSemanticChecks(checklist);
-            _logger.LogInformation("[2/5] Generated evaluation checklist ({Count} semantic checks)", totalSemanticChecks);
+
+            EvaluationChecklist checklist;
+
+            if (File.Exists(checklistPath))
+            {
+                // Resume path: an earlier run wrote this checklist; treat it as the source of truth.
+                // This is how the bring-your-own-LLM workflow round-trips: user scored the file,
+                // re-runs the same command, and we pick up where they left off.
+                _logger.LogInformation("[1/5] Resuming from existing checklist at {Path}", checklistPath);
+                checklist = await LoadChecklistAsync(checklistPath, cancellationToken);
+                _logger.LogInformation("      Loaded {ToolCount} tool{Plural} (skipping server discovery — delete the file to re-discover)",
+                    checklist.Tools.Count, checklist.Tools.Count == 1 ? "" : "s");
+
+                var totalSemanticChecks = CountSemanticChecks(checklist);
+                _logger.LogInformation("[2/5] Checklist has {Count} semantic check{Plural}", totalSemanticChecks, totalSemanticChecks == 1 ? "" : "s");
+            }
+            else
+            {
+                // Fresh run: discover the server and generate a new checklist.
+                _logger.LogInformation("[1/5] Discovering tools from {ServerUrl}", serverUrl);
+                var tools = await _discoveryService.DiscoverToolsAsync(serverUrl, authToken, cancellationToken);
+                _logger.LogInformation("      Found {ToolCount} tool{Plural}", tools.Count, tools.Count == 1 ? "" : "s");
+
+                checklist = _checklistGenerator.Generate(tools, serverName, serverUrl);
+                var totalSemanticChecks = CountSemanticChecks(checklist);
+                _logger.LogInformation("[2/5] Generated evaluation checklist ({Count} semantic checks)", totalSemanticChecks);
+            }
 
             // Step 3: Semantic Evaluation
             _logger.LogInformation("[3/5] Running semantic evaluation");
             var evalResult = await _checklistEvaluator.EvaluateAsync(checklist, checklistPath, engine, cancellationToken);
             checklist = evalResult.Checklist;
 
-            if (!evalResult.SemanticEvaluationCompleted && engine != EvalEngine.None)
+            if (!evalResult.SemanticEvaluationCompleted)
             {
-                // Semantic evaluation didn't run -- stop before the report so the user
-                // can complete it manually and re-run.
-                _logger.LogInformation("");
-                _logger.LogInformation(
-                    "Checklist saved at: {Path}",
-                    Path.GetFullPath(checklistPath));
-                _logger.LogInformation("After scoring the semantic checks, re-run with --eval-engine none to generate the report.");
+                // Semantic evaluation couldn't complete (no agent, partial scoring, etc.).
+                // Stop before analysis — proceeding with null scores would produce an
+                // inflated report (Scorer treats unscored categories as 100).
+                // ChecklistEvaluator has already printed the detailed "pick one" guidance;
+                // here we just append the concrete re-run command that carries their flags.
+                _logger.LogInformation("  Re-run command: a365 develop-mcp evaluate --server-url {Url} --output-dir {OutDir}",
+                    serverUrl, outputDir);
                 return;
             }
 
@@ -132,6 +147,71 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
                 },
                 innerException: ex);
         }
+    }
+
+    private static readonly JsonSerializerOptions ChecklistReadOptions = new()
+    {
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        PropertyNameCaseInsensitive = true,
+    };
+
+    /// <summary>
+    /// Loads an existing checklist from disk. Used on re-runs where the user has
+    /// already scored (or partially scored) the file with their own LLM.
+    /// </summary>
+    private static async Task<EvaluationChecklist> LoadChecklistAsync(string path, CancellationToken cancellationToken)
+    {
+        string json;
+        try
+        {
+            json = await File.ReadAllTextAsync(path, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            throw new EvaluationException(
+                ErrorCodes.EvaluationFailed,
+                $"Failed to read existing checklist at '{path}'.",
+                errorDetails: new List<string> { ex.Message },
+                mitigationSteps: new List<string>
+                {
+                    "Verify the file is readable and not locked by another process.",
+                    "Delete the file to force a fresh discovery on the next run."
+                },
+                innerException: ex);
+        }
+
+        EvaluationChecklist? checklist;
+        try
+        {
+            checklist = JsonSerializer.Deserialize<EvaluationChecklist>(json, ChecklistReadOptions);
+        }
+        catch (JsonException ex)
+        {
+            throw new EvaluationException(
+                ErrorCodes.EvaluationFailed,
+                $"Existing checklist at '{path}' is not valid JSON.",
+                errorDetails: new List<string> { ex.Message },
+                mitigationSteps: new List<string>
+                {
+                    "Validate the JSON with your editor or an online linter.",
+                    "Delete the file to force a fresh discovery on the next run."
+                },
+                innerException: ex);
+        }
+
+        if (checklist is null)
+        {
+            throw new EvaluationException(
+                ErrorCodes.EvaluationFailed,
+                $"Existing checklist at '{path}' deserialized to null.",
+                mitigationSteps: new List<string>
+                {
+                    "Delete the file to force a fresh discovery on the next run."
+                });
+        }
+
+        return checklist;
     }
 
     /// <summary>

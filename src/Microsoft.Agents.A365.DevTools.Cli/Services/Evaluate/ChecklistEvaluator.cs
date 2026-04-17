@@ -51,40 +51,41 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         ArgumentNullException.ThrowIfNull(checklist);
         ArgumentException.ThrowIfNullOrWhiteSpace(checklistPath);
 
-        // Write full checklist to file (auditable artifact)
-        var json = JsonSerializer.Serialize(checklist, WriteOptions);
         var dir = Path.GetDirectoryName(checklistPath) ?? ".";
         Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(checklistPath, json, cancellationToken);
-        _logger.LogDebug("Checklist written to {Path}", checklistPath);
 
-        // Count unevaluated semantic checks before starting
+        // Count unevaluated semantic checks before starting.
+        // The pipeline service is responsible for loading any pre-existing checklist
+        // from disk, so `checklist` already reflects whatever scores the user has done.
         int totalUnevaluatedBefore = CountTotalUnevaluatedSemanticChecks(checklist);
 
-        // Handle the explicit --eval-engine none case up-front
+        // Fast path: checklist is fully scored (this is the resume case after manual scoring,
+        // or a second run where agents already filled everything last time).
+        if (totalUnevaluatedBefore == 0)
+        {
+            _logger.LogInformation("      All semantic checks already scored — skipping agent invocation");
+            await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
+            return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = true };
+        }
+
+        // User explicitly opted out of running an agent AND the checklist isn't fully scored:
+        // persist what we have, print guidance, and stop.
         if (engine == EvalEngine.None)
         {
-            if (totalUnevaluatedBefore == 0)
-            {
-                _logger.LogInformation("      All semantic checks already scored in checklist — proceeding with analysis");
-                return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = true };
-            }
-            _logger.LogInformation("      Semantic evaluation disabled (--eval-engine none) — skipping {Count} semantic check{Plural}",
-                totalUnevaluatedBefore, totalUnevaluatedBefore == 1 ? "" : "s");
+            await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
+            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: false);
             return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
         }
+
+        // Persist the unscored checklist now so the user has a file to edit if no agent is available.
+        await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
 
         // Build the list of engines to try (for Auto, detect available; otherwise just the one requested)
         var enginesToTry = await BuildEngineList(engine, cancellationToken);
 
         if (enginesToTry.Count == 0)
         {
-            if (totalUnevaluatedBefore == 0)
-            {
-                return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = true };
-            }
-
-            LogManualEvaluationInstructions(checklistPath);
+            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: true);
             return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
         }
 
@@ -421,7 +422,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         return count;
     }
 
-    private void LogManualEvaluationInstructions(string checklistPath)
+    private void LogManualEvaluationInstructions(string checklistPath, int unscoredCount, bool engineNotFound)
     {
         var fullPath = Path.GetFullPath(checklistPath);
         var promptPath = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".", "semantic_eval_prompt.txt");
@@ -437,15 +438,33 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             promptPath = string.Empty;
         }
 
-        _logger.LogWarning("      No coding agent CLI detected (looked for `copilot` and `claude`)");
+        if (engineNotFound)
+        {
+            _logger.LogWarning("      No coding agent CLI detected (looked for `copilot` and `claude`)");
+        }
+        else
+        {
+            _logger.LogInformation("      {Count} semantic check{Plural} still unscored (--eval-engine none skips automatic scoring)",
+                unscoredCount, unscoredCount == 1 ? "" : "s");
+        }
+
         _logger.LogInformation("");
-        _logger.LogInformation("To score semantic checks, choose one option:");
+        _logger.LogInformation("To finish this evaluation, pick one:");
         _logger.LogInformation("");
-        _logger.LogInformation("  1. Install a coding agent CLI and re-run this command:");
-        _logger.LogInformation("       GitHub Copilot:  https://github.com/github/gh-copilot");
-        _logger.LogInformation("       Claude Code:     https://docs.anthropic.com/claude-code");
-        _logger.LogInformation("");
-        _logger.LogInformation("  2. Score with your own LLM (ChatGPT, Gemini, an IDE assistant, etc.):");
+
+        if (engineNotFound)
+        {
+            _logger.LogInformation("  1. Install a coding agent CLI and re-run the same command:");
+            _logger.LogInformation("       GitHub Copilot:  https://github.com/github/gh-copilot");
+            _logger.LogInformation("       Claude Code:     https://docs.anthropic.com/claude-code");
+            _logger.LogInformation("");
+            _logger.LogInformation("  2. Score with your own LLM (ChatGPT, Gemini, an IDE assistant, etc.):");
+        }
+        else
+        {
+            _logger.LogInformation("  Score with your own LLM (ChatGPT, Gemini, an IDE assistant, etc.):");
+        }
+
         _logger.LogInformation("       a. Open:   {ChecklistPath}", fullPath);
         if (!string.IsNullOrEmpty(promptPath))
         {
@@ -456,7 +475,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             _logger.LogInformation("       b. Paste the prompt shown below into your LLM");
         }
         _logger.LogInformation("       c. Have the LLM fill in every null `score` (true/false) with a one-sentence `reason`");
-        _logger.LogInformation("       d. Re-run:  a365 develop-mcp evaluate <server-url> --eval-engine none");
+        _logger.LogInformation("       d. Save the file, then re-run the exact same command. The pipeline will detect the scored checklist and generate the report.");
         _logger.LogInformation("");
 
         if (string.IsNullOrEmpty(promptPath))
@@ -465,6 +484,15 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             _logger.LogInformation("{Prompt}", prompt);
             _logger.LogInformation("--- END PROMPT ---");
         }
+    }
+
+    /// <summary>
+    /// Serializes the checklist to disk at <paramref name="checklistPath"/>.
+    /// </summary>
+    private static async Task WriteChecklistAsync(EvaluationChecklist checklist, string checklistPath, CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(checklist, WriteOptions);
+        await File.WriteAllTextAsync(checklistPath, json, cancellationToken);
     }
 
     private static int CountEvaluatedSemanticChecks(EvaluationChecklist checklist)
