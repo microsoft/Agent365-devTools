@@ -184,7 +184,11 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            var (fileName, fileArguments) = WrapForPlatform("copilot", $"-p \"{metaPrompt}\" --model {CopilotModel} --allow-all-tools");
+            // --available-tools bounds what the model can do to reading and editing files.
+            // --allow-tool pre-approves those tools so non-interactive mode doesn't prompt.
+            var (fileName, fileArguments) = WrapForPlatform(
+                "copilot",
+                $"-p \"{metaPrompt}\" --model {CopilotModel} --available-tools=view,edit --allow-tool=view --allow-tool=edit --no-ask-user");
 
             var startInfo = new ProcessStartInfo
             {

@@ -175,6 +175,9 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// <summary>
     /// Extracts a single tool to a temp file, invokes the coding agent to evaluate
     /// its semantic checks, then merges the scored results back into the tool object.
+    /// The temp file lives in an isolated directory under the system temp path so
+    /// the coding agent (which may run with broad tool permissions) cannot reach
+    /// the user's source tree even if they invoked from a repo root.
     /// </summary>
     private async Task<bool> EvaluateToolChecks(
         ToolChecklist tool,
@@ -182,7 +185,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         List<EvalEngine> engines,
         CancellationToken cancellationToken)
     {
-        var tempFile = Path.Combine(workingDir, $".eval_tool_{Guid.NewGuid():N}.json");
+        var sandbox = CreateSandboxDir();
+        var tempFile = Path.Combine(sandbox, $".eval_tool_{Guid.NewGuid():N}.json");
         try
         {
             // Write just this tool to a small temp file
@@ -222,13 +226,14 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         }
         finally
         {
-            try { File.Delete(tempFile); } catch { /* best effort */ }
+            DeleteSandboxDir(sandbox);
         }
     }
 
     /// <summary>
     /// Extracts server-level checks with a tool name summary to a temp file,
-    /// invokes the coding agent, then merges results back.
+    /// invokes the coding agent, then merges results back. Runs inside an isolated
+    /// sandbox directory for the same reason as EvaluateToolChecks.
     /// </summary>
     private async Task<bool> EvaluateServerChecks(
         EvaluationChecklist checklist,
@@ -236,7 +241,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         List<EvalEngine> engines,
         CancellationToken cancellationToken)
     {
-        var tempFile = Path.Combine(workingDir, $".eval_server_{Guid.NewGuid():N}.json");
+        var sandbox = CreateSandboxDir();
+        var tempFile = Path.Combine(sandbox, $".eval_server_{Guid.NewGuid():N}.json");
         try
         {
             // Build a lightweight object with tool summaries and server checks
@@ -278,8 +284,25 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         }
         finally
         {
-            try { File.Delete(tempFile); } catch { /* best effort */ }
+            DeleteSandboxDir(sandbox);
         }
+    }
+
+    /// <summary>
+    /// Creates a fresh isolated directory under the system temp path for a single
+    /// agent invocation. The agent's working directory is set to this path, which
+    /// bounds file-tool access to files that we place here ourselves.
+    /// </summary>
+    private static string CreateSandboxDir()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"a365-eval-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    private static void DeleteSandboxDir(string path)
+    {
+        try { Directory.Delete(path, recursive: true); } catch { /* best effort */ }
     }
 
     /// <summary>

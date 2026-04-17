@@ -22,10 +22,6 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService
     private const string ClientName = "a365-evaluate";
     private const string ClientVersion = "1.0";
     private const string JsonRpcVersion = "2.0";
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
 
     private readonly ILogger<SchemaDiscoveryService> _logger;
     private readonly HttpClient _httpClient;
