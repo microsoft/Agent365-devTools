@@ -64,7 +64,11 @@ public static class DevelopMcpCommand
     /// </summary>
     private static Command CreateEvaluateSubcommand(IEvaluationPipelineService pipelineService)
     {
-        var command = new Command("evaluate", "Evaluate MCP server tool schema quality and generate an HTML report");
+        var command = new Command(
+            "evaluate",
+            "Evaluate MCP server tool schema quality and generate an HTML report. " +
+            "Uses a locally installed coding agent (GitHub Copilot or Claude Code) to score semantic checks; " +
+            "if neither is installed, pass --eval-engine none to score the generated checklist manually with your own LLM.");
 
         // Use a required option (not a positional argument) for consistency with other
         // develop-mcp subcommands and Azure CLI conventions.
@@ -83,7 +87,10 @@ public static class DevelopMcpCommand
         var evalEngineOption = new Option<string>(
             "--eval-engine",
             getDefaultValue: () => "auto",
-            "Coding agent for semantic evaluation (auto, github-copilot, claude-code, none)");
+            "Which local coding agent scores semantic checks. " +
+            "auto: try github-copilot then claude-code. " +
+            "github-copilot or claude-code: use only that engine. " +
+            "none: skip automatic scoring and expect the checklist to be pre-scored (bring-your-own-LLM).");
 
         var authTokenOption = new Option<string?>(
             "--auth-token",

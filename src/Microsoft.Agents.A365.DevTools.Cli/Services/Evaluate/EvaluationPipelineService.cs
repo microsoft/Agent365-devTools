@@ -50,6 +50,19 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
         {
             var engine = ParseEvalEngine(evalEngine);
 
+            // Brief intro so first-time users know what backing service this needs.
+            if (engine == EvalEngine.Auto)
+            {
+                _logger.LogInformation("Semantic checks are scored by a locally installed coding agent (GitHub Copilot or Claude Code).");
+                _logger.LogInformation("If neither is installed, the run will stop after generating the checklist and print steps to score it with your own LLM.");
+                _logger.LogInformation("");
+            }
+            else if (engine == EvalEngine.None)
+            {
+                _logger.LogInformation("Semantic scoring disabled (--eval-engine none). Reading pre-scored checklist (if present) and generating the report.");
+                _logger.LogInformation("");
+            }
+
             // Step 1: Schema Discovery
             _logger.LogInformation("[1/5] Discovering tools from {ServerUrl}", serverUrl);
             var tools = await _discoveryService.DiscoverToolsAsync(serverUrl, authToken, cancellationToken);
