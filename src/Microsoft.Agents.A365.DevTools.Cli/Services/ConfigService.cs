@@ -171,12 +171,8 @@ public class ConfigService : IConfigService
             var localTime = localUpdated.GetDateTime();
             var globalTime = globalUpdated.GetDateTime();
             
-            // Only warn if the content timestamps differ (meaning they're from different save operations)
-            // TODO: Current design uses local folder data even if it's older than %LocalAppData%.
-            // This needs to be revisited to determine if we should:
-            // 1. Always prefer %LocalAppData% as authoritative source
-            // 2. Prompt user to choose which config to use
-            // 3. Auto-sync from newer to older location
+            // Warn when the local config is older — the user may have newer state in the global
+            // directory from a previous CLI version that still wrote there.
             if (globalTime > localTime)
             {
                 var msg = $"Warning: The local generated config (at {localPath}) is older than the global config (at {globalPath}). You may be using stale configuration. Consider syncing or running setup again.";

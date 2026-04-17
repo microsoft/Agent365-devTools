@@ -500,14 +500,14 @@ internal static class NonDwBlueprintSetupOrchestrator
                 continue;
             }
 
-            var granted = await ctx.GraphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+            var granted = await ctx.GraphApiService.CreatePrincipalOauth2PermissionGrantAsync(
                 ctx.Config.TenantId!,
                 agentIdentitySpObjectId,
                 resourceSpObjectId,
+                currentUserObjectId,
                 scopesToGrant,
                 ctx.CancellationToken,
-                Constants.AuthenticationConstants.RequiredPermissionGrantScopes,
-                principalId: currentUserObjectId);
+                Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
 
             if (granted)
                 ctx.Logger.LogDebug(

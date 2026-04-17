@@ -635,8 +635,7 @@ public class GraphApiService
         string resourceSpObjectId,
         IEnumerable<string> scopes,
         CancellationToken ct = default,
-        IEnumerable<string>? permissionGrantScopes = null,
-        string? principalId = null)
+        IEnumerable<string>? permissionGrantScopes = null)
     {
         return await CreateOrUpdateOauth2PermissionGrantCoreAsync(
             tenantId,
@@ -883,7 +882,7 @@ public class GraphApiService
             }
 
             var json = await response.Content.ReadAsStringAsync(ct);
-            var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(json);
 
             var roles = new List<string>();
             if (doc.RootElement.TryGetProperty("value", out var rolesArray))
@@ -1280,7 +1279,20 @@ public class GraphApiService
         _logger.LogDebug("POST {Url}", AgentRegistrationsPath);
         _logger.LogDebug("Body: {Body}", JsonSerializer.Serialize(payload));
 
-        var response = await GraphPostWithResponseAsync(tenantId, AgentRegistrationsPath, payload, ct, registrationScopes);
+        var response = await _retryHelper.ExecuteWithRetryAsync<GraphResponse>(
+            token => GraphPostWithResponseAsync(tenantId, AgentRegistrationsPath, payload, token, registrationScopes),
+            r =>
+            {
+                if (r.StatusCode is not (502 or 503 or 504)) return false;
+                _logger.LogWarning(
+                    "Agent registration request returned HTTP {StatusCode} (transient); retrying...",
+                    r.StatusCode);
+                r.Json?.Dispose();
+                return true;
+            },
+            maxRetries: 3,
+            baseDelaySeconds: 2,
+            cancellationToken: ct);
 
         // Log token claims so scope/audience issues are visible in -v output.
         var registrationToken = _httpClient.DefaultRequestHeaders.Authorization?.Parameter;

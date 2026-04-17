@@ -100,7 +100,7 @@ public class CleanupCommand
                 ? new NonInteractiveConfirmationProvider()
                 : confirmationProvider;
 
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, effectiveConfirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig);
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, effectiveConfirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig, ct: context.GetCancellationToken());
         });
 
         // Add subcommands for granular control
@@ -677,7 +677,8 @@ public class CleanupCommand
         FileInfo? configFile,
         GraphApiService? graphApiService = null,
         string? correlationId = null,
-        Agent365Config? configOverride = null)
+        Agent365Config? configOverride = null,
+        CancellationToken ct = default)
     {
         var cleanupSucceeded = false;
         var hasFailures = false;
@@ -752,7 +753,7 @@ public class CleanupCommand
                     var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
                         config.TenantId,
                         config.AgentRegistrationId,
-                        CancellationToken.None);
+                        ct);
 
                     if (registrationDeleted)
                     {
@@ -781,7 +782,7 @@ public class CleanupCommand
                     var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
                         config.TenantId,
                         config.AgentInstanceId,
-                        CancellationToken.None);
+                        ct);
 
                     if (instanceDeleted)
                     {

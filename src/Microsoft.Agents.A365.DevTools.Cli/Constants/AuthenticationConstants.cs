@@ -121,14 +121,6 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphDefaultScope = "https://graph.microsoft.com/.default";
 
     /// <summary>
-    /// Well-known application ID for the Microsoft Azure CLI.
-    /// All GraphApiService calls use az CLI's delegated token; scopes that need to appear
-    /// in that token's <c>scp</c> claim must be consented on this application, not only on
-    /// the custom client app registered by the user.
-    /// </summary>
-    public const string AzureCliAppId = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
-
-    /// <summary>
     /// Redirect URI registered on the blueprint application to support the /v2.0/adminconsent flow.
     /// AAD requires at least one redirect URI on the application — AADSTS500113 is returned otherwise.
     /// This is the standard Entra Portal redirect URI used for admin consent; it shows a generic

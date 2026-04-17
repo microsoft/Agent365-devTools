@@ -516,14 +516,26 @@ internal static class AllSubcommand
             // not exist on disk, so LoadAsync would throw ConfigFileNotFoundException.
             if (!ctx.IsBootstrap)
             {
-                // CRITICAL: Wait for file system to ensure config file is fully written
-                // Blueprint creation writes directly to disk and may not be immediately readable
-                ctx.Logger.LogDebug("Waiting for config file write to complete...");
-                await Task.Delay(2000, ctx.CancellationToken);
-
-                // Reload config to get blueprint ID and any other dynamic properties written to disk
+                // Reload config to get blueprint ID and any other dynamic properties written to disk.
+                // Retry up to 5 times with 500ms backoff to handle transient file-system flush delays.
                 var fullConfigPath = Path.GetFullPath(ctx.ConfigFile.FullName);
-                ctx.Config = await ctx.ConfigService.LoadAsync(fullConfigPath);
+                Agent365Config? reloaded = null;
+                for (var attempt = 0; attempt < 5; attempt++)
+                {
+                    await Task.Delay(500, ctx.CancellationToken);
+                    try
+                    {
+                        reloaded = await ctx.ConfigService.LoadAsync(fullConfigPath);
+                        if (!string.IsNullOrWhiteSpace(reloaded.AgentBlueprintId))
+                            break;
+                    }
+                    catch (Exception ex)
+                    {
+                        ctx.Logger.LogDebug(ex, "Config reload attempt {Attempt} failed; retrying", attempt + 1);
+                    }
+                }
+                if (reloaded is not null)
+                    ctx.Config = reloaded;
             }
             ctx.Results.BlueprintId = ctx.Config.AgentBlueprintId;
             ctx.Results.BlueprintDisplayName = ctx.Config.AgentBlueprintDisplayName;
