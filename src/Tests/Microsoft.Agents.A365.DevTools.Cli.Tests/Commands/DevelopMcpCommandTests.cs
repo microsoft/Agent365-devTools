@@ -328,9 +328,10 @@ public class DevelopMcpCommandTests
         // Act
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService, pipelineService);
 
-        // Assert
-        command.Subcommands.Should().HaveCount(8);
-        command.Subcommands.Select(sc => sc.Name).Should().Contain("evaluate");
+        // Assert - assert presence, not total count (total may change as other subcommands are added)
+        command.Subcommands.Select(sc => sc.Name).Should().Contain(
+            "evaluate",
+            because: "providing the pipeline service should register the evaluate subcommand");
     }
 
     [Fact]
@@ -339,8 +340,9 @@ public class DevelopMcpCommandTests
         // Act
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService, null);
 
-        // Assert
-        command.Subcommands.Should().HaveCount(7);
-        command.Subcommands.Select(sc => sc.Name).Should().NotContain("evaluate");
+        // Assert - assert absence, not total count
+        command.Subcommands.Select(sc => sc.Name).Should().NotContain(
+            "evaluate",
+            because: "evaluate must not be registered when no pipeline service is supplied");
     }
 }

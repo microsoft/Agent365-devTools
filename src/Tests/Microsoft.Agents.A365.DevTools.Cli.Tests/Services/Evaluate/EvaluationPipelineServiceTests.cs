@@ -54,7 +54,8 @@ public class EvaluationPipelineServiceTests
     {
         var result = EvaluationPipelineService.DeriveServerName("http://my.server.com/mcp");
 
-        result.Should().Be("my-server-com");
+        result.Should().Be("my-server-com",
+            because: "derived names feed into filenames, so dots in the host must be replaced with filesystem-safe hyphens");
     }
 
     [Fact]
@@ -62,7 +63,8 @@ public class EvaluationPipelineServiceTests
     {
         var result = EvaluationPipelineService.DeriveServerName("http://localhost:3000/mcp");
 
-        result.Should().Be("localhost-3000");
+        result.Should().Be("localhost-3000",
+            because: "non-default ports must be included so two servers on the same host don't collide to the same filename");
     }
 
     [Fact]
@@ -70,7 +72,8 @@ public class EvaluationPipelineServiceTests
     {
         var result = EvaluationPipelineService.DeriveServerName("http://example.com/mcp");
 
-        result.Should().Be("example-com");
+        result.Should().Be("example-com",
+            because: "default ports are implicit in the scheme and would add noise to the filename");
     }
 
     [Fact]
@@ -78,7 +81,8 @@ public class EvaluationPipelineServiceTests
     {
         var result = EvaluationPipelineService.DeriveServerName("not a valid uri");
 
-        result.Should().NotBeNullOrWhiteSpace();
+        result.Should().NotBeNullOrWhiteSpace(
+            because: "a malformed URL should still produce a usable name rather than breaking the pipeline");
     }
 
     [Fact]
@@ -86,8 +90,10 @@ public class EvaluationPipelineServiceTests
     {
         var result = EvaluationPipelineService.DeriveServerName("fake://host.name:1234/path");
 
-        result.Should().NotContain("://");
-        result.Should().NotContain("/");
+        result.Should().NotContain("://",
+            because: "the derived name is used in file paths which cannot contain scheme separators");
+        result.Should().NotContain("/",
+            because: "the derived name is used as a filename, not a path");
     }
 
     [Fact]
@@ -95,6 +101,7 @@ public class EvaluationPipelineServiceTests
     {
         var result = EvaluationPipelineService.DeriveServerName("");
 
-        result.Should().Be("unknown-server");
+        result.Should().Be("unknown-server",
+            because: "empty input must fall back to a stable placeholder so report generation still has a filename");
     }
 }

@@ -66,8 +66,14 @@ public static class DevelopMcpCommand
     {
         var command = new Command("evaluate", "Evaluate MCP server tool schema quality and generate an HTML report");
 
-        var serverUrlArg = new Argument<string>("server-url", "MCP server Streamable HTTP endpoint URL");
-        command.AddArgument(serverUrlArg);
+        // Use a required option (not a positional argument) for consistency with other
+        // develop-mcp subcommands and Azure CLI conventions.
+        var serverUrlOption = new Option<string>(
+            ["--server-url", "-u"],
+            "MCP server Streamable HTTP endpoint URL")
+        {
+            IsRequired = true,
+        };
 
         var outputDirOption = new Option<string>(
             ["--output-dir", "-o"],
@@ -83,13 +89,14 @@ public static class DevelopMcpCommand
             "--auth-token",
             "Bearer token for MCP server authentication");
 
+        command.AddOption(serverUrlOption);
         command.AddOption(outputDirOption);
         command.AddOption(evalEngineOption);
         command.AddOption(authTokenOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var serverUrl = context.ParseResult.GetValueForArgument(serverUrlArg);
+            var serverUrl = context.ParseResult.GetValueForOption(serverUrlOption)!;
             var outputDir = context.ParseResult.GetValueForOption(outputDirOption)!;
             var evalEngine = context.ParseResult.GetValueForOption(evalEngineOption)!;
             var authToken = context.ParseResult.GetValueForOption(authTokenOption);

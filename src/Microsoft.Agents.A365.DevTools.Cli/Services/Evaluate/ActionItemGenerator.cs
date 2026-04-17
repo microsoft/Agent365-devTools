@@ -40,7 +40,11 @@ public static class ActionItemGenerator
             }
 
             string categoryKey = CategoryToKey(check.Category);
-            float weight = Scorer.CategoryWeights.GetValueOrDefault(categoryKey, 0.15f);
+            // Toolset-level checks are scored separately from per-tool categories in Scorer.
+            // Route them to ToolsetWeight explicitly so action-item impact stays aligned with scoring.
+            float weight = check.Category == CheckCategory.ToolsetDesign
+                ? Scorer.ToolsetWeight
+                : Scorer.CategoryWeights.GetValueOrDefault(categoryKey, 0.15f);
             int categoryTotal = checksByCategory.TryGetValue(check.Category, out var catChecks)
                 ? catChecks.Count
                 : 1;

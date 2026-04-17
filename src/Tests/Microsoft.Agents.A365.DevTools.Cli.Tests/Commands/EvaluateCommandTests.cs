@@ -47,13 +47,24 @@ public class EvaluateCommandTests
     }
 
     [Fact]
-    public void EvaluateSubcommand_HasServerUrlArgument()
+    public void EvaluateSubcommand_HasServerUrlOption()
     {
         var command = GetEvaluateSubcommand();
 
-        var argument = command.Arguments.FirstOrDefault(a => a.Name == "server-url");
-        argument.Should().NotBeNull();
-        argument!.ValueType.Should().Be(typeof(string));
+        var option = command.Options.FirstOrDefault(o => o.Name == "server-url");
+        option.Should().NotBeNull(because: "develop-mcp subcommands use named options, not positional arguments, for Azure CLI consistency");
+        option!.ValueType.Should().Be(typeof(string));
+        option.IsRequired.Should().BeTrue(because: "evaluate cannot run without a target MCP server URL");
+        option.Aliases.Should().Contain("--server-url");
+        option.Aliases.Should().Contain("-u");
+    }
+
+    [Fact]
+    public void EvaluateSubcommand_HasNoPositionalArguments()
+    {
+        var command = GetEvaluateSubcommand();
+
+        command.Arguments.Should().BeEmpty(because: "develop-mcp subcommands should use named options only (Azure CLI convention)");
     }
 
     [Fact]
@@ -95,7 +106,7 @@ public class EvaluateCommandTests
         var option = command.Options.First(o => o.Name == "output-dir") as Option<string>;
         option.Should().NotBeNull();
 
-        var parseResult = command.Parse("http://localhost:3000");
+        var parseResult = command.Parse("--server-url http://localhost:3000");
         var value = parseResult.GetValueForOption(option!);
         value.Should().Be(".");
     }
@@ -108,7 +119,7 @@ public class EvaluateCommandTests
         var option = command.Options.First(o => o.Name == "eval-engine") as Option<string>;
         option.Should().NotBeNull();
 
-        var parseResult = command.Parse("http://localhost:3000");
+        var parseResult = command.Parse("--server-url http://localhost:3000");
         var value = parseResult.GetValueForOption(option!);
         value.Should().Be("auto");
     }

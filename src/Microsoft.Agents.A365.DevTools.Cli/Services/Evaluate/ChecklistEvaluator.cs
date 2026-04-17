@@ -154,14 +154,20 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
         var scoredSemantic = CountEvaluatedSemanticChecks(checklist);
         var totalSemantic = CountTotalSemanticChecks(checklist);
+        var remainingUnevaluated = CountTotalUnevaluatedSemanticChecks(checklist);
         _logger.LogInformation("      {Scored} of {Total} semantic checks scored", scoredSemantic, totalSemantic);
+        if (remainingUnevaluated > 0)
+        {
+            _logger.LogWarning("      {Count} semantic check{Plural} remain unscored — downstream analysis may be incomplete",
+                remainingUnevaluated, remainingUnevaluated == 1 ? "" : "s");
+        }
 
-        // Completed if nothing needed evaluation OR at least one tool was evaluated
-        var allAlreadyScored = totalUnevaluatedBefore == 0;
+        // Only treat evaluation as completed when nothing is left unscored.
+        // Partial evaluations would skew scoring (Scorer treats unscored categories as 100).
         return new ChecklistEvaluationResult
         {
             Checklist = checklist,
-            SemanticEvaluationCompleted = allAlreadyScored || toolsEvaluated > 0
+            SemanticEvaluationCompleted = remainingUnevaluated == 0
         };
     }
 
@@ -301,7 +307,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// Attempts to repair common JSON issues produced by coding agents:
     /// missing commas between properties/array elements, trailing commas.
     /// </summary>
-    private static string RepairJson(string json)
+    internal static string RepairJson(string json)
     {
         // Insert missing commas: a value-ending token followed by whitespace then a
         // value-starting token, with no comma in between.

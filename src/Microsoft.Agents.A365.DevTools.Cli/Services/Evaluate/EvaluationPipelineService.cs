@@ -29,6 +29,12 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
         IEvaluationAnalyzer evaluationAnalyzer,
         IReportGenerator reportGenerator)
     {
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(discoveryService);
+        ArgumentNullException.ThrowIfNull(checklistGenerator);
+        ArgumentNullException.ThrowIfNull(checklistEvaluator);
+        ArgumentNullException.ThrowIfNull(evaluationAnalyzer);
+        ArgumentNullException.ThrowIfNull(reportGenerator);
         _logger = logger;
         _discoveryService = discoveryService;
         _checklistGenerator = checklistGenerator;
