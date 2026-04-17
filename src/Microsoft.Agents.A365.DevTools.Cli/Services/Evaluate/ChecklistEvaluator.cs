@@ -56,17 +56,29 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var dir = Path.GetDirectoryName(checklistPath) ?? ".";
         Directory.CreateDirectory(dir);
         await File.WriteAllTextAsync(checklistPath, json, cancellationToken);
-        _logger.LogInformation("Checklist written to {Path}", checklistPath);
+        _logger.LogDebug("Checklist written to {Path}", checklistPath);
 
         // Count unevaluated semantic checks before starting
         int totalUnevaluatedBefore = CountTotalUnevaluatedSemanticChecks(checklist);
 
-        // Build the list of engines to try
+        // Handle the explicit --eval-engine none case up-front
+        if (engine == EvalEngine.None)
+        {
+            if (totalUnevaluatedBefore == 0)
+            {
+                _logger.LogInformation("      All semantic checks already scored in checklist — proceeding with analysis");
+                return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = true };
+            }
+            _logger.LogInformation("      Semantic evaluation disabled (--eval-engine none) — skipping {Count} semantic check{Plural}",
+                totalUnevaluatedBefore, totalUnevaluatedBefore == 1 ? "" : "s");
+            return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
+        }
+
+        // Build the list of engines to try (for Auto, detect available; otherwise just the one requested)
         var enginesToTry = await BuildEngineList(engine, cancellationToken);
 
         if (enginesToTry.Count == 0)
         {
-            // If nothing was unevaluated to begin with, that's success (all already scored)
             if (totalUnevaluatedBefore == 0)
             {
                 return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = true };
@@ -76,7 +88,17 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
         }
 
-        _logger.LogInformation("Engines available: {Engines}", string.Join(", ", enginesToTry));
+        // Announce the active engine (and fallback if any)
+        if (enginesToTry.Count == 1)
+        {
+            _logger.LogInformation("      Using {Engine}", FormatEngineName(enginesToTry[0]));
+        }
+        else
+        {
+            _logger.LogInformation("      Using {Primary} (fallback: {Fallback})",
+                FormatEngineName(enginesToTry[0]),
+                string.Join(", ", enginesToTry.Skip(1).Select(FormatEngineName)));
+        }
 
         int toolsEvaluated = 0;
         int toolsFailed = 0;
@@ -96,18 +118,18 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 continue;
             }
 
-            _logger.LogInformation("[{Current}/{Total}] Evaluating \"{ToolName}\" ({CheckCount} semantic checks)...",
-                i + 1, checklist.Tools.Count, tool.Name, unevaluated);
-
             var success = await EvaluateToolChecks(tool, dir, enginesToTry, cancellationToken);
             if (success)
             {
                 toolsEvaluated++;
+                _logger.LogInformation("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... ok",
+                    i + 1, checklist.Tools.Count, tool.Name, unevaluated);
             }
             else
             {
                 toolsFailed++;
-                _logger.LogWarning("Failed to evaluate \"{ToolName}\", continuing...", tool.Name);
+                _logger.LogWarning("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... failed (continuing)",
+                    i + 1, checklist.Tools.Count, tool.Name, unevaluated);
             }
         }
 
@@ -115,17 +137,24 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var serverUnevaluated = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
         if (serverUnevaluated > 0)
         {
-            _logger.LogInformation("Evaluating server-level checks ({CheckCount} semantic checks)...", serverUnevaluated);
-            await EvaluateServerChecks(checklist, dir, enginesToTry, cancellationToken);
+            var serverSuccess = await EvaluateServerChecks(checklist, dir, enginesToTry, cancellationToken);
+            if (serverSuccess)
+            {
+                _logger.LogInformation("      server-level checks ({Count} checks) ... ok", serverUnevaluated);
+            }
+            else
+            {
+                _logger.LogWarning("      server-level checks ({Count} checks) ... failed (continuing)", serverUnevaluated);
+            }
         }
 
         // Write the updated checklist back (with all merged results)
         var updatedJson = JsonSerializer.Serialize(checklist, WriteOptions);
         await File.WriteAllTextAsync(checklistPath, updatedJson, cancellationToken);
 
-        var semanticCount = CountEvaluatedSemanticChecks(checklist);
-        _logger.LogInformation("Evaluation complete: {Evaluated} tools succeeded, {Failed} failed, {SemanticCount} semantic checks scored",
-            toolsEvaluated, toolsFailed, semanticCount);
+        var scoredSemantic = CountEvaluatedSemanticChecks(checklist);
+        var totalSemantic = CountTotalSemanticChecks(checklist);
+        _logger.LogInformation("      {Scored} of {Total} semantic checks scored", scoredSemantic, totalSemantic);
 
         // Completed if nothing needed evaluation OR at least one tool was evaluated
         var allAlreadyScored = totalUnevaluatedBefore == 0;
@@ -299,7 +328,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 return true;
             }
 
-            _logger.LogWarning("{Engine} failed for this evaluation, trying next engine...", candidate);
+            _logger.LogDebug("{Engine} failed, trying next", candidate);
         }
 
         return false;
@@ -308,24 +337,16 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// <summary>
     /// Builds the ordered list of engines to try based on user's choice.
     /// For Auto: detect which are available, always Copilot first.
-    /// For a specific engine: just that one.
-    /// For None: empty list.
+    /// For a specific engine: just that one (caller should have handled None earlier).
     /// </summary>
     private async Task<List<EvalEngine>> BuildEngineList(EvalEngine requested, CancellationToken cancellationToken = default)
     {
-        if (requested == EvalEngine.None)
-        {
-            return [];
-        }
-
         if (requested != EvalEngine.Auto)
         {
-            // User explicitly chose an engine
             return [requested];
         }
 
         // Auto: detect all available engines, preserving priority order
-        _logger.LogInformation("Detecting available coding agents...");
         var available = new List<EvalEngine>();
         foreach (var engine in EnginePriority)
         {
@@ -336,17 +357,20 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             }
         }
 
-        if (available.Count == 0)
-        {
-            _logger.LogWarning("No coding agent CLI detected (tried copilot, claude)");
-        }
-        else
-        {
-            _logger.LogInformation("Available engines: {Engines}", string.Join(", ", available));
-        }
-
         return available;
     }
+
+    /// <summary>
+    /// Returns a user-friendly display name for an engine.
+    /// </summary>
+    private static string FormatEngineName(EvalEngine engine) => engine switch
+    {
+        EvalEngine.GithubCopilot => "GitHub Copilot",
+        EvalEngine.ClaudeCode => "Claude Code",
+        EvalEngine.Auto => "auto",
+        EvalEngine.None => "none",
+        _ => engine.ToString()
+    };
 
     private static int CountTotalUnevaluatedSemanticChecks(EvaluationChecklist checklist)
     {
@@ -373,42 +397,68 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         return count;
     }
 
+    private static int CountTotalSemanticChecks(EvaluationChecklist checklist)
+    {
+        int count = 0;
+        foreach (var tool in checklist.Tools)
+        {
+            count += tool.Checks.ToolName.Count(c => c.Type == CheckType.Semantic);
+            count += tool.Checks.ToolDescription.Count(c => c.Type == CheckType.Semantic);
+            count += tool.Checks.SchemaStructure.Count(c => c.Type == CheckType.Semantic);
+            foreach (var param in tool.Checks.Parameters.Values)
+            {
+                count += param.ParamName.Count(c => c.Type == CheckType.Semantic);
+                count += param.ParamDescription.Count(c => c.Type == CheckType.Semantic);
+            }
+        }
+        count += checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic);
+        return count;
+    }
+
     private void LogManualEvaluationInstructions(string checklistPath)
     {
         var fullPath = Path.GetFullPath(checklistPath);
+        var promptPath = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".", "semantic_eval_prompt.txt");
         var prompt = SemanticCheckPrompts.BuildEvaluationPrompt(fullPath);
 
-        _logger.LogWarning("");
-        _logger.LogWarning("Semantic checks were not evaluated automatically.");
-        _logger.LogWarning("To complete the evaluation, pass the checklist to your coding agent:");
-        _logger.LogWarning("");
-        _logger.LogWarning("  Option 1 - GitHub Copilot CLI:");
-        _logger.LogWarning("    copilot -p \"{Prompt}\" --allow-all-tools", EscapeForDisplay(prompt));
-        _logger.LogWarning("");
-        _logger.LogWarning("  Option 2 - Claude Code CLI:");
-        _logger.LogWarning("    claude -p \"{Prompt}\" --allowedTools Read,Edit", EscapeForDisplay(prompt));
-        _logger.LogWarning("");
-        _logger.LogWarning("  Option 3 - Any coding agent:");
-        _logger.LogWarning("    Copy the prompt below and pass it to your preferred coding agent.");
-        _logger.LogWarning("");
-        _logger.LogWarning("--- START PROMPT ---");
-        _logger.LogWarning("{Prompt}", prompt);
-        _logger.LogWarning("--- END PROMPT ---");
-        _logger.LogWarning("");
-        _logger.LogWarning("After the agent updates the checklist, re-run:");
-        _logger.LogWarning("  a365 evaluate <server-url> --eval-engine none");
-        _logger.LogWarning("to generate the final report from the updated checklist.");
-        _logger.LogWarning("");
-    }
-
-    private static string EscapeForDisplay(string prompt)
-    {
-        var firstLine = prompt.Split('\n')[0].Trim();
-        if (firstLine.Length > 60)
+        try
         {
-            firstLine = firstLine[..57] + "...";
+            File.WriteAllText(promptPath, prompt);
         }
-        return firstLine;
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to write prompt file to {Path}", promptPath);
+            promptPath = string.Empty;
+        }
+
+        _logger.LogWarning("      No coding agent CLI detected (looked for `copilot` and `claude`)");
+        _logger.LogInformation("");
+        _logger.LogInformation("To score semantic checks, choose one option:");
+        _logger.LogInformation("");
+        _logger.LogInformation("  1. Install a coding agent CLI and re-run this command:");
+        _logger.LogInformation("       GitHub Copilot:  https://github.com/github/gh-copilot");
+        _logger.LogInformation("       Claude Code:     https://docs.anthropic.com/claude-code");
+        _logger.LogInformation("");
+        _logger.LogInformation("  2. Score with your own LLM (ChatGPT, Gemini, an IDE assistant, etc.):");
+        _logger.LogInformation("       a. Open:   {ChecklistPath}", fullPath);
+        if (!string.IsNullOrEmpty(promptPath))
+        {
+            _logger.LogInformation("       b. Paste the prompt from: {PromptPath}", promptPath);
+        }
+        else
+        {
+            _logger.LogInformation("       b. Paste the prompt shown below into your LLM");
+        }
+        _logger.LogInformation("       c. Have the LLM fill in every null `score` (true/false) with a one-sentence `reason`");
+        _logger.LogInformation("       d. Re-run:  a365 develop-mcp evaluate <server-url> --eval-engine none");
+        _logger.LogInformation("");
+
+        if (string.IsNullOrEmpty(promptPath))
+        {
+            _logger.LogInformation("--- PROMPT ---");
+            _logger.LogInformation("{Prompt}", prompt);
+            _logger.LogInformation("--- END PROMPT ---");
+        }
     }
 
     private static int CountEvaluatedSemanticChecks(EvaluationChecklist checklist)

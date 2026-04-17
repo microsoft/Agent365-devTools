@@ -246,11 +246,11 @@ internal class CodingAgentRunner
 
             if (process.ExitCode == 0)
             {
-                _logger.LogInformation("Coding agent ({Engine}) completed successfully", engine);
+                _logger.LogDebug("Coding agent ({Engine}) completed successfully", engine);
                 return true;
             }
 
-            _logger.LogError("Coding agent ({Engine}) exited with code {ExitCode}", engine, process.ExitCode);
+            _logger.LogDebug("Coding agent ({Engine}) exited with code {ExitCode}", engine, process.ExitCode);
             if (stderr.Length > 0)
             {
                 _logger.LogDebug("Agent stderr: {StdErr}", stderr.ToString().Trim());
@@ -261,7 +261,7 @@ internal class CodingAgentRunner
         {
             // Kill the timed-out process to prevent zombie processes
             KillProcess(process, engine);
-            _logger.LogError("Coding agent ({Engine}) timed out after {Timeout} seconds", engine, timeout.TotalSeconds);
+            _logger.LogDebug("Coding agent ({Engine}) timed out after {Timeout}s", engine, timeout.TotalSeconds);
             return false;
         }
         finally

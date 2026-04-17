@@ -28,7 +28,7 @@ internal sealed class EvaluationAnalyzer : IEvaluationAnalyzer
         ArgumentNullException.ThrowIfNull(checklist);
         evalEngine ??= string.Empty;
 
-        _logger.LogInformation("Analyzing evaluation checklist for server {ServerName}", checklist.Metadata.ServerName);
+        _logger.LogDebug("Analyzing evaluation checklist for server {ServerName}", checklist.Metadata.ServerName);
 
         // Step 1: Build per-tool results
         var toolResults = new List<ToolEvalResult>();
@@ -64,7 +64,7 @@ internal sealed class EvaluationAnalyzer : IEvaluationAnalyzer
         // Step 7: Compute action items by priority
         var actionItemsByPriority = ComputeActionItemsByPriority(allActionItems);
 
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Analysis complete: overall score {OverallScore}, maturity level {MaturityLevel} ({MaturityLabel}), {ActionItemCount} action items",
             overallScore,
             maturity.Level,

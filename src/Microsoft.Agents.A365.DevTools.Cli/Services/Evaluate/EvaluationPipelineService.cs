@@ -45,42 +45,55 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             var engine = ParseEvalEngine(evalEngine);
 
             // Step 1: Schema Discovery
-            _logger.LogInformation("Discovering tools from {ServerUrl}...", serverUrl);
-            var tools = await _discoveryService.DiscoverToolsAsync(serverUrl, authToken);
+            _logger.LogInformation("[1/5] Discovering tools from {ServerUrl}", serverUrl);
+            var tools = await _discoveryService.DiscoverToolsAsync(serverUrl, authToken, cancellationToken);
+            _logger.LogInformation("      Found {ToolCount} tool{Plural}", tools.Count, tools.Count == 1 ? "" : "s");
 
             // Step 2: Checklist Generation
             var serverName = DeriveServerName(serverUrl);
-            _logger.LogInformation("Found {ToolCount} tools. Generating evaluation checklist...", tools.Count);
             var checklist = _checklistGenerator.Generate(tools, serverName, serverUrl);
-
-            // Step 3: Evaluate (writes checklist to file, invokes coding agent, re-reads)
             var checklistPath = Path.Combine(outputDir, $"{serverName}_checklist.json");
-            _logger.LogInformation("Evaluating checklist...");
+            var totalSemanticChecks = CountSemanticChecks(checklist);
+            _logger.LogInformation("[2/5] Generated evaluation checklist ({Count} semantic checks)", totalSemanticChecks);
+
+            // Step 3: Semantic Evaluation
+            _logger.LogInformation("[3/5] Running semantic evaluation");
             var evalResult = await _checklistEvaluator.EvaluateAsync(checklist, checklistPath, engine, cancellationToken);
             checklist = evalResult.Checklist;
 
             if (!evalResult.SemanticEvaluationCompleted && engine != EvalEngine.None)
             {
-                // Semantic evaluation didn't run -- stop here, don't generate a partial report
+                // Semantic evaluation didn't run -- stop before the report so the user
+                // can complete it manually and re-run.
+                _logger.LogInformation("");
                 _logger.LogInformation(
-                    "Checklist saved to {Path}. Complete the semantic evaluation above, then re-run to generate the report.",
+                    "Checklist saved at: {Path}",
                     Path.GetFullPath(checklistPath));
+                _logger.LogInformation("After scoring the semantic checks, re-run with --eval-engine none to generate the report.");
                 return;
             }
 
             // Step 4: Analysis
-            _logger.LogInformation("Analyzing results...");
             var engineName = engine.ToString();
             var result = _evaluationAnalyzer.Analyze(checklist, engineName);
+            _logger.LogInformation(
+                "[4/5] Analysis complete: score {Score}/100, Level {Level} ({Label}), {ActionCount} action item{Plural}",
+                result.OverallScore.ToString("F1"),
+                result.Maturity.Level,
+                result.Maturity.Label,
+                result.AllActionItems.Count,
+                result.AllActionItems.Count == 1 ? "" : "s");
 
             // Step 5: Report Generation
-            _logger.LogInformation("Generating report...");
+            _logger.LogInformation("[5/5] Writing reports");
             await _reportGenerator.GenerateAsync(result, outputDir);
 
+            _logger.LogInformation("");
             _logger.LogInformation(
-                "Evaluation complete! Score: {Score}/100 (Level {Level})",
+                "Done. Score: {Score}/100 | Level {Level} ({Label})",
                 result.OverallScore.ToString("F0"),
-                result.Maturity.Level);
+                result.Maturity.Level,
+                result.Maturity.Label);
         }
         catch (EvaluationException)
         {
@@ -100,6 +113,27 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
                 },
                 innerException: ex);
         }
+    }
+
+    /// <summary>
+    /// Counts semantic checks across the full checklist (tool-level + server-level).
+    /// </summary>
+    private static int CountSemanticChecks(EvaluationChecklist checklist)
+    {
+        int count = 0;
+        foreach (var tool in checklist.Tools)
+        {
+            count += tool.Checks.ToolName.Count(c => c.Type == CheckType.Semantic);
+            count += tool.Checks.ToolDescription.Count(c => c.Type == CheckType.Semantic);
+            count += tool.Checks.SchemaStructure.Count(c => c.Type == CheckType.Semantic);
+            foreach (var param in tool.Checks.Parameters.Values)
+            {
+                count += param.ParamName.Count(c => c.Type == CheckType.Semantic);
+                count += param.ParamDescription.Count(c => c.Type == CheckType.Semantic);
+            }
+        }
+        count += checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic);
+        return count;
     }
 
     /// <summary>

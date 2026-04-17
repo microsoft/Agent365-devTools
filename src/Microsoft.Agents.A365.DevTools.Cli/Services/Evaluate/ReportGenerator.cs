@@ -47,7 +47,7 @@ internal sealed partial class ReportGenerator : IReportGenerator
         string jsonPath = Path.Combine(outputDir, $"{safeServerName}_eval_report.json");
         string jsonContent = JsonSerializer.Serialize(result, s_jsonOptions);
         await File.WriteAllTextAsync(jsonPath, jsonContent).ConfigureAwait(false);
-        _logger.LogInformation("JSON report written to {JsonPath}", jsonPath);
+        _logger.LogInformation("      JSON: {JsonPath}", jsonPath);
 
         // Step 2: Build EvalReportData
         var reportData = new EvalReportData
@@ -67,7 +67,7 @@ internal sealed partial class ReportGenerator : IReportGenerator
         // Step 5: Write HTML report
         string htmlPath = Path.Combine(outputDir, $"{safeServerName}_eval_report.html");
         await File.WriteAllTextAsync(htmlPath, htmlContent).ConfigureAwait(false);
-        _logger.LogInformation("HTML report written to {HtmlPath}", htmlPath);
+        _logger.LogInformation("      HTML: {HtmlPath}", htmlPath);
 
         // Step 6: Open HTML report in default browser
         if (openInBrowser)
@@ -118,7 +118,7 @@ internal sealed partial class ReportGenerator : IReportGenerator
             }
 
             using var process = Process.Start(startInfo);
-            _logger.LogInformation("Opened HTML report in default browser");
+            _logger.LogInformation("      Opened HTML report in default browser");
         }
         catch (Exception ex)
         {
