@@ -166,6 +166,100 @@ public class AgentBlueprintServiceTests
     }
 
     [Fact]
+    public async Task SetInheritablePermissionsAsync_ReturnsFalse_WhenPatchThrows()
+    {
+        // Arrange — use a subclass that overrides GraphPatchAsync to throw,
+        // simulating a transient network error during the PATCH call (#366 regression).
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new ThrowingOnPatchGraphApiService(_mockGraphLogger, executor, FakeAuth(), handler);
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // ResolveBlueprintObjectIdAsync: 404 → resolve via appId filter
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // GET existing permissions — returns an entry so the merge+PATCH path is taken
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[] { new { resourceAppId = "resAppId", inheritableScopes = new { scopes = new[] { "scope1" } } } }
+            }))
+        });
+
+        // Act
+        var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
+
+        // Assert — must not throw; must surface the failure gracefully
+        ok.Should().BeFalse(because: "GraphPatchAsync threw an exception and the caller must not crash");
+        already.Should().BeFalse();
+        err.Should().Be("Network error during PATCH");
+    }
+
+    [Fact]
+    public async Task SetInheritablePermissionsAsync_ReturnsFalse_WhenPatchReturnsFalse()
+    {
+        // Arrange — GraphPatchAsync succeeds at the HTTP level but returns a non-2xx status,
+        // causing GraphPatchAsync to return false. The method must return (ok: false) without throwing.
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // ResolveBlueprintObjectIdAsync: 404 → resolve via appId filter
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // GET existing permissions — returns an entry so the PATCH path is taken
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[] { new { resourceAppId = "resAppId", inheritableScopes = new { scopes = new[] { "scope1" } } } }
+            }))
+        });
+
+        // PATCH returns 400 Bad Request — GraphPatchAsync returns false
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("{\"error\":{\"code\":\"BadRequest\",\"message\":\"Invalid payload\"}}")
+        });
+
+        // Act
+        var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
+
+        // Assert — must not throw; must surface the failure gracefully
+        ok.Should().BeFalse(because: "GraphPatchAsync returned false (HTTP 400)");
+        already.Should().BeFalse();
+        err.Should().Contain("Graph PATCH returned false", because: "error message must identify the failing operation");
+    }
+
+    [Fact]
     public async Task DeleteAgentIdentityAsync_WithValidIdentity_ReturnsTrue()
     {
         // Arrange
@@ -438,6 +532,25 @@ public class AgentBlueprintServiceTests
             // Assert
             result.Should().BeFalse();
         }
+    }
+
+    // Test helper — overrides GraphPatchAsync to throw, simulating a transient network failure.
+    private sealed class ThrowingOnPatchGraphApiService : GraphApiService
+    {
+        public ThrowingOnPatchGraphApiService(
+            ILogger<GraphApiService> logger,
+            CommandExecutor executor,
+            IAuthenticationService authService,
+            HttpMessageHandler handler)
+            : base(logger, executor, authService, handler) { }
+
+        public override Task<bool> GraphPatchAsync(
+            string tenantId,
+            string relativePath,
+            object payload,
+            CancellationToken ct = default,
+            IEnumerable<string>? scopes = null)
+            => Task.FromException<bool>(new HttpRequestException("Network error during PATCH"));
     }
 
     private static IAuthenticationService FakeAuth()

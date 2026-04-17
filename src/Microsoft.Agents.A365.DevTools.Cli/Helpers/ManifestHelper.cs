@@ -78,8 +78,9 @@ public static class ManifestHelper
     /// <param name="url">Server URL (optional)</param>
     /// <param name="scope">Required Entra scope</param>
     /// <param name="audience">Token audience for this server</param>
+    /// <param name="publisher">Publisher of the server (e.g. "Microsoft")</param>
     /// <returns>Anonymous object representing the complete server configuration</returns>
-    public static object CreateCompleteServerObject(string serverName, string? uniqueName = null, string? url = null, string? scope = null, string? audience = null)
+    public static object CreateCompleteServerObject(string serverName, string? uniqueName = null, string? url = null, string? scope = null, string? audience = null, string? publisher = null)
     {
         var serverObj = new Dictionary<string, object>
         {
@@ -100,6 +101,11 @@ public static class ManifestHelper
         if (!string.IsNullOrWhiteSpace(audience))
         {
             serverObj[McpConstants.ManifestProperties.Audience] = audience;
+        }
+
+        if (!string.IsNullOrWhiteSpace(publisher))
+        {
+            serverObj[McpConstants.ManifestProperties.Publisher] = publisher;
         }
 
         return serverObj;
@@ -197,7 +203,13 @@ public static class ManifestHelper
                     audience = audienceElement.GetString();
                 }
 
-                servers.Add(CreateCompleteServerObject(serverName, uniqueName, url, scope, audience));
+                string? publisher = null;
+                if (element.TryGetProperty(McpConstants.ManifestProperties.Publisher, out var publisherElement))
+                {
+                    publisher = publisherElement.GetString();
+                }
+
+                servers.Add(CreateCompleteServerObject(serverName, uniqueName, url, scope, audience, publisher));
             }
         }
         
@@ -205,18 +217,75 @@ public static class ManifestHelper
     }
 
     /// <summary>
-    /// Reads ToolingManifest.json and returns scopes grouped by their resolved audience (resourceAppId).
+    /// Reads ToolingManifest.json and returns the unique list of scopes required by all MCP servers.
+    /// Strategy:
+    ///  1) If a server entry has an explicit "scope" property, use it.
+    ///  2) Otherwise, use McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName).
+    ///  3) Always include "McpServersMetadata.Read.All".
+    /// </summary>
+    public static async Task<string[]> GetRequiredScopesAsync(string manifestPath)
+    {
+        var scopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "McpServersMetadata.Read.All"
+        };
+
+        var parsed = await ReadManifestAsync(manifestPath);
+        if (parsed is null) return scopes.OrderBy(s => s).ToArray();
+
+        var (servers, _) = parsed.Value;
+
+        foreach (var element in servers)
+        {
+            // Prefer explicit "scope" in manifest
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Scope, out var scopeEl) &&
+                scopeEl.ValueKind == JsonValueKind.String)
+            {
+                var s = scopeEl.GetString();
+                if (!string.IsNullOrWhiteSpace(s) &&
+                    !string.Equals(s, "null", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddScopeString(scopes, s);
+                    continue;
+                }
+            }
+
+            // Fallback to mapping
+            var serverName = ExtractServerName(element);
+            if (!string.IsNullOrWhiteSpace(serverName))
+            {
+                var (mappedScope, _) = McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName);
+                if (!string.IsNullOrWhiteSpace(mappedScope))
+                {
+                    AddScopeString(scopes, mappedScope);
+                }
+            }
+        }
+
+        return scopes.OrderBy(s => s).ToArray();
+
+        static void AddScopeString(HashSet<string> set, string scopeValue)
+        {
+            // Accept either a single scope or a space-delimited scope string
+            var parts = scopeValue.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var p in parts) set.Add(p);
+        }
+    }
+
+    /// <summary>
+    /// Reads ToolingManifest.json and returns scopes grouped by their audience (resourceAppId).
     /// Supports V1 (shared ATG AppId), V2 (per-server AppId), and mixed manifests.
-    /// Fallback rules — the following audience values all resolve to <see cref="McpConstants.WorkIQToolsProdAppId"/>:
-    ///   - missing / null / whitespace
-    ///   - any value starting with <c>api://</c> (legacy V1 format)
-    ///   - the literal string <c>"default"</c>
+    /// Fallback rules — the following audience values all resolve to <see cref="McpConstants.WorkIQToolsProdAppId"/> (ATG AppId):
+    ///   • missing / null / whitespace
+    ///   • any value starting with <c>api://</c> (legacy V1 format)
+    ///   • the literal string <c>"default"</c>
     /// </summary>
     /// <param name="manifestPath">Path to ToolingManifest.json</param>
     /// <param name="excludeLegacyAtg">
     /// When true, omits all entries whose resolved audience is the shared ATG AppId.
-    /// Pass true only when removing V1/legacy scopes (--remove-legacy-scopes).
+    /// Only pass true when V2 SDK is confirmed live (--remove-legacy-scopes flag).
     /// </param>
+    /// <returns>Dictionary of resourceAppId → ordered scopes array</returns>
     public static async Task<Dictionary<string, string[]>> GetScopesByAudienceAsync(
         string manifestPath,
         bool excludeLegacyAtg = false)
@@ -261,7 +330,7 @@ public static class ManifestHelper
             }
             if (string.IsNullOrWhiteSpace(scope)) continue;
 
-            // Resolve audience — null/whitespace/api://-prefixed/"default" → ATG AppId
+            // Resolve audience — fall back to ATG AppId when missing or old api:// format
             string? audience = null;
             if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
                 audience = audienceEl.GetString();
@@ -281,7 +350,8 @@ public static class ManifestHelper
             }
 
             foreach (var s in scope.Split(' ',
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                StringSplitOptions.RemoveEmptyEntries |
+                StringSplitOptions.TrimEntries))
             {
                 scopeSet.Add(s);
             }
@@ -297,57 +367,41 @@ public static class ManifestHelper
     }
 
     /// <summary>
-    /// Reads ToolingManifest.json and returns the unique list of scopes required by all MCP servers.
-    /// Strategy:
-    ///  1) If a server entry has an explicit "scope" property, use it.
-    ///  2) Otherwise, use McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName).
-    ///  3) Always include "McpServersMetadata.Read.All".
+    /// Reads ToolingManifest.json and returns a mapping of audience → server unique names.
+    /// Used by get-token to associate each acquired token with the right per-server env var key.
     /// </summary>
-    public static async Task<string[]> GetRequiredScopesAsync(string manifestPath)
+    public static async Task<Dictionary<string, List<string>>> GetServerNamesByAudienceAsync(string manifestPath)
     {
-        var scopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "McpServersMetadata.Read.All"
-        };
+        var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         var parsed = await ReadManifestAsync(manifestPath);
-        if (parsed is null) return scopes.OrderBy(s => s).ToArray();
+        if (parsed is null) return result;
 
         var (servers, _) = parsed.Value;
 
         foreach (var element in servers)
         {
-            // Prefer explicit "scope" in manifest
-            if (element.TryGetProperty(McpConstants.ManifestProperties.Scope, out var scopeEl) &&
-                scopeEl.ValueKind == JsonValueKind.String)
-            {
-                var s = scopeEl.GetString();
-                if (!string.IsNullOrWhiteSpace(s))
-                {
-                    AddScopeString(scopes, s);
-                    continue;
-                }
-            }
+            string? audience = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
+                audience = audienceEl.GetString();
 
-            // Fallback to mapping
+            // Skip all forms that resolve to the shared ATG audience — these are handled via the
+            // shared BEARER_TOKEN env var, not per-server BEARER_TOKEN_{AUDIENCE} entries.
+            var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience);
+            if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
             var serverName = ExtractServerName(element);
-            if (!string.IsNullOrWhiteSpace(serverName))
+            if (string.IsNullOrWhiteSpace(serverName)) continue;
+
+            if (!result.TryGetValue(resolvedAudience, out var names))
             {
-                var (mappedScope, _) = McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName);
-                if (!string.IsNullOrWhiteSpace(mappedScope))
-                {
-                    AddScopeString(scopes, mappedScope);
-                }
+                names = new List<string>();
+                result[resolvedAudience] = names;
             }
+            names.Add(serverName);
         }
 
-        return scopes.OrderBy(s => s).ToArray();
-
-        static void AddScopeString(HashSet<string> set, string scopeValue)
-        {
-            // Accept either a single scope or a space-delimited scope string
-            var parts = scopeValue.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            foreach (var p in parts) set.Add(p);
-        }
+        return result;
     }
 }

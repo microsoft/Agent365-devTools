@@ -129,7 +129,7 @@ public class ToolingManifest
 
         // Check for duplicate unique names
         var duplicateUniqueNames = McpServers
-            .GroupBy(s => s.McpServerUniqueName, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(s => s.McpServerUniqueName ?? s.McpServerName, StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1)
             .Select(g => g.Key);
 

@@ -4,6 +4,7 @@
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
@@ -342,8 +343,14 @@ internal static class AllSubcommand
                     var mcpManifestPath = Path.Combine(
                         setupConfig.DeploymentProjectPath ?? string.Empty,
                         McpConstants.ToolingManifestFileName);
-                    var mcpScopes = await PermissionsSubcommand.ReadMcpScopesAsync(mcpManifestPath, logger);
+                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false);
+
+                    // Derive ATG-AppId entry for consent URL helpers (V1 backward compat).
+                    // V2-only manifests produce an empty array here, which is correct.
                     var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                    var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes)
+                        ? atgScopes
+                        : Array.Empty<string>();
 
                     var specs = new List<ResourcePermissionSpec>
                     {
@@ -352,12 +359,9 @@ internal static class AllSubcommand
                             "Microsoft Graph",
                             setupConfig.AgentApplicationScopes.ToArray(),
                             SetInheritable: true),
-                        new ResourcePermissionSpec(
-                            mcpResourceAppId,
-                            "Agent 365 Tools",
-                            mcpScopes,
-                            SetInheritable: true),
                     };
+                    specs.AddRange(scopesByAudience.Select(kvp =>
+                        new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: true)));
                     specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
 
                     foreach (var customPerm in setupConfig.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())

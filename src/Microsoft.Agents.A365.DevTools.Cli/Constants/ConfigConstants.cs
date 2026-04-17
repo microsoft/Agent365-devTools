@@ -34,9 +34,10 @@ public static class ConfigConstants
     public const string CustomClientAppRegistrationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration";
 
     /// <summary>
-    /// Production Agent 365 Tools Discover endpoint URL
+    /// Agent 365 Tools Discover endpoint URL (V2)
     /// </summary>
-    public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/discoverToolServers";
+
+    public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers";
 
     /// <summary>
     /// Production Agent 365 Tools Create endpoint URL
@@ -152,7 +153,6 @@ public static class ConfigConstants
         // Default to production endpoint
         return environment?.ToLower() switch
         {
-            "prod" => ProductionDiscoverEndpointUrl,
             _ => ProductionDiscoverEndpointUrl
         };
     }

@@ -875,7 +875,8 @@ internal static class BlueprintSubcommand
             {
                 ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint", // CRITICAL: Required for Agent Blueprint type
                 ["displayName"] = displayName,
-                ["signInAudience"] = "AzureADMultipleOrgs" // Multi-tenant
+                ["signInAudience"] = "AzureADMultipleOrgs", // Multi-tenant
+                ["managerApplications"] = new JsonArray(AuthenticationConstants.A365ManagerAppId) // required to enable manageability for A365
             };
 
             // Add sponsors and owners fields if we have the current user

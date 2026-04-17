@@ -95,6 +95,12 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
 
     /// <summary>
+    /// Agent 365 manager application ID.
+    /// Set as the managerApplications value on blueprint creation to enable manageability for A365.
+    /// </summary>
+    public const string A365ManagerAppId = "e8be65d6-d430-4289-a665-51bf2a194bda";
+
+    /// <summary>
     /// Microsoft Graph identifier URI (used for admin consent URL construction).
     /// </summary>
     public const string MicrosoftGraphResourceUri = "https://graph.microsoft.com";
@@ -221,6 +227,14 @@ public static class AuthenticationConstants
     /// for testing purposes only. It should NOT be deployed to production Azure environments.
     /// </summary>
     public const string BearerTokenEnvironmentVariable = "BEARER_TOKEN";
+
+    /// <summary>
+    /// Returns the per-server bearer token env var name for a given MCP server unique name.
+    /// e.g. "mcp_WordServer" → "BEARER_TOKEN_MCP_WORDSERVER"
+    /// Takes precedence over <see cref="BearerTokenEnvironmentVariable"/> for V2 per-audience tokens.
+    /// </summary>
+    public static string GetPerServerBearerTokenEnvVar(string serverUniqueName) =>
+        $"BEARER_TOKEN_{serverUniqueName.ToUpperInvariant().Replace('-', '_')}";
 
     /// <summary>
     /// AADSTS53003: Access blocked by Conditional Access Policy.
