@@ -4,19 +4,30 @@
 
 ---
 
-> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the two path-determination questions below. Do NOT create todos, run commands, or read further until the user has answered both questions. After both answers are received, create all todos for the determined path and mark Todo 1 in-progress.
+> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the path-determination questions below (up to three, depending on answers). Do NOT create todos, run commands, or read further until all applicable questions are answered. After all answers are received, create all todos for the determined path and mark Todo 1 in-progress.
 
-**RULE 1 — ASK TWO QUESTIONS FIRST, THEN CREATE ALL TODOS.**
+**RULE 1 — ASK PATH-DETERMINATION QUESTIONS FIRST, THEN CREATE ALL TODOS.**
 
-Before creating any todos or running any commands, ask the user these two questions (one at a time, wait for each response):
+Before creating any todos or running any commands, ask the user these questions (one at a time, wait for each response):
 
 **Question 1: Which of the following best describes your agent?**
 
-1. M365 custom engine agent — Entra app ID
-2. M365 custom engine agent — Blueprint
-3. All other agents
+1. M365 custom engine agent
+2. All other agents
 
-Wait for the answer. Store as `agentType` (1, 2, or 3).
+Wait for the answer.
+
+- If the user answered **1 (M365 custom engine agent)**: ask Question 1b below.
+- If the user answered **2 (All other agents)**: set `agentType = 3`, skip Question 1b, and proceed directly to Question 2.
+
+**Question 1b: Is your M365 agent using an Entra app ID or a Blueprint?**
+
+1. Entra app ID
+2. Blueprint
+
+Wait for the answer. Then set `agentType`:
+- If **1 (Entra app ID)**: `agentType = 1`
+- If **2 (Blueprint)**: `agentType = 2`
 
 **Question 2: What capabilities do you want to enable?**
 
@@ -27,7 +38,7 @@ Present only the options that apply to the user's `agentType`:
   2. Observability and Work IQ
 - **If `agentType = 2`** (M365 custom engine — Blueprint):
   1. AI Teammate
-- **If `agentType = 3`** (All other agents — Blueprint):
+- **If `agentType = 3`** (All other agents):
   1. Discoverability
   2. Discoverability and Observability
   3. AI Teammate
