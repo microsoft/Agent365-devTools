@@ -120,23 +120,24 @@ The CLI is under active development, and some commands may have changed in recen
 
 The Agent 365 CLI relies on Azure context for deploying resources and may use your Azure credentials. Verify that the Azure CLI (`az`) is installed by running `az --version`. If it's not available, install the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) for your platform or prompt the user to do so.
 
-> **CRITICAL — Complete `az login` before any `a365` command.**
+> **CRITICAL — Complete `az login --allow-no-subscriptions` before any `a365` command.**
 >
 > The Agent 365 CLI authenticates to Microsoft Graph using **MSAL** with the token acquired by `az login`. If `az login` has not been completed successfully, the CLI will launch an interactive auth prompt (WAM on Windows, browser on Mac/Linux) that **you as a coding agent cannot interact with**. This will block setup indefinitely.
 >
-> **You must ensure `az login` is complete and `az account show` returns a valid account before proceeding past Step 2.**
+> Use `az login --allow-no-subscriptions` — the non-DW setup flow requires no Azure subscription, and plain `az login` will fail for users who have none.
+>
+> **You must ensure `az login --allow-no-subscriptions` is complete and `az account show` returns a valid account before proceeding past Step 2.**
 
 Run the following and verify the output shows a valid account:
 
 ```bash
-az account show --query "{user:user.name, tenantId:tenantId, subscriptionId:id}" -o json
+az account show --query "{user:user.name, tenantId:tenantId}" -o json
 ```
 
 - If this succeeds: the login is active. Continue.
-- If this fails or returns no output: **STOP. Tell the user to run `az login` in their terminal and complete the login, then confirm back to you.** Do NOT proceed until `az account show` returns a valid account.
-- If they need to set a specific subscription: `az account set -s <SubscriptionNameOrID>`
+- If this fails or returns no output: **STOP. Tell the user to run `az login --allow-no-subscriptions` in their terminal and complete the login, then confirm back to you.** Do NOT proceed until `az account show` returns a valid account.
 
-> **Why this matters:** After a successful `az login`, the CLI can acquire Graph tokens **silently** from the cache — no WAM dialog, no browser tab, no device code. Skipping this step is the most common cause of interactive auth prompts that block automated setup.
+> **Why this matters:** After a successful `az login --allow-no-subscriptions`, the CLI can acquire Graph tokens **silently** from the cache — no WAM dialog, no browser tab, no device code. Skipping this step is the most common cause of interactive auth prompts that block automated setup.
 
 ### Microsoft Entra ID (Azure AD) roles
 
@@ -600,7 +601,11 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 
 ### Step 4 completion
 
-> Mark all todos as completed. This is the final action — do NOT send any further response, do NOT proceed to Step 5, do NOT output anything after marking todos complete.
+Mark all todos as completed, then check `capabilities`:
+
+> **If `capabilities` includes "Observability"** (`agentType = 1` with either option, or `agentType = 3` with "Discoverability and Observability"): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
+>
+> **Otherwise**: this is the final action — do NOT send any further response, do NOT proceed to Step 5.
 
 ---
 
@@ -608,7 +613,7 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 
 > **AI TEAMMATE PATH ONLY.** This step does not exist on the Standard path. If `isAITeammate = false`, you should not be here.
 
-At this stage, your agent is set up. You should be able to see your agent in Microsoft Admin Center Agent Registry. You can proceed with adding observability to your agent application next.
+At this stage, your agent is set up. You should be able to see your agent in Microsoft Admin Center Agent Registry. Observability will be added after this step completes.
 
 ### Review and Update the Manifest File (REQUIRED)
 
@@ -780,6 +785,11 @@ az webapp log tail --name <your-web-app> --resource-group <your-resource-group>
 
 If your agent instance isn't working as expected, see the Troubleshooting section below or the [Agent 365 Troubleshooting Guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/troubleshooting).
 
+### Step 5 completion
+
+> **REQUIRED — do not skip this step.**
+> AI Teammate includes observability. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed.
+
 ---
 
 ## Error Handling and Troubleshooting
@@ -807,9 +817,9 @@ If any step results in an error, stop and analyze the error message carefully. F
 
 **If the dialog doesn't appear or disappears:** Have the user check minimized windows and the taskbar. If no dialog appeared, the token may already be cached (setup continues silently) — wait 10–15 seconds before assuming it's stuck.
 
-**If running headless (no desktop, e.g. a remote VM without a display):** WAM cannot show a dialog. Workaround: have the user run `az login` in an interactive terminal session first. If az CLI has a cached token for the tenant and the correct account, the CLI will use it silently without needing WAM. If `az login` is not an option, the user must run the setup command from a machine with a desktop session.
+**If running headless (no desktop, e.g. a remote VM without a display):** WAM cannot show a dialog. Workaround: have the user run `az login --allow-no-subscriptions` in an interactive terminal session first. If az CLI has a cached token for the tenant and the correct account, the CLI will use it silently without needing WAM. If `az login` is not an option, the user must run the setup command from a machine with a desktop session.
 
-**WAM hangs with no dialog and no error (rare):** Kill the process (`Ctrl+C`), have the user run `az login --tenant <tenant-id>` to refresh the az CLI credential, then retry `a365 setup all`.
+**WAM hangs with no dialog and no error (rare):** Kill the process (`Ctrl+C`), have the user run `az login --allow-no-subscriptions --tenant <tenant-id>` to refresh the az CLI credential, then retry `a365 setup all`.
 
 ---
 

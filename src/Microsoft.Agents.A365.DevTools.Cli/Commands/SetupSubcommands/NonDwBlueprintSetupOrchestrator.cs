@@ -52,57 +52,51 @@ internal static class NonDwBlueprintSetupOrchestrator
         else
             logger.LogInformation(SetupHelpers.DryRunRow(1, "Prerequisites") + "validate (PowerShell modules, Azure CLI, client app)");
 
-        // 2. Azure hosting
-        if (config.NeedDeployment)
-            logger.LogInformation(SetupHelpers.DryRunRow(2, "Azure hosting") + "provision (Resource Group, App Service Plan, Web App)");
-        else
-            logger.LogInformation(SetupHelpers.DryRunRow(2, "Azure hosting") + "skip — no Azure deployment configured");
-
-        // 3. Blueprint
+        // 2. Blueprint
         var blueprintDisplayName = config.AgentBlueprintDisplayName ?? config.AgentIdentityDisplayName ?? "Agent Blueprint";
         var blueprintExists = !string.IsNullOrWhiteSpace(config.AgentBlueprintId);
         if (blueprintExists)
         {
-            SetupHelpers.PrintDryRunBlueprintReuseRows(logger, config.AgentBlueprintId!, step: 3);
+            SetupHelpers.PrintDryRunBlueprintReuseRows(logger, config.AgentBlueprintId!, step: 2);
         }
         else
         {
-            logger.LogInformation(SetupHelpers.DryRunRow(3, "Blueprint") + "create (multi-tenant): {DisplayName}", blueprintDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(2, "Blueprint") + "create (multi-tenant): {DisplayName}", blueprintDisplayName);
             logger.LogInformation(sub + "create service principal");
             logger.LogInformation(sub + "create client secret");
             logger.LogInformation(sub + "create federated identity credential (FIC)");
             logger.LogInformation(sub + "create managed identity");
         }
 
-        // 4. Inheritable Permissions
+        // 3. Inheritable Permissions
         var permsList = new List<string> { "Observability API", "Power Platform API" };
         if (config.CustomBlueprintPermissions?.Count > 0)
             foreach (var custom in config.CustomBlueprintPermissions)
                 permsList.Add(custom.ResourceName ?? custom.ResourceAppId);
-        logger.LogInformation(SetupHelpers.DryRunRow(4, "Inheritable Permissions") + "configure for {Permissions}", string.Join(", ", permsList));
+        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Permissions}", string.Join(", ", permsList));
 
-        // 5. Permission Grants
+        // 4. Permission Grants
         var blueprintIdForCmd = config.AgentBlueprintId ?? "<blueprint-id>";
-        logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id {BlueprintId}", blueprintIdForCmd);
+        logger.LogInformation(SetupHelpers.DryRunRow(4, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id {BlueprintId}", blueprintIdForCmd);
 
-        // 6. Agent identity
+        // 5. Agent identity
         var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
         var registrationDisplayName = identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
             ? identityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
             : identityDisplayName;
         if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent identity") + "create: {DisplayName}", identityDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "create: {DisplayName}", identityDisplayName);
 
-        // 7. Agent Registration
+        // 6. Agent Registration
         if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
-            logger.LogInformation(SetupHelpers.DryRunRow(7, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", registrationDisplayName, config.AgentRegistrationId);
+            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", registrationDisplayName, config.AgentRegistrationId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow(7, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
 
-        // 8. Project settings
-        logger.LogInformation(SetupHelpers.DryRunRow(8, "Project settings") + "write to appsettings.json");
+        // 7. Project settings
+        logger.LogInformation(SetupHelpers.DryRunRow(7, "Project settings") + "write to appsettings.json");
 
         logger.LogInformation("");
         logger.LogInformation("No changes will be made. Run without --dry-run to apply.");

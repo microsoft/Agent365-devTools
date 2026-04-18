@@ -24,8 +24,9 @@ The agent will follow the MS Learn reference above to:
 3. Wire up the token resolver in the agent's turn handler
 4. Add the exporter configuration setting (`EnableAgent365Exporter` / `ENABLE_A365_OBSERVABILITY_EXPORTER`) and leave it disabled by default
 
-After completing the above steps, the agent **must** ask the user:
-
+> **REQUIRED — do not skip this step.**
+> After completing steps 1–4 above, you **must** say to the user, verbatim:
+>
 > "Setup is complete. Would you like me to scan your code and add instrumentation automatically? I'll find LLM calls, tool dispatches, agent-to-agent calls, and output operations and wrap each with the appropriate tracing scope."
 
 - If **yes**: scan all agent source files, identify operations matching the scope types in Task B, present a summary of planned changes, confirm with the user, then apply — adding the correct scope wrapper and required usings to each.

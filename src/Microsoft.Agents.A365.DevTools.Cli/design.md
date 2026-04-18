@@ -452,7 +452,7 @@ Because the two permission layers require different roles, the CLI supports a tw
 The entry point handles:
 
 1. **Logging Configuration** - `Microsoft.Extensions.Logging` with clean console and file sinks (per-command log file under `%LocalAppData%`)
-2. **Service Resolution** - Services are manually constructed (no DI container) and passed to `CreateCommand` factory methods
+2. **Service Resolution** - Services are registered in a DI container (ServiceCollection/ServiceProvider) and passed to `CreateCommand` factory methods
 3. **Command Registration** - `System.CommandLine` `RootCommand` with subcommands added via `AddCommand`
 4. **Exception Handling** - `CommandLineBuilder` middleware + `ExceptionHandler` for user-friendly messages
 
@@ -519,11 +519,11 @@ The non-DW spec list is a strict subset of the DW list:
 
 | Resource | DW | Non-DW Blueprint |
 |---|---|---|
-| Microsoft Graph (delegated) | ✓ | ✓ |
-| Agent 365 Tools (delegated) | ✓ | ✓ |
+| Microsoft Graph (delegated) | ✓ | — |
+| Agent 365 Tools (delegated) | ✓ | — |
 | Messaging Bot API | ✓ | — |
-| Observability API | ✓ | — |
-| Power Platform API | ✓ | — |
+| Observability API | ✓ | ✓ |
+| Power Platform API | ✓ | ✓ |
 
 ---
 

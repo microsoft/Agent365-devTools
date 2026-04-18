@@ -60,7 +60,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     [Fact]
     public async Task RegisterAgentInstanceAsync_ReturnsInstanceId_OnSuccess()
     {
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
 
         // GET /v1.0/me response
         handler.QueueResponse(new System.Net.Http.HttpResponseMessage(HttpStatusCode.OK)
@@ -87,7 +87,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     [Fact]
     public async Task RegisterAgentInstanceAsync_ReturnsNull_WhenMeCallFails()
     {
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
 
         // GET /v1.0/me fails
         handler.QueueResponse(new System.Net.Http.HttpResponseMessage(HttpStatusCode.Unauthorized)
@@ -108,7 +108,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     [Fact]
     public async Task RegisterAgentInstanceAsync_ReturnsNull_WhenPostFails()
     {
-        var handler = new TestHttpMessageHandler();
+        using var handler = new TestHttpMessageHandler();
 
         handler.QueueResponse(new System.Net.Http.HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -135,7 +135,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     {
         string? capturedBody = null;
 
-        var handler = new CapturingHttpMessageHandler(req =>
+        using var handler = new CapturingHttpMessageHandler(req =>
         {
             if (req.Method == System.Net.Http.HttpMethod.Post)
                 capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
@@ -167,7 +167,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     {
         string? capturedBody = null;
 
-        var handler = new CapturingHttpMessageHandler(req =>
+        using var handler = new CapturingHttpMessageHandler(req =>
         {
             if (req.Method == System.Net.Http.HttpMethod.Post)
                 capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
@@ -198,7 +198,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     {
         string? capturedBody = null;
 
-        var handler = new CapturingHttpMessageHandler(req =>
+        using var handler = new CapturingHttpMessageHandler(req =>
         {
             if (req.Method == System.Net.Http.HttpMethod.Post)
                 capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
@@ -230,7 +230,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     {
         System.Net.Http.HttpRequestMessage? capturedRequest = null;
 
-        var handler = new CapturingHttpMessageHandler(req =>
+        using var handler = new CapturingHttpMessageHandler(req =>
         {
             if (req.Method == System.Net.Http.HttpMethod.Post)
                 capturedRequest = req;

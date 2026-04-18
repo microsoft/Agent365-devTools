@@ -631,7 +631,7 @@ public class GraphApiServiceTests
         // Graph requires 'ConsistencyLevel: eventual' for advanced filter queries (displayName eq).
         // Missing this header causes HTTP 400 in some tenants.
         HttpRequestMessage? capturedRequest = null;
-        var handler = new CapturingHttpMessageHandler(req => capturedRequest = req);
+        using var handler = new CapturingHttpMessageHandler(req => capturedRequest = req);
         var service = CreateServiceWithHandler(handler);
 
         var result = await service.FindApplicationByDisplayNameAsync("tenant-id", "Agent 365 CLI");
@@ -649,7 +649,7 @@ public class GraphApiServiceTests
         // OData string literal escaping: ' must be doubled to ''
         // Without this, a name like "O'Brien" would break the filter URL.
         HttpRequestMessage? capturedRequest = null;
-        var handler = new CapturingHttpMessageHandler(req => capturedRequest = req);
+        using var handler = new CapturingHttpMessageHandler(req => capturedRequest = req);
         var service = CreateServiceWithHandler(handler);
 
         await service.FindApplicationByDisplayNameAsync("tenant-id", "O'Brien's App");

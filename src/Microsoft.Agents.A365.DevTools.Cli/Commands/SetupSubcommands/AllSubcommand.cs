@@ -226,9 +226,13 @@ internal static class AllSubcommand
                         }
                         logger.LogInformation("");
 
-                        // Write a365.config.json to anchor all SaveStateAsync calls to the local directory.
-                        // Without it, SaveStateAsync saves to the global %LocalAppData% directory instead,
-                        // making 'a365 cleanup' unable to find the resource IDs.
+                        // If existing config files belong to a different tenant (e.g. the user ran
+                        // 'az login' with a different account), back them up and remove them so this
+                        // run starts with a clean state and does not inherit stale resource IDs.
+                        await BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!, logger);
+
+                        // Write a365.config.json so the resolved bootstrap settings are persisted in the
+                        // current working directory and reused consistently by later setup and cleanup steps.
                         if (!File.Exists(config.FullName))
                             await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
                     }
@@ -761,6 +765,66 @@ internal static class AllSubcommand
         var json = JsonSerializer.Serialize(staticFields, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json);
         logger.LogDebug("Wrote bootstrap config to {Path}", path);
+    }
+
+    /// <summary>
+    /// When running bootstrap setup (--agent-name), checks whether config files already in the
+    /// current directory belong to a different tenant than the one currently signed in. If so,
+    /// backs both files up with a timestamp suffix and removes the originals so setup starts clean
+    /// without inheriting stale resource IDs from a previous run.
+    /// </summary>
+    internal static async Task BackupAndClearStaleConfigAsync(
+        string configPath,
+        string resolvedTenantId,
+        ILogger logger)
+    {
+        if (!File.Exists(configPath))
+            return;
+
+        // Read tenantId from the existing static config without loading the full model.
+        // shouldBackup is true when: (a) the file is unreadable/malformed, or (b) the tenant
+        // is present and explicitly differs from the resolved tenant.
+        bool shouldBackup = false;
+        string? existingTenantId = null;
+        try
+        {
+            var json = await File.ReadAllTextAsync(configPath);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("tenantId", out var prop))
+            {
+                existingTenantId = prop.GetString();
+                shouldBackup = !string.IsNullOrWhiteSpace(existingTenantId) &&
+                               !string.Equals(existingTenantId, resolvedTenantId, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch
+        {
+            // Unreadable or malformed config — back it up so setup starts clean.
+            shouldBackup = true;
+        }
+
+        if (!shouldBackup)
+            return;
+
+        logger.LogWarning(
+            "Existing config files belong to tenant {OldTenant} but the current az login session " +
+            "is for tenant {NewTenant}. Backing up and removing stale config files to start clean.",
+            existingTenantId, resolvedTenantId);
+
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var configDir = Path.GetDirectoryName(configPath) ?? Environment.CurrentDirectory;
+
+        var configBackup = configPath + ".bak." + timestamp;
+        File.Move(configPath, configBackup);
+        logger.LogInformation("  Backed up: {File}", Path.GetFileName(configBackup));
+
+        var generatedPath = Path.Combine(configDir, "a365.generated.config.json");
+        if (File.Exists(generatedPath))
+        {
+            var generatedBackup = generatedPath + ".bak." + timestamp;
+            File.Move(generatedPath, generatedBackup);
+            logger.LogInformation("  Backed up: {File}", Path.GetFileName(generatedBackup));
+        }
     }
 
     /// <summary>Step 1 — Creates Azure infrastructure (optional, skippable via --skip-infrastructure).</summary>

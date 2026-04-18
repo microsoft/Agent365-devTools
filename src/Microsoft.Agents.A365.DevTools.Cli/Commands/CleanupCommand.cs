@@ -51,7 +51,7 @@ public class CleanupCommand
         var agentNameOption = new Option<string?>(
             new[] { "--agent-name", "-n" },
             description: "Agent base name used with 'setup all --agent-name'. When provided, no config file is required.\n" +
-                         "Loads resource IDs from the global generated config written by the bootstrap setup.");
+                         "Loads resource IDs from generated config in the current directory first, then falls back to the global generated config if available.");
 
         var tenantIdOption = new Option<string?>(
             "--tenant-id",
@@ -1306,7 +1306,7 @@ public class CleanupCommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId ?? string.Empty,
-            AgentIdentityDisplayName = $"{agentName} Agent Identity",
+            AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = blueprintDisplayName,
             AgentDescription = agentName,
             NeedDeployment = false,

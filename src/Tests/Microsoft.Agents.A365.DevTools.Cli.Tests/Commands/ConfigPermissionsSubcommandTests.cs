@@ -390,31 +390,27 @@ public class ConfigPermissionsSubcommandTests
     }
 
     [Fact]
-    public async Task Add_NoLocalConfig_UsesGlobalConfig()
+    public async Task Add_NoLocalConfig_ReturnsError()
     {
+        // Global config fallback was removed: the command must only read from the current directory.
+        // A stale global config from a different project must not be silently used.
         var logger = _loggerFactory.CreateLogger("Test");
         var globalDir = GetTestConfigDir();
-        var emptyLocalDir = GetTestConfigDir(); // no config file here
+        var emptyLocalDir = GetTestConfigDir(); // no a365.config.json here
 
-        var globalConfigPath = await CreateConfigFileAsync(globalDir, new { tenantId = "global-tenant" });
+        await CreateConfigFileAsync(globalDir, new { tenantId = "global-tenant" });
 
         var originalDir = Environment.CurrentDirectory;
-        var originalOut = Console.Out;
-        using var output = new StringWriter();
         try
         {
             Environment.CurrentDirectory = emptyLocalDir;
-            Console.SetOut(output);
             var root = await BuildRootCommandAsync(logger, globalDir, _mockWizardService);
             var result = await root.InvokeAsync($"config permissions --resource-app-id {ValidGuid} --scopes User.Read");
 
-            result.Should().Be(0);
-            var globalJson = await File.ReadAllTextAsync(globalConfigPath);
-            globalJson.Should().Contain(ValidGuid);
+            result.Should().Be(1, because: "config permissions must fail when no a365.config.json exists in the current directory");
         }
         finally
         {
-            Console.SetOut(originalOut);
             Environment.CurrentDirectory = originalDir;
             await CleanupAsync(globalDir);
             await CleanupAsync(emptyLocalDir);

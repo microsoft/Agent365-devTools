@@ -359,72 +359,77 @@ internal static class SetupHelpers
         var pendingS2SAction = results.S2SAppRoleGranted == false;
 
         // ── Numbered step rows — mirrors the dry-run step list ─────────────────
+        // Non-DW omits the Azure hosting step, so all steps after 1 are shifted down by 1.
+        var s = isNonDw ? 0 : 1; // step offset: non-DW steps start at 2 (blueprint), DW at 3
 
         // 1. Prerequisites
         logger.LogInformation(DryRunRow(1, "Prerequisites") + (results.PrerequisitesSkipped ? "skipped" : "validated"));
 
-        // 2. Azure hosting
-        if (results.InfrastructureSkipped)
-            logger.LogInformation(DryRunRow(2, "Azure hosting") + "skipped");
-        else if (results.InfrastructureCreated)
-            logger.LogInformation(DryRunRow(2, "Azure hosting") + (results.InfrastructureAlreadyExisted ? "reused" : "provisioned"));
-        else
-            logger.LogError(DryRunRow(2, "Azure hosting") + "failed");
+        // 2. Azure hosting (DW only — not applicable for non-DW blueprint flow)
+        if (!isNonDw)
+        {
+            if (results.InfrastructureSkipped)
+                logger.LogInformation(DryRunRow(2, "Azure hosting") + "skipped");
+            else if (results.InfrastructureCreated)
+                logger.LogInformation(DryRunRow(2, "Azure hosting") + (results.InfrastructureAlreadyExisted ? "reused" : "provisioned"));
+            else
+                logger.LogError(DryRunRow(2, "Azure hosting") + "failed");
+        }
 
-        // 3. Blueprint
+        // Blueprint: step 2 (non-DW) or step 3 (DW)
         if (results.BlueprintCreated)
         {
             var bpStatus = results.BlueprintAlreadyExisted ? "reused" : "created";
             if (!results.BlueprintServicePrincipalCreated)
-                logger.LogWarning(DryRunRow(3, "Blueprint") + "{Status} (service principal failed — see warnings)   '{Name}' (ID: {Id})",
+                logger.LogWarning(DryRunRow(2 + s, "Blueprint") + "{Status} (service principal failed — see warnings)   '{Name}' (ID: {Id})",
                     bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
             else
-                logger.LogInformation(DryRunRow(3, "Blueprint") + "{Status}   '{Name}' (ID: {Id})",
+                logger.LogInformation(DryRunRow(2 + s, "Blueprint") + "{Status}   '{Name}' (ID: {Id})",
                     bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
         }
         else if (results.BlueprintFailed)
-            logger.LogError(DryRunRow(3, "Blueprint") + "failed");
+            logger.LogError(DryRunRow(2 + s, "Blueprint") + "failed");
 
-        // 4. Inheritable Permissions
+        // Inheritable Permissions: step 3 (non-DW) or step 4 (DW)
         if (results.BlueprintFailed)
-            logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + notRun);
+            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + notRun);
         else if (results.BatchPermissionsPhase1Completed)
-            logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configured");
+            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + "configured");
 
-        // 5. Permission Grants
+        // Permission Grants: step 4 (non-DW) or step 5 (DW)
         if (results.BlueprintFailed)
-            logger.LogInformation(DryRunRow(5, "Permission Grants") + notRun);
+            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + notRun);
         else if (results.AgentIdentityPermissionsGranted)
-            logger.LogInformation(DryRunRow(5, "Permission Grants") + "ok (developer-scoped)");
+            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + "ok (developer-scoped)");
         else if (results.BatchPermissionsPhase2Completed)
-            logger.LogInformation(DryRunRow(5, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
+            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
 
-        // Non-DW only: Agent identity (6) and Agent Registration (7)
+        // Non-DW only: Agent identity (5) and Agent Registration (6)
         if (isNonDw)
         {
             if (results.BlueprintFailed)
             {
-                logger.LogInformation(DryRunRow(6, "Agent identity") + notRun);
-                logger.LogInformation(DryRunRow(7, "Agent Registration") + notRun);
+                logger.LogInformation(DryRunRow(5, "Agent identity") + notRun);
+                logger.LogInformation(DryRunRow(6, "Agent Registration") + notRun);
             }
             else
             {
                 if (results.AgentIdentityCreated)
-                    logger.LogInformation(DryRunRow(6, "Agent identity") + "created   '{Name}' (ID: {Id})",
+                    logger.LogInformation(DryRunRow(5, "Agent identity") + "created   '{Name}' (ID: {Id})",
                         results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
                 else if (results.AgentIdentityFailed)
-                    logger.LogWarning(DryRunRow(6, "Agent identity") + "failed — see warnings");
+                    logger.LogWarning(DryRunRow(5, "Agent identity") + "failed — see warnings");
 
                 if (results.AgentInstanceRegistered)
-                    logger.LogInformation(DryRunRow(7, "Agent Registration") + "registered   '{Name}' (ID: {Id})",
+                    logger.LogInformation(DryRunRow(6, "Agent Registration") + "registered   '{Name}' (ID: {Id})",
                         results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
                 else if (results.AgentRegistrationFailed)
-                    logger.LogWarning(DryRunRow(7, "Agent Registration") + "failed — see warnings");
+                    logger.LogWarning(DryRunRow(6, "Agent Registration") + "failed — see warnings");
             }
         }
 
-        // Project settings: step 6 for DW, step 8 for non-DW
-        var settingsStep = isNonDw ? 8 : 6;
+        // Project settings: step 7 for non-DW, step 6 for DW
+        var settingsStep = isNonDw ? 7 : 6;
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
         else if (results.ProjectSettingsWritten)

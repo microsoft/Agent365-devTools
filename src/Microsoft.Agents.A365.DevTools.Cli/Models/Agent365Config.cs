@@ -254,7 +254,9 @@ public class Agent365Config
     /// <summary>
     /// Controls which setup and publish flow is used.
     /// true (default) = Digital Worker (Agent Identity Blueprint pattern).
-    /// false = non-AI Teammate agent — App Registration + Azure Bot, no blueprint.
+    /// false = non-AI Teammate agent. Two variants are available when false:
+    ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
+    ///   - UseBlueprint = true:  Blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
     /// Can be overridden per-command with the --aiteammate flag.
     /// </summary>
     [JsonPropertyName("aiTeammate")]
