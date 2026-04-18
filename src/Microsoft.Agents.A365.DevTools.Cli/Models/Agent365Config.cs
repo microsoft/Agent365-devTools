@@ -94,7 +94,7 @@ public class Agent365Config
 
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
         if (string.IsNullOrWhiteSpace(ClientAppId))
-            errors.Add($"clientAppId could not be resolved. Ensure an Entra app named \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" exists in your tenant.");
+            errors.Add($"clientAppId could not be resolved. Ensure an Entra app named \"{AuthenticationConstants.WellKnownClientAppDisplayName}\" exists in your tenant.");
         else
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");

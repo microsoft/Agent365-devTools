@@ -94,7 +94,7 @@ public class PublishCommand
 
                 if (isNonAiTeammate)
                 {
-                    var isBlueprint = useBlueprintFlag || config.IsNonDwBlueprint;
+                    var isBlueprint = useBlueprintFlag || (isNonAiTeammate && config.UseBlueprint == true);
 
                     if (dryRun)
                     {
@@ -108,7 +108,7 @@ public class PublishCommand
 
                     if (isBlueprint)
                     {
-                        isNormalExit = await PublishBlueprintNonDwAsync(config, graphApiService, configService, logger, context, ct: default);
+                        isNormalExit = await PublishBlueprintNonDwAsync(config, graphApiService, configService, logger, context, ct: context.GetCancellationToken());
                         return;
                     }
 

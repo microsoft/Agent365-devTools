@@ -57,7 +57,7 @@ public abstract class RequirementCheck : IRequirementCheck
         {
             logger.LogInformation("");
             foreach (var step in resolutionGuidance.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                logger.LogInformation("{Step}", step.TrimEnd());
+                logger.LogInformation("  {Step}", step.TrimEnd());
         }
     }
 
