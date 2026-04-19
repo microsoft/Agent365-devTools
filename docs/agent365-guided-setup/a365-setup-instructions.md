@@ -4,44 +4,34 @@
 
 ---
 
-> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the path-determination questions below (up to three, depending on answers). Do NOT create todos, run commands, or read further until all applicable questions are answered. After all answers are received, create all todos for the determined path and mark Todo 1 in-progress.
+> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the two path-determination questions below. Do NOT create todos, run commands, or read further until the user has answered both questions. After both answers are received, create all todos for the determined path and mark Todo 1 in-progress.
 
-**RULE 1 — ASK PATH-DETERMINATION QUESTIONS FIRST, THEN CREATE ALL TODOS.**
+**RULE 1 — ASK TWO QUESTIONS FIRST, THEN CREATE ALL TODOS.**
 
-Before creating any todos or running any commands, ask the user these questions (one at a time, wait for each response):
+Before creating any todos or running any commands, ask the user these two questions (one at a time, wait for each response):
 
 **Question 1: Which of the following best describes your agent?**
 
 1. M365 custom engine agent
 2. All other agents
 
-Wait for the answer.
-
-- If the user answered **1 (M365 custom engine agent)**: ask Question 1b below.
-- If the user answered **2 (All other agents)**: set `agentType = 3`, skip Question 1b, and proceed directly to Question 2.
-
-**Question 1b: Is your M365 agent using an Entra app ID or a Blueprint?**
-
-1. Entra app ID
-2. Blueprint
-
-Wait for the answer. Then set `agentType`:
-- If **1 (Entra app ID)**: `agentType = 1`
-- If **2 (Blueprint)**: `agentType = 2`
+Wait for the answer. Store as `agentType`:
+- If **1 (M365 custom engine agent)**: `agentType = 1`
+- If **2 (All other agents)**: `agentType = 2`
 
 **Question 2: What capabilities do you want to enable?**
 
 Present only the options that apply to the user's `agentType`:
 
-- **If `agentType = 1`** (M365 custom engine — Entra app ID):
+- **If `agentType = 1`** (M365 custom engine agent — Discoverability is already enabled):
   1. Observability
   2. Observability and Work IQ
-- **If `agentType = 2`** (M365 custom engine — Blueprint):
-  1. AI Teammate
-- **If `agentType = 3`** (All other agents):
+  3. AI Teammate
+- **If `agentType = 2`** (All other agents):
   1. Discoverability
   2. Discoverability and Observability
-  3. AI Teammate
+  3. Discoverability, Observability, and Work IQ
+  4. AI Teammate
 
 Wait for the answer. Store as `capabilities`.
 
@@ -56,17 +46,10 @@ After both questions are answered, set `isAITeammate = true` if `capabilities = 
 - Todo 4: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 - Todo 5: `Step 5: Publish and Deploy the Agent Application`
 
-**Standard path** — `agentType = 3, isAITeammate = false` (3 todos total):
+**Standard path** — `isAITeammate = false` (3 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
 - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
 - Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
-
-**Entra app ID path** — `agentType = 1` (3 todos total):
-- Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
-- Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
-- Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
-
-> **Note for Entra app ID agents (`agentType = 1`):** Steps 3 and 5 (Blueprint configuration and publish/deploy) do not apply. Follow Steps 1, 2, and 4 only.
 
 **RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the AI Teammate path (`isAITeammate = true`) — it is skipped entirely on all other paths.
 
@@ -243,7 +226,7 @@ pip --version
 
 > **AI TEAMMATE PATH ONLY** (`capabilities = AI Teammate`, `isAITeammate = true`).
 >
-> If `isAITeammate = false` (Standard or Entra app ID path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
+> If `isAITeammate = false` (Standard path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
 >
 > If `isAITeammate = true`, continue below.
 
@@ -617,7 +600,7 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 
 Mark all todos as completed, then check `capabilities`:
 
-> **If `capabilities` includes "Observability"** (`agentType = 1` with either option, or `agentType = 3` with "Discoverability and Observability"): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
+> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Observability and Work IQ, or `agentType = 2` with Discoverability and Observability or Discoverability, Observability, and Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
 >
 > **Otherwise**: say to the user verbatim:
 > "Your agent is provisioned. Would you like to add observability so you can trace LLM calls, tool dispatches, and agent-to-agent calls?"
