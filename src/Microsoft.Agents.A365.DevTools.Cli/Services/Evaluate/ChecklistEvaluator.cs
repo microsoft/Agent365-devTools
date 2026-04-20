@@ -200,8 +200,12 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             await File.WriteAllTextAsync(tempFile, toolJson, cancellationToken);
 
             var fullPath = Path.GetFullPath(tempFile);
-            var prompt = SemanticCheckPrompts.BuildToolEvaluationPrompt(fullPath, tool.Name);
-            var success = await TryEvaluateWithFallthrough(engines, tempFile, prompt, CodingAgentRunner.PerToolTimeout, cancellationToken);
+            var success = await TryEvaluateWithFallthrough(
+                engines,
+                tempFile,
+                engine => SemanticCheckPrompts.BuildToolEvaluationPrompt(fullPath, tool.Name, ToolsetFor(engine)),
+                CodingAgentRunner.PerToolTimeout,
+                cancellationToken);
 
             if (!success)
             {
@@ -261,8 +265,12 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             await File.WriteAllTextAsync(tempFile, dataJson, cancellationToken);
 
             var fullPath = Path.GetFullPath(tempFile);
-            var prompt = SemanticCheckPrompts.BuildServerChecksEvaluationPrompt(fullPath);
-            var success = await TryEvaluateWithFallthrough(engines, tempFile, prompt, CodingAgentRunner.PerToolTimeout, cancellationToken);
+            var success = await TryEvaluateWithFallthrough(
+                engines,
+                tempFile,
+                engine => SemanticCheckPrompts.BuildServerChecksEvaluationPrompt(fullPath, ToolsetFor(engine)),
+                CodingAgentRunner.PerToolTimeout,
+                cancellationToken);
 
             if (!success)
             {
@@ -348,16 +356,19 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
     /// <summary>
     /// Tries each engine in order for a single evaluation call until one succeeds.
+    /// Builds the prompt per engine so we can name the engine's exact tools in the
+    /// instructions (Copilot: view/create, Claude Code: Read/Write).
     /// </summary>
     private async Task<bool> TryEvaluateWithFallthrough(
         List<EvalEngine> engines,
         string filePath,
-        string prompt,
+        Func<EvalEngine, string> promptBuilder,
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
         foreach (var candidate in engines)
         {
+            var prompt = promptBuilder(candidate);
             var success = await _agentRunner.EvaluateChecklistAsync(filePath, prompt, candidate, timeout, cancellationToken);
             if (success)
             {
@@ -369,6 +380,25 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
         return false;
     }
+
+    /// <summary>
+    /// Maps an engine to the concrete tool names it exposes. Used by the prompt so
+    /// the agent is told exactly which tools to use rather than guessing.
+    /// </summary>
+    private static SemanticCheckPrompts.AgentToolset ToolsetFor(EvalEngine engine) => engine switch
+    {
+        EvalEngine.GithubCopilot => new SemanticCheckPrompts.AgentToolset(
+            ReadToolName: "view",
+            WriteToolName: "create",
+            EditToolName: "edit"),
+        EvalEngine.ClaudeCode => new SemanticCheckPrompts.AgentToolset(
+            ReadToolName: "Read",
+            WriteToolName: "Write",
+            EditToolName: "Edit"),
+        _ => new SemanticCheckPrompts.AgentToolset(
+            ReadToolName: "read",
+            WriteToolName: "write")
+    };
 
     /// <summary>
     /// Builds the ordered list of engines to try based on user's choice.

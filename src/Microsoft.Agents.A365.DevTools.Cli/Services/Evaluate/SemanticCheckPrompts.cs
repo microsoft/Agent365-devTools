@@ -46,27 +46,37 @@ internal static class SemanticCheckPrompts
     }
 
     /// <summary>
+    /// Describes the tools an agent is allowed to use. Embedded into the prompt so the
+    /// agent doesn't have to guess what's available and doesn't pick a strategy that
+    /// will silently fail (e.g. many small string-replace edits that can't disambiguate
+    /// repeated patterns).
+    /// </summary>
+    public sealed record AgentToolset(string ReadToolName, string WriteToolName, string? EditToolName = null);
+
+    /// <summary>
     /// Builds a prompt for evaluating a single tool's semantic checks.
     /// The file contains just one tool object (not the full checklist).
     /// </summary>
-    public static string BuildToolEvaluationPrompt(string toolFilePath, string toolName)
+    public static string BuildToolEvaluationPrompt(string toolFilePath, string toolName, AgentToolset toolset)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolFilePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        ArgumentNullException.ThrowIfNull(toolset);
 
         var sb = new StringBuilder();
 
         sb.AppendLine("You are evaluating an MCP tool schema for quality.");
         sb.AppendLine();
+        AppendToolsetHeader(sb, toolset);
         sb.AppendLine("TASK:");
-        sb.AppendLine($"1. Read the JSON file at: {toolFilePath}");
+        sb.AppendLine($"1. Use `{toolset.ReadToolName}` to read the JSON file at: {toolFilePath}");
         sb.AppendLine($"   It contains a single tool named \"{toolName}\" with its schema and checks.");
         sb.AppendLine("2. For every checklist item in the tool's \"checks\" where \"score\" is null,");
         sb.AppendLine("   evaluate the \"prompt\" against the tool's name, description, and input_schema.");
         sb.AppendLine("3. Set \"score\" to true (pass) or false (fail).");
         sb.AppendLine("4. Set \"reason\" to a single sentence explaining your judgment.");
         sb.AppendLine("5. Do NOT modify items where \"score\" is already set (true or false).");
-        sb.AppendLine("6. Write the updated JSON back to the SAME file path.");
+        AppendWriteStrategy(sb, toolset);
         sb.AppendLine("7. Preserve exact JSON formatting: 2-space indentation, UTF-8 encoding.");
         sb.AppendLine();
 
@@ -81,16 +91,18 @@ internal static class SemanticCheckPrompts
     /// Builds a prompt for evaluating server-level checks.
     /// The file contains tool summaries and server_checks array.
     /// </summary>
-    public static string BuildServerChecksEvaluationPrompt(string serverChecksFilePath)
+    public static string BuildServerChecksEvaluationPrompt(string serverChecksFilePath, AgentToolset toolset)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serverChecksFilePath);
+        ArgumentNullException.ThrowIfNull(toolset);
 
         var sb = new StringBuilder();
 
         sb.AppendLine("You are evaluating an MCP server's toolset design for quality.");
         sb.AppendLine();
+        AppendToolsetHeader(sb, toolset);
         sb.AppendLine("TASK:");
-        sb.AppendLine($"1. Read the JSON file at: {serverChecksFilePath}");
+        sb.AppendLine($"1. Use `{toolset.ReadToolName}` to read the JSON file at: {serverChecksFilePath}");
         sb.AppendLine("   It contains \"tool_summaries\" (list of tool names and descriptions)");
         sb.AppendLine("   and \"server_checks\" (checklist items to evaluate).");
         sb.AppendLine("2. For every item in \"server_checks\" where \"score\" is null,");
@@ -98,7 +110,7 @@ internal static class SemanticCheckPrompts
         sb.AppendLine("3. Set \"score\" to true (pass) or false (fail).");
         sb.AppendLine("4. Set \"reason\" to a single sentence explaining your judgment.");
         sb.AppendLine("5. Do NOT modify items where \"score\" is already set (true or false).");
-        sb.AppendLine("6. Write the updated JSON back to the SAME file path.");
+        AppendWriteStrategy(sb, toolset);
         sb.AppendLine("7. Preserve exact JSON formatting: 2-space indentation, UTF-8 encoding.");
         sb.AppendLine();
 
@@ -114,6 +126,29 @@ internal static class SemanticCheckPrompts
         AppendFinalRules(sb);
 
         return sb.ToString();
+    }
+
+    private static void AppendToolsetHeader(StringBuilder sb, AgentToolset toolset)
+    {
+        sb.AppendLine("AVAILABLE TOOLS (use only these):");
+        sb.AppendLine($"  - `{toolset.ReadToolName}` — read a file.");
+        sb.AppendLine($"  - `{toolset.WriteToolName}` — write a file (overwrites existing). USE THIS to save your updates.");
+        if (!string.IsNullOrEmpty(toolset.EditToolName))
+        {
+            sb.AppendLine($"  - `{toolset.EditToolName}` — targeted string replacement. AVOID for this task");
+            sb.AppendLine("    (the repeating \"score\": null pattern is not unique, so replacements fail).");
+        }
+        sb.AppendLine("  No other tools (shell, web, etc.) are available.");
+        sb.AppendLine();
+    }
+
+    private static void AppendWriteStrategy(StringBuilder sb, AgentToolset toolset)
+    {
+        sb.AppendLine("6. WRITE STRATEGY (important — choose correctly):");
+        sb.AppendLine($"   Compute all updates in one pass, then call `{toolset.WriteToolName}` ONCE with the full");
+        sb.AppendLine("   updated JSON to overwrite the file. Do not make multiple small edits — the");
+        sb.AppendLine("   repeating `\"score\": null, \"reason\": null` pattern is not unique across items,");
+        sb.AppendLine("   so string replacements will fail and leave checks unscored.");
     }
 
     private static void AppendInstructions(StringBuilder sb, string checklistPath)

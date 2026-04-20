@@ -117,7 +117,7 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --allowedTools Read,Edit");
+            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --allowedTools Read,Edit,Write");
 
             var startInfo = new ProcessStartInfo
             {
@@ -152,7 +152,7 @@ internal class CodingAgentRunner
         var startInfo = new ProcessStartInfo
         {
             FileName = "claude",
-            Arguments = "-p - --model haiku --allowedTools Read,Edit",
+            Arguments = "-p - --model haiku --allowedTools Read,Edit,Write",
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
