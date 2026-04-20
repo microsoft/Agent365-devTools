@@ -61,7 +61,7 @@ public class Agent365ToolingService : IAgent365ToolingService
 
         // Read response content
         var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-        _logger.LogInformation("Received response from {Operation} endpoint", operationName);
+        _logger.LogDebug("Received response from {Operation} endpoint", operationName);
         _logger.LogDebug("Response content: {ResponseContent}", responseContent);
 
         // Check if response content indicates failure (Microsoft Agent 365 API pattern)
@@ -146,13 +146,13 @@ public class Agent365ToolingService : IAgent365ToolingService
     /// <param name="payload">Request payload (optional)</param>
     private void LogRequest(string method, string url, string? payload = null)
     {
-        _logger.LogInformation("HTTP Method: {Method}", method);
-        _logger.LogInformation("Request URL: {Url}", url);
+        _logger.LogDebug("HTTP Method: {Method}", method);
+        _logger.LogDebug("Request URL: {Url}", url);
         if (!string.IsNullOrEmpty(payload))
         {
-            _logger.LogInformation("Request Payload: {Payload}", payload);
+            _logger.LogDebug("Request Payload: {Payload}", payload);
         }
-        _logger.LogInformation("Making {Method} request to: {Url}", method, url);
+        _logger.LogDebug("Making {Method} request to: {Url}", method, url);
     }
 
     /// <summary>
@@ -286,13 +286,13 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Generate correlation ID at workflow entry point
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Listing Dataverse environments (CorrelationId: {CorrelationId})", correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Listing Dataverse environments (CorrelationId: {CorrelationId})", correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -365,13 +365,13 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Generate correlation ID at workflow entry point
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Listing MCP servers for environment {EnvId} (CorrelationId: {CorrelationId})", environmentId, correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Listing MCP servers for environment {EnvId} (CorrelationId: {CorrelationId})", environmentId, correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -439,13 +439,13 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Generate correlation ID at workflow entry point
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Publishing MCP server {ServerName} to environment {EnvId} (CorrelationId: {CorrelationId})", serverName, environmentId, correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Publishing MCP server {ServerName} to environment {EnvId} (CorrelationId: {CorrelationId})", serverName, environmentId, correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -526,13 +526,13 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Generate correlation ID at workflow entry point
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Unpublishing MCP server {ServerName} from environment {EnvId} (CorrelationId: {CorrelationId})", serverName, environmentId, correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Unpublishing MCP server {ServerName} from environment {EnvId} (CorrelationId: {CorrelationId})", serverName, environmentId, correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -558,7 +558,7 @@ public class Agent365ToolingService : IAgent365ToolingService
                 return false;
             }
 
-            _logger.LogInformation("Successfully unpublished MCP server");
+            _logger.LogDebug("Successfully unpublished MCP server");
             return true;
         }
         catch (Exception ex)
@@ -587,13 +587,13 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Generate correlation ID at workflow entry point
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Approving MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Approving MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -620,7 +620,7 @@ public class Agent365ToolingService : IAgent365ToolingService
                 return false;
             }
 
-            _logger.LogInformation("Successfully approved MCP server");
+            _logger.LogDebug("Successfully approved MCP server");
             return true;
         }
         catch (Exception ex)
@@ -649,13 +649,13 @@ public class Agent365ToolingService : IAgent365ToolingService
             // Generate correlation ID at workflow entry point
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Blocking MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Blocking MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // Get authentication token
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -682,7 +682,7 @@ public class Agent365ToolingService : IAgent365ToolingService
                 return false;
             }
 
-            _logger.LogInformation("Successfully blocked MCP server");
+            _logger.LogDebug("Successfully blocked MCP server");
             return true;
         }
         catch (Exception ex)
@@ -700,13 +700,13 @@ public class Agent365ToolingService : IAgent365ToolingService
         // Generate correlation ID at workflow entry point
         var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-        _logger.LogInformation("Calling get MCP server for {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
-        _logger.LogInformation("Environment: {Env}", _environment);
-        _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+        _logger.LogDebug("Calling get MCP server for {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
+        _logger.LogDebug("Environment: {Env}", _environment);
+        _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
         // Get authentication token
         var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-        _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+        _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
         var loginHint = await AzCliHelper.ResolveLoginHintAsync();
         var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -715,7 +715,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogError("Failed to acquire authentication token");
             throw new InvalidOperationException("Failed to acquire authentication token");
         }
-        _logger.LogInformation("Successfully acquired access token");
+        _logger.LogDebug("Successfully acquired access token");
 
         // Create authenticated HTTP client
         using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
@@ -762,7 +762,7 @@ public class Agent365ToolingService : IAgent365ToolingService
 
         var responseContent = await response.Content.ReadAsStringAsync();
 
-        _logger.LogInformation("Successfully received response from MCP servers management endpoint");
+        _logger.LogDebug("Successfully received response from MCP servers management endpoint");
         
         // Join all response data: lines (handles single or multi-line data segments)
         var dataJson = string.Concat(
@@ -816,13 +816,13 @@ public class Agent365ToolingService : IAgent365ToolingService
 
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Adding MCP server {ServerName} (CorrelationId: {CorrelationId})", request.ServerName, correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Adding MCP server {ServerName} (CorrelationId: {CorrelationId})", request.ServerName, correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // TODO: Revert to ConfigConstants.GetAgent365ToolsResourceAppId(_environment) once backend is deployed
             var audience = "05879165-0320-489e-b644-f72b33f3edf0";
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -837,7 +837,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             if (!string.IsNullOrWhiteSpace(environmentId))
             {
                 httpClient.DefaultRequestHeaders.Add("x-ms-environment-id", environmentId);
-                _logger.LogInformation("Setting x-ms-environment-id header: {EnvironmentId}", environmentId);
+                _logger.LogDebug("Setting x-ms-environment-id header: {EnvironmentId}", environmentId);
             }
 
             var requestPayload = JsonSerializer.Serialize(request);
@@ -873,7 +873,7 @@ public class Agent365ToolingService : IAgent365ToolingService
                 return null;
             }
 
-            _logger.LogInformation("Successfully added MCP server {ServerName}", request.ServerName);
+            _logger.LogDebug("Successfully added MCP server {ServerName}", request.ServerName);
             return addResponse;
         }
         catch (Exception ex)
@@ -897,13 +897,13 @@ public class Agent365ToolingService : IAgent365ToolingService
 
             var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
 
-            _logger.LogInformation("Provisioning identity for MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
-            _logger.LogInformation("Environment: {Env}", _environment);
-            _logger.LogInformation("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Provisioning identity for MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
             // TODO: Revert to ConfigConstants.GetAgent365ToolsResourceAppId(_environment) once backend is deployed
             var audience = "05879165-0320-489e-b644-f72b33f3edf0";
-            _logger.LogInformation("Acquiring access token for audience: {Audience}", audience);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
             var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
@@ -941,7 +941,7 @@ public class Agent365ToolingService : IAgent365ToolingService
                 return null;
             }
 
-            _logger.LogInformation("Successfully provisioned identity with application ID: {ApplicationId}", provisionResponse.ApplicationId);
+            _logger.LogDebug("Successfully provisioned identity with application ID: {ApplicationId}", provisionResponse.ApplicationId);
             return provisionResponse;
         }
         catch (Exception ex)

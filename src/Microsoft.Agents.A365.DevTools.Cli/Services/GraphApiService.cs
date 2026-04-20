@@ -120,8 +120,8 @@ public class GraphApiService
             var loginHint = await _loginHintResolver();
             if (loginHint == null)
             {
-                _logger.LogInformation("Azure CLI not authenticated. Initiating login...");
-                _logger.LogInformation("A browser window will open for authentication. Please check your taskbar or browser if you don't see it.");
+                _logger.LogDebug("Azure CLI not authenticated. Initiating login...");
+                _logger.LogDebug("A browser window will open for authentication. Please check your taskbar or browser if you don't see it.");
                 var loginResult = await _executor.ExecuteAsync(
                     "az",
                     $"login --tenant {tenantId}",
@@ -165,10 +165,10 @@ public class GraphApiService
                 _logger.LogWarning("Authentication session may have expired. Attempting fresh login...");
 
                 // Force logout and re-login
-                _logger.LogInformation("Logging out of Azure CLI...");
+                _logger.LogDebug("Logging out of Azure CLI...");
                 await _executor.ExecuteAsync("az", "logout", suppressErrorLogging: true, cancellationToken: ct);
 
-                _logger.LogInformation("Initiating fresh login...");
+                _logger.LogDebug("Initiating fresh login...");
                 var freshLoginResult = await _executor.ExecuteAsync(
                     "az",
                     $"login --tenant {tenantId}",
@@ -185,7 +185,7 @@ public class GraphApiService
                 AzCliHelper.InvalidateAzCliTokenCache();
 
                 // Retry token acquisition
-                _logger.LogInformation("Retrying token acquisition...");
+                _logger.LogDebug("Retrying token acquisition...");
                 var retryTokenResult = await _executor.ExecuteAsync(
                     "az",
                     $"account get-access-token --resource {resource} --tenant {tenantId} --query accessToken -o tsv",
@@ -196,7 +196,7 @@ public class GraphApiService
                 {
                     var token = retryTokenResult.StandardOutput.Trim();
                     AzCliHelper.WarmAzCliTokenCache(resource, tenantId, token);
-                    _logger.LogInformation("Graph API access token acquired successfully after re-authentication");
+                    _logger.LogDebug("Graph API access token acquired successfully after re-authentication");
                     return token;
                 }
 
@@ -958,7 +958,7 @@ public class GraphApiService
 
         var objectId = doc.RootElement.GetProperty("id").GetString();
         var clientId = doc.RootElement.GetProperty("appId").GetString();
-        _logger.LogInformation("Created Entra application {DisplayName}: objectId={ObjectId}, clientId={ClientId}", displayName, objectId, clientId);
+        _logger.LogDebug("Created Entra application {DisplayName}: objectId={ObjectId}, clientId={ClientId}", displayName, objectId, clientId);
         return (objectId!, clientId!);
     }
 
@@ -989,7 +989,7 @@ public class GraphApiService
         }
 
         var secretText = doc.RootElement.GetProperty("secretText").GetString();
-        _logger.LogInformation("Added password to application {ObjectId}", applicationObjectId);
+        _logger.LogDebug("Added password to application {ObjectId}", applicationObjectId);
         return secretText;
     }
 
@@ -1015,7 +1015,7 @@ public class GraphApiService
         var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
         if (result)
         {
-            _logger.LogInformation("Updated redirect URIs for application {ObjectId}", applicationObjectId);
+            _logger.LogDebug("Updated redirect URIs for application {ObjectId}", applicationObjectId);
         }
         else
         {
@@ -1062,6 +1062,41 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Finds an application's object ID by its display name.
+    /// Returns null if not found.
+    /// </summary>
+    public async Task<string?> GetAppObjectIdByDisplayNameAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
+    {
+        var encodedName = Uri.EscapeDataString(displayName);
+        var response = await GraphGetWithResponseAsync(
+            tenantId,
+            $"/v1.0/applications?$filter=displayName eq '{encodedName}'&$select=id",
+            ct);
+
+        if (response.IsSuccess && response.Json != null)
+        {
+            var values = response.Json.RootElement.GetProperty("value");
+            if (values.GetArrayLength() > 0)
+            {
+                return values[0].GetProperty("id").GetString();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Deletes an Entra application by its object ID.
+    /// </summary>
+    public async Task<bool> DeleteEntraAppAsync(
+        string tenantId, string applicationObjectId, CancellationToken ct = default)
+    {
+        _logger.LogDebug("Deleting Entra application {ObjectId}", applicationObjectId);
+        return await GraphDeleteAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", ct);
+    }
+
+    /// <summary>
     /// Sets the identifierUris on an application.
     /// </summary>
     public async Task<bool> SetIdentifierUriAsync(
@@ -1071,7 +1106,7 @@ public class GraphApiService
         var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
         if (result)
         {
-            _logger.LogInformation("Set identifierUri on application {ObjectId}: {Uri}", applicationObjectId, identifierUri);
+            _logger.LogDebug("Set identifierUri on application {ObjectId}: {Uri}", applicationObjectId, identifierUri);
         }
         else
         {
@@ -1126,7 +1161,7 @@ public class GraphApiService
         var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
         if (result)
         {
-            _logger.LogInformation("Added scope '{ScopeName}' (ID: {ScopeId}) to application {ObjectId}", scopeName, newScopeId, applicationObjectId);
+            _logger.LogDebug("Added scope '{ScopeName}' (ID: {ScopeId}) to application {ObjectId}", scopeName, newScopeId, applicationObjectId);
             return newScopeId;
         }
 
@@ -1180,7 +1215,7 @@ public class GraphApiService
         var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
         if (result)
         {
-            _logger.LogInformation("Added API permissions for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
+            _logger.LogDebug("Added API permissions for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
         }
         else
         {

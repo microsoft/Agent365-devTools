@@ -813,7 +813,7 @@ public static class DevelopMcpCommand
     {
         var command = new Command("register-external-mcp-server", "Register an external MCP server with Entra, ExternalIDP, or NoAuth authentication");
 
-        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name (max 27 chars). If no '<prefix>_' is present, 'ext_' is auto-prepended.");
+        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name (max 22 chars). If no '<prefix>_' is present, 'ext_' is auto-prepended.");
         command.AddOption(serverNameOption);
 
         var serverUrlOption = new Option<string?>(["--server-url", "-u"], description: "Remote MCP server URL");
@@ -860,6 +860,15 @@ public static class DevelopMcpCommand
         var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
         command.AddOption(configOption);
 
+        var publisherOption = new Option<string?>("--publisher", description: "Publisher name (required, used in MOS package metadata)");
+        command.AddOption(publisherOption);
+
+        var descriptionOption = new Option<string?>("--description", description: "Server description (required, used in MOS package metadata)");
+        command.AddOption(descriptionOption);
+
+        var forceOption = new Option<bool>("--force", description: "Force re-creation of Entra apps and connectors");
+        command.AddOption(forceOption);
+
         var dryRunOption = new Option<bool>("--dry-run", description: "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
@@ -882,6 +891,9 @@ public static class DevelopMcpCommand
             var remoteScopes = context.ParseResult.GetValueForOption(remoteScopesOption);
             var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
             var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption);
+            var publisherName = context.ParseResult.GetValueForOption(publisherOption);
+            var serverDescription = context.ParseResult.GetValueForOption(descriptionOption);
+            var force = context.ParseResult.GetValueForOption(forceOption);
             var configPath = context.ParseResult.GetValueForOption(configOption)!;
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -915,7 +927,7 @@ public static class DevelopMcpCommand
                 }
 
                 // Validate server name length (max 27 chars including prefix)
-                const int maxServerNameLength = 27;
+                const int maxServerNameLength = 22;
                 if (serverName.Length > maxServerNameLength)
                 {
                     logger.LogError("Server name '{ServerName}' is {Length} characters, exceeding the maximum of {Max} characters (including prefix)", serverName, serverName.Length, maxServerNameLength);
@@ -1037,6 +1049,20 @@ public static class DevelopMcpCommand
                     }
                 }
 
+                // Publisher name is required
+                if (string.IsNullOrWhiteSpace(publisherName))
+                {
+                    publisherName = InputValidator.PromptAndValidateRequiredInput("Enter publisher name: ", "Publisher name", 200);
+                    if (string.IsNullOrWhiteSpace(publisherName)) { logger.LogError("Publisher name is required"); return; }
+                }
+
+                // Server description is required
+                if (string.IsNullOrWhiteSpace(serverDescription))
+                {
+                    serverDescription = InputValidator.PromptAndValidateRequiredInput("Enter server description: ", "Server description", 500);
+                    if (string.IsNullOrWhiteSpace(serverDescription)) { logger.LogError("Server description is required"); return; }
+                }
+
                 // Remote scopes are optional — if empty, the Remote Proxy connector uses NoAuth
                 // Skip for NoAuth and APIKey since no scopes are needed
                 if (!isNoAuth && !isApiKey && string.IsNullOrWhiteSpace(remoteScopes))
@@ -1051,13 +1077,13 @@ public static class DevelopMcpCommand
                 return;
             }
 
-            logger.LogInformation("Registering MCP server '{ServerName}' (AuthType: {AuthType})...", serverName, authType);
-
             if (dryRun)
             {
                 logger.LogInformation("[DRY RUN] Would create Entra apps and register MCP server {ServerName}", serverName);
                 return;
             }
+
+            Console.WriteLine($"Registering MCP server '{serverName}'...");
 
             // Step 1: Create Entra app(s) and get secrets
 
@@ -1116,6 +1142,29 @@ public static class DevelopMcpCommand
             {
                 logger.LogError("Graph API service is not available. Cannot create Entra applications.");
                 return;
+            }
+
+            // Force mode: delete existing Entra apps before recreating
+            if (force)
+            {
+                logger.LogDebug("Force mode: looking up existing Entra apps to delete...");
+
+                var existingA365ObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-A365Proxy");
+                if (!string.IsNullOrWhiteSpace(existingA365ObjectId))
+                {
+                    logger.LogDebug("Deleting existing A365 Proxy app: {ObjectId}", existingA365ObjectId);
+                    await graphApiService.DeleteEntraAppAsync(tenantId, existingA365ObjectId);
+                }
+
+                if (isEntra)
+                {
+                    var existingRemoteObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-RemoteProxy");
+                    if (!string.IsNullOrWhiteSpace(existingRemoteObjectId))
+                    {
+                        logger.LogDebug("Deleting existing Remote Proxy app: {ObjectId}", existingRemoteObjectId);
+                        await graphApiService.DeleteEntraAppAsync(tenantId, existingRemoteObjectId);
+                    }
+                }
             }
 
             logger.LogDebug("Creating Entra application for A365 Proxy...");
@@ -1214,6 +1263,9 @@ public static class DevelopMcpCommand
                     Name = apiKeyName,
                 } : null,
                 RemoteServerScopes = remoteScopes,
+                PublisherName = publisherName,
+                Description = serverDescription,
+                Force = force,
             };
 
             Models.AddMcpServerResponse? addResponse;
@@ -1391,45 +1443,33 @@ public static class DevelopMcpCommand
             }
 
             // Step 5: Show completion summary
-            logger.LogInformation("");
             if (warnings.Count == 0)
             {
-                logger.LogInformation("MCP server '{ServerName}' has been registered successfully.", serverName);
+                var prevColor = Console.ForegroundColor;
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"MCP server '{serverName}' has been registered successfully.");
+                Console.ForegroundColor = prevColor;
             }
             else
             {
-                logger.LogInformation("MCP server '{ServerName}' was registered with {Count} warning(s):", serverName, warnings.Count);
-                logger.LogInformation("");
+                var prevColor = Console.ForegroundColor;
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"MCP server '{serverName}' was registered with {warnings.Count} warning(s):");
+                Console.ForegroundColor = prevColor;
+                Console.WriteLine();
                 foreach (var w in warnings)
                 {
                     logger.LogWarning("  - {Warning}", w);
                 }
             }
 
-            logger.LogInformation("");
-            var appNumber = 1;
-            logger.LogInformation("The following Entra applications were created:");
-            logger.LogInformation("  {Num}. A365 Proxy:    {ClientId}  ({DisplayName})", appNumber++, authMetadata!.ClientApp1Id, $"{serverName}-A365Proxy");
-            if (isEntra)
-            {
-                logger.LogInformation("  {Num}. Remote Proxy:  {ClientId}  ({DisplayName})", appNumber++, authMetadata.ClientApp2Id, $"{serverName}-RemoteProxy");
-            }
-            if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
-            {
-                logger.LogInformation("  {Num}. PPMI App:      {ClientId}  ({DisplayName})", appNumber++, ppmiAppClientId, serverName);
-            }
-            logger.LogInformation("");
-            logger.LogInformation("Please ask your tenant admin to grant admin consent on all Entra applications listed above.");
+            Console.WriteLine();
+            Console.WriteLine($"Please ask your tenant admin to approve MCP server '{serverName}'.");
             if (isExternalIdp && !string.IsNullOrWhiteSpace(remoteRedirectUri))
             {
-                logger.LogInformation("");
-                logger.LogInformation("Redirect URI: {RedirectUri}", remoteRedirectUri);
-                logger.LogInformation("Please add this redirect URI to your external IDP application ({ClientId}).", idpClientId);
-            }
-            if (isApiKey)
-            {
-                logger.LogInformation("");
-                logger.LogInformation("API Key Authentication: {Location} ({Name})", apiKeyLocation, apiKeyName);
+                Console.WriteLine();
+                Console.WriteLine($"Redirect URI: {remoteRedirectUri}");
+                Console.WriteLine($"Please add this redirect URI to your external IDP application ({idpClientId}).");
             }
         });
 

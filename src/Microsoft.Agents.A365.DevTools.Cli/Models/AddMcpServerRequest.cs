@@ -62,6 +62,24 @@ public class AddMcpServerRequest
     /// </summary>
     [JsonPropertyName("apiKeyDetails")]
     public ApiKeyDetails? ApiKeyDetails { get; set; }
+
+    /// <summary>
+    /// Publisher name for MOS package metadata
+    /// </summary>
+    [JsonPropertyName("publisherName")]
+    public string? PublisherName { get; set; }
+
+    /// <summary>
+    /// Server description for MOS package metadata
+    /// </summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// When true, force re-creation of connectors and reuse existing MCC record
+    /// </summary>
+    [JsonPropertyName("force")]
+    public bool Force { get; set; }
 }
 
 /// <summary>
