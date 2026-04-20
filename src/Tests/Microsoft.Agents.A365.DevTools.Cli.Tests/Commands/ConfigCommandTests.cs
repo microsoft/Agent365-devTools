@@ -165,6 +165,7 @@ public class ConfigCommandTests
         var minimalStaticConfig = new
         {
             tenantId = "12345678-1234-1234-1234-123456789012",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "87654321-4321-4321-4321-210987654321",
             resourceGroup = "test-rg",
             location = "eastus",
@@ -225,12 +226,14 @@ public class ConfigCommandTests
         var globalConfig = new
         {
             tenantId = "11111111-1111-1111-1111-111111111111",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "22222222-2222-2222-2222-222222222222",
             resourceGroup = "global-rg",
             location = "eastus",
             appServicePlanName = "global-plan",
             webAppName = "global-app",
-            agentIdentityDisplayName = "Global Agent"
+            agentIdentityDisplayName = "Global Agent",
+            deploymentProjectPath = configDir
         };
         await File.WriteAllTextAsync(globalConfigPath, JsonSerializer.Serialize(globalConfig));
 
@@ -239,12 +242,14 @@ public class ConfigCommandTests
         var localConfig = new
         {
             tenantId = "33333333-3333-3333-3333-333333333333",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "44444444-4444-4444-4444-444444444444",
             resourceGroup = "local-rg",
             location = "eastus",
             appServicePlanName = "local-plan",
             webAppName = "local-app",
-            agentIdentityDisplayName = "Local Agent"
+            agentIdentityDisplayName = "Local Agent",
+            deploymentProjectPath = localDir
         };
         await File.WriteAllTextAsync(localConfigPath, JsonSerializer.Serialize(localConfig));
 
@@ -291,6 +296,7 @@ public class ConfigCommandTests
         var minimalStaticConfig = new
         {
             tenantId = "12345678-1234-1234-1234-123456789012",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "87654321-4321-4321-4321-210987654321",
             resourceGroup = "test-rg",
             location = "eastus",
@@ -347,6 +353,7 @@ public class ConfigCommandTests
         var minimalStaticConfig = new
         {
             tenantId = "12345678-1234-1234-1234-123456789012",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "87654321-4321-4321-4321-210987654321",
             resourceGroup = "test-rg",
             location = "eastus",

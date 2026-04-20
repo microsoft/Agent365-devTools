@@ -137,16 +137,16 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent identity application: {ApplicationId}", applicationId);
 
-            // Agent Identity deletion requires the same DeleteRestore scope as blueprint deletion.
-            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
+            // Agent Identity deletion requires AgentIdentity.DeleteRestore.All — NOT the blueprint scope.
+            // DELETE /beta/servicePrincipals/{id} for agent identities uses the AgentIdentity permission family.
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityDeleteRestoreAllScope };
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
+            _logger.LogInformation("Acquiring access token with AgentIdentity.DeleteRestore.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
-            // Use the special servicePrincipals endpoint for deletion
             var deletePath = $"/beta/servicePrincipals/{applicationId}";
 
-            // Use GraphDeleteAsync with the special scopes required for identity operations
+            // Use GraphDeleteAsync with the correct scope for agent identity deletion
             return await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 deletePath,

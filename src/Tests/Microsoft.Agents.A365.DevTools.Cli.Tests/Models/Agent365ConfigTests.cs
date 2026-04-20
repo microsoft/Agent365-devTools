@@ -397,6 +397,30 @@ public class Agent365ConfigTests
     }
 
     [Fact]
+    public void Validate_WithNeedDeploymentFalseAndNoMessagingEndpoint_ReturnsNoError()
+    {
+        // Arrange — bootstrap config: externally hosted agent with no endpoint yet
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = ".",
+            NeedDeployment = false
+            // MessagingEndpoint intentionally absent — filled in after the agent is deployed
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().NotContain(e => e.Contains("messagingEndpoint"),
+            because: "messagingEndpoint is optional at config-validation time; SetupHelpers enforces it at registration time");
+    }
+
+    [Fact]
     public void Validate_WithoutMessagingEndpoint_RequiresAppServiceFields()
     {
         // Arrange
@@ -1020,6 +1044,231 @@ public class Agent365ConfigTests
         config.CustomBlueprintPermissions![0].ResourceAppId.Should().Be("00000003-0000-0000-c000-000000000000");
         config.CustomBlueprintPermissions[0].ResourceName.Should().Be("Microsoft Graph");
         config.CustomBlueprintPermissions[0].Scopes.Should().BeEquivalentTo(new[] { "User.Read", "Mail.Send" });
+    }
+
+    #endregion
+
+    #region AiTeammate and IsNonAiTeammate Tests
+
+    [Theory]
+    [InlineData(false, true)]   // aiTeammate=false → non-AI Teammate agent
+    [InlineData(true, false)]   // aiTeammate=true  → AI Teammate (digital worker)
+    [InlineData(null, false)]   // not set → AI Teammate (default)
+    public void IsNonAiTeammate_ReturnsCorrectValue(bool? aiTeammate, bool expected)
+    {
+        var config = new Agent365Config { AiTeammate = aiTeammate };
+
+        config.IsNonAiTeammate.Should().Be(expected);
+    }
+
+    [Fact]
+    public void AiTeammate_IsSerializedToJson_WithCorrectPropertyName()
+    {
+        var config = new Agent365Config { AiTeammate = false };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"aiTeammate\"");
+        json.Should().Contain("false");
+    }
+
+    [Fact]
+    public void AiTeammate_IsDeserializedFromJson()
+    {
+        const string json = "{\"aiTeammate\": false}";
+
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        config.Should().NotBeNull();
+        config!.AiTeammate.Should().BeFalse();
+        config.IsNonAiTeammate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AiTeammate_IsNullByDefault_WhenNotSpecified()
+    {
+        var config = new Agent365Config();
+
+        config.AiTeammate.Should().BeNull();
+        config.IsNonAiTeammate.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AzureOpenAIProperties_AreSerializedCorrectly()
+    {
+        var config = new Agent365Config
+        {
+            AzureOpenAIName = "aoai-test",
+            AzureOpenAILocation = "swedencentral",
+            AzureOpenAIModelDeploymentName = "gpt-4.1",
+            NeedAzureOpenAI = true
+        };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"azureOpenAIName\"");
+        json.Should().Contain("aoai-test");
+        json.Should().Contain("\"azureOpenAILocation\"");
+        json.Should().Contain("swedencentral");
+        json.Should().Contain("\"azureOpenAIModelDeploymentName\"");
+        json.Should().Contain("gpt-4.1");
+        json.Should().Contain("\"needAzureOpenAI\"");
+    }
+
+    [Theory]
+    [InlineData(false, true, true)]    // aiTeammate=false + useBlueprint=true → blueprint non-DW
+    [InlineData(false, false, false)]  // aiTeammate=false + useBlueprint=false → app-based non-DW
+    [InlineData(false, null, false)]   // aiTeammate=false + useBlueprint not set → app-based non-DW
+    [InlineData(true, true, false)]    // aiTeammate=true (DW) → never blueprint non-DW
+    [InlineData(null, true, false)]    // not set (DW default) → never blueprint non-DW
+    public void IsNonDwBlueprint_ReturnsCorrectValue(bool? aiTeammate, bool? useBlueprint, bool expected)
+    {
+        var config = new Agent365Config { AiTeammate = aiTeammate, UseBlueprint = useBlueprint };
+
+        config.IsNonDwBlueprint.Should().Be(expected);
+    }
+
+    [Fact]
+    public void UseBlueprint_IsSerializedToJson_WithCorrectPropertyName()
+    {
+        var config = new Agent365Config { UseBlueprint = true };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"useBlueprint\"");
+        json.Should().Contain("true");
+    }
+
+    [Fact]
+    public void UseBlueprint_IsDeserializedFromJson()
+    {
+        const string json = "{\"aiTeammate\": false, \"useBlueprint\": true}";
+
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        config.Should().NotBeNull();
+        config!.UseBlueprint.Should().BeTrue();
+        config.IsNonDwBlueprint.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WithCustomBlueprintPermissions_PreservesAiTeammate()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            UseBlueprint = true,
+            AzureOpenAIName = "aoai-test",
+            NeedAzureOpenAI = true
+        };
+
+        var cloned = config.WithCustomBlueprintPermissions(null);
+
+        cloned.AiTeammate.Should().BeFalse();
+        cloned.UseBlueprint.Should().BeTrue();
+        cloned.AzureOpenAIName.Should().Be("aoai-test");
+        cloned.NeedAzureOpenAI.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region ValidateNonDwMinimal Tests
+
+    [Fact]
+    public void ValidateNonDwMinimal_ValidMinimalConfig_ReturnsNoErrors()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().BeEmpty(
+            because: "a config with valid tenantId, clientAppId (GUID), and agentIdentityDisplayName meets the minimal bootstrap requirements");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingTenantId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*tenantId*",
+            because: "tenantId is required for the bootstrap path to acquire tokens");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingClientAppId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*clientAppId*",
+            because: "clientAppId is required to authenticate against Graph and ARM; an empty value means the well-known app lookup failed");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_NonGuidClientAppId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "not-a-guid",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().NotBeEmpty(
+            because: "clientAppId must be a valid GUID for MSAL to accept it as an application ID");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingAgentIdentityDisplayName_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = ""
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*agentIdentityDisplayName*",
+            because: "agentIdentityDisplayName is required to name the Entra app registration created for the agent identity");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_DoesNotRequireSubscriptionId()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+            // SubscriptionId, ResourceGroup, DeploymentProjectPath intentionally omitted
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().BeEmpty(
+            because: "bootstrap (--agent-name) path uses external hosting — no Azure subscription or deployment path is required");
     }
 
     #endregion

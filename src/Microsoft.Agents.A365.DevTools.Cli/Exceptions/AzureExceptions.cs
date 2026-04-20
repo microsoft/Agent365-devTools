@@ -123,7 +123,7 @@ public class GraphApiException : Agent365Exception
                 ? new List<string>
                 {
                     "Ensure you have the required Graph API permissions",
-                    "You need Application.ReadWrite.All permission for agent blueprint creation",
+                    "You need AgentIdentityBlueprint.ReadWrite.All permission for agent blueprint creation",
                     "Contact your tenant administrator to grant permissions",
                     $"See documentation: {ConfigConstants.CustomClientAppRegistrationUrl}"
                 }

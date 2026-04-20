@@ -56,6 +56,7 @@ The skill analyzes:
 - **Security**: Secrets, input validation, error handling
 - **Standards**: Coding conventions, file organization
 - **Context**: CLI vs GitHub Actions (different standards apply)
+- **Full file content**: Every staged file is read in full — not just the changed lines. This catches issues in unchanged sections such as duplicate hardcoded values, parallel code structures that should use a shared helper, or dead code that the diff didn't touch.
 
 ## Review Severity Levels
 

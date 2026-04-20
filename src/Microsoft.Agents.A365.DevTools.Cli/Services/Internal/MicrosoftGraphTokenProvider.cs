@@ -159,13 +159,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 var result = await ExecuteWithFallbackAsync(script, ct);
                 token = ProcessResult(result);
 
-                // If PowerShell browser auth was blocked by Conditional Access Policy, retry with
-                // device code. This covers the case where clientAppId is null (MSAL skipped) and the
-                // user is on a CAP-enforced tenant where browser auth is blocked.
-                if (string.IsNullOrWhiteSpace(token) && !useDeviceCode && IsConditionalAccessError(result))
+                // If PowerShell browser auth was blocked (Conditional Access Policy or interactive
+                // browser unavailable in embedded terminal), retry with device code.
+                if (string.IsNullOrWhiteSpace(token) && !useDeviceCode &&
+                    (IsConditionalAccessError(result) || IsInteractiveBrowserFailure(result)))
                 {
                     _logger.LogWarning(
-                        "PowerShell browser authentication blocked by a Conditional Access or device compliance policy (AADSTS53003/AADSTS53000). " +
+                        "PowerShell interactive browser authentication failed (Conditional Access Policy or embedded terminal). " +
                         "Retrying with device code authentication...");
                     var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
                     var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
@@ -343,10 +343,17 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             _logger.LogDebug("Microsoft Graph access token acquired successfully.");
             return tokenResult.Token;
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("MSAL Graph token acquisition cancelled.");
+            return null;
+        }
         catch (Exception ex)
         {
+            var isCanceled = ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase);
             _logger.LogDebug(ex, "MSAL Graph token acquisition failed");
-            _logger.LogWarning("MSAL Graph token acquisition failed: {Message}", ex.Message);
+            if (!isCanceled)
+                _logger.LogWarning("MSAL Graph token acquisition failed: {Message}", ex.Message);
             return null;
         }
     }
@@ -499,6 +506,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         return !string.IsNullOrWhiteSpace(result.StandardError) &&
                (result.StandardError.Contains(AuthenticationConstants.ConditionalAccessPolicyBlockedError, StringComparison.Ordinal) ||
                 result.StandardError.Contains(AuthenticationConstants.DeviceCompliancePolicyBlockedError, StringComparison.Ordinal));
+    }
+
+    private static bool IsInteractiveBrowserFailure(CommandResult result)
+    {
+        return !string.IsNullOrWhiteSpace(result.StandardError) &&
+               result.StandardError.Contains("InteractiveBrowserCredential authentication failed",
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsPowerShellNotFoundError(CommandResult result)

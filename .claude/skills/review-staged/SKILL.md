@@ -109,9 +109,15 @@ The skill uses **Claude Code directly** for semantic code analysis (same as revi
 2. Claude Code reads `.github/copilot-instructions.md` for coding standards
 3. Claude Code gets staged files: `git diff --staged --name-only`
 4. Claude Code gets staged changes: `git diff --staged`
-5. Claude Code performs semantic analysis using its own capabilities
-6. Claude Code identifies specific issues with line numbers and code references
-7. **Claude Code runs the full test suite with per-test timing:**
+5. **Claude Code reads the complete current content of every staged file** (not just diff lines) to enable full-file semantic analysis. This is critical for catching issues that exist in unchanged sections of modified files, such as:
+   - Duplicate hardcoded constants or magic values that already exist elsewhere
+   - Parallel code structures that should be consolidated (e.g., a method building the same spec list as a shared helper)
+   - Unused or dead code that was already there but not touched by the diff
+   - Missing calls to shared helpers — where the diff adds a new use but existing code still has the old duplicate pattern
+   For each file path returned in step 3, Claude Code must `Read` the full file before performing analysis.
+6. Claude Code performs semantic analysis using its own capabilities
+7. Claude Code identifies specific issues with line numbers and code references
+8. **Claude Code runs the full test suite with per-test timing:**
    ```bash
    cd src && dotnet test tests.proj --configuration Release --logger "console;verbosity=normal" 2>&1
    ```

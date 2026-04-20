@@ -124,9 +124,32 @@ public class AuthenticationService : IAuthenticationService
                         }
                         else
                         {
-                            _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
-                                resourceUrl, tenantId);
-                            return cachedToken.AccessToken;
+                            // Validate UPN: cached token must be for the same user identity as the cache key.
+                            // Prevents returning a guest/cross-app token stored under a member UPN key.
+                            if (!string.IsNullOrWhiteSpace(userId))
+                            {
+                                var tokenUpn = TryExtractUpnFromJwt(cachedToken.AccessToken);
+                                if (!string.IsNullOrWhiteSpace(tokenUpn) &&
+                                    !string.Equals(tokenUpn, userId, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    _logger.LogDebug(
+                                        "Cached token is for user {TokenUser} but requested user is {RequestedUser}. Re-authenticating...",
+                                        tokenUpn, userId);
+                                    // Fall through to re-authenticate
+                                }
+                                else
+                                {
+                                    _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                                        resourceUrl, tenantId);
+                                    return cachedToken.AccessToken;
+                                }
+                            }
+                            else
+                            {
+                                _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                                    resourceUrl, tenantId);
+                                return cachedToken.AccessToken;
+                            }
                         }
                     }
                     else
@@ -143,8 +166,28 @@ public class AuthenticationService : IAuthenticationService
         }
 
         // Authenticate interactively with specific tenant and scopes
-        _logger.LogInformation("Authentication required for Work IQ Tools");
+        _logger.LogDebug("Authentication required for Agent 365 Tools");
         var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
+
+        // Validate the token identity before caching: if a userId was requested,
+        // ensure the returned token is actually for that user. WAM may return a
+        // guest/cross-app token for an account it considers "equivalent" (same Microsoft
+        // account in a different tenant). Caching the wrong token would cause silent
+        // failures on the next run.
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            var returnedUpn = TryExtractUpnFromJwt(token.AccessToken);
+            if (!string.IsNullOrWhiteSpace(returnedUpn) &&
+                !string.Equals(returnedUpn, userId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug(
+                    "Authentication returned token for {ReturnedUser} but {RequestedUser} was requested. Not caching.",
+                    returnedUpn, userId);
+                // Return the token as-is — it may still be valid for this call.
+                // Do not write it to cache under the userId key.
+                return token.AccessToken;
+            }
+        }
 
         // Cache the token with the appropriate cache key
         await CacheTokenAsync(cacheKey, token);
@@ -224,7 +267,7 @@ public class AuthenticationService : IAuthenticationService
                     // This allows passing custom App IDs directly via config
                     scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                         ? resourceUrl
-                        : $"{resourceUrl}/.default";
+                        : $"{resourceUrl.TrimEnd('/')}/.default";
                     _logger.LogDebug("Using custom resource for authentication: {Resource}", resourceUrl);
                 }
                 scopes = [scope];
@@ -243,9 +286,7 @@ public class AuthenticationService : IAuthenticationService
             if (useInteractiveBrowser)
             {
                 // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
-                _logger.LogInformation("Using interactive authentication...");
-                _logger.LogInformation("Please sign in with your Microsoft account and grant consent for the requested permissions.");
-                _logger.LogInformation("");
+                _logger.LogDebug("Using interactive authentication (browser/WAM)...");
 
                 credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint);
             }
@@ -624,6 +665,8 @@ public class AuthenticationService : IAuthenticationService
                 return upn.GetString();
             if (doc.RootElement.TryGetProperty("preferred_username", out var pref) && !string.IsNullOrWhiteSpace(pref.GetString()))
                 return pref.GetString();
+            if (doc.RootElement.TryGetProperty("unique_name", out var uniqueName) && !string.IsNullOrWhiteSpace(uniqueName.GetString()))
+                return uniqueName.GetString();
         }
         catch { } // Static helper — no logger access. Caller logs via ResolveLoginHintFromCacheAsync.
         return null;

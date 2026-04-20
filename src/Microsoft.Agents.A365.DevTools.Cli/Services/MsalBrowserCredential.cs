@@ -3,6 +3,7 @@
 
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
@@ -37,6 +38,7 @@ public sealed class MsalBrowserCredential : TokenCredential
 {
     private readonly IPublicClientApplication _publicClientApp;
     private readonly ILogger? _logger;
+    private readonly string _clientAppId;
     private readonly string _tenantId;
     private readonly bool _useWam;
     private readonly IntPtr _windowHandle;
@@ -104,6 +106,7 @@ public sealed class MsalBrowserCredential : TokenCredential
             throw new ArgumentNullException(nameof(tenantId));
         }
 
+        _clientAppId = clientId;
         _tenantId = tenantId;
         _logger = logger;
         _loginHint = loginHint;
@@ -351,9 +354,41 @@ public sealed class MsalBrowserCredential : TokenCredential
                     _logger?.LogDebug("Successfully acquired token from cache.");
                     return new AccessToken(silentResult.AccessToken, silentResult.ExpiresOn);
                 }
+                catch (MsalUiRequiredException ex)
+                {
+                    if (ex.Classification == UiRequiredExceptionClassification.ConsentRequired)
+                        LogConsentRequiredAndThrow(ex);
+                    _logger?.LogDebug("Token cache miss or expired, interactive authentication required.");
+                }
+            }
+
+            // Before showing interactive WAM: probe silently using the OS account.
+            // WAM can detect "Need admin approval" (consent required) without showing any dialog.
+            // If detected, print the admin consent URL and exit — WAM dialog is never shown.
+            if (_useWam)
+            {
+                try
+                {
+                    _logger?.LogDebug("Probing consent status silently via WAM OS account...");
+                    var probeResult = await _publicClientApp
+                        .AcquireTokenSilent(scopes, PublicClientApplication.OperatingSystemAccount)
+                        .ExecuteAsync(cancellationToken);
+                    _logger?.LogDebug("WAM OS account probe succeeded — consent is granted.");
+                    // Only return the OS account token when no login hint is set.
+                    // When a hint is provided, the caller wants a specific identity — fall through
+                    // to interactive WAM with the hint so the correct user is authenticated.
+                    if (string.IsNullOrWhiteSpace(_loginHint))
+                        return new AccessToken(probeResult.AccessToken, probeResult.ExpiresOn);
+                    _logger?.LogDebug("Login hint set — skipping OS account token, proceeding to interactive WAM for {LoginHint}.", _loginHint);
+                }
+                catch (MsalUiRequiredException ex) when (
+                    ex.Classification == UiRequiredExceptionClassification.ConsentRequired)
+                {
+                    LogConsentRequiredAndThrow(ex);
+                }
                 catch (MsalUiRequiredException)
                 {
-                    _logger?.LogDebug("Token cache miss or expired, interactive authentication required.");
+                    // Interaction required for other reasons (first sign-in, MFA, etc.) — fall through to WAM.
                 }
             }
 
@@ -436,12 +471,57 @@ public sealed class MsalBrowserCredential : TokenCredential
                 aadErrorCode);
             return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
         }
+        catch (MsalException ex) when (ex.Message.Contains(AuthenticationConstants.WamErrorPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            // WAM error 0xcaa90019 = "Need admin approval" (admin consent not granted).
+            // Do NOT fall back to device code — device code shows the same browser consent page
+            // and hangs if the user clicks "Return to application without granting consent".
+            if (ex.Message.Contains(AuthenticationConstants.WamConsentRequiredError, StringComparison.OrdinalIgnoreCase))
+                LogConsentRequiredAndThrow(ex);
+
+            // Other WAM errors (e.g. Conditional Access Policy, device compliance policy)
+            // are not consent-related — device code flow bypasses the WAM broker and may succeed.
+            _logger?.LogWarning(
+                "WAM authentication blocked ({Error}). Falling back to device code authentication.",
+                ex.Message.Split('\n').FirstOrDefault(l => l.Contains("0xcaa", StringComparison.OrdinalIgnoreCase))?.Trim() ?? "WAM error");
+            return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
+        }
         catch (MsalException ex)
         {
             _logger?.LogDebug(ex, "MSAL authentication failed");
-            _logger?.LogError("MSAL authentication failed: {Message}", ex.Message);
+            if (ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase) ||
+                ex.ErrorCode is "authentication_canceled" or "user_canceled")
+            {
+                _logger?.LogDebug("Sign-in was canceled.");
+            }
+            else
+            {
+                _logger?.LogError("MSAL authentication failed: {Message}", ex.Message);
+            }
             throw new MsalAuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Logs a consistent "admin consent required" message with the admin consent URL and throws.
+    /// Used by all three consent-detection points: silent path, WAM OS probe, and WAM error backstop.
+    /// </summary>
+    private void LogConsentRequiredAndThrow(Exception inner)
+    {
+        var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(_clientAppId, _tenantId);
+        _logger?.LogWarning("Admin consent has not been granted for this application.");
+        _logger?.LogWarning("You are running as a non-admin user and cannot grant admin consent.");
+        if (consentUrl != null)
+        {
+            _logger?.LogWarning("Share this URL with a Global Administrator to grant consent:");
+            _logger?.LogWarning("  {ConsentUrl}", consentUrl);
+        }
+        _logger?.LogWarning("After consent is granted, re-run the command.");
+        throw new MsalAuthenticationFailedException(
+            consentUrl != null
+                ? $"Admin consent required. Share this URL with a Global Administrator: {consentUrl}"
+                : "Admin consent required. A Global Administrator must grant tenant-wide consent for this application.",
+            inner);
     }
 
     private async Task<AccessToken> AcquireTokenWithDeviceCodeFallbackAsync(

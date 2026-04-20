@@ -476,7 +476,7 @@ public class BlueprintSubcommandTests
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Creating Agent Blueprint")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Creating agent blueprint")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

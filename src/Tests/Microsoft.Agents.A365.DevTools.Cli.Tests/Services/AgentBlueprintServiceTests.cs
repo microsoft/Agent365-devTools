@@ -272,7 +272,7 @@ public class AgentBlueprintServiceTests
             // Override with specific scope assertion
             _mockTokenProvider.GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentity.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>(),
@@ -289,7 +289,7 @@ public class AgentBlueprintServiceTests
 
             await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentity.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>(),
@@ -542,7 +542,9 @@ public class AgentBlueprintServiceTests
             CommandExecutor executor,
             IAuthenticationService authService,
             HttpMessageHandler handler)
-            : base(logger, executor, authService, handler) { }
+            // loginHintResolver: no-op — prevents AzCliHelper.ResolveLoginHintAsync() from
+            // spawning a real 'az account get-access-token' subprocess in tests.
+            : base(logger, executor, authService, handler, loginHintResolver: () => Task.FromResult<string?>(null)) { }
 
         public override Task<bool> GraphPatchAsync(
             string tenantId,

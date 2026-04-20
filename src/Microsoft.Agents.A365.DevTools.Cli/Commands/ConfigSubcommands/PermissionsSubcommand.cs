@@ -31,14 +31,13 @@ public static class ConfigPermissionsSubcommand
             bool reset = context.ParseResult.GetValueForOption(resetOption);
             bool force = context.ParseResult.GetValueForOption(forceOption);
 
-            // Resolve config path: current directory first, then global fallback
-            var localConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.config.json");
-            var globalConfigPath = Path.Combine(configDir, "a365.config.json");
-            var configPath = File.Exists(localConfigPath) ? localConfigPath : globalConfigPath;
+            // Only read from the current directory — never fall back to the global config directory.
+            // A stale global config from a different project would silently corrupt permissions.
+            var configPath = Path.Combine(Environment.CurrentDirectory, "a365.config.json");
 
             if (!File.Exists(configPath))
             {
-                logger.LogError("Configuration file not found. Run 'a365 config init' first to create a base configuration.");
+                logger.LogError("Configuration file not found in the current directory. Run 'a365 config init' first to create a base configuration.");
                 context.ExitCode = 1;
                 return;
             }

@@ -35,7 +35,8 @@ public class CleanupCommand
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
-        AzureAuthValidator authValidator)
+        AzureAuthValidator authValidator,
+        GraphApiService? graphApiService = null)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
@@ -47,25 +48,63 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name used with 'setup all --agent-name'. When provided, no config file is required.\n" +
+                         "Loads resource IDs from generated config in the current directory first, then falls back to the global generated config if available.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'. Use with --agent-name.");
+
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            description: "Skip confirmation prompts and proceed automatically");
+
         var verboseOption = new Option<bool>(
-            new[] { "--verbose", "-v" },
+            ["--verbose", "-v"],
             description: "Enable verbose logging");
 
         cleanupCommand.AddOption(configOption);
+        cleanupCommand.AddOption(agentNameOption);
+        cleanupCommand.AddOption(tenantIdOption);
+        cleanupCommand.AddOption(yesOption);
         cleanupCommand.AddOption(verboseOption);
 
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
-        cleanupCommand.SetHandler(async (configFile, verbose) =>
+        cleanupCommand.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var yes = context.ParseResult.GetValueForOption(yesOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption); // consumed by Program.cs startup via args
+
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogInformation("Starting cleanup (CorrelationId: {CorrelationId})", correlationId);
-            
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, correlationId: correlationId);
-        }, configOption, verboseOption);
+
+            Agent365Config? bootstrapConfig = null;
+            if (!string.IsNullOrWhiteSpace(agentName))
+            {
+                bootstrapConfig = await BuildBootstrapConfigForCleanupAsync(
+                    agentName, tenantIdFlag, executor, graphApiService, logger);
+                if (bootstrapConfig is null)
+                {
+                    context.ExitCode = 1;
+                    return;
+                }
+            }
+
+            IConfirmationProvider effectiveConfirmationProvider = yes
+                ? new NonInteractiveConfirmationProvider()
+                : confirmationProvider;
+
+            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, effectiveConfirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig, ct: context.GetCancellationToken());
+        });
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, graphApiService: graphApiService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -80,7 +119,8 @@ public class CleanupCommand
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
-        string? correlationId = null)
+        string? correlationId = null,
+        GraphApiService? graphApiService = null)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
         
@@ -158,6 +198,16 @@ public class CleanupCommand
                 logger.LogInformation("Will delete Entra ID application: {BlueprintId}", config.AgentBlueprintId);
                 logger.LogInformation("  Name: {DisplayName}", config.AgentBlueprintDisplayName);
 
+                if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("Will also delete Agent Identity Service Principal: {SpId}", config.AgenticAppId);
+                }
+                if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("Will also deregister Agent Instance: {InstanceId}", config.AgentInstanceId);
+                }
                 if (instances.Count > 0)
                 {
                     logger.LogInformation("");
@@ -176,6 +226,79 @@ public class CleanupCommand
                 {
                     logger.LogInformation("Cleanup cancelled by user");
                     return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
+                {
+                    logger.LogInformation("Deleting agent identity service principal {SpId}...", config.AgenticAppId);
+                    var identityDeleted = await agentBlueprintService.DeleteAgentIdentityAsync(
+                        config.TenantId,
+                        config.AgenticAppId);
+
+                    if (identityDeleted)
+                    {
+                        logger.LogInformation("Agent identity service principal deleted");
+                        config.AgenticAppId = string.Empty;
+                        await configService.SaveStateAsync(config);
+                    }
+                    else
+                    {
+                        logger.LogWarning("Failed to delete agent identity service principal {SpId} -- will continue with cleanup", config.AgenticAppId);
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+                {
+                    if (graphApiService is null)
+                    {
+                        logger.LogWarning("Agent registration deletion skipped (GraphApiService not available). Delete registration {RegistrationId} manually.", config.AgentRegistrationId);
+                    }
+                    else
+                    {
+                        logger.LogInformation("Deleting agent registration {RegistrationId} via Graph API...", config.AgentRegistrationId);
+                        var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
+                            config.TenantId,
+                            config.AgentRegistrationId,
+                            CancellationToken.None);
+
+                        if (registrationDeleted)
+                        {
+                            logger.LogInformation("Agent registration deleted");
+                            config.AgentRegistrationId = string.Empty;
+                            await configService.SaveStateAsync(config);
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete agent registration {RegistrationId} -- will continue with cleanup", config.AgentRegistrationId);
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                {
+                    if (graphApiService is null)
+                    {
+                        logger.LogWarning("Agent instance deletion skipped (GraphApiService not available). Delete instance {InstanceId} manually via the M365 Admin Center.", config.AgentInstanceId);
+                    }
+                    else
+                    {
+                        logger.LogInformation("Deleting agent instance {InstanceId} from Agent Registry...", config.AgentInstanceId);
+                        var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
+                            config.TenantId,
+                            config.AgentInstanceId,
+                            CancellationToken.None);
+
+                        if (instanceDeleted)
+                        {
+                            logger.LogInformation("Agent instance deleted from registry");
+                            config.AgentInstanceId = string.Empty;
+                            await configService.SaveStateAsync(config);
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete agent instance {InstanceId} -- will continue with blueprint deletion", config.AgentInstanceId);
+                        }
+                    }
                 }
 
                 // Delete instances first (warn and continue on failure)
@@ -270,21 +393,7 @@ public class CleanupCommand
 
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
-                bool endpointDeleted = false;
-                try
-                {
-                    endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
-                }
-                finally
-                {
-                    // Always emit orphan summary before returning, regardless of endpoint deletion outcome
-                    PrintOrphanSummary(logger, failedResources);
-                }
-
-                if (!endpointDeleted)
-                {
-                    return;
-                }
+                PrintOrphanSummary(logger, failedResources);
 
                 // Clear configuration after successful blueprint deletion
                 logger.LogInformation("");
@@ -292,6 +401,8 @@ public class CleanupCommand
 
                 config.AgentBlueprintId = string.Empty;
                 config.AgentBlueprintClientSecret = string.Empty;
+                config.AgenticAppId = string.Empty;
+                config.AgentInstanceId = string.Empty;
                 config.ResourceConsents.Clear();
 
                 await configService.SaveStateAsync(config);
@@ -472,7 +583,7 @@ public class CleanupCommand
                 logger.LogInformation("Will delete the following resources:");
                 
                 if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-                    logger.LogInformation("    Agent Identity Application: {IdentityId}", config.AgenticAppId);
+                    logger.LogInformation("    Agent Identity Service Principal: {SpId}", config.AgenticAppId);
                 if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
                     logger.LogInformation("    Agent User: {UserId}", config.AgenticUserId);
                 logger.LogInformation("    Generated configuration file");
@@ -486,12 +597,12 @@ public class CleanupCommand
                     return;
                 }
 
-                // Delete agent identity application
+                // Delete agent identity service principal
                 if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                 {
-                    logger.LogInformation("Deleting agent identity application...");
+                    logger.LogInformation("Deleting agent identity service principal...");
                     await executor.ExecuteAsync("az", $"ad app delete --id {config.AgenticAppId}", null, true, false, CancellationToken.None);
-                    logger.LogInformation("Agent identity application deleted");
+                    logger.LogInformation("Agent identity service principal deleted");
                 }
 
                 // Delete agent user
@@ -564,15 +675,18 @@ public class CleanupCommand
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
         FileInfo? configFile,
-        string? correlationId = null)
+        GraphApiService? graphApiService = null,
+        string? correlationId = null,
+        Agent365Config? configOverride = null,
+        CancellationToken ct = default)
     {
         var cleanupSucceeded = false;
         var hasFailures = false;
         try
         {
             logger.LogInformation("Starting complete cleanup...");
-            
-            var config = await LoadConfigAsync(configFile, logger, configService);
+
+            var config = configOverride ?? await LoadConfigAsync(configFile, logger, configService);
             if (config == null) return;
             
             // Configure AgentBlueprintService with custom client app ID if available
@@ -587,8 +701,14 @@ public class CleanupCommand
             logger.LogInformation("WARNING: ALL RESOURCES WILL BE DELETED:");
             if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
                 logger.LogInformation("    Blueprint Application: {BlueprintId}", config.AgentBlueprintId);
+            if (!string.IsNullOrWhiteSpace(config.AgentBlueprintServicePrincipalObjectId))
+                logger.LogInformation("    Blueprint Service Principal: {SpId}", config.AgentBlueprintServicePrincipalObjectId);
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-                logger.LogInformation("    Agent Identity Application: {IdentityId}", config.AgenticAppId);
+                logger.LogInformation("    Agent Identity Service Principal: {SpId}", config.AgenticAppId);
+            if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+                logger.LogInformation("    Agent Registration (AgentX): {RegistrationId}", config.AgentRegistrationId);
+            if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
+                logger.LogInformation("    Agent Registry Instance: {InstanceId}", config.AgentInstanceId);
             if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
                 logger.LogInformation("    Agent User: {UserId}", config.AgenticUserId);
             if (!string.IsNullOrWhiteSpace(config.WebAppName))
@@ -599,7 +719,10 @@ public class CleanupCommand
                 logger.LogInformation("    Azure Messaging Endpoint: {BotName}", config.BotName);
             if (!string.IsNullOrWhiteSpace(config.Location))
                 logger.LogInformation("    Location: {Location}", config.Location);
-            logger.LogInformation("    Generated configuration file");
+            var previewLocalGen = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
+            var previewGlobalGen = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
+            if (File.Exists(previewLocalGen) || File.Exists(previewGlobalGen))
+                logger.LogInformation("    Generated configuration file");
             logger.LogInformation("");
 
             if (!await confirmationProvider.ConfirmAsync("Are you sure you want to DELETE ALL resources? (y/N): "))
@@ -615,6 +738,64 @@ public class CleanupCommand
             }
 
             logger.LogInformation("Starting complete cleanup...");
+
+            // 1a. For non-DW blueprint flow: delete AgentX agent registration before blueprint
+            if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+            {
+                if (graphApiService is null)
+                {
+                    logger.LogWarning("Agent registration deletion skipped (GraphApiService not available). Delete registration {RegistrationId} manually.", config.AgentRegistrationId);
+                    hasFailures = true;
+                }
+                else
+                {
+                    logger.LogInformation("Deleting agent registration {RegistrationId} via Graph API...", config.AgentRegistrationId);
+                    var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
+                        config.TenantId,
+                        config.AgentRegistrationId,
+                        ct);
+
+                    if (registrationDeleted)
+                    {
+                        logger.LogInformation("Agent registration deleted");
+                        config.AgentRegistrationId = string.Empty;
+                    }
+                    else
+                    {
+                        logger.LogWarning("Failed to delete agent registration {RegistrationId} -- will continue with blueprint deletion", config.AgentRegistrationId);
+                        hasFailures = true;
+                    }
+                }
+            }
+
+            // 1b. For non-DW blueprint flow: delete Agent Registry instance before blueprint
+            if (!string.IsNullOrWhiteSpace(config.AgentInstanceId))
+            {
+                if (graphApiService is null)
+                {
+                    logger.LogWarning("Agent instance deletion skipped (GraphApiService not available). Delete instance {InstanceId} manually via the M365 Admin Center.", config.AgentInstanceId);
+                    hasFailures = true;
+                }
+                else
+                {
+                    logger.LogInformation("Deleting agent instance {InstanceId} from Agent Registry...", config.AgentInstanceId);
+                    var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
+                        config.TenantId,
+                        config.AgentInstanceId,
+                        ct);
+
+                    if (instanceDeleted)
+                    {
+                        logger.LogInformation("Agent instance deleted from registry");
+                        config.AgentInstanceId = string.Empty;
+                    }
+                    else
+                    {
+                        logger.LogWarning("Failed to delete agent instance {InstanceId} -- will continue with blueprint deletion", config.AgentInstanceId);
+                        hasFailures = true;
+                    }
+                }
+            }
 
             // 1. Delete federated credentials from agent blueprint (if exists)
             if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
@@ -663,24 +844,69 @@ public class CleanupCommand
                 }
             }
 
-            // 3. Delete agent identity application
+            // 3. Delete agent identity service principal(s).
+            // First delete the one recorded in config (fast path, no extra Graph query).
+            // Then query Entra for any additional identities linked to the blueprint that
+            // may not be in config — mirrors what 'cleanup blueprint' does, and handles the
+            // case where AgenticAppId is missing (e.g. bootstrap cleanup without --agent-name).
+            var deletedIdentityIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
             {
-                logger.LogInformation("Deleting agent identity application...");
+                logger.LogInformation("Deleting agent identity service principal...");
 
                 var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
                     config.TenantId,
-                    config.AgenticAppId);
+                    config.AgenticAppId,
+                    ct);
 
                 if (deleted)
                 {
-                    logger.LogInformation("Agent identity application deleted successfully");
+                    deletedIdentityIds.Add(config.AgenticAppId);
+                    logger.LogInformation("Agent identity service principal deleted successfully");
                 }
                 else
                 {
-                    logger.LogWarning("Failed to delete agent identity application (will continue with other resources)");
+                    logger.LogWarning("Failed to delete agent identity service principal (will continue with other resources)");
                     logger.LogWarning("Local configuration will still be cleared at the end");
                     hasFailures = true;
+                }
+            }
+
+            // Discover any remaining linked identities via Entra (handles IDs missing from config).
+            if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId) && graphApiService != null)
+            {
+                try
+                {
+                    var linkedInstances = await agentBlueprintService.GetAgentInstancesForBlueprintAsync(
+                        config.TenantId, config.AgentBlueprintId, ct);
+
+                    foreach (var instance in linkedInstances)
+                    {
+                        if (string.IsNullOrWhiteSpace(instance.IdentitySpId) ||
+                            deletedIdentityIds.Contains(instance.IdentitySpId))
+                            continue;
+
+                        logger.LogInformation("Deleting linked agent identity SP {SpId} ({DisplayName})...",
+                            instance.IdentitySpId, instance.DisplayName ?? "(unnamed)");
+
+                        var deleted = await agentBlueprintService.DeleteAgentIdentityAsync(
+                            config.TenantId, instance.IdentitySpId, ct);
+
+                        if (deleted)
+                        {
+                            deletedIdentityIds.Add(instance.IdentitySpId);
+                            logger.LogInformation("Linked agent identity SP deleted");
+                        }
+                        else
+                        {
+                            logger.LogWarning("Failed to delete linked agent identity SP {SpId}", instance.IdentitySpId);
+                            hasFailures = true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning("Could not query linked agent identities from Entra (non-fatal): {Message}", ex.Message);
                 }
             }
 
@@ -974,6 +1200,137 @@ public class CleanupCommand
         foreach (var spId in failedResources[IdentitySpsKey])
             logger.LogWarning("  Orphaned identity SP: {ResourceId}", spId);
         logger.LogWarning("Delete them manually via the Entra portal or Graph API.");
+    }
+
+    /// <summary>
+    /// Builds a cleanup config from the global generated config without requiring a static config file.
+    /// Used when cleanup is invoked with <c>--agent-name</c> after a bootstrap setup.
+    /// Loads resource IDs (blueprint, agent identity, registration) from the generated config saved
+    /// to the global config directory by <c>setup all --agent-name</c>.
+    /// </summary>
+    private static async Task<Agent365Config?> BuildBootstrapConfigForCleanupAsync(
+        string agentName,
+        string? tenantIdFlag,
+        CommandExecutor executor,
+        GraphApiService? graphApiService,
+        ILogger<CleanupCommand> logger)
+    {
+        // Step 1: Resolve tenant ID
+        var tenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(tenantIdFlag, executor, logger);
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            logger.LogError("Could not detect tenant ID. Sign in with 'az login' or pass --tenant-id.");
+            return null;
+        }
+
+        // Step 2: Resolve client app ID.
+        // Prefer a365.config.json when it exists locally and its tenant matches the current tenant.
+        // Fall back to Entra lookup by well-known display name if the static config is absent or stale.
+        var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            tenantId,
+            graphApiService,
+            logger,
+            CancellationToken.None,
+            preferLocalConfig: true);
+        if (!string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
+            graphApiService.CustomClientAppId = clientAppId;
+
+        // Step 3: Resolve blueprint ID from Entra by display name (authoritative source).
+        var blueprintDisplayName = $"{agentName} Blueprint";
+        string? resolvedBlueprintId = null;
+        if (graphApiService != null)
+        {
+            resolvedBlueprintId = await graphApiService.FindApplicationByDisplayNameAsync(
+                tenantId, blueprintDisplayName);
+            if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
+                logger.LogWarning("Blueprint '{Name}' not found in Entra — resource IDs may be incomplete.", blueprintDisplayName);
+        }
+
+        // Step 4: Load generated config.
+        // Only take agentRegistrationId from the file when the blueprint IDs match,
+        // confirming the file belongs to this agent.
+        var localGeneratedPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
+        var globalGeneratedPath = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
+        var generatedConfigPath = File.Exists(localGeneratedPath) ? localGeneratedPath : globalGeneratedPath;
+
+        string? agentRegistrationId = null;
+        string? agenticAppId = null;
+        string? agentBlueprintSpObjectId = null;
+        string? configBlueprintId = null;
+
+        if (File.Exists(generatedConfigPath))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(generatedConfigPath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                configBlueprintId = SetupHelpers.GetJsonString(root, "agentBlueprintId");
+
+                if (!string.IsNullOrWhiteSpace(resolvedBlueprintId) &&
+                    string.Equals(resolvedBlueprintId, configBlueprintId, StringComparison.OrdinalIgnoreCase))
+                {
+                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
+                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
+                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
+                    logger.LogInformation("Loaded resource IDs from {Path}", generatedConfigPath);
+                }
+                else if (!string.IsNullOrWhiteSpace(configBlueprintId) && !string.IsNullOrWhiteSpace(resolvedBlueprintId))
+                {
+                    logger.LogWarning(
+                        "Generated config blueprint ID ({ConfigId}) does not match Entra-resolved ID ({ResolvedId}). Skipping resource IDs from file.",
+                        configBlueprintId, resolvedBlueprintId);
+                }
+                else if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
+                {
+                    // Entra lookup failed — fall back to file values for all IDs
+                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
+                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
+                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
+                    logger.LogInformation("Loaded resource IDs from {Path} (Entra lookup unavailable)", generatedConfigPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Could not read generated config at {Path}: {Message}", generatedConfigPath, ex.Message);
+            }
+        }
+        else
+        {
+            logger.LogWarning("No generated config found at {Path}. Resource IDs may be missing — resources must be deleted manually.", generatedConfigPath);
+        }
+
+        var blueprintId = resolvedBlueprintId ?? configBlueprintId;
+
+        var config = new Agent365Config
+        {
+            TenantId = tenantId,
+            ClientAppId = clientAppId ?? string.Empty,
+            AgentIdentityDisplayName = $"{agentName} Identity",
+            AgentBlueprintDisplayName = blueprintDisplayName,
+            AgentDescription = agentName,
+            NeedDeployment = false,
+            AiTeammate = false,
+            UseBlueprint = true,
+        };
+
+        config.AgentBlueprintId = blueprintId;
+        config.AgentBlueprintServicePrincipalObjectId = agentBlueprintSpObjectId;
+        config.AgentRegistrationId = agentRegistrationId;
+        config.AgenticAppId = agenticAppId;
+
+        logger.LogInformation("Bootstrap cleanup config:");
+        using (logger.Indent())
+        {
+            logger.LogInformation("TenantId:        {TenantId}", tenantId);
+            logger.LogInformation("ClientAppId:     {ClientAppId}", clientAppId ?? "(not found)");
+            logger.LogInformation("BlueprintId:     {BlueprintId}", blueprintId ?? "(not found)");
+            logger.LogInformation("BlueprintSP:     {SpId}", agentBlueprintSpObjectId ?? "(not found)");
+            logger.LogInformation("AgentIdentitySP: {SpId}", agenticAppId ?? "(not found)");
+            logger.LogInformation("RegistrationId:  {RegId}", agentRegistrationId ?? "(not found)");
+        }
+
+        return config;
     }
 
     private static async Task<Agent365Config?> LoadConfigAsync(

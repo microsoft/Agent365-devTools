@@ -382,4 +382,123 @@ public class MicrosoftGraphTokenProviderTests
             because: "forceRefresh: true must evict the cached token and re-invoke MSAL, " +
                      "ensuring a stale CAE-revoked token is not reused");
     }
+
+    /// <summary>
+    /// Tests for the IsInteractiveBrowserFailure + device-code retry path.
+    /// This is the specific fix for 'a365 cleanup --agent-name' failing when PowerShell
+    /// Connect-MgGraph's interactive browser auth fails in an embedded terminal.
+    /// </summary>
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WhenPowerShellBrowserAuthFails_RetriesWithDeviceCode()
+    {
+        // Arrange
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "User.Read" };
+        var deviceCodeToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZXZpY2VDb2RlIn0.signature";
+        var browserFailureError = "InteractiveBrowserCredential authentication failed: user cancelled";
+
+        // First call (browser auth) fails with the embedded-terminal error; second call (device code) succeeds.
+        var callCount = 0;
+        _executor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? Task.FromResult(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = browserFailureError })
+                    : Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = deviceCodeToken, StandardError = string.Empty });
+            });
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(null)
+        };
+
+        // Act
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, useDeviceCode: false);
+
+        // Assert
+        token.Should().Be(deviceCodeToken,
+            because: "when PowerShell browser auth fails with 'InteractiveBrowserCredential authentication failed' " +
+                     "(embedded terminal), the CLI must automatically retry with device code flow");
+        callCount.Should().Be(2,
+            because: "browser auth attempt (1) should be followed by a device-code retry attempt (2)");
+
+        // The second call must include -UseDeviceCode
+        await _executor.Received(1).ExecuteWithStreamingAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(args => args.Contains("-UseDeviceCode")),
+            Arg.Any<string?>(), Arg.Any<string>(), Arg.Any<bool>(),
+            Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("InteractiveBrowserCredential authentication failed")]
+    [InlineData("INTERACTIVEBROWSERCREDENTIAL AUTHENTICATION FAILED: user cancelled")]  // case-insensitive
+    public async Task GetMgGraphAccessTokenAsync_WhenPowerShellBrowserAuthFails_DeviceCodeRetryIsCaseInsensitive(string stderr)
+    {
+        // Arrange — ensures IsInteractiveBrowserFailure uses OrdinalIgnoreCase as documented
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "User.Read" };
+        var deviceCodeToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZXZpY2VDb2RlIn0.signature";
+
+        var callCount = 0;
+        _executor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? Task.FromResult(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = stderr })
+                    : Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = deviceCodeToken, StandardError = string.Empty });
+            });
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(null)
+        };
+
+        // Act
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, useDeviceCode: false);
+
+        // Assert
+        token.Should().Be(deviceCodeToken,
+            because: "IsInteractiveBrowserFailure must match the error string case-insensitively");
+    }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WhenUseDeviceCodeAlreadyTrue_DoesNotRetryAgain()
+    {
+        // Arrange — ensures no double-retry when the caller already requested device code
+        var tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "User.Read" };
+        var browserFailureError = "InteractiveBrowserCredential authentication failed";
+
+        _executor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 1, StandardOutput = string.Empty, StandardError = browserFailureError }));
+
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(null)
+        };
+
+        // Act — caller already set useDeviceCode: true
+        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, useDeviceCode: true);
+
+        // Assert
+        token.Should().BeNull(
+            because: "when useDeviceCode is already true the retry guard (!useDeviceCode) prevents an infinite loop");
+        // Only one PowerShell call — no retry
+        await _executor.Received(1).ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
+            Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
 }

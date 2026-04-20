@@ -12,10 +12,14 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 /// Custom console formatter that outputs clean messages without timestamps or category names.
 /// Follows Azure CLI output patterns for user-friendly CLI experience.
 /// Errors are displayed in red, warnings in yellow, info is plain text, debug/trace in dark gray.
+///
+/// Supports log indent scopes via <see cref="LoggerExtensions.Indent"/>:
+/// each <see cref="LogIndentScope"/> instance on the scope stack adds 4 spaces of leading indent.
+/// Maximum indent depth: 3 levels (12 spaces).
 /// </summary>
 public sealed class CleanConsoleFormatter : ConsoleFormatter
 {
-    public CleanConsoleFormatter() 
+    public CleanConsoleFormatter()
         : base("clean")
     {
     }
@@ -54,6 +58,16 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
             return;
         }
 
+        // Compute indent prefix from LogIndentScope instances in the scope stack.
+        // ForEachScope is synchronous — safe to capture a local variable in the callback.
+        // Each LogIndentScope instance = one indent level (4 spaces); capped at 3.
+        var indentLevel = 0;
+        scopeProvider?.ForEachScope(
+            (scope, _) => { if (scope is LogIndentScope) indentLevel++; },
+            (object?)null);
+        indentLevel = Math.Min(indentLevel, 3);
+        var indent = indentLevel > 0 ? new string(' ', indentLevel * 4) : string.Empty;
+
         // Azure CLI pattern: red for errors, yellow for warnings, dark gray for debug/trace, no color for info
         switch (logEntry.LogLevel)
         {
@@ -62,6 +76,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 if (isConsole)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Write(indent);
                     Console.Write("ERROR: ");
                     Console.Write(message);
                     Console.ResetColor();
@@ -69,6 +84,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 }
                 else
                 {
+                    textWriter.Write(indent);
                     textWriter.Write("ERROR: ");
                     textWriter.WriteLine(message);
                 }
@@ -77,12 +93,14 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 if (isConsole)
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.Write(indent);
                     Console.Write(message);
                     Console.ResetColor();
                     Console.WriteLine();
                 }
                 else
                 {
+                    textWriter.Write(indent);
                     textWriter.WriteLine(message);
                 }
                 break;
@@ -90,6 +108,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 if (isConsole)
                 {
                     Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write(indent);
                     Console.Write("[DEBUG] ");
                     Console.Write(message);
                     Console.ResetColor();
@@ -97,6 +116,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 }
                 else
                 {
+                    textWriter.Write(indent);
                     textWriter.Write("[DEBUG] ");
                     textWriter.WriteLine(message);
                 }
@@ -105,6 +125,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 if (isConsole)
                 {
                     Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.Write(indent);
                     Console.Write("[TRACE] ");
                     Console.Write(message);
                     Console.ResetColor();
@@ -112,6 +133,7 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 }
                 else
                 {
+                    textWriter.Write(indent);
                     textWriter.Write("[TRACE] ");
                     textWriter.WriteLine(message);
                 }
@@ -120,11 +142,11 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
                 if (isConsole)
                 {
                     Console.ResetColor();
-                    Console.WriteLine(message);
+                    Console.WriteLine(indent + message);
                 }
                 else
                 {
-                    textWriter.WriteLine(message);
+                    textWriter.WriteLine(indent + message);
                 }
                 break;
         }

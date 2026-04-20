@@ -80,6 +80,16 @@ public interface IConfigService
     /// <param name="statePath">Path where the state file should be created</param>
     /// <exception cref="IOException">Thrown when file write fails</exception>
     Task InitializeStateAsync(string statePath = "a365.generated.config.json");
+
+    /// <summary>
+    /// Validates the configured clientAppId still exists in the tenant and, if not, resolves
+    /// it by looking up the well-known display name "Agent 365 CLI".
+    /// When a new ID is found it is written back to a365.config.json so subsequent LoadAsync
+    /// calls return the correct value without manual config edits.
+    /// Safe to call before any command — uses az CLI token, not MSAL.
+    /// No-ops silently if no config file exists or if the tenant ID is unavailable.
+    /// </summary>
+    Task TryResolveClientAppIdAsync(GraphApiService graphApiService, CancellationToken ct = default);
 }
 
 /// <summary>

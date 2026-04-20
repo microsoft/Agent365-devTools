@@ -61,7 +61,7 @@ public class RetryHelper
                 if (attempt < retries - 1)
                 {
                     var delaySpan = CalculateDelay(attempt, delay);
-                    _logger.LogInformation(
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
                         attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
@@ -81,7 +81,7 @@ public class RetryHelper
                 if (attempt < retries - 1)
                 {
                     var delaySpan = CalculateDelay(attempt, delay);
-                    _logger.LogInformation(
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
                         attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
@@ -172,7 +172,7 @@ public class RetryHelper
                 if (attempt < retries - 1)
                 {
                     var delaySpan = CalculateDelay(attempt, delay);
-                    _logger.LogInformation(
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
                         attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
@@ -192,7 +192,7 @@ public class RetryHelper
                 if (attempt < retries - 1)
                 {
                     var delaySpan = CalculateDelay(attempt, delay);
-                    _logger.LogInformation(
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
                         attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
