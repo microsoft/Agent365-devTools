@@ -73,7 +73,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         if (engine == EvalEngine.None)
         {
             await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
-            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: false);
+            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: false, agentAttempted: false);
             return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
         }
 
@@ -85,7 +85,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
         if (enginesToTry.Count == 0)
         {
-            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: true);
+            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: true, agentAttempted: false);
             return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
         }
 
@@ -159,8 +159,14 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         _logger.LogInformation("      {Scored} of {Total} semantic checks scored", scoredSemantic, totalSemantic);
         if (remainingUnevaluated > 0)
         {
-            _logger.LogWarning("      {Count} semantic check{Plural} remain unscored — downstream analysis may be incomplete",
+            _logger.LogWarning("      {Count} semantic check{Plural} remain unscored",
                 remainingUnevaluated, remainingUnevaluated == 1 ? "" : "s");
+
+            // The detected agent(s) didn't score enough to finish the run — it may have
+            // hit tool-permission limits, timed out, or returned without edits. Rather
+            // than silently producing an inflated report, give the user the same BYOL
+            // fallback they'd get if no agent was installed at all.
+            LogManualEvaluationInstructions(checklistPath, remainingUnevaluated, engineNotFound: false, agentAttempted: true);
         }
 
         // Only treat evaluation as completed when nothing is left unscored.
@@ -445,7 +451,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         return count;
     }
 
-    private void LogManualEvaluationInstructions(string checklistPath, int unscoredCount, bool engineNotFound)
+    private void LogManualEvaluationInstructions(string checklistPath, int unscoredCount, bool engineNotFound, bool agentAttempted)
     {
         var fullPath = Path.GetFullPath(checklistPath);
         var promptPath = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".", "semantic_eval_prompt.txt");
@@ -464,6 +470,13 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         if (engineNotFound)
         {
             _logger.LogWarning("      No coding agent CLI detected (looked for `copilot` and `claude`)");
+        }
+        else if (agentAttempted)
+        {
+            // Agent was detected and invoked but didn't score enough of the checklist.
+            // Could be a tool-permission issue, a timeout, or the model bailing out.
+            _logger.LogWarning("      The coding agent ran but left {Count} check{Plural} unscored — falling back to manual scoring",
+                unscoredCount, unscoredCount == 1 ? "" : "s");
         }
         else
         {

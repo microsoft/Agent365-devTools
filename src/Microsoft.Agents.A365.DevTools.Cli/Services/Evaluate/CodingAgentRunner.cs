@@ -184,11 +184,15 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            // --available-tools bounds what the model can do to reading and editing files.
-            // --allow-tool pre-approves those tools so non-interactive mode doesn't prompt.
+            // Copilot CLI requires --allow-all-tools in non-interactive mode; individual
+            // --allow-tool flags are not honored without user prompts. To still keep the
+            // blast radius small we cap *what tools even exist* via --available-tools, so
+            // powershell / shell / web tools are hidden from the model entirely. The agent
+            // only sees view (read), edit (targeted string replace), and create (overwrite
+            // file). --no-ask-user prevents blocking on clarification it cannot resolve.
             var (fileName, fileArguments) = WrapForPlatform(
                 "copilot",
-                $"-p \"{metaPrompt}\" --model {CopilotModel} --available-tools=view,edit --allow-tool=view --allow-tool=edit --no-ask-user");
+                $"-p \"{metaPrompt}\" --model {CopilotModel} --allow-all-tools --available-tools=view,edit,create --no-ask-user");
 
             var startInfo = new ProcessStartInfo
             {
