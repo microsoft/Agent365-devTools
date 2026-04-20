@@ -596,8 +596,11 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 
 3. **Skip the client secret action item entirely.** Do not show it, do not mention it.
 
-4. After showing the CLI output sections above, output exactly this closing line and nothing else:
-   > "Your agent is provisioned. If admin consent is required, have a Global Admin run the PowerShell script above."
+4. After showing the CLI output sections above, output exactly one of these closing lines — choose based on what the CLI reported:
+   - **If the CLI printed an admin consent action item** (i.e., you showed a PowerShell script in step 2 above):
+     > "Your agent is provisioned. Have a Global Admin run the PowerShell script above to complete admin consent."
+   - **If Permission Grants row in the Summary shows `ok`** (no action item was printed):
+     > "Your agent is provisioned."
 
 ### Step 4 completion
 
@@ -605,7 +608,10 @@ Mark all todos as completed, then check `capabilities`:
 
 > **If `capabilities` includes "Observability"** (`agentType = 1` with either option, or `agentType = 3` with "Discoverability and Observability"): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
 >
-> **Otherwise**: this is the final action — do NOT send any further response, do NOT proceed to Step 5.
+> **Otherwise**: say to the user verbatim:
+> "Your agent is provisioned. Would you like to add observability so you can trace LLM calls, tool dispatches, and agent-to-agent calls?"
+> - If **yes**: follow `#file:a365-observability-instructions.md` to add observability. Do not proceed to Step 5.
+> - If **no**: this is the final action — do NOT send any further response, do NOT proceed to Step 5.
 
 ---
 

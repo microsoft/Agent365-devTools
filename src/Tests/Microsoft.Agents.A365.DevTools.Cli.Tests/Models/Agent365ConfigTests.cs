@@ -397,6 +397,30 @@ public class Agent365ConfigTests
     }
 
     [Fact]
+    public void Validate_WithNeedDeploymentFalseAndNoMessagingEndpoint_ReturnsNoError()
+    {
+        // Arrange — bootstrap config: externally hosted agent with no endpoint yet
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            SubscriptionId = "11111111-1111-1111-1111-111111111111",
+            ResourceGroup = "test-rg",
+            AgentIdentityDisplayName = "Test Agent Identity",
+            DeploymentProjectPath = ".",
+            NeedDeployment = false
+            // MessagingEndpoint intentionally absent — filled in after the agent is deployed
+        };
+
+        // Act
+        var errors = config.Validate();
+
+        // Assert
+        errors.Should().NotContain(e => e.Contains("messagingEndpoint"),
+            because: "messagingEndpoint is optional at config-validation time; SetupHelpers enforces it at registration time");
+    }
+
+    [Fact]
     public void Validate_WithoutMessagingEndpoint_RequiresAppServiceFields()
     {
         // Arrange

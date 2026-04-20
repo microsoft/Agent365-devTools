@@ -202,13 +202,19 @@ class Program
 
             // Validate the configured clientAppId still exists in the tenant before any command runs.
             // If not found, falls back to the well-known display name and patches a365.config.json.
-            try
+            // Skip for help/version requests — these never make Graph calls and must work offline.
+            var isHelpOrVersion = args.Length == 0
+                || args.Any(a => a is "--help" or "-h" or "--version");
+            if (!isHelpOrVersion)
             {
-                await configService.TryResolveClientAppIdAsync(graphApiService);
-            }
-            catch (Exception ex)
-            {
-                startupLogger.LogDebug(ex, "Client app ID pre-resolution skipped: {Message}", ex.Message);
+                try
+                {
+                    await configService.TryResolveClientAppIdAsync(graphApiService);
+                }
+                catch (Exception ex)
+                {
+                    startupLogger.LogDebug(ex, "Client app ID pre-resolution skipped: {Message}", ex.Message);
+                }
             }
 
             var parser = builder.Build();

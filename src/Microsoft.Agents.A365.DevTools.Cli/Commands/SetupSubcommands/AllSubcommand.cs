@@ -759,7 +759,6 @@ internal static class AllSubcommand
             ["needDeployment"] = config.NeedDeployment,
             ["aiTeammate"] = config.AiTeammate,
             ["useBlueprint"] = config.UseBlueprint,
-            ["messagingEndpoint"] = "https://placeholder.example.com/api/messages",
         };
 
         var json = JsonSerializer.Serialize(staticFields, new JsonSerializerOptions { WriteIndented = true });

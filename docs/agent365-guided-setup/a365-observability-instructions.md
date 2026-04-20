@@ -18,9 +18,14 @@ Ask your coding agent (Claude Code, GitHub Copilot, or similar):
 
 > "Using #file:a365-observability-instructions.md, add observability to this project"
 
-The agent will follow the MS Learn reference above to:
-1. Install the observability SDK packages for your project type (.NET, Python, or Node.js)
-   - .NET: `Microsoft.Agents.A365.Observability.Runtime` and `Microsoft.Agents.A365.Observability.Hosting`
+> **Do NOT search NuGet package caches, inspect package XML files, browse MS Learn, or probe installed package versions. All required code is provided verbatim below — use it as-is.**
+
+1. Install the observability SDK packages:
+   - **.NET** — run these two commands in the project directory:
+     ```
+     dotnet add package Microsoft.Agents.A365.Observability.Runtime --prerelease
+     dotnet add package Microsoft.Agents.A365.Observability.Hosting --prerelease
+     ```
    - Python / Node.js: see the MS Learn reference for current package names
 
 ### .NET helper files — scaffold before step 2 (agentType = 3 only)
@@ -185,13 +190,25 @@ internal sealed class ObservabilityTokenService : BackgroundService
    - Python / Node.js: see the MS Learn reference
 4. Add the exporter configuration setting (`EnableAgent365Exporter` / `ENABLE_A365_OBSERVABILITY_EXPORTER`) **enabled by default** in the main config, and **disabled in the development/local override** (e.g. `appsettings.Development.json` for .NET, `.env` for Node.js/Python) so that `dotnet run` / local dev stays console-only until the agent is reachable from the platform
 
+   > **To verify exporter connectivity from Visual Studio:** temporarily set `"EnableAgent365Exporter": true` and add `"Microsoft.Agents.A365.Observability": "Debug"` and `"OpenTelemetry": "Debug"` to the `LogLevel` section of `appsettings.Development.json`, then revert when done.
+
 > **REQUIRED — do not skip this step.**
 > After completing steps 1–4 above, you **must** say to the user, verbatim:
 >
-> "Setup is complete. Would you like me to scan your code and add instrumentation automatically? I'll find LLM calls, tool dispatches, agent-to-agent calls, and output operations and wrap each with the appropriate tracing scope."
+> "---
+> **Observability SDK is wired up.** Would you like me to scan your code and add instrumentation automatically? I'll find LLM calls, tool dispatches, agent-to-agent calls, and output operations and wrap each with the appropriate tracing scope.
+>
+> Reply **yes** to add instrumentation, or **no** to skip (you can add it later).
+> ---"
 
 - If **yes**: scan all agent source files, identify operations matching the scope types in Task B, present a summary of planned changes, confirm with the user, then apply — adding the correct scope wrapper and required usings to each. **Follow the hierarchy rule in Task B:** every instrumented block must have `InvokeAgentScope` as its outermost scope; `InferenceScope`, `ExecuteToolScope`, and `OutputScope` are child scopes that go inside it.
 - If **no**: skip — instrumentation can be added later via Task B.
+
+> **Note — recording response data:** Auto-instrumentation adds scope wrappers only. To attach the actual response text to a span, call the appropriate record method manually after you have the result:
+> - `invokeAgentScope.RecordResponse(responseText)` — adds the agent's final reply to the `invoke_agent` span
+> - `inferenceScope.RecordOutputMessages(...)` / `inferenceScope.RecordInputMessages(...)` — attaches LLM output/input messages to the `Chat` span
+>
+> These are one-liners and are best added by hand once you know which variable holds the response.
 
 ### Task A completion — final summary
 

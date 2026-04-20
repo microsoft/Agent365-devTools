@@ -688,6 +688,54 @@ When a block of code — a method body, a collection initializer, a sequence of 
 
 **Real example (from `users/sellak/blueprintScopes`):** `AllSubcommand.cs`, `AdminSubcommand.cs`, and `PermissionsSubcommand.cs` each contained an identical three-entry block for Bot API, Observability API, and Power Platform API. When `Agent365.Observability.OtelWrite` was added, the new scope had to be written in three places — and would have been missed without manual cross-file inspection. Extracted to `SetupHelpers.GetFixedApiPermissionSpecs(bool setInheritable)`.
 
+### 23. Unconditional Success Log After Multiple Fallible Operations
+
+A success or completion log message is emitted unconditionally after a sequence of independent operations that each have their own `if (!ok)` warning branches. The final message claims the whole step succeeded regardless of which individual operations failed.
+
+- **Pattern to catch**:
+  - A sequence of: `var aOk = await DoA(...); if (!aOk) LogWarning(...); var bOk = await DoB(...); if (!bOk) LogWarning(...); LogInformation("completed successfully");`
+  - The success log appears at the end without checking `aOk && bOk` — it fires even if every preceding operation returned false
+  - Common in multi-grant admin consent flows, multi-step provisioning, and batch operations
+- **Severity**: `high` — users see "completed successfully" in the terminal while one or more required operations silently failed; they have no indication follow-up action is needed
+- **Check**: For every `LogInformation("...success..." or "...completed...")` in the diff, scan backwards to find all `bool`-returning async calls in the same block. Verify each outcome variable is included in a combined guard before the success log.
+- **Fix**: Accumulate outcomes and gate the success log:
+  ```csharp
+  var aOk = await DoA(...);
+  if (!aOk) logger.LogWarning("A failed.");
+  var bOk = await DoB(...);
+  if (!bOk) logger.LogWarning("B failed.");
+
+  if (!aOk || !bOk)
+  {
+      logger.LogError("Step completed with errors. One or more operations failed and follow-up action is required.");
+      throw new InvalidOperationException("Step did not complete successfully for all operations.");
+  }
+  logger.LogInformation("Step completed successfully.");
+  ```
+- **Real example** (`CreateInstanceCommand.cs`): Three separate `CreateOrUpdateOauth2PermissionGrantAsync` calls (MCP scopes, Bot API, Observability API) each had their own `LogWarning` on failure, but a single `LogInformation("Admin consent granted ... completed successfully")` was always emitted at the end. Fixed by computing `adminConsentGrantOk = mcpGrantOk && botApiGrantOk && observabilityApiGrantOk` and throwing if false.
+
+### 24. Expensive Unconditional Startup Code Before Command Dispatch
+
+An HTTP call, token acquisition, subprocess spawn, or other expensive/network-dependent operation runs unconditionally in startup — before `parser.InvokeAsync(args)` and before the user's chosen command is even parsed. This adds latency to every invocation (including `--help`, `--version`, and offline/CI scenarios) and can fail in environments without network access even when the command doesn't require it.
+
+- **Pattern to catch**:
+  - Any `await SomeService.NetworkCallAsync(...)` in `Program.cs` (or equivalent startup file) between `services.BuildServiceProvider()` and `parser.InvokeAsync(args)`
+  - Calls to `configService.TryResolveXxx(graphApiService)`, `graphApiService.AnyMethodAsync(...)`, or `AzCliHelper.*` that are NOT inside a command handler lambda
+  - The call is not guarded by a check of whether the command actually needs the result
+- **Severity**: `medium` — noticeable latency on every invocation; breaks offline/CI scenarios; especially bad for interactive developer workflows where `a365 --help` should be instant
+- **Fix**: Guard with a check of the args array to skip for informational invocations, or move the call inside the command handlers that actually need it:
+  ```csharp
+  // Skip for help, version, and empty invocations — must work offline
+  var isHelpOrVersion = args.Length == 0 || args.Any(a => a is "--help" or "-h" or "--version");
+  if (!isHelpOrVersion)
+  {
+      try { await configService.TryResolveClientAppIdAsync(graphApiService); }
+      catch (Exception ex) { logger.LogDebug(ex, "Pre-resolution skipped: {Message}", ex.Message); }
+  }
+  ```
+  Alternatively, move the call into a `System.CommandLine` middleware so it runs lazily only when a command handler needs it.
+- **Real example** (`Program.cs`): `TryResolveClientAppIdAsync` was called unconditionally before `parser.InvokeAsync(args)`, causing a Graph API call + az token acquisition on every invocation including `a365 --help`. Fixed by guarding with `isHelpOrVersion`.
+
 ## Example Invocation
 
 When you receive a request like "Review PR #253", you should:

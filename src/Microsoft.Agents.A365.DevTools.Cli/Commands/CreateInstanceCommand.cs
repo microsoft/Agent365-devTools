@@ -123,20 +123,15 @@ public class CreateInstanceCommand
                 var agent365ToolsResourceSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(instanceConfig.TenantId, resourceAppId)
                     ?? throw new InvalidOperationException("Agent 365 Tools Service Principal not found for appId " + resourceAppId);
 
-                var response = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+                var mcpGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
                     instanceConfig.TenantId,
                     agenticAppSpObjectId,
                     agent365ToolsResourceSpObjectId,
                     scopesForAgent
                 );
 
-                if (!response)
-                {
-                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity.");
-                }
-
-                logger.LogInformation("     OAuth2 admin consent completed for Agent Identity (scopes: {Scopes})",
-                    string.Join(' ', scopesForAgent));
+                if (!mcpGrantOk)
+                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity (MCP scopes).");
 
                 logger.LogInformation("");
                 logger.LogInformation("Granting Bot Framework API scopes to Agent Identity");
@@ -172,6 +167,13 @@ public class CreateInstanceCommand
 
                 if (!observabilityApiGrantOk)
                     logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Observability API.");
+
+                var adminConsentGrantOk = mcpGrantOk && botApiGrantOk && observabilityApiGrantOk;
+                if (!adminConsentGrantOk)
+                {
+                    logger.LogError("Admin consent for Agent Identity completed with errors. One or more required API grants failed and follow-up action is required.");
+                    throw new InvalidOperationException("Admin consent for Agent Identity did not complete successfully for all required API grants.");
+                }
 
                 logger.LogInformation("Admin consent granted for Agent Identity completed successfully");
 

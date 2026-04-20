@@ -45,12 +45,6 @@ public class Agent365Config
             if (string.IsNullOrWhiteSpace(AppServicePlanName)) errors.Add("appServicePlanName is required.");
             if (string.IsNullOrWhiteSpace(WebAppName)) errors.Add("webAppName is required.");
         }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(MessagingEndpoint))
-                errors.Add("messagingEndpoint is required when needDeployment is 'no'.");
-        }
-
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
         if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
 
