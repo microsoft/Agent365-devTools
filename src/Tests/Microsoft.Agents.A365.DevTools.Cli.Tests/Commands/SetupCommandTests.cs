@@ -369,20 +369,21 @@ public class SetupCommandTests
     public async Task RequirementsSubcommand_ValidConfig_CompletesSuccessfully()
     {
         // Arrange
-        var config = new Agent365Config 
-        { 
-            TenantId = "tenant", 
-            SubscriptionId = "sub", 
-            ResourceGroup = "rg", 
-            Location = "eastus", 
-            AppServicePlanName = "plan", 
-            WebAppName = "web", 
-            AgentIdentityDisplayName = "agent", 
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            SubscriptionId = "sub",
+            ResourceGroup = "rg",
+            Location = "eastus",
+            AppServicePlanName = "plan",
+            WebAppName = "web",
+            AgentIdentityDisplayName = "agent",
             DeploymentProjectPath = "."
         };
-        
+
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 
+        // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests
         var command = SetupCommand.CreateCommand(
             _mockLogger,
             _mockConfigService,
@@ -393,7 +394,8 @@ public class SetupCommandTests
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,
-            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
+            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider,
+            requirementChecksOverride: []);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
@@ -412,20 +414,21 @@ public class SetupCommandTests
     public async Task RequirementsSubcommand_WithCategoryFilter_RunsFilteredChecks()
     {
         // Arrange
-        var config = new Agent365Config 
-        { 
-            TenantId = "tenant", 
-            SubscriptionId = "sub", 
-            ResourceGroup = "rg", 
-            Location = "eastus", 
-            AppServicePlanName = "plan", 
-            WebAppName = "web", 
-            AgentIdentityDisplayName = "agent", 
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            SubscriptionId = "sub",
+            ResourceGroup = "rg",
+            Location = "eastus",
+            AppServicePlanName = "plan",
+            WebAppName = "web",
+            AgentIdentityDisplayName = "agent",
             DeploymentProjectPath = "."
         };
-        
+
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 
+        // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests
         var command = SetupCommand.CreateCommand(
             _mockLogger,
             _mockConfigService,
@@ -436,7 +439,8 @@ public class SetupCommandTests
             _mockPlatformDetector,
             _mockGraphApiService,
             _mockBlueprintService,
-            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
+            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider,
+            requirementChecksOverride: []);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();

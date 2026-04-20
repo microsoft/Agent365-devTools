@@ -480,11 +480,10 @@ public class GraphApiService
             {
                 var body = await resp.Content.ReadAsStringAsync(ct);
                 var errorMessage = TryExtractGraphErrorMessage(body);
-                if (errorMessage != null)
-                    _logger.LogError("Graph DELETE {Url} failed: {ErrorMessage}", url, errorMessage);
+                if (!string.IsNullOrWhiteSpace(errorMessage))
+                    _logger.LogError("Graph DELETE {Url} failed {Code}: {ErrorMessage}", url, (int)resp.StatusCode, errorMessage);
                 else
-                    _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
-                _logger.LogDebug("Graph DELETE response body: {Body}", body);
+                    _logger.LogError("Graph DELETE {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
                 return false;
             }
 

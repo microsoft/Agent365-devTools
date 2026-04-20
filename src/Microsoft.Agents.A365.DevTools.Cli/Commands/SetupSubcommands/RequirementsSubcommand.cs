@@ -21,7 +21,8 @@ internal static class RequirementsSubcommand
         ILogger logger,
         IConfigService configService,
         AzureAuthValidator authValidator,
-        IClientAppValidator clientAppValidator)
+        IClientAppValidator clientAppValidator,
+        IEnumerable<IRequirementCheck>? requirementChecksOverride = null)
     {
         var command = new Command("requirements", 
             "Validate prerequisites for Agent 365 setup\n" +
@@ -59,7 +60,7 @@ internal static class RequirementsSubcommand
             {
                 // Load configuration
                 var setupConfig = await configService.LoadAsync(config.FullName);
-                var requirementChecks = GetRequirementChecks(authValidator, clientAppValidator);
+                var requirementChecks = requirementChecksOverride?.ToList() ?? GetRequirementChecks(authValidator, clientAppValidator);
                 await RunRequirementChecksAsync(requirementChecks, setupConfig, logger, category);
             }
             catch (Exception ex)

@@ -542,7 +542,9 @@ public class AgentBlueprintServiceTests
             CommandExecutor executor,
             IAuthenticationService authService,
             HttpMessageHandler handler)
-            : base(logger, executor, authService, handler) { }
+            // loginHintResolver: no-op — prevents AzCliHelper.ResolveLoginHintAsync() from
+            // spawning a real 'az account get-access-token' subprocess in tests.
+            : base(logger, executor, authService, handler, loginHintResolver: () => Task.FromResult<string?>(null)) { }
 
         public override Task<bool> GraphPatchAsync(
             string tenantId,

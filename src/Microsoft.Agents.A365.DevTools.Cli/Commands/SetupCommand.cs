@@ -41,7 +41,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             FederatedCredentialService federatedCredentialService,
             IClientAppValidator clientAppValidator,
             IConfirmationProvider confirmationProvider,
-            ArmApiService? armApiService = null)
+            ArmApiService? armApiService = null,
+            IEnumerable<IRequirementCheck>? requirementChecksOverride = null)
         {
             var command = new Command("setup",
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
@@ -59,7 +60,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
-                logger, configService, authValidator, clientAppValidator));
+                logger, configService, authValidator, clientAppValidator, requirementChecksOverride));
 
             command.AddCommand(InfrastructureSubcommand.CreateCommand(
                 logger, configService, authValidator, platformDetector, executor));
