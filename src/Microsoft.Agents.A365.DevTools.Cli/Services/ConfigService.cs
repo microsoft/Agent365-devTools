@@ -570,7 +570,7 @@ public class ConfigService : IConfigService
         try
         {
             var json = await File.ReadAllTextAsync(configPath, ct);
-            using var doc = JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { AllowTrailingCommas = true });
             var root = doc.RootElement;
 
             root.TryGetProperty("tenantId", out var tenantIdEl);

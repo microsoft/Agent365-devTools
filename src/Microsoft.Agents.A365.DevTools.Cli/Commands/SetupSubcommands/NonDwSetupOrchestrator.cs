@@ -126,6 +126,10 @@ internal static class NonDwSetupOrchestrator
             .Where(char.IsLetterOrDigit)
             .ToArray());
 
+        // ACR names must start with a letter; prefix 'a' if the first char is a digit.
+        if (candidate.Length > 0 && !char.IsLetter(candidate[0]))
+            candidate = "a" + candidate;
+
         if (candidate.Length < 5)
             candidate = candidate.PadRight(5, '0');
 
