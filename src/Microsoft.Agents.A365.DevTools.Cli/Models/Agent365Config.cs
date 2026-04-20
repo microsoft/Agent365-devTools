@@ -36,17 +36,16 @@ public class Agent365Config
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         }
 
-        if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
-        if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
-
         if (NeedDeployment)
         {
+            if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
+            if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
             if (string.IsNullOrWhiteSpace(Location)) errors.Add("location is required.");
             if (string.IsNullOrWhiteSpace(AppServicePlanName)) errors.Add("appServicePlanName is required.");
             if (string.IsNullOrWhiteSpace(WebAppName)) errors.Add("webAppName is required.");
+            if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
         }
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
-        if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
 
         // Validate custom blueprint permissions
         if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)

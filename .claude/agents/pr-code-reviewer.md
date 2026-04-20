@@ -736,6 +736,25 @@ An HTTP call, token acquisition, subprocess spawn, or other expensive/network-de
   Alternatively, move the call into a `System.CommandLine` middleware so it runs lazily only when a command handler needs it.
 - **Real example** (`Program.cs`): `TryResolveClientAppIdAsync` was called unconditionally before `parser.InvokeAsync(args)`, causing a Graph API call + az token acquisition on every invocation including `a365 --help`. Fixed by guarding with `isHelpOrVersion`.
 
+### 25. Validation Rule Change in Model Not Mirrored in Service-Layer Validator
+
+When a required-field check is added, removed, or relaxed in a model's `Validate()` method, the same change is almost always needed in the service-level `ValidateAsync()` method — and vice versa. Failing to update both is the root cause of "fixed in one place but still broken in the other" bugs.
+
+- **Pattern to catch**:
+  - A diff removes (or adds) a `ValidateRequired(...)` call, or an `if (string.IsNullOrWhiteSpace(...))` guard, inside any `Validate()` method on a model class
+  - The diff does NOT also touch the service-level validator (`ConfigService.ValidateAsync`, or any method named `ValidateAsync` that takes the same model type)
+- **Severity**: `high` — the fix is incomplete; the rule will still fire (or fail to fire) via the other path
+- **Check**: For every model-level validation change in the diff, run `Grep` for the same field name + `"is required"` or `ValidateRequired` in `ConfigService.cs`. If the service-level validator has the same rule and the diff doesn't touch it, flag it.
+- **Fix**: Apply the same change in both validators, or — better — consolidate so `ConfigService.ValidateAsync` calls `config.Validate()` for required-field rules and only adds format checks on top:
+  ```csharp
+  // ConfigService.ValidateAsync — required-field rules delegated to the model
+  var errors = new List<string>(config.Validate());
+  // Format-only checks follow...
+  if (!string.IsNullOrWhiteSpace(config.TenantId))
+      ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
+  ```
+- **Real example**: Removing `"messagingEndpoint is required when needDeployment is 'no'."` from `Agent365Config.Validate()` without removing the parallel `ValidateRequired(config.MessagingEndpoint, ...)` call in `ConfigService.ValidateAsync`. The fix appeared in `Agent365ConfigTests.cs` and `Agent365Config.cs` but not in `ConfigService.cs`, so `a365 cleanup` still failed with `MessagingEndpoint is required` on bootstrap-path projects.
+
 ## Example Invocation
 
 When you receive a request like "Review PR #253", you should:

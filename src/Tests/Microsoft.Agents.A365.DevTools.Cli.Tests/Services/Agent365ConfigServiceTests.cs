@@ -56,6 +56,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var staticConfig = new
         {
             tenantId = "12345678-1234-1234-1234-123456789012",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "87654321-4321-4321-4321-210987654321",
             resourceGroup = "rg-test",
             location = "eastus",
@@ -91,6 +92,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var staticConfig = new
         {
             tenantId = "12345678-1234-1234-1234-123456789012",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "87654321-4321-4321-4321-210987654321",
             resourceGroup = "rg-test",
             location = "eastus",
@@ -330,6 +332,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var config = new Agent365Config
         {
             TenantId = "12345678-1234-1234-1234-123456789012",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             SubscriptionId = "87654321-4321-4321-4321-210987654321",
             ResourceGroup = "rg-test",
             Location = "eastus",
@@ -360,12 +363,12 @@ public class Agent365ConfigServiceTests : IDisposable
         // Act
         var result = await _service.ValidateAsync(config);
 
-        // Assert
+        // Assert — error messages use camelCase field names (from Agent365Config.Validate())
         Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, e => e.Contains("TenantId"));
-        Assert.Contains(result.Errors, e => e.Contains("SubscriptionId"));
-        Assert.Contains(result.Errors, e => e.Contains("ResourceGroup"));
-        Assert.Contains(result.Errors, e => e.Contains("Location"));
+        Assert.Contains(result.Errors, e => e.Contains("tenantId"));
+        Assert.Contains(result.Errors, e => e.Contains("subscriptionId"));
+        Assert.Contains(result.Errors, e => e.Contains("resourceGroup"));
+        Assert.Contains(result.Errors, e => e.Contains("location"));
     }
 
     [Fact]

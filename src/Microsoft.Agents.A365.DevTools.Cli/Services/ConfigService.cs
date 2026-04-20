@@ -384,34 +384,30 @@ public class ConfigService : IConfigService
     /// <inheritdoc />
     public async Task<ValidationResult> ValidateAsync(Agent365Config config)
     {
-        var errors = new List<string>();
+        // Required-field rules live in Agent365Config.Validate() — single source of truth.
+        var errors = new List<string>(config.Validate());
         var warnings = new List<string>();
 
-        ValidateRequired(config.TenantId, nameof(config.TenantId), errors);
-        ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
+        // Format-only checks — run only when the value is present (required-field errors already above).
+        if (!string.IsNullOrWhiteSpace(config.TenantId))
+            ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
 
         if (config.NeedDeployment)
         {
-            // Validate required static properties
-            ValidateRequired(config.SubscriptionId, nameof(config.SubscriptionId), errors);
-            ValidateRequired(config.ResourceGroup, nameof(config.ResourceGroup), errors);
-            ValidateRequired(config.Location, nameof(config.Location), errors);
-            ValidateRequired(config.AppServicePlanName, nameof(config.AppServicePlanName), errors);
-            ValidateRequired(config.WebAppName, nameof(config.WebAppName), errors);
-
-            // Validate GUID formats
-            ValidateGuid(config.SubscriptionId, nameof(config.SubscriptionId), errors);
-
-            // Validate Azure naming conventions
-            ValidateResourceGroupName(config.ResourceGroup, errors);
-            ValidateAppServicePlanName(config.AppServicePlanName, errors);
-            ValidateWebAppName(config.WebAppName, errors);
+            if (!string.IsNullOrWhiteSpace(config.SubscriptionId))
+                ValidateGuid(config.SubscriptionId, nameof(config.SubscriptionId), errors);
+            if (!string.IsNullOrWhiteSpace(config.ResourceGroup))
+                ValidateResourceGroupName(config.ResourceGroup, errors);
+            if (!string.IsNullOrWhiteSpace(config.AppServicePlanName))
+                ValidateAppServicePlanName(config.AppServicePlanName, errors);
+            if (!string.IsNullOrWhiteSpace(config.WebAppName))
+                ValidateWebAppName(config.WebAppName, errors);
         }
         else
         {
-            // Only validate bot messaging endpoint
-            ValidateRequired(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
-            ValidateUrl(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
+            // MessagingEndpoint is optional; if provided it must be a valid URL.
+            if (!string.IsNullOrWhiteSpace(config.MessagingEndpoint))
+                ValidateUrl(config.MessagingEndpoint, nameof(config.MessagingEndpoint), errors);
         }
 
         // Validate dynamic properties if they exist
@@ -849,14 +845,6 @@ public class ConfigService : IConfigService
     #endregion
 
     #region Validation Helpers
-
-    private void ValidateRequired(string? value, string propertyName, List<string> errors)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            errors.Add($"{propertyName} is required but was not provided.");
-        }
-    }
 
     private void ValidateGuid(string? value, string propertyName, List<string> errors)
     {
