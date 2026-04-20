@@ -117,7 +117,7 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --allowedTools Read,Edit,Write");
+            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --disallowedTools Bash,BashOutput,KillBash,WebFetch,WebSearch");
 
             var startInfo = new ProcessStartInfo
             {
@@ -152,7 +152,7 @@ internal class CodingAgentRunner
         var startInfo = new ProcessStartInfo
         {
             FileName = "claude",
-            Arguments = "-p - --model haiku --allowedTools Read,Edit,Write",
+            Arguments = "-p - --model haiku --disallowedTools Bash,BashOutput,KillBash,WebFetch,WebSearch",
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -184,15 +184,23 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            // Copilot CLI requires --allow-all-tools in non-interactive mode; individual
-            // --allow-tool flags are not honored without user prompts. To still keep the
-            // blast radius small we cap *what tools even exist* via --available-tools, so
-            // powershell / shell / web tools are hidden from the model entirely. The agent
-            // only sees view (read), edit (targeted string replace), and create (overwrite
-            // file). --no-ask-user prevents blocking on clarification it cannot resolve.
+            // Security model: allow the full tool set EXCEPT subprocess execution and
+            // outbound network. The agent can pick any read/write/search strategy
+            // against files in its sandboxed cwd, but cannot shell out, hit the web,
+            // or exfiltrate the checklist to an arbitrary URL. Copilot's shell tool is
+            // named `shell` on macOS/Linux and `powershell` on Windows (plus a family
+            // of session helpers); we deny every variant so the flag is correct on
+            // every platform. File access is already bounded by Copilot's default path
+            // verification to the current working directory, which is an isolated temp
+            // sandbox — so view/create/edit stay confined.
             var (fileName, fileArguments) = WrapForPlatform(
                 "copilot",
-                $"-p \"{metaPrompt}\" --model {CopilotModel} --allow-all-tools --available-tools=view,edit,create --no-ask-user");
+                $"-p \"{metaPrompt}\" --model {CopilotModel} --allow-all-tools " +
+                "--deny-tool=shell --deny-tool=write_shell --deny-tool=read_shell " +
+                "--deny-tool=stop_shell --deny-tool=list_shell " +
+                "--deny-tool=powershell --deny-tool=write_powershell --deny-tool=read_powershell " +
+                "--deny-tool=stop_powershell --deny-tool=list_powershell " +
+                "--deny-tool=web_fetch --deny-tool=web_search --no-ask-user");
 
             var startInfo = new ProcessStartInfo
             {

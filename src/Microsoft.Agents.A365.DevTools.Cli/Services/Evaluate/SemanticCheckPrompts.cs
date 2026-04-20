@@ -46,12 +46,10 @@ internal static class SemanticCheckPrompts
     }
 
     /// <summary>
-    /// Describes the tools an agent is allowed to use. Embedded into the prompt so the
-    /// agent doesn't have to guess what's available and doesn't pick a strategy that
-    /// will silently fail (e.g. many small string-replace edits that can't disambiguate
-    /// repeated patterns).
+    /// Concrete read/write tool names for the target coding agent. Embedded into
+    /// the prompt so the agent is told exactly what to use rather than guessing.
     /// </summary>
-    public sealed record AgentToolset(string ReadToolName, string WriteToolName, string? EditToolName = null);
+    public sealed record AgentToolset(string ReadToolName, string WriteToolName);
 
     /// <summary>
     /// Builds a prompt for evaluating a single tool's semantic checks.
@@ -130,25 +128,19 @@ internal static class SemanticCheckPrompts
 
     private static void AppendToolsetHeader(StringBuilder sb, AgentToolset toolset)
     {
-        sb.AppendLine("AVAILABLE TOOLS (use only these):");
-        sb.AppendLine($"  - `{toolset.ReadToolName}` — read a file.");
-        sb.AppendLine($"  - `{toolset.WriteToolName}` — write a file (overwrites existing). USE THIS to save your updates.");
-        if (!string.IsNullOrEmpty(toolset.EditToolName))
-        {
-            sb.AppendLine($"  - `{toolset.EditToolName}` — targeted string replacement. AVOID for this task");
-            sb.AppendLine("    (the repeating \"score\": null pattern is not unique, so replacements fail).");
-        }
-        sb.AppendLine("  No other tools (shell, web, etc.) are available.");
+        sb.AppendLine("TOOLS:");
+        sb.AppendLine($"  Your file-reading tool is `{toolset.ReadToolName}`; your file-writing tool is `{toolset.WriteToolName}`.");
+        sb.AppendLine("  Shell / subprocess tools are disabled. Do not try to spawn processes.");
         sb.AppendLine();
     }
 
     private static void AppendWriteStrategy(StringBuilder sb, AgentToolset toolset)
     {
-        sb.AppendLine("6. WRITE STRATEGY (important — choose correctly):");
-        sb.AppendLine($"   Compute all updates in one pass, then call `{toolset.WriteToolName}` ONCE with the full");
-        sb.AppendLine("   updated JSON to overwrite the file. Do not make multiple small edits — the");
-        sb.AppendLine("   repeating `\"score\": null, \"reason\": null` pattern is not unique across items,");
-        sb.AppendLine("   so string replacements will fail and leave checks unscored.");
+        sb.AppendLine("6. WRITE STRATEGY:");
+        sb.AppendLine($"   When you are done scoring, rewrite the ENTIRE file in one `{toolset.WriteToolName}`");
+        sb.AppendLine("   call with the full updated JSON. Do not make many small string-replace edits across");
+        sb.AppendLine("   the file — the repeating `\"score\": null, \"reason\": null` pattern is not unique");
+        sb.AppendLine("   across items, so targeted replacements may fail.");
     }
 
     private static void AppendInstructions(StringBuilder sb, string checklistPath)
@@ -279,6 +271,9 @@ internal static class SemanticCheckPrompts
     {
         sb.AppendLine("IMPORTANT RULES:");
         sb.AppendLine("- Only modify items where \"score\" is null. Leave all other items untouched.");
+        sb.AppendLine("- Every null-scored item MUST end up with score=true or score=false. Never leave");
+        sb.AppendLine("  score as null. If you are uncertain, default to true (pass) with a reason that");
+        sb.AppendLine("  explains why nothing problematic was observed. \"No issues identified\" = pass.");
         sb.AppendLine("- Each \"reason\" must be exactly one sentence.");
         sb.AppendLine("- Be calibrated: pass items that meet the check criteria, fail those that do not.");
         sb.AppendLine("- Use the tool's actual name, description, and input_schema from the JSON to evaluate.");
