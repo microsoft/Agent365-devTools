@@ -21,6 +21,11 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     // Engine priority order: always try Copilot first
     private static readonly EvalEngine[] EnginePriority = [EvalEngine.GitHubCopilot, EvalEngine.ClaudeCode];
 
+    // Per-scope (tool or server) the agent may leave some items unscored on a given
+    // pass, especially "pass if no issues" prompts the model hedges on. Re-invoke up
+    // to this many times; we stop as soon as everything is scored.
+    private const int MaxAttempts = 3;
+
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
     // Tolerant reader options: coding agents sometimes produce trailing commas or comments
@@ -194,43 +199,82 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var tempFile = Path.Combine(sandbox, $".eval_tool_{Guid.NewGuid():N}.json");
         try
         {
-            // Write just this tool to a small temp file
-            var toolJson = JsonSerializer.Serialize(tool, WriteOptions);
-            await File.WriteAllTextAsync(tempFile, toolJson, cancellationToken);
-
             var fullPath = Path.GetFullPath(tempFile);
-            var success = await TryEvaluateWithFallthrough(
-                engines,
-                tempFile,
-                engine => SemanticCheckPrompts.BuildToolEvaluationPrompt(fullPath, tool.Name, ToolsetFor(engine)),
-                CodingAgentRunner.PerToolTimeout,
-                cancellationToken);
+            bool anyAttemptSucceeded = false;
 
-            if (!success)
+            // Up to MaxAttempts agent passes. Each pass, we re-serialize the current
+            // tool state (with any scores merged from prior passes) so the agent only
+            // sees the items that are still null. Stops early once everything is scored.
+            for (int attempt = 1; attempt <= MaxAttempts; attempt++)
             {
-                return false;
-            }
+                var toolJson = JsonSerializer.Serialize(tool, WriteOptions);
+                await File.WriteAllTextAsync(tempFile, toolJson, cancellationToken);
 
-            // Re-read the evaluated tool and merge scores back.
-            // Coding agents sometimes produce slightly malformed JSON (missing commas, trailing commas).
-            var updatedJson = RepairJson(await File.ReadAllTextAsync(tempFile, cancellationToken));
-            var updatedTool = JsonSerializer.Deserialize<ToolChecklist>(updatedJson, ReadOptions);
+                var success = await TryEvaluateWithFallthrough(
+                    engines,
+                    tempFile,
+                    engine => SemanticCheckPrompts.BuildToolEvaluationPrompt(fullPath, tool.Name, ToolsetFor(engine)),
+                    CodingAgentRunner.PerToolTimeout,
+                    cancellationToken);
 
-            if (updatedTool is not null)
-            {
-                MergeScores(tool.Checks.ToolName, updatedTool.Checks.ToolName);
-                MergeScores(tool.Checks.ToolDescription, updatedTool.Checks.ToolDescription);
-                MergeScores(tool.Checks.SchemaStructure, updatedTool.Checks.SchemaStructure);
-                foreach (var (paramName, paramChecks) in tool.Checks.Parameters)
+                if (success)
                 {
-                    if (updatedTool.Checks.Parameters.TryGetValue(paramName, out var updatedParam))
+                    anyAttemptSucceeded = true;
+
+                    // Re-read the evaluated tool and merge scores back.
+                    // Coding agents sometimes produce slightly malformed JSON: missing
+                    // commas (handled by RepairJson), or structurally invalid items
+                    // where a check is an abbreviated object or wrong type. Those will
+                    // throw from Deserialize — treat as "agent made no usable progress
+                    // this attempt" and let the retry loop try again.
+                    try
                     {
-                        MergeScores(paramChecks.ParamName, updatedParam.ParamName);
-                        MergeScores(paramChecks.ParamDescription, updatedParam.ParamDescription);
+                        var updatedJson = RepairJson(await File.ReadAllTextAsync(tempFile, cancellationToken));
+                        var updatedTool = JsonSerializer.Deserialize<ToolChecklist>(updatedJson, ReadOptions);
+
+                        if (updatedTool is not null)
+                        {
+                            MergeScores(tool.Checks.ToolName, updatedTool.Checks.ToolName);
+                            MergeScores(tool.Checks.ToolDescription, updatedTool.Checks.ToolDescription);
+                            MergeScores(tool.Checks.SchemaStructure, updatedTool.Checks.SchemaStructure);
+                            foreach (var (paramName, paramChecks) in tool.Checks.Parameters)
+                            {
+                                if (updatedTool.Checks.Parameters.TryGetValue(paramName, out var updatedParam))
+                                {
+                                    MergeScores(paramChecks.ParamName, updatedParam.ParamName);
+                                    MergeScores(paramChecks.ParamDescription, updatedParam.ParamDescription);
+                                }
+                            }
+                        }
                     }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogDebug(ex,
+                            "Tool {ToolName}: attempt {Attempt} produced JSON that failed to deserialize (path: {Path}); will retry if attempts remain",
+                            tool.Name, attempt, ex.Path ?? "unknown");
+                    }
+                }
+                else if (!anyAttemptSucceeded)
+                {
+                    // First attempt failed at the subprocess level (no exit-0). Give up;
+                    // a retry would just repeat the same subprocess failure.
+                    return false;
+                }
+
+                if (CountUnevaluatedSemanticChecks(tool) == 0)
+                {
+                    return true;
+                }
+
+                if (attempt < MaxAttempts)
+                {
+                    _logger.LogDebug("Tool {ToolName}: attempt {Attempt} left {Count} check(s) unscored, retrying",
+                        tool.Name, attempt, CountUnevaluatedSemanticChecks(tool));
                 }
             }
 
+            // All MaxAttempts used; return true (agent ran) even if some checks remain null.
+            // The outer pipeline will detect unscored items and fall back to manual scoring.
             return true;
         }
         finally
@@ -253,42 +297,72 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var tempFile = Path.Combine(sandbox, $".eval_server_{Guid.NewGuid():N}.json");
         try
         {
-            // Build a lightweight object with tool summaries and server checks
-            var serverData = new
-            {
-                tool_summaries = checklist.Tools.Select(t => new { t.Name, t.Description }).ToList(),
-                server_checks = checklist.ServerChecks
-            };
-            var dataJson = JsonSerializer.Serialize(serverData, WriteOptions);
-            await File.WriteAllTextAsync(tempFile, dataJson, cancellationToken);
-
             var fullPath = Path.GetFullPath(tempFile);
-            var success = await TryEvaluateWithFallthrough(
-                engines,
-                tempFile,
-                engine => SemanticCheckPrompts.BuildServerChecksEvaluationPrompt(fullPath, ToolsetFor(engine)),
-                CodingAgentRunner.PerToolTimeout,
-                cancellationToken);
-
-            if (!success)
-            {
-                return false;
-            }
-
-            // Re-read and merge server check scores
-            var updatedJson = RepairJson(await File.ReadAllTextAsync(tempFile, cancellationToken));
+            bool anyAttemptSucceeded = false;
             var docOptions = new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
                 CommentHandling = JsonCommentHandling.Skip
             };
-            using var doc = JsonDocument.Parse(updatedJson, docOptions);
-            if (doc.RootElement.TryGetProperty("server_checks", out var checksElement))
+
+            for (int attempt = 1; attempt <= MaxAttempts; attempt++)
             {
-                var updatedChecks = JsonSerializer.Deserialize<List<ChecklistItem>>(checksElement.GetRawText(), ReadOptions);
-                if (updatedChecks is not null)
+                // Re-build the input each attempt so the agent sees the current
+                // (partially scored) state — previously-scored items are preserved.
+                var serverData = new
                 {
-                    MergeScores(checklist.ServerChecks, updatedChecks);
+                    tool_summaries = checklist.Tools.Select(t => new { t.Name, t.Description }).ToList(),
+                    server_checks = checklist.ServerChecks
+                };
+                var dataJson = JsonSerializer.Serialize(serverData, WriteOptions);
+                await File.WriteAllTextAsync(tempFile, dataJson, cancellationToken);
+
+                var success = await TryEvaluateWithFallthrough(
+                    engines,
+                    tempFile,
+                    engine => SemanticCheckPrompts.BuildServerChecksEvaluationPrompt(fullPath, ToolsetFor(engine)),
+                    CodingAgentRunner.PerToolTimeout,
+                    cancellationToken);
+
+                if (success)
+                {
+                    anyAttemptSucceeded = true;
+
+                    try
+                    {
+                        var updatedJson = RepairJson(await File.ReadAllTextAsync(tempFile, cancellationToken));
+                        using var doc = JsonDocument.Parse(updatedJson, docOptions);
+                        if (doc.RootElement.TryGetProperty("server_checks", out var checksElement))
+                        {
+                            var updatedChecks = JsonSerializer.Deserialize<List<ChecklistItem>>(checksElement.GetRawText(), ReadOptions);
+                            if (updatedChecks is not null)
+                            {
+                                MergeScores(checklist.ServerChecks, updatedChecks);
+                            }
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogDebug(ex,
+                            "Server checks: attempt {Attempt} produced JSON that failed to deserialize (path: {Path}); will retry if attempts remain",
+                            attempt, ex.Path ?? "unknown");
+                    }
+                }
+                else if (!anyAttemptSucceeded)
+                {
+                    return false;
+                }
+
+                var remaining = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
+                if (remaining == 0)
+                {
+                    return true;
+                }
+
+                if (attempt < MaxAttempts)
+                {
+                    _logger.LogDebug("Server checks: attempt {Attempt} left {Count} check(s) unscored, retrying",
+                        attempt, remaining);
                 }
             }
 
