@@ -21,7 +21,28 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 internal class CodingAgentRunner
 {
     internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(10);
-    internal static readonly TimeSpan PerToolTimeout = TimeSpan.FromMinutes(6);
+
+    // Observed on Copilot + Haiku: a tool evaluation needs ~60-90s of fixed overhead
+    // (CLI startup, session init, reading the checklist) plus ~12-15s per semantic
+    // check (read + reason + write). The constants below give each attempt enough
+    // headroom without being so long that an agent stuck in a loop stalls the run.
+    private static readonly TimeSpan PerToolBaseTimeout = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan PerCheckTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MinPerToolTimeout = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan MaxPerToolTimeout = TimeSpan.FromMinutes(20);
+
+    /// <summary>
+    /// Returns a per-attempt timeout scaled to the number of semantic checks the
+    /// agent has to score. Clamped to [<see cref="MinPerToolTimeout"/>,
+    /// <see cref="MaxPerToolTimeout"/>].
+    /// </summary>
+    internal static TimeSpan TimeoutForChecks(int checkCount)
+    {
+        var scaled = PerToolBaseTimeout + TimeSpan.FromSeconds(PerCheckTimeout.TotalSeconds * checkCount);
+        if (scaled < MinPerToolTimeout) return MinPerToolTimeout;
+        if (scaled > MaxPerToolTimeout) return MaxPerToolTimeout;
+        return scaled;
+    }
 
     private const string ClaudeCodeEnvVar = "CLAUDECODE";
 

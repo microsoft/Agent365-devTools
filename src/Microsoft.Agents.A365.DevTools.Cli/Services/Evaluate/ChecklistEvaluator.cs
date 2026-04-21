@@ -210,11 +210,15 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 var toolJson = JsonSerializer.Serialize(tool, WriteOptions);
                 await File.WriteAllTextAsync(tempFile, toolJson, cancellationToken);
 
+                // Scale the per-attempt timeout to the remaining work: a tool with
+                // 46 unscored checks legitimately needs longer than one with 18.
+                var perAttemptTimeout = CodingAgentRunner.TimeoutForChecks(CountUnevaluatedSemanticChecks(tool));
+
                 var success = await TryEvaluateWithFallthrough(
                     engines,
                     tempFile,
                     engine => SemanticCheckPrompts.BuildToolEvaluationPrompt(fullPath, tool.Name, ToolsetFor(engine)),
-                    CodingAgentRunner.PerToolTimeout,
+                    perAttemptTimeout,
                     cancellationToken);
 
                 if (success)
@@ -317,11 +321,14 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 var dataJson = JsonSerializer.Serialize(serverData, WriteOptions);
                 await File.WriteAllTextAsync(tempFile, dataJson, cancellationToken);
 
+                var serverRemaining = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
+                var perAttemptTimeout = CodingAgentRunner.TimeoutForChecks(serverRemaining);
+
                 var success = await TryEvaluateWithFallthrough(
                     engines,
                     tempFile,
                     engine => SemanticCheckPrompts.BuildServerChecksEvaluationPrompt(fullPath, ToolsetFor(engine)),
-                    CodingAgentRunner.PerToolTimeout,
+                    perAttemptTimeout,
                     cancellationToken);
 
                 if (success)
