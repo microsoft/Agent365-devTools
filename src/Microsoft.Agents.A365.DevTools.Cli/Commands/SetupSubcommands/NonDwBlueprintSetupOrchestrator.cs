@@ -205,7 +205,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Step 1: Requirements validation
                 if (!ctx.SkipRequirements)
                 {
-                    var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, includeInfrastructure: false, isBootstrap: ctx.IsBootstrap);
+                    var checks = AllSubcommand.GetNonDwChecks(ctx.AuthValidator, ctx.ClientAppValidator, isBootstrap: ctx.IsBootstrap);
                     try
                     {
                         await RequirementsSubcommand.RunChecksOrExitAsync(checks, ctx.Config, ctx.Logger, ctx.CancellationToken);

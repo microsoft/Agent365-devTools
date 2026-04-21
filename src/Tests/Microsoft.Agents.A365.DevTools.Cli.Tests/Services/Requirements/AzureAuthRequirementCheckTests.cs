@@ -67,23 +67,6 @@ public class AzureAuthRequirementCheckTests
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldPassSubscriptionIdToValidator()
-    {
-        // Arrange
-        var check = new AzureAuthRequirementCheck(_mockAuthValidator);
-        var config = new Agent365Config();
-
-        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns(true);
-
-        // Act
-        await check.CheckAsync(config, _mockLogger);
-
-        // Assert
-        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync(null, Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
     public async Task CheckAsync_WhenNoSubscriptionInConfig_ShouldPassNullToValidator()
     {
         // Arrange
