@@ -56,6 +56,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var staticConfig = new
         {
             tenantId = "12345678-1234-1234-1234-123456789012",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "87654321-4321-4321-4321-210987654321",
             resourceGroup = "rg-test",
             location = "eastus",
@@ -91,6 +92,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var staticConfig = new
         {
             tenantId = "12345678-1234-1234-1234-123456789012",
+            clientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             subscriptionId = "87654321-4321-4321-4321-210987654321",
             resourceGroup = "rg-test",
             location = "eastus",
@@ -280,45 +282,32 @@ public class Agent365ConfigServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveStateAsync_SavesGloballyWhenNoStaticConfigExists()
+    public async Task SaveStateAsync_SavesLocallyEvenWhenNoStaticConfigExists()
     {
-        // Arrange - Use a directory without a static config
+        // Global config directory fallback was removed — SaveStateAsync always writes
+        // to the current directory regardless of whether a static config exists there.
         var tempDir = Path.Combine(Path.GetTempPath(), $"agent365-noproj-{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
-        
+
         try
         {
             var originalDir = Environment.CurrentDirectory;
             Environment.CurrentDirectory = tempDir;
-            
+
             try
             {
-                // Create a config to save
                 var config = new Agent365Config { TenantId = "12345678-1234-1234-1234-123456789012" };
                 config.AgentBlueprintId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
 
-                // Get global config path
-                var globalDir = ConfigService.GetGlobalConfigDirectory();
-                var globalStatePath = Path.Combine(globalDir, ConfigConstants.DefaultStateFileName);
-                
-                // Delete global state if it exists to ensure clean test
-                if (File.Exists(globalStatePath))
-                {
-                    File.Delete(globalStatePath);
-                }
-
-                // Act - Save state (should go to global directory, NOT local)
+                // Act
                 await _service.SaveStateAsync(config, ConfigConstants.DefaultStateFileName);
 
-                // Assert - State should be saved globally
-                Assert.True(File.Exists(globalStatePath), "Global state file should exist when no local config present");
-                
-                var globalContent = await File.ReadAllTextAsync(globalStatePath);
-                Assert.Contains("bbbbbbbb-cccc-dddd-eeee-ffffffffffff", globalContent);
-
-                // Assert - State should NOT be saved to current directory
+                // Assert — state is always saved to the current directory
                 var localStatePath = Path.Combine(tempDir, ConfigConstants.DefaultStateFileName);
-                Assert.False(File.Exists(localStatePath), "Local state file should NOT exist when no static config present");
+                Assert.True(File.Exists(localStatePath),
+                    "State file should always be saved to the current directory");
+                var content = await File.ReadAllTextAsync(localStatePath);
+                Assert.Contains("bbbbbbbb-cccc-dddd-eeee-ffffffffffff", content);
             }
             finally
             {
@@ -328,9 +317,7 @@ public class Agent365ConfigServiceTests : IDisposable
         finally
         {
             if (Directory.Exists(tempDir))
-            {
                 Directory.Delete(tempDir, recursive: true);
-            }
         }
     }
 
@@ -345,6 +332,7 @@ public class Agent365ConfigServiceTests : IDisposable
         var config = new Agent365Config
         {
             TenantId = "12345678-1234-1234-1234-123456789012",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             SubscriptionId = "87654321-4321-4321-4321-210987654321",
             ResourceGroup = "rg-test",
             Location = "eastus",
@@ -375,12 +363,12 @@ public class Agent365ConfigServiceTests : IDisposable
         // Act
         var result = await _service.ValidateAsync(config);
 
-        // Assert
+        // Assert — error messages use camelCase field names (from Agent365Config.Validate())
         Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, e => e.Contains("TenantId"));
-        Assert.Contains(result.Errors, e => e.Contains("SubscriptionId"));
-        Assert.Contains(result.Errors, e => e.Contains("ResourceGroup"));
-        Assert.Contains(result.Errors, e => e.Contains("Location"));
+        Assert.Contains(result.Errors, e => e.Contains("tenantId"));
+        Assert.Contains(result.Errors, e => e.Contains("subscriptionId"));
+        Assert.Contains(result.Errors, e => e.Contains("resourceGroup"));
+        Assert.Contains(result.Errors, e => e.Contains("location"));
     }
 
     [Fact]

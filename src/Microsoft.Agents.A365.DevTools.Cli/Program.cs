@@ -162,8 +162,8 @@ class Program
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
@@ -199,6 +199,23 @@ class Program
                         context.ExitCode = 1;
                     }
                 });
+
+            // Validate the configured clientAppId still exists in the tenant before any command runs.
+            // If not found, falls back to the well-known display name and patches a365.config.json.
+            // Skip for help/version requests — these never make Graph calls and must work offline.
+            var isHelpOrVersion = args.Length == 0
+                || args.Any(a => a is "--help" or "-h" or "--version");
+            if (!isHelpOrVersion)
+            {
+                try
+                {
+                    await configService.TryResolveClientAppIdAsync(graphApiService);
+                }
+                catch (Exception ex)
+                {
+                    startupLogger.LogDebug(ex, "Client app ID pre-resolution skipped: {Message}", ex.Message);
+                }
+            }
 
             var parser = builder.Build();
             return await parser.InvokeAsync(args);

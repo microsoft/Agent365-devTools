@@ -24,6 +24,19 @@ public static class ProjectSettingsSyncHelper
     // Messaging Bot API Application GUID
     private const string DEFAULT_SERVICE_CONNECTION_SCOPE = $"{ConfigConstants.MessagingBotApiAppId}/.default";
 
+    /// <summary>
+    /// Overload that accepts a pre-built config (e.g. from ctx.Config in the setup orchestrator)
+    /// so that in-memory values such as AgentDescription and AgentIdentityDisplayName derived
+    /// from --agent-name are not lost when the config is reloaded from disk.
+    /// </summary>
+    public static Task ExecuteAsync(
+        string a365ConfigPath,
+        Agent365Config config,
+        PlatformDetector platformDetector,
+        ILogger logger)
+        => ExecuteAsyncCore(a365ConfigPath, config, platformDetector, logger);
+
+
     public static async Task ExecuteAsync(
         string a365ConfigPath,
         string a365GeneratedPath,
@@ -35,14 +48,32 @@ public static class ProjectSettingsSyncHelper
         if (!File.Exists(a365GeneratedPath))
             throw new FileNotFoundException("a365.generated.config.json not found", a365GeneratedPath);
 
-        // Load merged config via ConfigService
         var pkgConfig = await configService.LoadAsync(a365ConfigPath, a365GeneratedPath);
+        await ExecuteAsync(a365ConfigPath, pkgConfig, platformDetector, logger);
+    }
 
+    private static async Task ExecuteAsyncCore(
+        string a365ConfigPath,
+        Agent365Config pkgConfig,
+        PlatformDetector platformDetector,
+        ILogger logger
+    )
+    {
         var project = pkgConfig.DeploymentProjectPath;
         if (string.IsNullOrWhiteSpace(project) || !Directory.Exists(project))
         {
-            logger.LogWarning("deploymentProjectPath is not set or does not exist in a365.config.json; skipping project settings sync.");
-            return;
+            // Fall back to the directory of the config file (bootstrap mode: no deploymentProjectPath).
+            var configDir = Path.GetDirectoryName(Path.GetFullPath(a365ConfigPath));
+            if (!string.IsNullOrWhiteSpace(configDir) && Directory.Exists(configDir))
+            {
+                project = configDir;
+                logger.LogDebug("deploymentProjectPath not configured; using config directory: {Path}", project);
+            }
+            else
+            {
+                logger.LogWarning("deploymentProjectPath is not set or does not exist in a365.config.json; skipping project settings sync.");
+                return;
+            }
         }
 
         // Detect platform type (DotNet -> NodeJs -> Python -> Unknown)
@@ -99,7 +130,7 @@ public static class ProjectSettingsSyncHelper
             }
         }
 
-        logger.LogInformation("Stamped TenantId, ServiceConnection, and AgentBlueprint settings into {ProjectPath}", project);
+        logger.LogInformation("Stamped TenantId, ServiceConnection, AgentBlueprint, and Agent365Observability settings into {ProjectPath}", project);
     }
 
     /// <summary>
@@ -475,15 +506,32 @@ public static class ProjectSettingsSyncHelper
 
         // -- Agent365Observability --
         root["EnableAgent365Exporter"] ??= false;
-        var obsSection = RequireObj(root, "Agent365Observability");
-        if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
+        var obsAgentId = ResolveObservabilityAgentId(pkgConfig);
+        if (!string.IsNullOrWhiteSpace(obsAgentId) || !string.IsNullOrWhiteSpace(pkgConfig.TenantId))
         {
-            obsSection["AgentBlueprintId"] = pkgConfig.AgentBlueprintId;
+            var obs = RequireObj(root, "Agent365Observability");
+            if (!string.IsNullOrWhiteSpace(obsAgentId))
+                obs["AgentId"] = obsAgentId;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentIdentityDisplayName))
+                obs["AgentName"] = pkgConfig.AgentIdentityDisplayName;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentDescription))
+                obs["AgentDescription"] = pkgConfig.AgentDescription;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
+                obs["TenantId"] = pkgConfig.TenantId;
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintId))
+            {
+                obs["AgentBlueprintId"] = pkgConfig.AgentBlueprintId;
+                obs["ClientId"] = pkgConfig.AgentBlueprintId;
+            }
+            if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
+            {
+                var obsSecret = SecretProtectionHelper.UnprotectSecret(
+                    pkgConfig.AgentBlueprintClientSecret,
+                    pkgConfig.AgentBlueprintClientSecretProtected,
+                    logger);
+                obs["ClientSecret"] = obsSecret;
+            }
         }
-        if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
-            obsSection["TenantId"] = pkgConfig.TenantId;
-        obsSection["AgentName"]        ??= "";
-        obsSection["AgentDescription"] ??= "";
 
         var updated = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(appsettingsPath, updated, new UTF8Encoding(false));
@@ -540,6 +588,20 @@ public static class ProjectSettingsSyncHelper
 
         // --- Agent365 Observability ---
         Set("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
+        Set("AGENT365OBSERVABILITY__AGENTID", ResolveObservabilityAgentId(pkgConfig));
+        Set("AGENT365OBSERVABILITY__AGENTNAME", pkgConfig.AgentIdentityDisplayName);
+        Set("AGENT365OBSERVABILITY__AGENTDESCRIPTION", pkgConfig.AgentDescription);
+        Set("AGENT365OBSERVABILITY__TENANTID", pkgConfig.TenantId);
+        Set("AGENT365OBSERVABILITY__AGENTBLUEPRINTID", pkgConfig.AgentBlueprintId);
+        Set("AGENT365OBSERVABILITY__CLIENTID", pkgConfig.AgentBlueprintId);
+        if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
+        {
+            var obsSecretPy = SecretProtectionHelper.UnprotectSecret(
+                pkgConfig.AgentBlueprintClientSecret,
+                pkgConfig.AgentBlueprintClientSecretProtected,
+                logger);
+            Set("AGENT365OBSERVABILITY__CLIENTSECRET", obsSecretPy);
+        }
 
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }
@@ -595,9 +657,32 @@ public static class ProjectSettingsSyncHelper
 
         // --- Agent365 Observability ---
         Set("ENABLE_A365_OBSERVABILITY_EXPORTER", "false");
+        Set("agent365Observability__agentId", ResolveObservabilityAgentId(pkgConfig));
+        Set("agent365Observability__agentName", pkgConfig.AgentIdentityDisplayName);
+        Set("agent365Observability__agentDescription", pkgConfig.AgentDescription);
+        Set("agent365Observability__tenantId", pkgConfig.TenantId);
+        Set("agent365Observability__agentBlueprintId", pkgConfig.AgentBlueprintId);
+        Set("agent365Observability__clientId", pkgConfig.AgentBlueprintId);
+        if (!string.IsNullOrWhiteSpace(pkgConfig.AgentBlueprintClientSecret))
+        {
+            var obsSecretNode = SecretProtectionHelper.UnprotectSecret(
+                pkgConfig.AgentBlueprintClientSecret,
+                pkgConfig.AgentBlueprintClientSecretProtected,
+                logger);
+            Set("agent365Observability__clientSecret", obsSecretNode);
+        }
 
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }
+
+    /// <summary>
+    /// Returns the Agent Identity app ID (non-DW) or the Blueprint app ID (DW) for use
+    /// as the <c>AgentId</c> field in the <c>Agent365Observability</c> config section.
+    /// </summary>
+    private static string? ResolveObservabilityAgentId(Agent365Config pkgConfig) =>
+        !string.IsNullOrWhiteSpace(pkgConfig.AgenticAppId)
+            ? pkgConfig.AgenticAppId
+            : pkgConfig.AgentBlueprintId;
 
     private static string EscapeEnv(string value)
     {

@@ -85,13 +85,13 @@ public static class InfrastructureSubcommand
                 logger.LogInformation("  - Managed Service Identity: Enabled");
                 
                 // Detect platform (even in dry-run for informational purposes)
-                if (!string.IsNullOrWhiteSpace(dryRunConfig.DeploymentProjectPath))
-                {
-                    var detectedPlatform = platformDetector.Detect(dryRunConfig.DeploymentProjectPath);
-                    var detectedRuntime = await GetLinuxFxVersionForPlatformAsync(detectedPlatform, dryRunConfig.DeploymentProjectPath, executor, logger);
-                    logger.LogInformation("  - Detected Platform: {Platform}", detectedPlatform);
-                    logger.LogInformation("  - Runtime: {Runtime}", detectedRuntime);
-                }
+                var dryRunProjectPath = string.IsNullOrWhiteSpace(dryRunConfig.DeploymentProjectPath)
+                    ? Environment.CurrentDirectory
+                    : dryRunConfig.DeploymentProjectPath;
+                var detectedPlatform = platformDetector.Detect(dryRunProjectPath);
+                var detectedRuntime = await GetLinuxFxVersionForPlatformAsync(detectedPlatform, dryRunProjectPath, executor, logger);
+                logger.LogInformation("  - Detected Platform: {Platform}", detectedPlatform);
+                logger.LogInformation("  - Runtime: {Runtime}", detectedRuntime);
                 
                 return;
             }
@@ -189,55 +189,40 @@ public static class InfrastructureSubcommand
                 return (false, false);
             }
         }
-        else
-        {
-            // Non-Azure hosting or --blueprint: no infra required
-            if (string.IsNullOrWhiteSpace(subscriptionId))
-            {
-                logger.LogWarning(
-                    "subscriptionId is not set. This is acceptable for blueprint-only or External hosting mode " +
-                    "as Azure infrastructure will not be provisioned.");
-            }
-        }
 
         // Detect project platform for appropriate runtime configuration
-        var platform = Models.ProjectPlatform.DotNet; // Default fallback
-        if (!string.IsNullOrWhiteSpace(deploymentProjectPath))
-        {
-            platform = platformDetector.Detect(deploymentProjectPath);
-            logger.LogInformation("Detected project platform: {Platform}", platform);
-        }
-        else
-        {
-            logger.LogWarning("No deploymentProjectPath specified, defaulting to .NET runtime");
-        }
-        logger.LogInformation("");
-
-        logger.LogInformation("Agent 365 Setup Infrastructure - Starting...");
-        logger.LogInformation("Subscription: {Sub}", subscriptionId);
-        logger.LogInformation("Resource Group: {RG}", resourceGroup);
-        logger.LogInformation("App Service Plan: {Plan}", planName);
-        logger.LogInformation("Web App: {App}", webAppName);
-        logger.LogInformation("Location: {Loc}", location);
+        var effectiveProjectPath = string.IsNullOrWhiteSpace(deploymentProjectPath)
+            ? Environment.CurrentDirectory
+            : deploymentProjectPath;
+        var platform = platformDetector.Detect(effectiveProjectPath);
+        logger.LogInformation("Detected project platform: {Platform}", platform);
         logger.LogInformation("");
 
         if (!skipInfra)
         {
+            logger.LogInformation("Agent 365 Setup Infrastructure - Starting...");
+            using (logger.Indent())
+            {
+                logger.LogInformation("Subscription: {Sub}", subscriptionId);
+                logger.LogInformation("Resource Group: {RG}", resourceGroup);
+                if (!string.IsNullOrWhiteSpace(planName))
+                    logger.LogInformation("App Service Plan: {Plan}", planName);
+                if (!string.IsNullOrWhiteSpace(webAppName))
+                    logger.LogInformation("Web App: {App}", webAppName);
+                logger.LogInformation("Location: {Loc}", location);
+            }
+            logger.LogInformation("");
+
             bool isValidated = await ValidateAzureCliAuthenticationAsync(
-            commandExecutor,
-            tenantId,
-            logger,
-            cancellationToken);
+                commandExecutor,
+                tenantId,
+                logger,
+                cancellationToken);
 
             if (!isValidated)
             {
                 return (false, false);
             }
-        }
-        else
-        {
-            logger.LogInformation("==> Skipping Azure management authentication (--skipInfrastructure or External hosting)");
-            logger.LogInformation("");
         }
 
         var (principalId, anyAlreadyExisted) = await CreateInfrastructureAsync(
@@ -250,7 +235,7 @@ public static class InfrastructureSubcommand
             planSku,
             webAppName,
             generatedConfigPath,
-            deploymentProjectPath,
+            effectiveProjectPath,
             platform,
             logger,
             needDeployment,
@@ -272,8 +257,7 @@ public static class InfrastructureSubcommand
         ILogger logger,
         CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("==> Verifying Azure CLI authentication");
-        logger.LogInformation("");
+        logger.LogInformation("Verifying Azure CLI authentication...");
 
         // Use cached login hint from AzCliHelper (populated by requirements check).
         // Falls back to spawning 'az account show' only on first call in this process.
@@ -339,11 +323,8 @@ public static class InfrastructureSubcommand
 
         if (skipInfra)
         {
-            var modeMessage = "External hosting (non-Azure)";
-
-            logger.LogInformation("==> Skipping Azure infrastructure ({Mode})", modeMessage);
-            logger.LogInformation("");
-            logger.LogInformation("Loading existing configuration...");
+            logger.LogInformation("Skipping infrastructure setup — no Azure deployment configured.");
+            logger.LogDebug("Loading existing configuration...");
 
             // Load existing generated config if available
             if (File.Exists(generatedConfigPath))
@@ -356,7 +337,7 @@ public static class InfrastructureSubcommand
                     {
                         // Only reuse MSI in blueprint-only mode
                         principalId = existingPrincipalId?.GetValue<string>();
-                        logger.LogInformation("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
+                        logger.LogDebug("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
                     }
                     else if (externalHosting)
                     {
@@ -366,25 +347,18 @@ public static class InfrastructureSubcommand
                         principalId = null;
                     }
 
-                    logger.LogInformation("Existing configuration loaded successfully");
+                    logger.LogDebug("Existing configuration loaded successfully");
                 }
                 catch (Exception ex)
                 {
                     logger.LogWarning("Could not load existing config: {Message}. Starting fresh.", ex.Message);
                 }
             }
-            else
-            {
-                logger.LogInformation("No existing configuration found - blueprint will be created without managed identity");
-            }
-
-            logger.LogInformation("");
             return (principalId, false); // Skip infra means nothing was created/modified
         }
         else
         {
-            logger.LogInformation("==> Deploying App Service + enabling Managed Identity");
-            logger.LogInformation("");
+            logger.LogInformation("Deploying App Service and enabling Managed Identity...");
 
             // Resource group
             // Use ArmApiService for a direct HTTP check (~0.5s) instead of az subprocess (~15-20s).

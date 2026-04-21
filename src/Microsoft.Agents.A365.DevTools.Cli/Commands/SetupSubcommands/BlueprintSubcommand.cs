@@ -228,8 +228,9 @@ internal static class BlueprintSubcommand
                 }
                 catch (Exception reqEx) when (reqEx is not OperationCanceledException && reqEx is not CleanExitException)
                 {
-                    logger.LogError(reqEx, "Requirements check failed with an unexpected error: {Message}", reqEx.Message);
-                    logger.LogError("If you want to bypass requirement validation, rerun this command with the --skip-requirements flag.");
+                    logger.LogError("Requirements check failed: {Message}", reqEx.Message);
+                    logger.LogDebug(reqEx, "Requirements check exception details");
+                    logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
                     ExceptionHandler.ExitWithCleanup(1);
                 }
             }
@@ -346,8 +347,7 @@ internal static class BlueprintSubcommand
         Func<Task<string?>>? loginHintResolver = null)
     {
         logger.LogInformation("");
-        logger.LogInformation("==> Creating Agent Blueprint");
-        logger.LogInformation("");
+        logger.LogInformation("Creating agent blueprint...");
 
         var generatedConfigPath = Path.Combine(
             config.DirectoryName ?? Environment.CurrentDirectory,
@@ -366,7 +366,7 @@ internal static class BlueprintSubcommand
                 if (generatedConfig.TryGetPropertyValue("managedIdentityPrincipalId", out var existingPrincipalId))
                 {
                     principalId = existingPrincipalId?.GetValue<string>();
-                    logger.LogInformation("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
+                    logger.LogDebug("Found existing Managed Identity Principal ID: {Id}", principalId ?? "(none)");
                 }
             }
             catch (Exception ex)
@@ -376,13 +376,16 @@ internal static class BlueprintSubcommand
         }
         else
         {
-            logger.LogInformation("No existing configuration found - blueprint will be created without managed identity");
+            logger.LogDebug("No existing configuration found - blueprint will be created without managed identity");
         }
 
-        // Create required services
+        using var blueprintOuterScope = logger.Indent();
+
+        // Create required services.
+        // Pass the caller's logger so consent messages appear in the correct indent scope.
         var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
         var delegatedConsentService = new DelegatedConsentService(
-            cleanLoggerFactory.CreateLogger<DelegatedConsentService>(),
+            logger,
             new GraphApiService(
                 cleanLoggerFactory.CreateLogger<GraphApiService>(),
                 executor,
@@ -452,12 +455,11 @@ internal static class BlueprintSubcommand
 
         if (!blueprintResult.success)
         {
-            logger.LogError("Failed to create agent blueprint");
-            return new BlueprintCreationResult 
-            { 
-                BlueprintCreated = false, 
-                EndpointRegistered = false, 
-                EndpointRegistrationAttempted = false 
+            return new BlueprintCreationResult
+            {
+                BlueprintCreated = false,
+                EndpointRegistered = false,
+                EndpointRegistrationAttempted = false
             };
         }
 
@@ -540,17 +542,9 @@ internal static class BlueprintSubcommand
             clientSecretManualActionRequired = !secretCreated;
         }
 
+        blueprintOuterScope.Dispose();
         logger.LogInformation("");
-        if (blueprintAlreadyExisted)
-        {
-            logger.LogInformation("Agent blueprint configured successfully");
-        }
-        else
-        {
-            logger.LogInformation("Agent blueprint created successfully");
-        }
-        logger.LogInformation("Generated config saved: {Path}", generatedConfigPath);
-        logger.LogInformation("");
+        logger.LogDebug("Generated config saved: {Path}", generatedConfigPath);
 
         // Endpoint registration is temporarily disabled pending a backend fix.
         // Re-enable by restoring the registration block here and in the --endpoint-only / --update-endpoint
@@ -584,17 +578,8 @@ internal static class BlueprintSubcommand
         if (!isSetupAll)
         {
             logger.LogInformation("Next steps:");
-            if (!endpointRegistered)
-            {
-                logger.LogInformation("  1. Register endpoint: a365 setup blueprint --endpoint-only");
-                logger.LogInformation("  2. Run 'a365 setup permissions mcp' to configure MCP permissions");
-                logger.LogInformation("  3. Run 'a365 setup permissions bot' to configure Bot API permissions");
-            }
-            else
-            {
-                logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
-                logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
-            }
+            logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
+            logger.LogInformation("  2. Run 'a365 setup permissions bot' to configure Bot API permissions");
         }
 
         return new BlueprintCreationResult
@@ -627,15 +612,17 @@ internal static class BlueprintSubcommand
         CancellationToken cancellationToken = default,
         string? correlationId = null)
     {
-        // Fast fail on invalid config — avoids multiple retry attempts with exponential backoff
+        // Fast fail on invalid config — these are configuration errors, not transient failures.
+        // Retrying would waste 35+ seconds with no chance of success.
         if (!Guid.TryParse(clientAppId, out _))
         {
-            logger.LogError("Invalid Client App ID format: {AppId} — skipping consent", clientAppId ?? "(null)");
+            logger.LogError("Invalid Client App ID format: {AppId}. Configure a valid GUID in a365.config.json.", clientAppId ?? "(null)");
             return false;
         }
+
         if (!Guid.TryParse(tenantId, out _))
         {
-            logger.LogError("Invalid Tenant ID format: {TenantId} — skipping consent", tenantId ?? "(null)");
+            logger.LogError("Invalid Tenant ID format: {TenantId}. Configure a valid GUID in a365.config.json.", tenantId ?? "(null)");
             return false;
         }
 
@@ -849,7 +836,8 @@ internal static class BlueprintSubcommand
         // ========================================================================
         try
         {
-            logger.LogInformation("Creating Agent Blueprint using Microsoft Graph SDK...");
+            logger.LogInformation("Creating blueprint application...");
+            using var blueprintAppScope = logger.Indent();
 
             using GraphServiceClient graphClient = await GetAuthenticatedGraphClientAsync(logger, setupConfig, tenantId, ct);
 
@@ -897,12 +885,14 @@ internal static class BlueprintSubcommand
             var blueprintLoginHint = loginHintResolver != null
                 ? await loginHintResolver()
                 : await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
-            // Use Application.ReadWrite.All explicitly — NOT .default. Using .default bundles all
-            // consented scopes including AgentIdentityBlueprint.*, which Entra rejects for
-            // POST /v1.0/servicePrincipals ("backing application must be in the local tenant").
-            logger.LogDebug("Acquiring blueprint httpClient token — scope: Application.ReadWrite.All, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
+            // Explicit scopes — NOT .default. Using .default bundles all consented scopes including
+            // AgentIdentityBlueprint.*, which Entra rejects for POST /v1.0/servicePrincipals
+            // ("backing application must be in the local tenant").
+            // AgentIdentityBlueprintPrincipal.Create is the correct scope per Agent ID team (Kyle Marsh).
+            logger.LogDebug("Acquiring blueprint httpClient token — scope: AgentIdentityBlueprintPrincipal.Create, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
             var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct,
-                scope: AuthenticationConstants.ApplicationReadWriteAllScope, loginHint: blueprintLoginHint);
+                scope: AuthenticationConstants.AgentIdentityBlueprintPrincipalCreateScope,
+                loginHint: blueprintLoginHint);
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
@@ -916,11 +906,10 @@ internal static class BlueprintSubcommand
 
             var createAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/beta/applications";
 
-            logger.LogInformation("Creating Agent Blueprint application...");
-            logger.LogInformation("  - Display Name: {DisplayName}", displayName);
+            logger.LogInformation("Display Name: {DisplayName}", displayName);
             if (!string.IsNullOrEmpty(sponsorUserId))
             {
-                logger.LogInformation("  - Sponsor and Owner: User ID {UserId}", sponsorUserId);
+                logger.LogInformation("Sponsor and Owner: User ID {UserId}", sponsorUserId);
             }
 
             var appResponse = await httpClient.PostAsync(
@@ -970,7 +959,7 @@ internal static class BlueprintSubcommand
                                 return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
                             }
 
-                            logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation will fail unless the custom client app has Application.ReadWrite.All permission or you have Application Administrator role in your Entra tenant.");
+                            logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation may fail — ensure you have Application Administrator role or the blueprint owner is set correctly.");
                         }
                         else
                         {
@@ -994,9 +983,13 @@ internal static class BlueprintSubcommand
             var appId = app["appId"]!.GetValue<string>();
             var objectId = app["id"]!.GetValue<string>();
 
-            logger.LogInformation("Application created successfully");
-            logger.LogInformation("  Blueprint ID: {AppId}", appId);
-            logger.LogDebug("  Object ID: {ObjectId}", objectId);
+            blueprintAppScope.Dispose();
+            logger.LogInformation("Blueprint application created successfully");
+            using (logger.Indent())
+            {
+                logger.LogInformation("Blueprint ID: {AppId}", appId);
+                logger.LogDebug("Object ID: {ObjectId}", objectId);
+            }
 
             // Wait for application propagation using RetryHelper
             var retryHelper = new RetryHelper(logger);
@@ -1020,12 +1013,28 @@ internal static class BlueprintSubcommand
             
             logger.LogDebug("Application object verified in directory");
 
-            // Update application with identifier URI
+            // Update application with identifier URI and expose the access_agent_as_user scope
+            // so callers can acquire tokens scoped to this blueprint via the OBO flow.
             var identifierUri = $"api://{appId}";
             var patchAppUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{objectId}";
             var patchBody = new JsonObject
             {
-                ["identifierUris"] = new JsonArray { identifierUri }
+                ["identifierUris"] = new JsonArray { identifierUri },
+                ["api"] = new JsonObject
+                {
+                    ["oauth2PermissionScopes"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["adminConsentDescription"] = "Allow the agent to act on behalf of the signed-in user.",
+                            ["adminConsentDisplayName"] = "Access agent on behalf of user",
+                            ["id"] = Guid.NewGuid().ToString(),
+                            ["isEnabled"] = true,
+                            ["type"] = "User",
+                            ["value"] = Constants.ConfigConstants.BlueprintOboScope
+                        }
+                    }
+                }
             };
 
             var patchResponse = await httpClient.PatchAsync(
@@ -1037,28 +1046,34 @@ internal static class BlueprintSubcommand
             {
                 var patchError = await patchResponse.Content.ReadAsStringAsync(ct);
                 logger.LogDebug("Waiting for application propagation before setting identifier URI...");
-                logger.LogDebug("Identifier URI update deferred (propagation delay): {Error}", patchError);
+                logger.LogDebug("Identifier URI / scope update deferred (propagation delay): {Error}", patchError);
             }
             else
             {
-                logger.LogDebug("Identifier URI set to: {Uri}", identifierUri);
+                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
             }
 
             // Create service principal
             // Retry on 400 NoBackingApplicationObject: Agent Blueprint apps may not yet be indexed
             // by appId in all Graph API replicas even after the application object is visible by
             // objectId. Retry with backoff until the appId index is replicated.
-            logger.LogInformation("Creating service principal...");
+            logger.LogInformation("");
+            logger.LogInformation("Creating blueprint service principal...");
             string? servicePrincipalId = await CreateServicePrincipalAsync(appId, httpClient, retryHelper, logger, ct);
             if (string.IsNullOrWhiteSpace(servicePrincipalId))
             {
                 logger.LogError("Service principal creation failed after retries");
             }
+            else
+            {
+                using (logger.Indent())
+                    logger.LogInformation("Blueprint service principal ID: {SpId}", servicePrincipalId);
+            }
 
             // Wait for service principal propagation using RetryHelper
             if (!string.IsNullOrWhiteSpace(servicePrincipalId))
             {
-                logger.LogInformation("Verifying service principal propagation in directory...");
+                logger.LogDebug("Verifying blueprint service principal...");
                 var spPropagated = await retryHelper.ExecuteWithRetryAsync(
                     async ct =>
                     {
@@ -1121,7 +1136,7 @@ internal static class BlueprintSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to create agent blueprint: {Message}", ex.Message);
+            logger.LogDebug(ex, "Blueprint creation failed: {Message}", ex.Message);
             return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
         }
     }
@@ -1301,9 +1316,17 @@ internal static class BlueprintSubcommand
         }
 
         // ========================================================================
+        // OBO Scope Reconciliation
+        // Ensure the blueprint exposes access_agent_as_user. Idempotent — skipped
+        // when the scope is already present. Runs for both new and existing blueprints
+        // so that re-runs of setup patch blueprints created before this feature.
+        // ========================================================================
+        await EnsureOboScopeAsync(graphApiService, tenantId, objectId, logger, ct);
+
+        // ========================================================================
         // Federated Identity Credential Validation/Creation
         // ========================================================================
-        
+
         // Create Federated Identity Credential ONLY when MSI is relevant (if managed identity provided)
         bool ficConfigured = false;
         string? ficError = null;
@@ -1414,6 +1437,82 @@ internal static class BlueprintSubcommand
         bool graphPermissionsFailed = !graphInheritablePermissionsConfigured;
         string? adminConsentUrl = !consentSuccess ? consentUrlGraph : null;
         return (true, appId, objectId, servicePrincipalId, alreadyExisted, consentSuccess, graphPermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl);
+    }
+
+    /// <summary>
+    /// Ensures the blueprint application exposes the <see cref="ConfigConstants.BlueprintOboScope"/>
+    /// delegated scope. Idempotent — no-op when the scope already exists.
+    /// Preserves any other scopes already configured on the application.
+    /// </summary>
+    private static async Task EnsureOboScopeAsync(
+        GraphApiService graphApiService,
+        string tenantId,
+        string objectId,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var appDoc = await graphApiService.GraphGetAsync(
+                tenantId, $"/v1.0/applications/{objectId}?$select=api", ct,
+                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+
+            var existingScopes = new JsonArray();
+
+            if (appDoc != null &&
+                appDoc.RootElement.TryGetProperty("api", out var apiProp) &&
+                apiProp.TryGetProperty("oauth2PermissionScopes", out var scopesEl))
+            {
+                foreach (var scope in scopesEl.EnumerateArray())
+                {
+                    if (scope.TryGetProperty("value", out var val) &&
+                        string.Equals(val.GetString(), ConfigConstants.BlueprintOboScope, StringComparison.OrdinalIgnoreCase))
+                    {
+                        logger.LogDebug("Blueprint already has {Scope} scope — skipping", ConfigConstants.BlueprintOboScope);
+                        return;
+                    }
+
+                    // Preserve existing scope in the PATCH body so we don't overwrite it.
+                    existingScopes.Add(JsonNode.Parse(scope.GetRawText()));
+                }
+            }
+
+            logger.LogInformation("Adding {Scope} scope to blueprint...", ConfigConstants.BlueprintOboScope);
+
+            existingScopes.Add(new JsonObject
+            {
+                ["adminConsentDescription"] = "Allow the agent to act on behalf of the signed-in user.",
+                ["adminConsentDisplayName"] = "Access agent on behalf of user",
+                ["id"] = Guid.NewGuid().ToString(),
+                ["isEnabled"] = true,
+                ["type"] = "User",
+                ["value"] = ConfigConstants.BlueprintOboScope
+            });
+
+            var patch = new JsonObject
+            {
+                ["api"] = new JsonObject
+                {
+                    ["oauth2PermissionScopes"] = existingScopes
+                }
+            };
+
+            var patched = await graphApiService.GraphPatchAsync(
+                tenantId, $"/v1.0/applications/{objectId}", patch, ct,
+                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+
+            if (patched)
+                logger.LogInformation("{Scope} scope added to blueprint", ConfigConstants.BlueprintOboScope);
+            else
+                logger.LogWarning(
+                    "Could not add {Scope} scope to blueprint. Add it manually: " +
+                    "Entra portal > App registrations > Expose an API.",
+                    ConfigConstants.BlueprintOboScope);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning("OBO scope reconciliation failed (non-fatal): {Message}", ex.Message);
+        }
     }
 
     /// <summary>
@@ -1673,7 +1772,7 @@ internal static class BlueprintSubcommand
     /// rejected by the Agent Blueprint API. Defaults to .default (all consented permissions).
     /// Pass loginHint so WAM targets the az-logged-in user rather than the OS default account.
     /// </summary>
-    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null, string? loginHint = null)
+    private static async Task<string?> AcquireMsalGraphTokenAsync(string tenantId, string clientAppId, ILogger logger, CancellationToken ct = default, string? scope = null, string? loginHint = null, string[]? additionalScopes = null)
     {
         // Guard: MSAL will fail (and block for ~30s on WAM) with empty credentials.
         if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
@@ -1691,11 +1790,19 @@ internal static class BlueprintSubcommand
                 logger,
                 loginHint: loginHint);
 
-            var resolvedScope = string.IsNullOrWhiteSpace(scope)
+            var primaryScope = string.IsNullOrWhiteSpace(scope)
                 ? $"{Constants.GraphApiConstants.BaseUrl}/.default"
                 : $"{Constants.GraphApiConstants.BaseUrl}/{scope}";
-            var tokenRequestContext = new TokenRequestContext(new[] { resolvedScope });
+
+            var allScopes = additionalScopes?.Length > 0
+                ? new[] { primaryScope }.Concat(additionalScopes.Select(s => $"{Constants.GraphApiConstants.BaseUrl}/{s}")).ToArray()
+                : new[] { primaryScope };
+
+            var tokenRequestContext = new TokenRequestContext(allScopes);
             var token = await credential.GetTokenAsync(tokenRequestContext, ct);
+
+            logger.LogDebug("Acquired MSAL token (requested: [{Scopes}])", string.Join(", ", allScopes));
+            TryLogTokenScp(token.Token, logger);
 
             return token.Token;
         }
@@ -1707,37 +1814,58 @@ internal static class BlueprintSubcommand
     }
 
     /// <summary>
+    /// Decodes the JWT payload and logs the scp claim at Debug level.
+    /// Used only to diagnose scope issues during blueprint creation.
+    /// </summary>
+    private static void TryLogTokenScp(string token, ILogger logger)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length < 2) return;
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var scp = doc.RootElement.TryGetProperty("scp", out var scpEl) ? scpEl.GetString() : "(absent)";
+            var upn = doc.RootElement.TryGetProperty("upn", out var upnEl) ? upnEl.GetString()
+                : doc.RootElement.TryGetProperty("unique_name", out var unEl) ? unEl.GetString() : "(absent)";
+            logger.LogDebug("Token scp: {Scp} | upn: {Upn}", scp, upn);
+        }
+        catch { /* non-fatal */ }
+    }
+
+    /// <summary>
     /// Creates and authenticates a GraphServiceClient using InteractiveGraphAuthService.
     /// This common method consolidates the authentication logic used across multiple methods.
     /// </summary>
     private async static Task<GraphServiceClient> GetAuthenticatedGraphClientAsync(ILogger logger, Models.Agent365Config setupConfig, string tenantId, CancellationToken ct)
     {
-        logger.LogInformation("Authenticating to Microsoft Graph using interactive browser authentication...");
-        logger.LogInformation("IMPORTANT: Agent Blueprint operations require Application.ReadWrite.All permission.");
-        logger.LogInformation("This will open a browser window for interactive authentication.");
-        logger.LogInformation("Please sign in with your Microsoft account.");
-        logger.LogInformation("");
+        logger.LogInformation("Sign in to Microsoft Graph to continue...");
 
-        // Use InteractiveGraphAuthService to get proper authentication
-        using var cleanLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
+        // Use InteractiveGraphAuthService to get proper authentication.
+        // Pass the caller's logger so messages appear in the correct indent scope.
         var interactiveAuth = new InteractiveGraphAuthService(
-            cleanLoggerFactory.CreateLogger<InteractiveGraphAuthService>(),
+            logger,
             setupConfig.ClientAppId);
 
         try
         {
             var graphClient = await interactiveAuth.GetAuthenticatedGraphClientAsync(tenantId, ct);
-            logger.LogInformation("Successfully authenticated to Microsoft Graph");
             return graphClient;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
-            logger.LogError("");
-            logger.LogError("TROUBLESHOOTING:");
-            logger.LogError("1. Ensure you are a Global Administrator or have Application.ReadWrite.All permission");
-            logger.LogError("2. The account must have already consented to these permissions");
-            logger.LogError("");
+            var isCanceled = ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase);
+            if (!isCanceled)
+            {
+                logger.LogError("Failed to authenticate to Microsoft Graph: {Message}", ex.Message);
+                logger.LogError("");
+                logger.LogError("TROUBLESHOOTING:");
+                logger.LogError("1. Ensure you are a Global Administrator or have AgentIdentityBlueprint.ReadWrite.All permission");
+                logger.LogError("2. The account must have already consented to these permissions");
+                logger.LogError("");
+            }
             throw new InvalidOperationException($"Microsoft Graph authentication failed: {ex.Message}", ex);
         }
     }
@@ -1758,10 +1886,11 @@ internal static class BlueprintSubcommand
         CancellationToken ct = default,
         Func<Task<string?>>? loginHintResolver = null)
     {
+        logger.LogInformation("");
+        logger.LogInformation("Creating blueprint client secret...");
+        using var clientSecretScope = logger.Indent();
         try
         {
-            logger.LogInformation("Creating client secret for Agent Blueprint using Graph API...");
-
             // Resolve login hint so WAM targets the az-logged-in user, not the OS default account.
             // Without this, WAM may return a cached token for a different user who is not the owner.
             var loginHint = loginHintResolver != null
@@ -1798,15 +1927,33 @@ internal static class BlueprintSubcommand
 
             var addPasswordUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/applications/{blueprintObjectId}/addPassword";
             var secretBodyJson = secretBody.ToJsonString();
-            // Retry on 404: newly created Agent Blueprints may not yet be visible to all Graph
-            // API replicas due to Entra eventual consistency. Retry with backoff until propagated.
+
+            // Retry on 404 (blueprint not yet visible on all replicas) and transient 403 (owner
+            // propagation lag — the blueprint was just created with owners@odata.bind, and Entra
+            // may not yet recognize the caller as owner when addPassword is called immediately after
+            // creation). Do NOT retry on Authorization_RequestDenied (permanent permission failure).
             var retryHelper = new RetryHelper(logger);
             var passwordResponse = await retryHelper.ExecuteWithRetryAsync(
                 async token => await httpClient.PostAsync(
                     addPasswordUrl,
                     new StringContent(secretBodyJson, System.Text.Encoding.UTF8, "application/json"),
                     token),
-                response => response.StatusCode == System.Net.HttpStatusCode.NotFound,
+                async (response, token) =>
+                {
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                        return true;
+                    if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        // Buffer so the body can be re-read by the caller after this predicate.
+                        await response.Content.LoadIntoBufferAsync();
+                        var body = await response.Content.ReadAsStringAsync(token);
+                        // Authorization_RequestDenied = permanent privilege failure — no point retrying.
+                        if (body.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase))
+                            return false;
+                        return true; // transient 403 (owner propagation lag), retry
+                    }
+                    return false;
+                },
                 maxRetries: 5,
                 baseDelaySeconds: 5,
                 cancellationToken: ct);
@@ -1853,7 +2000,8 @@ internal static class BlueprintSubcommand
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to create client secret automatically: {Message}", ex.Message);
+            logger.LogDebug(ex, "Failed to create blueprint client secret (detail)");
+            logger.LogWarning("Insufficient privileges to create blueprint client secret automatically. You must create it manually.");
             logger.LogWarning("Create the client secret manually for blueprint app {AppId} and add it to a365.generated.config.json, then re-run: a365 setup all", blueprintAppId);
             logger.LogWarning("See: https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials");
             return false;

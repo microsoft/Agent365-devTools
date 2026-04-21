@@ -15,15 +15,15 @@
 # pip-tools to generate. See docs/SECRETS.md for details.
 
 # Azure Functions
-azure-functions==2.0.0
+azure-functions==2.1.0
 
 # FastAPI (local development)
 fastapi==0.135.3
-uvicorn==0.42.0
+uvicorn==0.44.0
 python-dotenv==1.0.1
 
 # GitHub API
-PyGithub==2.9.0
+PyGithub==2.9.1
 
 # Azure DevOps API
 azure-devops==7.1.0b4

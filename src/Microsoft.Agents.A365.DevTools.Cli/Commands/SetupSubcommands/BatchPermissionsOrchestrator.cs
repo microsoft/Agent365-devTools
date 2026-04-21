@@ -99,10 +99,6 @@ internal static class BatchPermissionsOrchestrator
 
         var permScopes = AuthenticationConstants.RequiredPermissionGrantScopes;
 
-        // --- Resolve service principals ---
-        logger.LogInformation("");
-        logger.LogInformation("Resolving service principals...");
-
         BlueprintPermissionsResult? phase1Result = null;
         var blueprintPermissionsUpdated = false;
         try
@@ -129,8 +125,7 @@ internal static class BatchPermissionsOrchestrator
 
         // --- Phase 2a: Inheritable permissions (Agent ID Admin or GA) ---
         // --- Phase 2b: OAuth2 grants (Global Administrator only) ---
-        logger.LogInformation("");
-        logger.LogInformation("Configuring inheritable permissions and OAuth2 grants...");
+        logger.LogInformation("Configuring inheritable permissions...");
 
         var inheritedPermissionsConfigured = false;
         Dictionary<string, (bool configured, bool alreadyExisted)> inheritedResults =
@@ -148,9 +143,12 @@ internal static class BatchPermissionsOrchestrator
             // emitted and remaining specs are skipped.
             try
             {
-                inheritedResults = await ConfigureInheritedPermissionsAsync(
-                    graph, blueprintService, blueprintAppId, tenantId, specs,
-                    phase1Result, permScopes, logger, setupResults, ct);
+                using (logger.Indent())
+                {
+                    inheritedResults = await ConfigureInheritedPermissionsAsync(
+                        graph, blueprintService, blueprintAppId, tenantId, specs,
+                        phase1Result, permScopes, logger, setupResults, ct);
+                }
 
                 var inheritableSpecs = specs.Where(s => s.SetInheritable).ToList();
                 inheritedPermissionsConfigured = inheritableSpecs.Count == 0 ||
@@ -180,7 +178,7 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogInformation("");
                 if (grantsOk)
                 {
-                    logger.LogInformation("Admin consent granted (tenant-wide grants configured in Phase 2).");
+                    logger.LogInformation("Admin consent granted.");
                     UpdateResourceConsents(config, specs, inheritedResults);
                     return (blueprintPermissionsUpdated, inheritedPermissionsConfigured, true, null);
                 }
@@ -263,8 +261,11 @@ internal static class BatchPermissionsOrchestrator
         {
             try
             {
+                // Suppress Graph POST warning: non-admin users cannot create SPs and that is expected.
+                // Phase 2 grants will be skipped for any resource whose SP cannot be resolved.
                 var resourceSpId = await graph.EnsureServicePrincipalForAppIdAsync(
-                    tenantId, spec.ResourceAppId, ct, permScopes);
+                    tenantId, spec.ResourceAppId, ct, permScopes,
+                    logWarningOnCreateFailure: false);
 
                 if (!string.IsNullOrWhiteSpace(resourceSpId))
                 {
@@ -273,7 +274,7 @@ internal static class BatchPermissionsOrchestrator
                 }
                 else
                 {
-                    logger.LogWarning(
+                    logger.LogDebug(
                         "   - Service principal not found for {ResourceName} ({ResourceAppId}). " +
                         "Phase 2 grants will be skipped for this resource.",
                         spec.ResourceName, spec.ResourceAppId);
@@ -281,7 +282,7 @@ internal static class BatchPermissionsOrchestrator
             }
             catch (Exception ex)
             {
-                logger.LogWarning(
+                logger.LogDebug(
                     "   - Failed to resolve service principal for {ResourceName}: {Message}. " +
                     "Phase 2 grants will be skipped for this resource.",
                     spec.ResourceName, ex.Message);
@@ -351,13 +352,13 @@ internal static class BatchPermissionsOrchestrator
                 {
                     inheritedResults[spec.ResourceAppId] = (configured: true, alreadyExisted: alreadyExists);
                     var verb = alreadyExists ? "already configured" : "configured";
-                    logger.LogInformation("   - {ResourceName}: inheritable permissions {Verb}", spec.ResourceName, verb);
+                    logger.LogInformation("{ResourceName}: inheritable permissions {Verb}", spec.ResourceName, verb);
                 }
                 else
                 {
                     inheritedResults[spec.ResourceAppId] = (configured: false, alreadyExisted: false);
                     logger.LogWarning(
-                        "   - Inheritable permissions set for {ResourceName} but verification read-back failed: {Error}",
+                        "Inheritable permissions set for {ResourceName} but verification read-back failed: {Error}",
                         spec.ResourceName, verifyErr ?? "not found in read-back");
                     setupResults?.Warnings.Add(
                         $"Inheritable permissions for {spec.ResourceName} could not be verified after setting.");
@@ -536,18 +537,16 @@ internal static class BatchPermissionsOrchestrator
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // If there are no Graph scopes to consent to (e.g. agent config has no agentApplicationScopes),
-        // skip Phase 3 entirely — there is nothing to grant via the admin consent URL.
-        if (graphScopes.Count == 0)
-        {
-            logger.LogInformation("No Microsoft Graph scopes require admin consent — skipping consent URL.");
-            return (true, null);
-        }
+        // Build consent URL only when there are Graph scopes — non-Graph APIs cannot be consented
+        // via the /v2.0/adminconsent endpoint. They require Phase 2b (oauth2PermissionGrants via Graph API).
+        string? consentUrl = graphScopes.Count > 0
+            ? SetupHelpers.BuildAdminConsentUrl(tenantId, blueprintAppId, graphScopes)
+            : null;
 
-        var consentUrl = SetupHelpers.BuildAdminConsentUrl(tenantId, blueprintAppId, graphScopes);
-
-        // Check if consent already exists for ALL resolved resources (Phase 2 programmatic grants satisfy this check).
-        // Only skip browser consent if every resource has its consent in place.
+        // Check if consent already exists for ALL resolved resources (Phase 2b programmatic grants
+        // satisfy this check). Run this regardless of whether Graph scopes are present — non-DW
+        // blueprints have no Graph scopes but still require oauth2PermissionGrants for Observability
+        // and Power Platform APIs created by GA via Phase 2b or 'a365 setup admin'.
         if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
         {
             var specsWithResolvedSp = specs
@@ -590,6 +589,14 @@ internal static class BatchPermissionsOrchestrator
             }
         }
 
+        // Grants not fully in place. When there are no Graph scopes (non-DW path), there is no
+        // consent URL to open — the admin must run 'a365 setup admin' to create the oauth2PermissionGrants.
+        // No inline message: the caller surfaces this as an Action Required item in the summary.
+        if (graphScopes.Count == 0)
+        {
+            return (false, null);
+        }
+
         // Consent not yet detected — check whether the current user can grant it interactively.
         // adminCheck was resolved before Phase 2 and passed in to avoid a duplicate Graph call.
         // When phase1Result is null, auth failed entirely — the message must reflect that, not imply
@@ -612,7 +619,7 @@ internal static class BatchPermissionsOrchestrator
         logger.LogInformation("Opening browser for Microsoft Graph admin consent...");
         logger.LogInformation(
             "If the browser does not open automatically, navigate to this URL: {ConsentUrl}", consentUrl);
-        BrowserHelper.TryOpenUrl(consentUrl, logger);
+        BrowserHelper.TryOpenUrl(consentUrl!, logger);
 
         bool consentGranted;
         if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
@@ -768,7 +775,7 @@ internal static class BatchPermissionsOrchestrator
 
         // Phase 1: resolve SPs
         logger.LogInformation("");
-        logger.LogInformation("Resolving service principals...");
+        logger.LogInformation("Resolving service principals for permission configuration...");
 
         // When delegated specs are empty but S2S specs exist, resolve SPs from S2S specs instead
         // so the blueprint SP object ID is available for app role assignment.

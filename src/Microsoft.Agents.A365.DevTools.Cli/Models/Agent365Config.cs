@@ -36,23 +36,16 @@ public class Agent365Config
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         }
 
-        if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
-        if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
-
         if (NeedDeployment)
         {
+            if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
+            if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
             if (string.IsNullOrWhiteSpace(Location)) errors.Add("location is required.");
             if (string.IsNullOrWhiteSpace(AppServicePlanName)) errors.Add("appServicePlanName is required.");
             if (string.IsNullOrWhiteSpace(WebAppName)) errors.Add("webAppName is required.");
+            if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
         }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(MessagingEndpoint))
-                errors.Add("messagingEndpoint is required when needDeployment is 'no'.");
-        }
-
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
-        if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
 
         // Validate custom blueprint permissions
         if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
@@ -79,6 +72,25 @@ public class Agent365Config
                 errors.Add($"Duplicate resourceAppId found in customBlueprintPermissions: {string.Join(", ", duplicates)}");
             }
         }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Minimal validation for the config-free non-DW bootstrap path (--agent-name flow).
+    /// Only requires TenantId, ClientAppId, and AgentIdentityDisplayName.
+    /// SubscriptionId, ResourceGroup, DeploymentProjectPath, and MessagingEndpoint are not required.
+    /// </summary>
+    public List<string> ValidateNonDwMinimal()
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
+        if (string.IsNullOrWhiteSpace(ClientAppId))
+            errors.Add($"clientAppId could not be resolved. Ensure an Entra app named \"{AuthenticationConstants.WellKnownClientAppDisplayName}\" exists in your tenant.");
+        else
+            ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
+        if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
 
         return errors;
     }
@@ -199,7 +211,69 @@ public class Agent365Config
 
     #endregion
 
+    #region Azure OpenAI Configuration
+
+    /// <summary>
+    /// Name of the Azure OpenAI resource to create (non-AI Teammate agents only).
+    /// If set and NeedAzureOpenAI is true, setup will provision this resource.
+    /// </summary>
+    [JsonPropertyName("azureOpenAIName")]
+    public string? AzureOpenAIName { get; init; }
+
+    /// <summary>
+    /// Azure region for the OpenAI resource. Defaults to Location if not set.
+    /// OpenAI resource availability varies by region.
+    /// </summary>
+    [JsonPropertyName("azureOpenAILocation")]
+    public string? AzureOpenAILocation { get; init; }
+
+    /// <summary>
+    /// Name of the model deployment to create inside the Azure OpenAI resource (e.g., "gpt-4.1").
+    /// </summary>
+    [JsonPropertyName("azureOpenAIModelDeploymentName")]
+    public string? AzureOpenAIModelDeploymentName { get; init; }
+
+    /// <summary>
+    /// When true, setup will provision an Azure OpenAI resource.
+    /// Only relevant for non-AI Teammate agent deployments.
+    /// </summary>
+    [JsonPropertyName("needAzureOpenAI")]
+    public bool NeedAzureOpenAI { get; init; }
+
+    #endregion
+
     #region Agent Configuration
+
+    /// <summary>
+    /// Controls which setup and publish flow is used.
+    /// true (default) = Digital Worker (Agent Identity Blueprint pattern).
+    /// false = non-AI Teammate agent. Two variants are available when false:
+    ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
+    ///   - UseBlueprint = true:  Blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
+    /// Can be overridden per-command with the --aiteammate flag.
+    /// </summary>
+    [JsonPropertyName("aiTeammate")]
+    public bool? AiTeammate { get; init; }
+
+    /// <summary>
+    /// When true, use the blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
+    /// Only meaningful when AiTeammate is false.
+    /// Can be overridden per-command with the --use-blueprint flag.
+    /// </summary>
+    [JsonPropertyName("useBlueprint")]
+    public bool? UseBlueprint { get; init; }
+
+    /// <summary>
+    /// Returns true when this config represents a non-AI Teammate agent deployment.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsNonAiTeammate => AiTeammate == false;
+
+    /// <summary>
+    /// Returns true when this config uses the blueprint-based non-DW flow.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsNonDwBlueprint => AiTeammate == false && UseBlueprint == true;
 
     /// <summary>
     /// Display name for the agent identity in Azure AD.
@@ -374,6 +448,21 @@ public class Agent365Config
     public string? AgentBlueprintId { get; set; }
 
     /// <summary>
+    /// Unique identifier for the agent instance registered via the Agent Registry Graph API.
+    /// Set by 'a365 publish' for blueprint-based non-DW agents.
+    /// </summary>
+    [JsonPropertyName("agentInstanceId")]
+    public string? AgentInstanceId { get; set; }
+
+    /// <summary>
+    /// Unique identifier returned by the AgentX Agent Registration API V2
+    /// (POST https://agentxppe.microsoft.com/api/a365/agents/registration).
+    /// Stored separately from agentInstanceId which tracks the Graph agentRegistry instance.
+    /// </summary>
+    [JsonPropertyName("agentRegistrationId")]
+    public string? AgentRegistrationId { get; set; }
+
+    /// <summary>
     /// Azure AD object ID for the agent blueprint application.
     /// Used as authoritative identifier for all blueprint operations to handle cases
     /// where multiple blueprints may exist with the same display name.
@@ -439,6 +528,23 @@ public class Agent365Config
     [JsonIgnore]
     [JsonPropertyName("messagingEndpoint")]
     public string? BotMessagingEndpoint { get; set; }
+
+    #endregion
+
+    #region Azure OpenAI State
+
+    /// <summary>
+    /// Endpoint URL for the provisioned Azure OpenAI resource.
+    /// Set by setup, consumed by appsettings.generated.json output.
+    /// </summary>
+    [JsonPropertyName("azureOpenAIEndpoint")]
+    public string? AzureOpenAIEndpoint { get; set; }
+
+    /// <summary>
+    /// API key for the provisioned Azure OpenAI resource.
+    /// </summary>
+    [JsonPropertyName("azureOpenAIApiKey")]
+    public string? AzureOpenAIApiKey { get; set; }
 
     #endregion
 
@@ -664,6 +770,12 @@ public class Agent365Config
             AppServicePlanName = this.AppServicePlanName,
             AppServicePlanSku = this.AppServicePlanSku,
             WebAppName = this.WebAppName,
+            AiTeammate = this.AiTeammate,
+            UseBlueprint = this.UseBlueprint,
+            AzureOpenAIName = this.AzureOpenAIName,
+            AzureOpenAILocation = this.AzureOpenAILocation,
+            AzureOpenAIModelDeploymentName = this.AzureOpenAIModelDeploymentName,
+            NeedAzureOpenAI = this.NeedAzureOpenAI,
             AgentIdentityDisplayName = this.AgentIdentityDisplayName,
             AgentBlueprintDisplayName = this.AgentBlueprintDisplayName,
             AgentUserPrincipalName = this.AgentUserPrincipalName,

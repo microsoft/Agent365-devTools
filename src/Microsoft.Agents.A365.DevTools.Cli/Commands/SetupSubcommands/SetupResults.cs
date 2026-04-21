@@ -11,6 +11,7 @@ public class SetupResults
     public bool InfrastructureCreated { get; set; }
     public bool BlueprintCreated { get; set; }
     public string? BlueprintId { get; set; }
+    public string? BlueprintDisplayName { get; set; }
     public bool McpPermissionsConfigured { get; set; }
     public bool BotApiPermissionsConfigured { get; set; }
     public bool MessagingEndpointRegistered { get; set; }
@@ -101,9 +102,77 @@ public class SetupResults
     /// </summary>
     public string? CombinedConsentUrl { get; set; }
 
+    /// <summary>
+    /// Whether this is a non-DW blueprint setup flow (--aiteammate false).
+    /// Used in the summary display to show the correct recovery actions.
+    /// </summary>
+    public bool IsNonDwBlueprintFlow { get; set; }
+
+    /// <summary>
+    /// Whether Principal-scoped oauth2PermissionGrants were successfully created for the agent identity.
+    /// Set in the non-DW non-admin path as an alternative to tenant-wide AllPrincipals consent.
+    /// </summary>
+    public bool AgentIdentityPermissionsGranted { get; set; }
+
+    /// <summary>
+    /// Whether the Agent Identity was successfully created via the Agent Identity Graph API.
+    /// Populated by the non-DW blueprint setup flow only.
+    /// </summary>
+    public bool AgentIdentityCreated { get; set; }
+
+    /// <summary>
+    /// The Agent Identity ID returned after agent identity creation.
+    /// Non-null when <see cref="AgentIdentityCreated"/> is true.
+    /// </summary>
+    public string? AgentIdentityId { get; set; }
+
+    /// <summary>
+    /// The display name of the agent identity Entra app (e.g. "MyAgent Agent Identity").
+    /// </summary>
+    public string? AgentIdentityDisplayName { get; set; }
+
+    /// <summary>
+    /// Whether the Agent Instance was successfully registered via the Agent Instance Graph API.
+    /// Populated by the non-DW blueprint setup flow only.
+    /// </summary>
+    public bool AgentInstanceRegistered { get; set; }
+
+    /// <summary>
+    /// The Agent Instance ID returned by the Agent Instance Graph API after registration.
+    /// Non-null when <see cref="AgentInstanceRegistered"/> is true.
+    /// </summary>
+    public string? AgentInstanceId { get; set; }
+
+    /// <summary>
+    /// The display name used when registering the agent in the Agent Registry (e.g. "MyAgent Agent").
+    /// </summary>
+    public string? AgentRegistrationDisplayName { get; set; }
+
+
+    /// <summary>Whether step 1 (Requirements validation) was skipped via --skip-requirements.</summary>
+    public bool PrerequisitesSkipped { get; set; }
+
+    /// <summary>Whether step 2 (Azure hosting) was skipped because no Azure deployment is configured.</summary>
+    public bool InfrastructureSkipped { get; set; }
+
+    /// <summary>Whether step 3 (Blueprint creation) failed. Drives "failed"/"skipped" rows in the summary.</summary>
+    public bool BlueprintFailed { get; set; }
+
+    /// <summary>Whether the blueprint service principal was created successfully. False means blueprint is partial.</summary>
+    public bool BlueprintServicePrincipalCreated { get; set; }
+
+    /// <summary>Whether step 6 (Agent identity creation) was attempted but failed.</summary>
+    public bool AgentIdentityFailed { get; set; }
+
+    /// <summary>Whether step 7 (Agent registration) was attempted but failed.</summary>
+    public bool AgentRegistrationFailed { get; set; }
+
+    /// <summary>Whether step 8 (Project settings) was written to appsettings.json.</summary>
+    public bool ProjectSettingsWritten { get; set; }
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
-    
+
     public bool HasErrors => Errors.Count > 0;
     public bool HasWarnings => Warnings.Count > 0;
 }

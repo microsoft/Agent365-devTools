@@ -53,7 +53,7 @@ public class FederatedCredentialService
                 tenantId,
                 $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
                 cancellationToken,
-                scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
+                scopes: [AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope]);
 
             JsonDocument? doc;
             if (primaryDoc != null && primaryDoc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
@@ -69,7 +69,7 @@ public class FederatedCredentialService
                     tenantId,
                     $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials",
                     cancellationToken,
-                    scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
+                    scopes: [AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope]);
             }
 
             if (doc == null)
@@ -267,7 +267,7 @@ public class FederatedCredentialService
                     endpoint,
                     payload,
                     cancellationToken,
-                    scopes: [AuthenticationConstants.ApplicationReadWriteAllScope]);
+                    scopes: [AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope]);
 
                 if (response.IsSuccess)
                 {
@@ -401,10 +401,7 @@ public class FederatedCredentialService
             _logger.LogDebug("Deleting federated credential: {CredentialId} from blueprint: {ObjectId}", 
                 credentialId, blueprintObjectId);
 
-            // Application.ReadWrite.All is the currently functional scope for FIC deletion.
-            // AddRemoveCreds.All is specified in the permissions reference but is not yet validated;
-            // restoring Application.ReadWrite.All to match the previously working state.
-            var ficScope = AuthenticationConstants.ApplicationReadWriteAllScope;
+            var ficScope = AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope;
 
             // Try the standard endpoint first
             var endpoint = $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";

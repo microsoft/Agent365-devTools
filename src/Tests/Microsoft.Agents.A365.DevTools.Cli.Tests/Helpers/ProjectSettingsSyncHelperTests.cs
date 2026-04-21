@@ -562,46 +562,177 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal(plaintextSecret, clientSecret);
     }
 
-    [Fact]
-    public async Task ExecuteAsync_DotNet_WritesAgent365ObservabilitySection()
-    {
-        // Arrange
-        var projectDir = Path.Combine(_tempRoot, "dotnet_obs");
-        Directory.CreateDirectory(projectDir);
+    // -------------------------------------------------------------------------
+    // Agent365Observability section tests
+    // -------------------------------------------------------------------------
 
+    /// <summary>
+    /// Non-DW flow (AgenticAppId set): AgentId must use the Agent Identity, not the Blueprint.
+    /// AgentName, AgentDescription, TenantId, ClientId (blueprint), and ClientSecret are written.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DotNet_WritesAgent365Observability_NonDw()
+    {
+        var projectDir = Path.Combine(_tempRoot, "dotnet_obs_nondw");
+        Directory.CreateDirectory(projectDir);
         WriteFile(projectDir, "MyAgent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
         var appsettingsPath = WriteFile(projectDir, "appsettings.json", "{}");
 
-        var genPath = WriteFile(_tempRoot, "a365.generated.config.json", "{}");
-        var cfgPath = WriteFile(_tempRoot, "a365.config.json", "{}");
+        var genPath = WriteFile(_tempRoot, "a365.generated.obs_nondw.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.obs_nondw.config.json", "{}");
+
 
         var cfg = new Agent365Config
         {
             DeploymentProjectPath = projectDir,
-            TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
-            AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
-            AgentBlueprintClientSecret = "secret"
+            TenantId = "tenant-obs-id",
+            AgenticAppId = "agent-identity-app-id",
+            AgentBlueprintId = "blueprint-app-id",
+            AgentIdentityDisplayName = "My Agent Identity",
+            AgentDescription = "An agent for testing",
+            AgentBlueprintClientSecret = "obs-secret",
+            AgentBlueprintClientSecretProtected = false
         };
 
-        var configService = MockConfigService(cfg).Object;
-        var platformDetector = CreatePlatformDetector();
-        var logger = CreateLogger();
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(cfg).Object, CreatePlatformDetector(), CreateLogger());
 
-        // Act
-        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath, configService, platformDetector, logger);
+        var obs = ReadJson(appsettingsPath)["Agent365Observability"]!.AsObject();
+        // non-DW must use Agent Identity app ID, not Blueprint
+        Assert.Equal("agent-identity-app-id", obs["AgentId"]!.GetValue<string>());
+        Assert.Equal("My Agent Identity", obs["AgentName"]!.GetValue<string>());
+        Assert.Equal("An agent for testing", obs["AgentDescription"]!.GetValue<string>());
+        Assert.Equal("tenant-obs-id", obs["TenantId"]!.GetValue<string>());
+        Assert.Equal("blueprint-app-id", obs["AgentBlueprintId"]!.GetValue<string>());
+        Assert.Equal("blueprint-app-id", obs["ClientId"]!.GetValue<string>());
+        Assert.Equal("obs-secret", obs["ClientSecret"]!.GetValue<string>());
+    }
 
-        // Assert
+    /// <summary>
+    /// DW flow (AgenticAppId null/empty): AgentId falls back to the Blueprint app ID.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DotNet_WritesAgent365Observability_Dw()
+    {
+        var projectDir = Path.Combine(_tempRoot, "dotnet_obs_dw");
+        Directory.CreateDirectory(projectDir);
+        WriteFile(projectDir, "MyAgent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var appsettingsPath = WriteFile(projectDir, "appsettings.json", "{}");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.obs_dw.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.obs_dw.config.json", "{}");
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "tenant-dw-id",
+            AgenticAppId = null,                   // DW: no agent identity
+            AgentBlueprintId = "blueprint-dw-id",
+            AgentBlueprintClientSecret = "dw-secret",
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(cfg).Object, CreatePlatformDetector(), CreateLogger());
+
         var j = ReadJson(appsettingsPath);
-
-        // EnableAgent365Exporter written at root level, defaulting to false
-        Assert.False(j["EnableAgent365Exporter"]!.GetValue<bool>());
-
-        // Agent365Observability section present with correct values
         var obs = j["Agent365Observability"]!.AsObject();
-        Assert.Null(obs["AgentId"]);
-        Assert.Equal(cfg.AgentBlueprintId, obs["AgentBlueprintId"]!.GetValue<string>());
-        Assert.Equal(cfg.TenantId, obs["TenantId"]!.GetValue<string>());
-        Assert.Equal("", obs["AgentName"]!.GetValue<string>());
-        Assert.Equal("", obs["AgentDescription"]!.GetValue<string>());
+        // DW must fall back to Blueprint app ID when AgenticAppId is absent
+        Assert.Equal("blueprint-dw-id", obs["AgentId"]!.GetValue<string>());
+        Assert.Equal("tenant-dw-id", obs["TenantId"]!.GetValue<string>());
+        Assert.Equal("blueprint-dw-id", obs["AgentBlueprintId"]!.GetValue<string>());
+        Assert.Equal("blueprint-dw-id", obs["ClientId"]!.GetValue<string>());
+        // EnableAgent365Exporter is written to false by default
+        Assert.False(j["EnableAgent365Exporter"]!.GetValue<bool>());
+    }
+
+    /// <summary>
+    /// Python .env: Agent365Observability keys use UPPER_SNAKE_CASE with double-underscores.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Python_WritesAgent365Observability()
+    {
+        var projectDir = Path.Combine(_tempRoot, "py_obs");
+        Directory.CreateDirectory(projectDir);
+        WriteFile(projectDir, "pyproject.toml", "[tool.poetry]");
+        var envPath = WriteFile(projectDir, ".env", "");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.py_obs.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.py_obs.config.json", "{}");
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "tenant-py-id",
+            AgenticAppId = "agent-py-id",
+            AgentBlueprintId = "blueprint-py-id",
+            AgentIdentityDisplayName = "Py-Agent",
+            AgentDescription = "Python-test-agent",
+            AgentBlueprintClientSecret = "py-secret",
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(cfg).Object, CreatePlatformDetector(), CreateLogger());
+
+        var lines = File.ReadAllLines(envPath);
+        string Val(string key) => lines
+            .First(l => l.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
+            .Split('=', 2)[1];
+
+        // non-DW uses Agent Identity app ID
+        Assert.Equal("agent-py-id", Val("AGENT365OBSERVABILITY__AGENTID"));
+        Assert.Equal("Py-Agent", Val("AGENT365OBSERVABILITY__AGENTNAME"));
+        Assert.Equal("Python-test-agent", Val("AGENT365OBSERVABILITY__AGENTDESCRIPTION"));
+        Assert.Equal("tenant-py-id", Val("AGENT365OBSERVABILITY__TENANTID"));
+        Assert.Equal("blueprint-py-id", Val("AGENT365OBSERVABILITY__AGENTBLUEPRINTID"));
+        Assert.Equal("blueprint-py-id", Val("AGENT365OBSERVABILITY__CLIENTID"));
+        Assert.Equal("py-secret", Val("AGENT365OBSERVABILITY__CLIENTSECRET"));
+        Assert.Contains(lines, l => l.StartsWith("ENABLE_A365_OBSERVABILITY_EXPORTER=", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Node .env: Agent365Observability keys use camelCase with double-underscores.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Node_WritesAgent365Observability()
+    {
+        var projectDir = Path.Combine(_tempRoot, "node_obs");
+        Directory.CreateDirectory(projectDir);
+        WriteFile(projectDir, "package.json", "{ \"name\": \"sample\" }");
+        var envPath = WriteFile(projectDir, ".env", "");
+
+        var genPath = WriteFile(_tempRoot, "a365.generated.node_obs.json", "{}");
+        var cfgPath = WriteFile(_tempRoot, "a365.node_obs.config.json", "{}");
+
+        var cfg = new Agent365Config
+        {
+            DeploymentProjectPath = projectDir,
+            TenantId = "tenant-node-id",
+            AgenticAppId = "agent-node-id",
+            AgentBlueprintId = "blueprint-node-id",
+            AgentIdentityDisplayName = "Node Agent",
+            AgentDescription = "Node test agent",
+            AgentBlueprintClientSecret = "node-secret",
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(cfg).Object, CreatePlatformDetector(), CreateLogger());
+
+        var lines = File.ReadAllLines(envPath);
+        string Val(string key) => lines
+            .First(l => l.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
+            .Split('=', 2)[1];
+
+        // non-DW uses Agent Identity app ID
+        Assert.Equal("agent-node-id", Val("agent365Observability__agentId"));
+        Assert.Equal("Node Agent", Val("agent365Observability__agentName"));
+        Assert.Equal("Node test agent", Val("agent365Observability__agentDescription"));
+        Assert.Equal("tenant-node-id", Val("agent365Observability__tenantId"));
+        Assert.Equal("blueprint-node-id", Val("agent365Observability__agentBlueprintId"));
+        Assert.Equal("blueprint-node-id", Val("agent365Observability__clientId"));
+        Assert.Equal("node-secret", Val("agent365Observability__clientSecret"));
+        Assert.Contains(lines, l => l.StartsWith("ENABLE_A365_OBSERVABILITY_EXPORTER=", StringComparison.OrdinalIgnoreCase));
     }
 }

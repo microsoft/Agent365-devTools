@@ -198,16 +198,16 @@ internal static class AddPermissionsSubcommand
                             var ok = await blueprintService.AddRequiredResourceAccessAsync(
                                 tenantId, targetAppId, kvp.Key, kvp.Value, isDelegated: true);
                             if (ok)
-                                logger.LogInformation("  [SUCCESS] Added permissions for {ResourceAppId}", kvp.Key);
+                                logger.LogInformation("  Added permissions for {ResourceAppId}", kvp.Key);
                             else
                             {
-                                logger.LogError("  [FAILED] Failed to add permissions for {ResourceAppId}", kvp.Key);
+                                logger.LogError("  Failed to add permissions for {ResourceAppId}", kvp.Key);
                                 success = false;
                             }
                         }
                         catch (Exception ex)
                         {
-                            logger.LogError("  [ERROR] {ResourceAppId}: {Message}", kvp.Key, ex.Message);
+                            logger.LogError("  {ResourceAppId}: {Message}", kvp.Key, ex.Message);
                             logger.LogDebug("    {StackTrace}", ex.StackTrace);
                             success = false;
                         }
@@ -222,13 +222,13 @@ internal static class AddPermissionsSubcommand
                         success = await blueprintService.AddRequiredResourceAccessAsync(
                             tenantId, targetAppId, atgResourceAppId, requestedScopes!, isDelegated: true);
                         if (success)
-                            logger.LogInformation("  [SUCCESS] Successfully added permissions for {ResourceAppId}", atgResourceAppId);
+                            logger.LogInformation("  Added permissions for {ResourceAppId}", atgResourceAppId);
                         else
-                            logger.LogError("  [FAILED] Failed to add permissions for {ResourceAppId}", atgResourceAppId);
+                            logger.LogError("  Failed to add permissions for {ResourceAppId}", atgResourceAppId);
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError("  [ERROR] Exception adding permissions for {ResourceAppId}: {Message}", atgResourceAppId, ex.Message);
+                        logger.LogError("  Exception adding permissions for {ResourceAppId}: {Message}", atgResourceAppId, ex.Message);
                         logger.LogDebug("    {StackTrace}", ex.StackTrace);
                         success = false;
                     }
@@ -241,7 +241,7 @@ internal static class AddPermissionsSubcommand
 
                 if (success)
                 {
-                    logger.LogInformation("[SUCCESS] All permissions added successfully!");
+                    logger.LogInformation("All permissions added successfully");
                     logger.LogInformation("");
                     logger.LogInformation("  Review permissions in Azure Portal: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{AppId}", targetAppId);
                 }

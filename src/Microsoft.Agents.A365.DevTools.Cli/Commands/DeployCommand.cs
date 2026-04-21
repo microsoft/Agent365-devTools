@@ -467,7 +467,7 @@ public class DeployCommand
         if (!ok && !alreadyExists)
         {
             throw new InvalidOperationException("Failed to set inheritable permissions: " + err +
-                ". Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All and Application.ReadWrite.All permissions in your custom client app.");
+                ". Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All permission in your custom client app.");
         }
 
         logger.LogInformation("   - Inheritable permissions completed: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",

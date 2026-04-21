@@ -16,7 +16,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// </summary>
 public sealed class DelegatedConsentService
 {
-    private readonly ILogger<DelegatedConsentService> _logger;
+    private readonly ILogger _logger;
     private readonly GraphApiService _graphService;
 
     // Constants
@@ -24,7 +24,7 @@ public sealed class DelegatedConsentService
     private const string AllPrincipalsConsentType = "AllPrincipals";
 
     public DelegatedConsentService(
-        ILogger<DelegatedConsentService> logger,
+        ILogger logger,
         GraphApiService graphService)
     {
         _logger = logger;
@@ -48,11 +48,10 @@ public sealed class DelegatedConsentService
     {
         try
         {
-            _logger.LogInformation("==> Ensuring AgentIdentityBlueprint.ReadWrite.All permission for custom client app");
-            _logger.LogInformation("");
-            _logger.LogInformation("    Client App ID: {AppId}", callingAppId);
-            _logger.LogInformation("    Tenant ID: {TenantId}", tenantId);
-            _logger.LogInformation("    Required Scope: {Scope}", TargetScope);
+            _logger.LogInformation("Verifying consent for agent blueprint operations...");
+            _logger.LogDebug("    Client App ID: {AppId}", callingAppId);
+            _logger.LogDebug("    Tenant ID: {TenantId}", tenantId);
+            _logger.LogDebug("    Required Scope: {Scope}", TargetScope);
 
             // Validate inputs
             if (!Guid.TryParse(callingAppId, out _))
@@ -68,7 +67,7 @@ public sealed class DelegatedConsentService
             }
 
             // Get Graph access token with required scopes
-            _logger.LogInformation("Acquiring Graph API access token...");
+            _logger.LogDebug("Acquiring Graph API access token...");
             var graphToken = await _graphService.GetGraphAccessTokenAsync(tenantId, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(graphToken))
             {
@@ -79,7 +78,7 @@ public sealed class DelegatedConsentService
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
 
             // Step 1: Get or create service principal for custom client app
-            _logger.LogInformation("    Looking up service principal for client app (ID: {AppId})", callingAppId);
+            _logger.LogDebug("    Looking up service principal for client app (ID: {AppId})", callingAppId);
             var clientSp = await GetOrCreateServicePrincipalAsync(httpClient, callingAppId, tenantId, cancellationToken);
             if (clientSp == null)
             {
@@ -88,10 +87,10 @@ public sealed class DelegatedConsentService
             }
 
             var clientSpId = clientSp.RootElement.GetProperty("id").GetString()!;
-            _logger.LogInformation("    Client Service Principal ID: {SpId}", clientSpId);
+            _logger.LogDebug("    Client Service Principal ID: {SpId}", clientSpId);
 
             // Step 2: Get Microsoft Graph service principal
-            _logger.LogInformation("    Looking up Microsoft Graph service principal");
+            _logger.LogDebug("    Looking up Microsoft Graph service principal");
             var graphSp = await GetServicePrincipalAsync(httpClient, AuthenticationConstants.MicrosoftGraphResourceAppId, cancellationToken);
             if (graphSp == null)
             {
@@ -100,15 +99,15 @@ public sealed class DelegatedConsentService
             }
 
             var graphSpId = graphSp.RootElement.GetProperty("id").GetString()!;
-            _logger.LogInformation("    Graph Service Principal ID: {SpId}", graphSpId);
+            _logger.LogDebug("    Graph Service Principal ID: {SpId}", graphSpId);
 
             // Step 3: Check if grant already exists
-            _logger.LogInformation("    Checking for existing permission grant");
+            _logger.LogDebug("    Checking for existing permission grant");
             var existingGrants = await GetExistingGrantsAsync(httpClient, clientSpId, graphSpId, cancellationToken);
 
             if (existingGrants != null && existingGrants.Count > 0)
             {
-                _logger.LogInformation("    Found {Count} existing grant(s)", existingGrants.Count);
+                _logger.LogDebug("    Found {Count} existing grant(s)", existingGrants.Count);
 
                 // Update existing grant(s) to include required scope
                 foreach (var grant in existingGrants)
@@ -118,7 +117,7 @@ public sealed class DelegatedConsentService
             }
             else
             {
-                _logger.LogInformation("    No existing grants found, creating new grant");
+                _logger.LogDebug("    No existing grants found, creating new grant");
 
                 // Create new grant with required scope
                 var success = await CreateGrantAsync(httpClient, clientSpId, graphSpId, TargetScope, cancellationToken);
@@ -129,8 +128,7 @@ public sealed class DelegatedConsentService
                 }
             }
 
-            _logger.LogInformation("Successfully ensured grant for scope: {Scope}", TargetScope);
-            _logger.LogInformation("    You can now create Agent Blueprints");
+            _logger.LogDebug("Consent verified for scope: {Scope}", TargetScope);
 
             return true;
         }
@@ -166,12 +164,12 @@ public sealed class DelegatedConsentService
             var getSp = await GetServicePrincipalAsync(httpClient, appId, cancellationToken);
             if (getSp != null)
             {
-                _logger.LogInformation("    Service principal already exists for app {AppId}", appId);
+                _logger.LogDebug("Service principal already exists for app {AppId}", appId);
                 return getSp;
             }
 
             // Create new service principal
-            _logger.LogInformation("Creating service principal for app {AppId}", appId);
+            _logger.LogDebug("Creating service principal for app {AppId}", appId);
             var createSpUrl = $"{GraphApiConstants.BaseUrl}/v1.0/servicePrincipals";
             var createBody = new
             {
@@ -427,7 +425,7 @@ public sealed class DelegatedConsentService
             // Check if scope already exists
             if (existingScopes.Contains(scopeToAdd))
             {
-                _logger.LogInformation("    Scope '{Scope}' already exists on grant {GrantId}", scopeToAdd, grantId);
+                _logger.LogDebug("    Scope '{Scope}' already exists on grant {GrantId}", scopeToAdd, grantId);
                 return true;
             }
 
@@ -435,7 +433,7 @@ public sealed class DelegatedConsentService
             existingScopes.Add(scopeToAdd);
             var newScope = string.Join(' ', existingScopes.OrderBy(s => s));
 
-            _logger.LogInformation("    Updating grant {GrantId} to include scope: {Scope}", grantId, scopeToAdd);
+            _logger.LogDebug("    Updating grant {GrantId} to include scope: {Scope}", grantId, scopeToAdd);
 
             // Update the grant
             var updateUrl = $"{GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants/{grantId}";
@@ -462,7 +460,7 @@ public sealed class DelegatedConsentService
                 return true;
             }
 
-            _logger.LogInformation("    Grant updated successfully");
+            _logger.LogDebug("    Grant updated successfully");
             return true;
         }
         catch (Exception ex)
@@ -513,7 +511,7 @@ public sealed class DelegatedConsentService
             using var responseDoc = JsonDocument.Parse(responseJson);
             var grantId = responseDoc.RootElement.GetProperty("id").GetString();
 
-            _logger.LogInformation("    Permission grant created successfully (ID: {GrantId})", grantId);
+            _logger.LogDebug("    Permission grant created successfully (ID: {GrantId})", grantId);
             return true;
         }
         catch (Exception ex)
