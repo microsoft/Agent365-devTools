@@ -262,10 +262,12 @@ internal static class SetupHelpers
         logger.LogInformation("       6. Click 'Grant admin consent for your organization' and confirm");
 
         // Option B — PowerShell (Microsoft Graph SDK)
+        // Use Invoke-MgGraphRequest instead of New-MgOauth2PermissionGrant to avoid
+        // assembly conflicts when Microsoft.Graph.Identity.SignIns is already partially loaded.
         logger.LogInformation("");
         logger.LogInformation("     Option B — PowerShell (Microsoft.Graph module required):");
         logger.LogInformation("       Install-Module Microsoft.Graph -Scope CurrentUser  # skip if already installed");
-        logger.LogInformation("       Connect-MgGraph -Scopes \"DelegatedPermissionGrant.ReadWrite.All\"");
+        logger.LogInformation("       Connect-MgGraph -Scopes \"Directory.Read.All\", \"DelegatedPermissionGrant.ReadWrite.All\"");
         logger.LogInformation("       $sp = (Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\").Id", blueprintId);
         foreach (var (resourceName, resourceAppId, _, _) in specs)
         {
@@ -276,9 +278,7 @@ internal static class SetupHelpers
         foreach (var (resourceName, _, scope, _) in specs)
         {
             var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
-            // Use Invoke-MgGraphRequest instead of New-MgOauth2PermissionGrant to avoid
-            // assembly conflicts when Microsoft.Graph.Identity.SignIns is already partially loaded.
-            logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' \\");
+            logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' `");
             logger.LogInformation("         -Body @{{ clientId = $sp; consentType = 'AllPrincipals'; resourceId = {Var}; scope = '{Scope}' }}",
                 varName, scope);
         }
