@@ -413,10 +413,17 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// <summary>
     /// Merges scores from evaluated items back into the original list.
     /// Only copies score/reason for items that were null and are now filled.
+    /// Agent output can contain duplicate or empty ids; drop empties and take
+    /// last-wins on duplicates so a malformed batch is handled like other
+    /// agent-JSON quirks (treated as "no usable progress, retry") rather than
+    /// crashing the run.
     /// </summary>
     private static void MergeScores(List<ChecklistItem> original, List<ChecklistItem> evaluated)
     {
-        var evaluatedById = evaluated.ToDictionary(e => e.Id);
+        var evaluatedById = evaluated
+            .Where(e => !string.IsNullOrEmpty(e.Id))
+            .GroupBy(e => e.Id)
+            .ToDictionary(g => g.Key, g => g.Last());
         foreach (var item in original)
         {
             if (item.Score is not null)
