@@ -258,11 +258,15 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                             tool.Name, attempt, ex.Path ?? "unknown");
                     }
                 }
-                else if (!anyAttemptSucceeded)
+                else
                 {
-                    // First attempt failed at the subprocess level (no exit-0). Give up;
-                    // a retry would just repeat the same subprocess failure.
-                    return false;
+                    // Subprocess failed this attempt (timeout or non-zero exit).
+                    // We still retry — we've observed that timeouts on Haiku are
+                    // non-deterministic: a tool that times out on attempt 1 often
+                    // completes on attempt 2 or 3. Giving up fast loses winnable runs.
+                    _logger.LogDebug(
+                        "Tool {ToolName}: attempt {Attempt} subprocess failed; will retry if attempts remain",
+                        tool.Name, attempt);
                 }
 
                 if (CountUnevaluatedSemanticChecks(tool) == 0)
@@ -277,9 +281,12 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 }
             }
 
-            // All MaxAttempts used; return true (agent ran) even if some checks remain null.
-            // The outer pipeline will detect unscored items and fall back to manual scoring.
-            return true;
+            // All MaxAttempts used. If at least one attempt produced exit-0 output
+            // (even if some items remain null), treat as "agent ran" — the outer
+            // pipeline will see the unscored items and fall back to manual scoring.
+            // If no attempt ever succeeded (e.g. all 3 hit timeout), report failure
+            // so the tool shows up as "failed (continuing)" in the pipeline log.
+            return anyAttemptSucceeded;
         }
         finally
         {
@@ -355,9 +362,12 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                             attempt, ex.Path ?? "unknown");
                     }
                 }
-                else if (!anyAttemptSucceeded)
+                else
                 {
-                    return false;
+                    // Subprocess failed this attempt (timeout / non-zero exit).
+                    // Retry — the failure is often transient on Haiku.
+                    _logger.LogDebug("Server checks: attempt {Attempt} subprocess failed; will retry if attempts remain",
+                        attempt);
                 }
 
                 var remaining = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
@@ -373,7 +383,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 }
             }
 
-            return true;
+            return anyAttemptSucceeded;
         }
         finally
         {
