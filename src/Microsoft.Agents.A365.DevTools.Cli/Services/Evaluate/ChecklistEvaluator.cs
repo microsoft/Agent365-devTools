@@ -475,20 +475,23 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// <summary>
     /// Maps an engine to the concrete tool names it exposes. Edit-style tools are
     /// deliberately omitted: we've observed models thrashing between edit and create
-    /// strategies when both are available, so the runner only exposes view+create
-    /// (or Read+Write) and the prompt describes only those.
+    /// strategies when both are available, so the runner only exposes read + an
+    /// edit (string-replace) tool. We deliberately do NOT expose a whole-file
+    /// write tool: Copilot's `create` refuses to overwrite existing files, which
+    /// sends the agent on long workaround loops, and a mix of edit+create tempts
+    /// the model to oscillate between strategies.
     /// </summary>
     private static SemanticCheckPrompts.AgentToolset ToolsetFor(EvalEngine engine) => engine switch
     {
         EvalEngine.GitHubCopilot => new SemanticCheckPrompts.AgentToolset(
             ReadToolName: "view",
-            WriteToolName: "create"),
+            EditToolName: "edit"),
         EvalEngine.ClaudeCode => new SemanticCheckPrompts.AgentToolset(
             ReadToolName: "Read",
-            WriteToolName: "Write"),
+            EditToolName: "Edit"),
         _ => new SemanticCheckPrompts.AgentToolset(
             ReadToolName: "read",
-            WriteToolName: "write")
+            EditToolName: "edit")
     };
 
     /// <summary>

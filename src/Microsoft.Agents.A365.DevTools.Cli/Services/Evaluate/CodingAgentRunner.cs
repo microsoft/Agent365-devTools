@@ -139,7 +139,7 @@ internal class CodingAgentRunner
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --disallowedTools Bash,BashOutput,KillBash,WebFetch,WebSearch");
+            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --allowedTools Read,Edit");
 
             var startInfo = new ProcessStartInfo
             {
@@ -174,7 +174,7 @@ internal class CodingAgentRunner
         var startInfo = new ProcessStartInfo
         {
             FileName = "claude",
-            Arguments = "-p - --model haiku --disallowedTools Bash,BashOutput,KillBash,WebFetch,WebSearch",
+            Arguments = "-p - --model haiku --allowedTools Read,Edit",
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -218,6 +218,11 @@ internal class CodingAgentRunner
             var (fileName, fileArguments) = WrapForPlatform(
                 "copilot",
                 $"-p \"{metaPrompt}\" --model {CopilotModel} --allow-all-tools " +
+                // Restrict visible tools to just read + edit. `create` is specifically
+                // excluded because Copilot's create cannot overwrite existing files and
+                // exposing it leads the model down workaround loops (sibling files,
+                // retries, etc.) instead of the straightforward str_replace flow.
+                "--available-tools=view,edit " +
                 "--deny-tool=shell --deny-tool=write_shell --deny-tool=read_shell " +
                 "--deny-tool=stop_shell --deny-tool=list_shell " +
                 "--deny-tool=powershell --deny-tool=write_powershell --deny-tool=read_powershell " +

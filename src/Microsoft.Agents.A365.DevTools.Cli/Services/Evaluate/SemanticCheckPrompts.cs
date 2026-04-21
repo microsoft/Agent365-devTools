@@ -46,10 +46,13 @@ internal static class SemanticCheckPrompts
     }
 
     /// <summary>
-    /// Concrete read/write tool names for the target coding agent. Embedded into
+    /// Concrete read/edit tool names for the target coding agent. Embedded into
     /// the prompt so the agent is told exactly what to use rather than guessing.
+    /// We use an edit (string-replace) tool rather than a whole-file write tool,
+    /// because Copilot's `create` tool cannot overwrite existing files and telling
+    /// the model to "rewrite the file" leaves it thrashing on workaround paths.
     /// </summary>
-    public sealed record AgentToolset(string ReadToolName, string WriteToolName);
+    public sealed record AgentToolset(string ReadToolName, string EditToolName);
 
     /// <summary>
     /// Builds a prompt for evaluating a single tool's semantic checks.
@@ -129,18 +132,42 @@ internal static class SemanticCheckPrompts
     private static void AppendToolsetHeader(StringBuilder sb, AgentToolset toolset)
     {
         sb.AppendLine("TOOLS:");
-        sb.AppendLine($"  Your file-reading tool is `{toolset.ReadToolName}`; your file-writing tool is `{toolset.WriteToolName}`.");
+        sb.AppendLine($"  Read the file with `{toolset.ReadToolName}`.");
+        sb.AppendLine($"  Update the file ONLY with `{toolset.EditToolName}` — a string-replace tool that");
+        sb.AppendLine("  takes old_str and new_str and replaces a single unique match.");
+        sb.AppendLine("  Do NOT try to use `create` or any whole-file write tool — it cannot overwrite.");
         sb.AppendLine("  Shell / subprocess tools are disabled. Do not try to spawn processes.");
         sb.AppendLine();
     }
 
     private static void AppendWriteStrategy(StringBuilder sb, AgentToolset toolset)
     {
-        sb.AppendLine("6. WRITE STRATEGY:");
-        sb.AppendLine($"   When you are done scoring, rewrite the ENTIRE file in one `{toolset.WriteToolName}`");
-        sb.AppendLine("   call with the full updated JSON. Do not make many small string-replace edits across");
-        sb.AppendLine("   the file — the repeating `\"score\": null, \"reason\": null` pattern is not unique");
-        sb.AppendLine("   across items, so targeted replacements may fail.");
+        sb.AppendLine("6. EDIT STRATEGY (follow exactly — most failures come from ignoring this):");
+        sb.AppendLine($"   For each checklist item with score:null, call `{toolset.EditToolName}` once.");
+        sb.AppendLine("   To make each edit's old_str UNIQUE in the file, include the item's \"id\" line.");
+        sb.AppendLine("   The minimum unique old_str is:");
+        sb.AppendLine();
+        sb.AppendLine("       \"id\": \"<item-id>\",");
+        sb.AppendLine("       \"type\": \"Semantic\",");
+        sb.AppendLine("       \"prompt\": \"<the full prompt text>\",");
+        sb.AppendLine("       \"score\": null,");
+        sb.AppendLine("       \"reason\": null,");
+        sb.AppendLine();
+        sb.AppendLine("   Your new_str must be the same block with score and reason filled:");
+        sb.AppendLine();
+        sb.AppendLine("       \"id\": \"<item-id>\",");
+        sb.AppendLine("       \"type\": \"Semantic\",");
+        sb.AppendLine("       \"prompt\": \"<the full prompt text>\",");
+        sb.AppendLine("       \"score\": true,");
+        sb.AppendLine("       \"reason\": \"<one sentence>\",");
+        sb.AppendLine();
+        sb.AppendLine("   IMPORTANT:");
+        sb.AppendLine("   - Include the whole \"prompt\" line verbatim in old_str — the \"id\" alone is not");
+        sb.AppendLine("     always enough for uniqueness across tools, but id + prompt always is.");
+        sb.AppendLine("   - Do NOT include any fields the file doesn't have.");
+        sb.AppendLine("   - Answer with your FIRST instinct. Do not re-read the file to double-check an");
+        sb.AppendLine("     edit you already made — the edit succeeded if the tool didn't error.");
+        sb.AppendLine("   - Do NOT batch many items into one old_str — one item per edit call.");
     }
 
     private static void AppendInstructions(StringBuilder sb, string checklistPath)
