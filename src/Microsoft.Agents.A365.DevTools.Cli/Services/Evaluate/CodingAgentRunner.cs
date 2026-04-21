@@ -23,11 +23,12 @@ internal class CodingAgentRunner
     internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(10);
 
     // Observed on Copilot + Haiku: a tool evaluation needs ~60-90s of fixed overhead
-    // (CLI startup, session init, reading the checklist) plus ~12-15s per semantic
-    // check (read + reason + write). The constants below give each attempt enough
-    // headroom without being so long that an agent stuck in a loop stalls the run.
+    // (CLI startup, session init, reading the checklist) plus ~15-20s per semantic
+    // check (read + reason + write, with several thinking rounds). The constants
+    // below give each attempt enough headroom without being so long that an agent
+    // stuck in a loop stalls the whole run.
     private static readonly TimeSpan PerToolBaseTimeout = TimeSpan.FromSeconds(120);
-    private static readonly TimeSpan PerCheckTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan PerCheckTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan MinPerToolTimeout = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan MaxPerToolTimeout = TimeSpan.FromMinutes(20);
 
