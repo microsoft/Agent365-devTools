@@ -16,7 +16,7 @@ public interface IEvaluationAnalyzer
     /// Analyzes the evaluated checklist and produces a complete evaluation result.
     /// </summary>
     /// <param name="checklist">The evaluation checklist with all checks scored.</param>
-    /// <param name="evalEngine">The evaluation engine used (e.g., "GithubCopilot", "None").</param>
+    /// <param name="evalEngine">The evaluation engine used (e.g., "GitHub Copilot", "Claude Code", "none").</param>
     /// <returns>A fully populated <see cref="SchemaEvalResult"/>.</returns>
     SchemaEvalResult Analyze(EvaluationChecklist checklist, string evalEngine);
 }

@@ -19,7 +19,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 internal sealed class ChecklistEvaluator : IChecklistEvaluator
 {
     // Engine priority order: always try Copilot first
-    private static readonly EvalEngine[] EnginePriority = [EvalEngine.GithubCopilot, EvalEngine.ClaudeCode];
+    private static readonly EvalEngine[] EnginePriority = [EvalEngine.GitHubCopilot, EvalEngine.ClaudeCode];
 
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
@@ -119,7 +119,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 continue;
             }
 
-            var success = await EvaluateToolChecks(tool, dir, enginesToTry, cancellationToken);
+            var success = await EvaluateToolChecks(tool, enginesToTry, cancellationToken);
             if (success)
             {
                 toolsEvaluated++;
@@ -138,7 +138,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var serverUnevaluated = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
         if (serverUnevaluated > 0)
         {
-            var serverSuccess = await EvaluateServerChecks(checklist, dir, enginesToTry, cancellationToken);
+            var serverSuccess = await EvaluateServerChecks(checklist, enginesToTry, cancellationToken);
             if (serverSuccess)
             {
                 _logger.LogInformation("      server-level checks ({Count} checks) ... ok", serverUnevaluated);
@@ -187,7 +187,6 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// </summary>
     private async Task<bool> EvaluateToolChecks(
         ToolChecklist tool,
-        string workingDir,
         List<EvalEngine> engines,
         CancellationToken cancellationToken)
     {
@@ -247,7 +246,6 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// </summary>
     private async Task<bool> EvaluateServerChecks(
         EvaluationChecklist checklist,
-        string workingDir,
         List<EvalEngine> engines,
         CancellationToken cancellationToken)
     {
@@ -389,7 +387,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// </summary>
     private static SemanticCheckPrompts.AgentToolset ToolsetFor(EvalEngine engine) => engine switch
     {
-        EvalEngine.GithubCopilot => new SemanticCheckPrompts.AgentToolset(
+        EvalEngine.GitHubCopilot => new SemanticCheckPrompts.AgentToolset(
             ReadToolName: "view",
             WriteToolName: "create"),
         EvalEngine.ClaudeCode => new SemanticCheckPrompts.AgentToolset(
@@ -429,9 +427,9 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// <summary>
     /// Returns a user-friendly display name for an engine.
     /// </summary>
-    private static string FormatEngineName(EvalEngine engine) => engine switch
+    internal static string FormatEngineName(EvalEngine engine) => engine switch
     {
-        EvalEngine.GithubCopilot => "GitHub Copilot",
+        EvalEngine.GitHubCopilot => "GitHub Copilot",
         EvalEngine.ClaudeCode => "Claude Code",
         EvalEngine.Auto => "auto",
         EvalEngine.None => "none",

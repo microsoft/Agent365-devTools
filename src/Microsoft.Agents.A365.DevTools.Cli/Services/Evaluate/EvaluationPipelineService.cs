@@ -60,8 +60,12 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             }
 
             // Derive checklist path first so we can detect an in-progress evaluation.
+            // Run the derived name through the same sanitizer as the report filename so
+            // any invalid-for-filesystem characters (?, *, <, etc.) from the fallback path
+            // don't crash Path.Combine / File.Exists downstream.
             var serverName = DeriveServerName(serverUrl);
-            var checklistPath = Path.Combine(outputDir, $"{serverName}_checklist.json");
+            var safeServerName = ReportGenerator.SanitizeFileName(serverName);
+            var checklistPath = Path.Combine(outputDir, $"{safeServerName}_checklist.json");
 
             EvaluationChecklist checklist;
 
@@ -108,7 +112,10 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             }
 
             // Step 4: Analysis
-            var engineName = engine.ToString();
+            // Persist the human-readable display name ("GitHub Copilot", "Claude Code")
+            // in the report instead of the raw enum identifier so downstream consumers
+            // don't have to map "GitHubCopilot" back to something user-facing.
+            var engineName = ChecklistEvaluator.FormatEngineName(engine);
             var result = _evaluationAnalyzer.Analyze(checklist, engineName);
             _logger.LogInformation(
                 "[4/5] Analysis complete: score {Score}/100, Level {Level} ({Label}), {ActionCount} action item{Plural}",
@@ -243,7 +250,7 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
         return value.ToLowerInvariant() switch
         {
             "auto" => EvalEngine.Auto,
-            "github-copilot" => EvalEngine.GithubCopilot,
+            "github-copilot" => EvalEngine.GitHubCopilot,
             "claude-code" => EvalEngine.ClaudeCode,
             "none" => EvalEngine.None,
             _ => throw new EvaluationException(

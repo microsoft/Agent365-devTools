@@ -504,11 +504,11 @@ public class EvaluationAnalyzerTests
         var tool = CreateToolWithUniformChecks("tool1", score: true);
         var checklist = CreateChecklist([tool]);
 
-        var result = _analyzer.Analyze(checklist, "GithubCopilot");
+        var result = _analyzer.Analyze(checklist, "GitHub Copilot");
 
         result.ServerName.Should().Be("test-server");
         result.ServerUrl.Should().Be("http://localhost:3000");
-        result.EvalEngine.Should().Be("GithubCopilot");
+        result.EvalEngine.Should().Be("GitHub Copilot");
     }
 
     [Fact]

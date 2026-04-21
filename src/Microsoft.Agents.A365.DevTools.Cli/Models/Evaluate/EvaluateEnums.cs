@@ -54,7 +54,7 @@ public enum CheckType
 public enum EvalEngine
 {
     Auto,
-    GithubCopilot,
+    GitHubCopilot,
     ClaudeCode,
     None
 }

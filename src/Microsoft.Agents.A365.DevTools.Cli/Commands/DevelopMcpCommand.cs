@@ -67,8 +67,9 @@ public static class DevelopMcpCommand
         var command = new Command(
             "evaluate",
             "Evaluate MCP server tool schema quality and generate an HTML report. " +
-            "Uses a locally installed coding agent (GitHub Copilot or Claude Code) to score semantic checks; " +
-            "if neither is installed, pass --eval-engine none to score the generated checklist manually with your own LLM.");
+            "Uses a locally installed coding agent (GitHub Copilot or Claude Code) to score semantic checks. " +
+            "If no agent is detected, the command stops after writing the checklist so you can score it manually with your own LLM, " +
+            "or pass --eval-engine none to skip agent probing entirely.");
 
         // Use a required option (not a positional argument) for consistency with other
         // develop-mcp subcommands and Azure CLI conventions.

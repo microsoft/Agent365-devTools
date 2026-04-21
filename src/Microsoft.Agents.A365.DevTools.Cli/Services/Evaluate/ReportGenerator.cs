@@ -61,7 +61,7 @@ internal sealed partial class ReportGenerator : IReportGenerator
         string template = await ReadEmbeddedTemplateAsync().ConfigureAwait(false);
 
         // Step 4: Inject report data into template.
-        // Escape sequences that can break out of the inline <script> block (</script>, <!--, -->, <!)
+        // Escape sequences that can break out of the inline <script> block (</script>, <!--, -->)
         // since the JSON contains untrusted strings from the MCP server.
         string reportDataJson = EscapeForInlineScript(JsonSerializer.Serialize(reportData, s_jsonOptions));
         string htmlContent = template.Replace(TemplatePlaceholder, reportDataJson, StringComparison.Ordinal);

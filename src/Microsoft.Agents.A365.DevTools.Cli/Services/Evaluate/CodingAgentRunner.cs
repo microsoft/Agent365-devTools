@@ -44,7 +44,7 @@ internal class CodingAgentRunner
     {
         return engine switch
         {
-            EvalEngine.GithubCopilot => await ProbeCommandAsync("copilot", "--version", cancellationToken),
+            EvalEngine.GitHubCopilot => await ProbeCommandAsync("copilot", "--version", cancellationToken),
             EvalEngine.ClaudeCode => await ProbeCommandAsync("claude", "--version", cancellationToken),
             _ => false
         };
@@ -77,7 +77,7 @@ internal class CodingAgentRunner
         return engine switch
         {
             EvalEngine.ClaudeCode => await LaunchClaudeCodeAsync(prompt, workingDirectory, effectiveTimeout, cancellationToken),
-            EvalEngine.GithubCopilot => await LaunchGithubCopilotAsync(prompt, workingDirectory, effectiveTimeout, cancellationToken),
+            EvalEngine.GitHubCopilot => await LaunchGithubCopilotAsync(prompt, workingDirectory, effectiveTimeout, cancellationToken),
             _ => LogUnsupportedEngine(engine)
         };
     }
@@ -213,7 +213,7 @@ internal class CodingAgentRunner
                 CreateNoWindow = true
             };
 
-            return await RunProcessAsync(startInfo, EvalEngine.GithubCopilot, timeout, cancellationToken: cancellationToken);
+            return await RunProcessAsync(startInfo, EvalEngine.GitHubCopilot, timeout, cancellationToken: cancellationToken);
         }
         finally
         {
