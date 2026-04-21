@@ -1238,6 +1238,44 @@ public static class DevelopMcpCommand
                 };
             }
 
+            // Create Copilot (VS Code) Entra app — same pattern as A365 Proxy
+            string? copilotAppClientId = null;
+            string? copilotAppObjectId = null;
+
+            if (force)
+            {
+                var existingCopilotObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-Copilot");
+                if (!string.IsNullOrWhiteSpace(existingCopilotObjectId))
+                {
+                    logger.LogDebug("Deleting existing Copilot app: {ObjectId}", existingCopilotObjectId);
+                    await graphApiService.DeleteEntraAppAsync(tenantId, existingCopilotObjectId);
+                }
+            }
+
+            logger.LogDebug("Creating Entra application for Copilot (VS Code)...");
+            var copilotApp = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-Copilot", serviceTreeId: serviceTreeId);
+            if (copilotApp != null)
+            {
+                copilotAppClientId = copilotApp.Value.ClientId;
+                copilotAppObjectId = copilotApp.Value.ObjectId;
+                logger.LogDebug("Created Copilot app: {ClientId}", copilotAppClientId);
+
+                var copilotRedirectUri = $"ms-appx-web://MicrosoftAAD.BrokerPlugin/{copilotAppClientId}";
+                try
+                {
+                    await graphApiService.UpdateAppRedirectUrisAsync(tenantId, copilotAppObjectId, new[] { copilotRedirectUri });
+                    logger.LogDebug("Set Copilot redirect URI: {Uri}", copilotRedirectUri);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning("Failed to set redirect URI on Copilot app: {Error}", ex.Message);
+                }
+            }
+            else
+            {
+                logger.LogWarning("Failed to create Copilot Entra app. Continuing without it.");
+            }
+
             // Track warnings for non-fatal failures during registration
             var warnings = new List<string>();
 
@@ -1265,6 +1303,7 @@ public static class DevelopMcpCommand
                 RemoteServerScopes = remoteScopes,
                 PublisherName = publisherName,
                 Description = serverDescription,
+                CopilotClientAppId = copilotAppClientId,
                 Force = force,
             };
 
@@ -1426,6 +1465,23 @@ public static class DevelopMcpCommand
                         var msg = "No PPMI scopes were created. API permissions not added to A365 Proxy app.";
                         logger.LogWarning(msg);
                         warnings.Add(msg);
+                    }
+
+                    // Add same PPMI API permissions on Copilot app
+                    if (ppmiScopeIds.Count > 0 && copilotAppObjectId != null)
+                    {
+                        try
+                        {
+                            logger.LogDebug("Adding API permissions on Copilot app for PPMI scopes...");
+                            await graphApiService.AddRequiredResourceAccessAsync(
+                                tenantId, copilotAppObjectId, ppmiAppClientId, ppmiScopeIds);
+                        }
+                        catch (Exception ex)
+                        {
+                            var msg = $"Failed to add API permissions on Copilot app: {ex.Message}";
+                            logger.LogWarning(msg);
+                            warnings.Add(msg);
+                        }
                     }
                 }
                 else

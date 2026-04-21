@@ -76,6 +76,12 @@ public class AddMcpServerRequest
     public string? Description { get; set; }
 
     /// <summary>
+    /// Copilot (VS Code) Entra client application ID
+    /// </summary>
+    [JsonPropertyName("copilotClientAppId")]
+    public string? CopilotClientAppId { get; set; }
+
+    /// <summary>
     /// When true, force re-creation of connectors and reuse existing MCC record
     /// </summary>
     [JsonPropertyName("force")]
