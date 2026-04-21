@@ -53,14 +53,6 @@ public class ActionItemGeneratorTests
     }
 
     [Fact]
-    public void GenerateFromAllChecks_NullChecks_ReturnsEmpty()
-    {
-        var result = ActionItemGenerator.GenerateFromAllChecks(null!, "tool1");
-
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
     public void GenerateFromAllChecks_EmptyChecks_ReturnsEmpty()
     {
         var result = ActionItemGenerator.GenerateFromAllChecks([], "tool1");

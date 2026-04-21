@@ -99,14 +99,6 @@ public class ScorerTests
         result.Should().Be(100f);
     }
 
-    [Fact]
-    public void ComputeCategoryScore_NullList_Returns100()
-    {
-        float result = Scorer.ComputeCategoryScore(null!);
-
-        result.Should().Be(100f);
-    }
-
     // =======================================================================
     // ComputeToolScore
     // =======================================================================
@@ -186,14 +178,6 @@ public class ScorerTests
     }
 
     [Fact]
-    public void ComputeToolScore_NullInput_Returns100()
-    {
-        float result = Scorer.ComputeToolScore(null!);
-
-        result.Should().Be(100f);
-    }
-
-    [Fact]
     public void CategoryWeights_SumTo1()
     {
         float sum = Scorer.CategoryWeights.Values.Sum();
@@ -246,17 +230,6 @@ public class ScorerTests
 
         // 80 * 0.15 = 12.0
         result.Should().BeApproximately(12.0f, 0.1f);
-    }
-
-    [Fact]
-    public void ComputeOverallScore_NullTools_ReturnsToolsetOnly()
-    {
-        float toolsetScore = 60f;
-
-        float result = Scorer.ComputeOverallScore(null!, toolsetScore);
-
-        // 60 * 0.15 = 9.0
-        result.Should().BeApproximately(9.0f, 0.1f);
     }
 
     [Fact]
@@ -329,14 +302,6 @@ public class ScorerTests
     public void ComputeCategoryAverages_EmptyList_ReturnsEmptyDict()
     {
         var result = Scorer.ComputeCategoryAverages([]);
-
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void ComputeCategoryAverages_NullList_ReturnsEmptyDict()
-    {
-        var result = Scorer.ComputeCategoryAverages(null!);
 
         result.Should().BeEmpty();
     }

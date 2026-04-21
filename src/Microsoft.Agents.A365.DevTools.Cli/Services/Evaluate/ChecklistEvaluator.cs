@@ -186,9 +186,11 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// <summary>
     /// Extracts a single tool to a temp file, invokes the coding agent to evaluate
     /// its semantic checks, then merges the scored results back into the tool object.
-    /// The temp file lives in an isolated directory under the system temp path so
-    /// the coding agent (which may run with broad tool permissions) cannot reach
-    /// the user's source tree even if they invoked from a repo root.
+    /// The temp file lives in an isolated directory under the system temp path to
+    /// reduce the blast radius of the agent's file tools: the agent's cwd is the
+    /// sandbox, and each engine's path-verification (Copilot's default, Claude's
+    /// --add-dir allowlist) bounds cwd-relative file access to it. Absolute paths
+    /// remain reachable, so this is a reduced-surface defense, not a full jail.
     /// </summary>
     private async Task<bool> EvaluateToolChecks(
         ToolChecklist tool,

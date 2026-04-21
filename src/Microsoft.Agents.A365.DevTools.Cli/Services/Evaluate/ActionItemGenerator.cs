@@ -23,7 +23,7 @@ public static class ActionItemGenerator
         List<ChecklistItem> checks,
         string? toolName)
     {
-        if (checks is null || checks.Count == 0)
+        if (checks.Count == 0)
         {
             return [];
         }

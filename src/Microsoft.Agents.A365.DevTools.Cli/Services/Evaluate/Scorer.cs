@@ -44,7 +44,7 @@ public static class Scorer
     /// <returns>Score from 0 to 100, rounded to 1 decimal place.</returns>
     public static float ComputeCategoryScore(List<ChecklistItem> checks)
     {
-        if (checks is null || checks.Count == 0)
+        if (checks.Count == 0)
         {
             return 100f;
         }
@@ -70,11 +70,6 @@ public static class Scorer
     /// <returns>Weighted score from 0 to 100, rounded to 1 decimal place.</returns>
     public static float ComputeToolScore(Dictionary<string, float> categoryScores)
     {
-        if (categoryScores is null)
-        {
-            return 100f;
-        }
-
         float overall = 0f;
         foreach (var (category, weight) in CategoryWeights)
         {
@@ -95,7 +90,7 @@ public static class Scorer
     /// <returns>Overall score from 0 to 100, rounded to 1 decimal place.</returns>
     public static float ComputeOverallScore(List<ToolEvalResult> toolResults, float toolsetScore)
     {
-        if (toolResults is null || toolResults.Count == 0)
+        if (toolResults.Count == 0)
         {
             return MathF.Round(toolsetScore * ToolsetWeight, 1);
         }
@@ -113,7 +108,7 @@ public static class Scorer
     /// <returns>Dictionary of category name to average score, rounded to 1 decimal.</returns>
     public static Dictionary<string, float> ComputeCategoryAverages(List<ToolEvalResult> toolResults)
     {
-        if (toolResults is null || toolResults.Count == 0)
+        if (toolResults.Count == 0)
         {
             return [];
         }
