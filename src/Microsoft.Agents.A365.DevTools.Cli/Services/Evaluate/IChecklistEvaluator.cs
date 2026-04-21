@@ -30,4 +30,12 @@ public class ChecklistEvaluationResult
 {
     public EvaluationChecklist Checklist { get; init; } = new();
     public bool SemanticEvaluationCompleted { get; init; }
+
+    /// <summary>
+    /// The engine that actually produced successful evaluations (first in priority
+    /// order among engines that ran successfully). Null when no agent ran or all
+    /// engines failed. Callers can use this to stamp reports with the engine that
+    /// actually did the work, rather than whatever the user requested (e.g. "auto").
+    /// </summary>
+    public EvalEngine? EngineUsed { get; init; }
 }

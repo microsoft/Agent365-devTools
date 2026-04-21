@@ -106,8 +106,10 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 string.Join(", ", enginesToTry.Skip(1).Select(FormatEngineName)));
         }
 
-        int toolsEvaluated = 0;
-        int toolsFailed = 0;
+        // Track the first engine that successfully produced evaluations across any
+        // tool or server-check pass. Used to stamp the report with the engine that
+        // actually did the work (rather than the user's "auto" request).
+        EvalEngine? engineUsed = null;
 
         // Evaluate each tool using extract-evaluate-merge pattern.
         // The full checklist is ~1MB which is too large for coding agents.
@@ -124,16 +126,15 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 continue;
             }
 
-            var success = await EvaluateToolChecks(tool, enginesToTry, cancellationToken);
-            if (success)
+            var toolEngine = await EvaluateToolChecks(tool, enginesToTry, cancellationToken);
+            if (toolEngine is not null)
             {
-                toolsEvaluated++;
+                engineUsed ??= toolEngine;
                 _logger.LogInformation("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... ok",
                     i + 1, checklist.Tools.Count, tool.Name, unevaluated);
             }
             else
             {
-                toolsFailed++;
                 _logger.LogWarning("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... failed (continuing)",
                     i + 1, checklist.Tools.Count, tool.Name, unevaluated);
             }
@@ -143,9 +144,10 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var serverUnevaluated = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
         if (serverUnevaluated > 0)
         {
-            var serverSuccess = await EvaluateServerChecks(checklist, enginesToTry, cancellationToken);
-            if (serverSuccess)
+            var serverEngine = await EvaluateServerChecks(checklist, enginesToTry, cancellationToken);
+            if (serverEngine is not null)
             {
+                engineUsed ??= serverEngine;
                 _logger.LogInformation("      server-level checks ({Count} checks) ... ok", serverUnevaluated);
             }
             else
@@ -179,7 +181,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         return new ChecklistEvaluationResult
         {
             Checklist = checklist,
-            SemanticEvaluationCompleted = remainingUnevaluated == 0
+            SemanticEvaluationCompleted = remainingUnevaluated == 0,
+            EngineUsed = engineUsed
         };
     }
 
@@ -192,7 +195,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// --add-dir allowlist) bounds cwd-relative file access to it. Absolute paths
     /// remain reachable, so this is a reduced-surface defense, not a full jail.
     /// </summary>
-    private async Task<bool> EvaluateToolChecks(
+    private async Task<EvalEngine?> EvaluateToolChecks(
         ToolChecklist tool,
         List<EvalEngine> engines,
         CancellationToken cancellationToken)
@@ -202,7 +205,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         try
         {
             var fullPath = Path.GetFullPath(tempFile);
-            bool anyAttemptSucceeded = false;
+            EvalEngine? firstSuccessfulEngine = null;
 
             // Up to MaxAttempts agent passes. Each pass, we re-serialize the current
             // tool state (with any scores merged from prior passes) so the agent only
@@ -216,16 +219,16 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 // 46 unscored checks legitimately needs longer than one with 18.
                 var perAttemptTimeout = CodingAgentRunner.TimeoutForChecks(CountUnevaluatedSemanticChecks(tool));
 
-                var success = await TryEvaluateWithFallthrough(
+                var successEngine = await TryEvaluateWithFallthrough(
                     engines,
                     tempFile,
                     engine => SemanticCheckPrompts.BuildToolEvaluationPrompt(fullPath, tool.Name, ToolsetFor(engine)),
                     perAttemptTimeout,
                     cancellationToken);
 
-                if (success)
+                if (successEngine is not null)
                 {
-                    anyAttemptSucceeded = true;
+                    firstSuccessfulEngine ??= successEngine;
 
                     // Re-read the evaluated tool and merge scores back.
                     // Coding agents sometimes produce slightly malformed JSON: missing
@@ -273,7 +276,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
                 if (CountUnevaluatedSemanticChecks(tool) == 0)
                 {
-                    return true;
+                    return firstSuccessfulEngine;
                 }
 
                 if (attempt < MaxAttempts)
@@ -288,7 +291,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             // pipeline will see the unscored items and fall back to manual scoring.
             // If no attempt ever succeeded (e.g. all 3 hit timeout), report failure
             // so the tool shows up as "failed (continuing)" in the pipeline log.
-            return anyAttemptSucceeded;
+            return firstSuccessfulEngine;
         }
         finally
         {
@@ -301,7 +304,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// invokes the coding agent, then merges results back. Runs inside an isolated
     /// sandbox directory for the same reason as EvaluateToolChecks.
     /// </summary>
-    private async Task<bool> EvaluateServerChecks(
+    private async Task<EvalEngine?> EvaluateServerChecks(
         EvaluationChecklist checklist,
         List<EvalEngine> engines,
         CancellationToken cancellationToken)
@@ -311,7 +314,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         try
         {
             var fullPath = Path.GetFullPath(tempFile);
-            bool anyAttemptSucceeded = false;
+            EvalEngine? firstSuccessfulEngine = null;
             var docOptions = new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
@@ -333,16 +336,16 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 var serverRemaining = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
                 var perAttemptTimeout = CodingAgentRunner.TimeoutForChecks(serverRemaining);
 
-                var success = await TryEvaluateWithFallthrough(
+                var successEngine = await TryEvaluateWithFallthrough(
                     engines,
                     tempFile,
                     engine => SemanticCheckPrompts.BuildServerChecksEvaluationPrompt(fullPath, ToolsetFor(engine)),
                     perAttemptTimeout,
                     cancellationToken);
 
-                if (success)
+                if (successEngine is not null)
                 {
-                    anyAttemptSucceeded = true;
+                    firstSuccessfulEngine ??= successEngine;
 
                     try
                     {
@@ -375,7 +378,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 var remaining = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
                 if (remaining == 0)
                 {
-                    return true;
+                    return firstSuccessfulEngine;
                 }
 
                 if (attempt < MaxAttempts)
@@ -385,7 +388,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 }
             }
 
-            return anyAttemptSucceeded;
+            return firstSuccessfulEngine;
         }
         finally
         {
@@ -440,8 +443,9 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     }
 
     /// <summary>
-    /// Attempts to repair common JSON issues produced by coding agents:
-    /// missing commas between properties/array elements, trailing commas.
+    /// Attempts to repair common JSON issues produced by coding agents by
+    /// inserting missing commas between properties or array elements.
+    /// Trailing commas are tolerated separately via AllowTrailingCommas in ReadOptions.
     /// </summary>
     internal static string RepairJson(string json)
     {
@@ -454,10 +458,11 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
     /// <summary>
     /// Tries each engine in order for a single evaluation call until one succeeds.
+    /// Returns the engine that succeeded, or null if every candidate failed.
     /// Builds the prompt per engine so we can name the engine's exact tools in the
     /// instructions (Copilot: view/create, Claude Code: Read/Write).
     /// </summary>
-    private async Task<bool> TryEvaluateWithFallthrough(
+    private async Task<EvalEngine?> TryEvaluateWithFallthrough(
         List<EvalEngine> engines,
         string filePath,
         Func<EvalEngine, string> promptBuilder,
@@ -470,13 +475,13 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             var success = await _agentRunner.EvaluateChecklistAsync(filePath, prompt, candidate, timeout, cancellationToken);
             if (success)
             {
-                return true;
+                return candidate;
             }
 
             _logger.LogDebug("{Engine} failed, trying next", candidate);
         }
 
-        return false;
+        return null;
     }
 
     /// <summary>
@@ -504,13 +509,23 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// <summary>
     /// Builds the ordered list of engines to try based on user's choice.
     /// For Auto: detect which are available, always Copilot first.
-    /// For a specific engine: just that one (caller should have handled None earlier).
+    /// For a specific engine: return it only if its CLI is available; otherwise
+    /// an empty list so the caller takes the same "engine not found" path as Auto
+    /// with nothing installed (instead of looping through failures and surfacing
+    /// a misleading "agent ran but left checks unscored" message).
+    /// Caller should have handled None earlier.
     /// </summary>
     private async Task<List<EvalEngine>> BuildEngineList(EvalEngine requested, CancellationToken cancellationToken = default)
     {
         if (requested != EvalEngine.Auto)
         {
-            return [requested];
+            if (await _agentRunner.IsEngineAvailableAsync(requested, cancellationToken))
+            {
+                return [requested];
+            }
+
+            _logger.LogDebug("Requested engine {Engine} is not available on PATH", requested);
+            return [];
         }
 
         // Auto: detect all available engines, preserving priority order

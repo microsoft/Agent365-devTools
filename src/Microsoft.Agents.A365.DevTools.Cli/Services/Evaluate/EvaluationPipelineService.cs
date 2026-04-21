@@ -114,8 +114,11 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             // Step 4: Analysis
             // Persist the human-readable display name ("GitHub Copilot", "Claude Code")
             // in the report instead of the raw enum identifier so downstream consumers
-            // don't have to map "GitHubCopilot" back to something user-facing.
-            var engineName = ChecklistEvaluator.FormatEngineName(engine);
+            // don't have to map "GitHubCopilot" back to something user-facing. Prefer
+            // the engine that actually produced evaluations over the user's request,
+            // so --eval-engine auto reports as "GitHub Copilot" (or whichever ran)
+            // instead of the meaningless "auto".
+            var engineName = ChecklistEvaluator.FormatEngineName(evalResult.EngineUsed ?? engine);
             var result = _evaluationAnalyzer.Analyze(checklist, engineName);
             _logger.LogInformation(
                 "[4/5] Analysis complete: score {Score}/100, Level {Level} ({Label}), {ActionCount} action item{Plural}",
