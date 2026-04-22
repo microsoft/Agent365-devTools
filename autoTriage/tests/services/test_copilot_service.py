@@ -714,20 +714,21 @@ class TestGetFixInstructions:
 
     # Test: Long issue body is truncated
     def test_issue_body_truncated(self):
-        """Test that very long issue bodies are truncated."""
+        """Test that very long issue bodies are truncated to MAX_ISSUE_BODY_LENGTH."""
         from services.copilot_service import CopilotService
-        
+        from utils.sanitise import MAX_ISSUE_BODY_LENGTH
+
         service = CopilotService()
-        long_body = "A" * 2000  # Longer than 1500 char limit
+        long_body = "A" * (MAX_ISSUE_BODY_LENGTH + 500)
         instructions = service.get_fix_instructions(
             issue_title="Test",
             issue_body=long_body,
             fix_suggestions=[]
         )
-        
-        assert "..." in instructions
-        # Should have truncated content
-        assert "A" * 1500 in instructions
+
+        # sanitise_user_content truncates at MAX_ISSUE_BODY_LENGTH (no "..." suffix)
+        assert "A" * MAX_ISSUE_BODY_LENGTH in instructions
+        assert "A" * (MAX_ISSUE_BODY_LENGTH + 1) not in instructions
 
     # Test: Suggestion numbering
     def test_suggestions_are_numbered(self):
@@ -873,21 +874,22 @@ class TestGetFixInstructions:
             f"Dependency constraint missing when fix_suggestions={suggestions!r}"
 
     def test_xml_escaped_title_appears_inside_user_content(self):
-        """A title with XML special chars that was sanitized upstream stays inside user_content."""
+        """A title with XML special chars is sanitised by get_fix_instructions and stays inside user_content."""
         from services.copilot_service import CopilotService
 
         service = CopilotService()
-        # Simulate a title that has already been XML-escaped by _sanitise_user_content
-        sanitized_title = "&lt;script&gt;alert(1)&lt;/script&gt; fix typo"
+        # Pass raw (unsanitised) title — get_fix_instructions now owns the sanitisation.
+        raw_title = "<script>alert(1)</script> fix typo"
+        escaped_title = "&lt;script&gt;alert(1)&lt;/script&gt; fix typo"
         instructions = service.get_fix_instructions(
-            issue_title=sanitized_title,
+            issue_title=raw_title,
             issue_body="",
             fix_suggestions=[]
         )
 
         open_pos = instructions.index("<user_content>")
         close_pos = instructions.index("</user_content>")
-        title_pos = instructions.index(sanitized_title)
+        title_pos = instructions.index(escaped_title)
         assert open_pos < title_pos < close_pos, \
             "Escaped title must remain inside user_content block"
 

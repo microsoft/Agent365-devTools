@@ -111,7 +111,7 @@ jobs:
             if (triageResult.rationale) {
               if (typeof triageResult.rationale === 'object') {
                 rationaleText = Object.entries(triageResult.rationale)
-                  .map(([key, value]) => `**${key.replace(/_/g, ' ')}:** ${escapeMd(value)}`)
+                  .map(([key, value]) => `**${escapeMd(key.replace(/_/g, ' '))}:** ${escapeMd(value)}`)
                   .join('\n\n');
               } else {
                 rationaleText = escapeMd(triageResult.rationale);
