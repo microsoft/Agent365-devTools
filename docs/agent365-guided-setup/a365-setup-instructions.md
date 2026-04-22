@@ -10,27 +10,27 @@
 
 Before creating any todos or running any commands, ask the user these two questions (one at a time, wait for each response):
 
-**Question 1: Which of the following best describes your agent?**
+**Question 1: Is your agent already available in Teams or Copilot?**
 
-1. M365 custom engine agent
-2. All other agents
+- Yes
+- No
 
 Wait for the answer. Store as `agentType`:
-- If **1 (M365 custom engine agent)**: `agentType = 1`
-- If **2 (All other agents)**: `agentType = 2`
+- If **Yes**: `agentType = 1` (M365 custom engine agent)
+- If **No**: `agentType = 2` (All other agents)
 
 **Question 2: What capabilities do you want to enable?**
 
 Present only the options that apply to the user's `agentType`:
 
-- **If `agentType = 1`** (M365 custom engine agent — Discoverability is already enabled):
+- **If `agentType = 1`** (M365 — Discoverability is already included):
   1. Observability
-  2. Observability and Work IQ
+  2. Work IQ
   3. AI Teammate
-- **If `agentType = 2`** (All other agents): 
+- **If `agentType = 2`** (All other agents):
   1. Discoverability
-  2. Discoverability and Observability
-  3. Discoverability, Observability, and Work IQ
+  2. Observability
+  3. Work IQ
   4. AI Teammate
 
 Wait for the answer. Store as `capabilities`.
@@ -600,7 +600,7 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 
 Mark all todos as completed, then check `capabilities`:
 
-> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Observability and Work IQ, or `agentType = 2` with Discoverability and Observability or Discoverability, Observability, and Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
+> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Work IQ, or `agentType = 2` with Observability or Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
 >
 > **Otherwise**: say to the user verbatim:
 > "Your agent is provisioned. Would you like to add observability so you can trace LLM calls, tool dispatches, and agent-to-agent calls?"
