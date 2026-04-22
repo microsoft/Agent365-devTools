@@ -80,7 +80,8 @@ internal static class SetupHelpers
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
             new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
-            setInheritable),
+            setInheritable,
+            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             "Power Platform API",
@@ -224,12 +225,14 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Fixed permission specs for the non-DW admin consent flow.
-    /// Observability API and Power Platform API — both delegated.
+    /// Observability API requires both Application (app role for S2S) and Delegated (oauth2 grant for OBO).
+    /// Power Platform API requires Delegated only.
     /// Extend this list or pass an override to <see cref="LogNonDwAdminConsentInstructions"/>
     /// when additional APIs are required (e.g. dynamic MCP scopes, custom permissions).
     /// </summary>
     internal static readonly IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)> NonDwAdminConsentSpecs =
     [
+        ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Application"),
         ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Delegated"),
         ("Power Platform API", PowerPlatformConstants.PowerPlatformApiResourceAppId,           PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,  "Delegated"),
     ];
@@ -245,9 +248,14 @@ internal static class SetupHelpers
     internal static void LogNonDwAdminConsentInstructions(
         ILogger logger,
         string blueprintId,
+        string? agentIdentityAppId = null,
         IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null)
     {
         specs ??= NonDwAdminConsentSpecs;
+
+        var appSpecs = specs.Where(s => s.PermissionType == "Application").ToList();
+        var delegatedSpecs = specs.Where(s => s.PermissionType == "Delegated").ToList();
+        var hasAgentIdentity = !string.IsNullOrWhiteSpace(agentIdentityAppId);
 
         // Option A — Entra portal
         logger.LogInformation("     Option A — Entra portal:");
@@ -257,30 +265,74 @@ internal static class SetupHelpers
         logger.LogInformation("          (switch to 'All applications' tab if not shown under 'Owned applications')");
         logger.LogInformation("       4. Open the app, go to: API permissions");
         logger.LogInformation("       5. Confirm the following permissions are listed:");
-        foreach (var (resourceName, _, scope, permType) in specs)
-            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermType})", resourceName, scope, permType);
+        foreach (var group in specs.GroupBy(s => (s.ResourceName, s.Scope)))
+        {
+            var types = string.Join(", ", group.Select(s => s.PermissionType));
+            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermTypes})", group.Key.ResourceName, group.Key.Scope, types);
+        }
         logger.LogInformation("       6. Click 'Grant admin consent for your organization' and confirm");
+        if (hasAgentIdentity && appSpecs.Count > 0)
+        {
+            logger.LogInformation("       7. Grant Application permissions to the agent identity (required for S2S token acquisition):");
+            logger.LogInformation("          - Search for the agent identity app by ID: {AgentIdentityAppId}", agentIdentityAppId);
+            logger.LogInformation("          - Open the app, go to: API permissions");
+            logger.LogInformation("          - Confirm the following Application permissions are listed:");
+            foreach (var (resourceName, _, scope, _) in appSpecs)
+                logger.LogInformation("               - {ResourceName,-20}: {Scope} (Application)", resourceName, scope);
+            logger.LogInformation("          - Click 'Grant admin consent for your organization' and confirm");
+        }
 
         // Option B — PowerShell (Microsoft Graph SDK)
         // Use Invoke-MgGraphRequest instead of New-MgOauth2PermissionGrant to avoid
         // assembly conflicts when Microsoft.Graph.Identity.SignIns is already partially loaded.
+        var mgScopes = new List<string> { "\"Directory.Read.All\"" };
+        if (appSpecs.Count > 0) mgScopes.Add("\"AppRoleAssignment.ReadWrite.All\"");
+        if (delegatedSpecs.Count > 0) mgScopes.Add("\"DelegatedPermissionGrant.ReadWrite.All\"");
+
         logger.LogInformation("");
         logger.LogInformation("     Option B — PowerShell (Microsoft.Graph module required):");
         logger.LogInformation("       Install-Module Microsoft.Graph -Scope CurrentUser  # skip if already installed");
-        logger.LogInformation("       Connect-MgGraph -Scopes \"Directory.Read.All\", \"DelegatedPermissionGrant.ReadWrite.All\"");
-        logger.LogInformation("       $sp = (Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\").Id", blueprintId);
-        foreach (var (resourceName, resourceAppId, _, _) in specs)
+        logger.LogInformation("       Connect-MgGraph -Scopes {Scopes}", string.Join(", ", mgScopes));
+        logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\"", blueprintId);
+        if (hasAgentIdentity)
+            logger.LogInformation("       $ai = Get-MgServicePrincipal -Filter \"appId eq '{AgentIdentityAppId}'\"", agentIdentityAppId);
+
+        if (appSpecs.Count > 0)
         {
-            var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
-            logger.LogInformation("       {Var} = (Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\").Id  # {Name}",
-                varName, resourceAppId, resourceName);
+            logger.LogInformation("       # Application permissions (app role assignments — blueprint and agent identity)");
+            foreach (var (resourceName, resourceAppId, scope, _) in appSpecs)
+            {
+                var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
+                logger.LogInformation("       {Var} = Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\"  # {Name}",
+                    varName, resourceAppId, resourceName);
+                logger.LogInformation("       $rid = ({Var}.AppRoles | Where-Object {{ $_.Value -eq '{Scope}' }}).Id",
+                    varName, scope);
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                    varName);
+                if (hasAgentIdentity)
+                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ai.Id -PrincipalId $ai.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                        varName);
+            }
         }
-        foreach (var (resourceName, _, scope, _) in specs)
+
+        if (delegatedSpecs.Count > 0)
         {
-            var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
-            logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' `");
-            logger.LogInformation("         -Body @{{ clientId = $sp; consentType = 'AllPrincipals'; resourceId = {Var}; scope = '{Scope}' }}",
-                varName, scope);
+            logger.LogInformation("       # Delegated permissions (oauth2PermissionGrants)");
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (resourceName, resourceAppId, _, _) in delegatedSpecs)
+            {
+                var idVarName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant() + "Id";
+                if (seen.Add(idVarName))
+                    logger.LogInformation("       {Var} = (Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\").Id  # {Name}",
+                        idVarName, resourceAppId, resourceName);
+            }
+            foreach (var (resourceName, _, scope, _) in delegatedSpecs)
+            {
+                var idVarName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant() + "Id";
+                logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' `");
+                logger.LogInformation("         -Body @{{ clientId = $bp.Id; consentType = 'AllPrincipals'; resourceId = {Var}; scope = '{Scope}' }}",
+                    idVarName, scope);
+            }
         }
     }
 
@@ -456,7 +508,7 @@ internal static class SetupHelpers
                 else
                 {
                     logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
-                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId);
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId);
                 }
             }
             if (pendingS2SAction)
