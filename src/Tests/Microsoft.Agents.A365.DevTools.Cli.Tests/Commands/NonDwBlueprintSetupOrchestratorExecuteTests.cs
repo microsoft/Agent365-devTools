@@ -363,4 +363,347 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>());
     }
+
+    // -------------------------------------------------------------------------
+    // Idempotency tests — Steps 5 & 6
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Builds a SetupContext suited for testing the agent identity + registration steps
+    /// (Steps 5–6) via the AgentInstanceOnly path.
+    /// Returns the context, graph service mock, and blueprint service mock so tests can
+    /// configure stub return values.
+    /// </summary>
+    private static (SetupContext ctx, GraphApiService graph, AgentBlueprintService blueprintService)
+        BuildIdempotencyTestContext(Agent365Config? config = null)
+    {
+        var graph = Substitute.ForPartsOf<GraphApiService>();
+
+        // Prevent real HTTP for consent lookup and oauth2 grant lookups.
+        graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns((System.Text.Json.JsonDocument?)null);
+
+        var cfg = config ?? new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+        };
+
+        var mockExecutor = BuildMockExecutor();
+        var configService = Substitute.For<IConfigService>();
+        configService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        var blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
+            Substitute.For<ILogger<AgentBlueprintService>>(), graph);
+
+        var ctx = new SetupContext(
+            config: cfg,
+            results: new SetupResults(),
+            logger: Substitute.For<ILogger>(),
+            configFile: new FileInfo("a365.config.json"),
+            generatedConfigPath: "a365.generated.config.json",
+            correlationId: "test-correlation-id",
+            skipInfrastructure: true,
+            skipRequirements: true,
+            cancellationToken: CancellationToken.None,
+            configService: configService,
+            executor: mockExecutor,
+            botConfigurator: Substitute.For<IBotConfigurator>(),
+            authValidator: Substitute.For<AzureAuthValidator>(
+                NullLogger<AzureAuthValidator>.Instance, mockExecutor),
+            platformDetector: Substitute.ForPartsOf<PlatformDetector>(
+                Substitute.For<ILogger<PlatformDetector>>()),
+            graphApiService: graph,
+            blueprintService: blueprintService,
+            blueprintLookupService: Substitute.ForPartsOf<BlueprintLookupService>(
+                Substitute.For<ILogger<BlueprintLookupService>>(), graph),
+            federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
+                Substitute.For<ILogger<FederatedCredentialService>>(), graph),
+            clientAppValidator: Substitute.For<IClientAppValidator>(),
+            agentInstanceOnly: true,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        return (ctx, graph, blueprintService);
+    }
+
+    /// <summary>
+    /// Step 5: When the API lookup finds an existing identity by display name,
+    /// the existing ID must be reused and CreateAgentIdentityDelegatedAsync must NOT be called.
+    /// </summary>
+    [Fact]
+    public async Task Step5_ReuseExistingIdentity_WhenFoundByApiLookup()
+    {
+        var (ctx, graph, blueprintService) = BuildIdempotencyTestContext();
+
+        blueprintService.FindExistingAgentIdentityAsync(
+            "tenant-id", "blueprint-id", "sellakapri211 Identity", Arg.Any<CancellationToken>())
+            .Returns("existing-sp-id");
+
+        // Step 6 must also complete cleanly; stub RegisterAgentInstanceAsyncV2
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentIdentityId.Should().Be("existing-sp-id",
+            because: "the existing agent identity must be reused");
+        await graph.DidNotReceive().CreateAgentIdentityDelegatedAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await ctx.ConfigService.Received().SaveStateAsync(
+            Arg.Is<Agent365Config>(c => c.AgenticAppId == "existing-sp-id"),
+            Arg.Any<string>());
+    }
+
+    /// <summary>
+    /// Step 5: When the lookup returns null, CreateAgentIdentityDelegatedAsync must be called.
+    /// </summary>
+    [Fact]
+    public async Task Step5_CreatesNewIdentity_WhenNotFoundByApiLookup()
+    {
+        var (ctx, graph, blueprintService) = BuildIdempotencyTestContext();
+
+        blueprintService.FindExistingAgentIdentityAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+
+        graph.CreateAgentIdentityDelegatedAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns("new-sp-id");
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentIdentityId.Should().Be("new-sp-id",
+            because: "a new agent identity must be created when no existing one is found");
+        await graph.Received(1).CreateAgentIdentityDelegatedAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Step 6: When AgentRegistrationId is not in config, RegisterAgentInstanceAsyncV2 must be called.
+    /// </summary>
+    [Fact]
+    public async Task Step6_RegistersNewAgent_WhenNotInConfig()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentInstanceId.Should().Be("new-reg-id",
+            because: "RegisterAgentInstanceAsyncV2 must be called when no registration ID is in config");
+        await graph.Received(1).RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        await graph.DidNotReceive().AgentRegistrationExistsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Step 5: When an existing identity is found by API lookup, AgentIdentityAlreadyExisted
+    /// must be true so the summary shows "reused" rather than "created".
+    /// </summary>
+    [Fact]
+    public async Task Step5_SetsAlreadyExistedFlag_WhenFoundByApiLookup()
+    {
+        var (ctx, graph, blueprintService) = BuildIdempotencyTestContext();
+
+        blueprintService.FindExistingAgentIdentityAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns("existing-sp-id");
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentIdentityAlreadyExisted.Should().BeTrue(
+            because: "the identity was found by API lookup, not freshly created");
+    }
+
+    /// <summary>
+    /// Step 5: When AgenticAppId is already in config, AgentIdentityAlreadyExisted must be true
+    /// so the summary shows "reused" rather than "created".
+    /// </summary>
+    [Fact]
+    public async Task Step5_SetsAlreadyExistedFlag_WhenFoundInConfig()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id-from-config",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentIdentityAlreadyExisted.Should().BeTrue(
+            because: "the identity was already recorded in config, not freshly created");
+    }
+
+    /// <summary>
+    /// Step 5: When a new identity is created (lookup returns null), AgentIdentityAlreadyExisted
+    /// must remain false so the summary shows "created".
+    /// </summary>
+    [Fact]
+    public async Task Step5_AlreadyExistedFlag_IsFalse_WhenNewlyCreated()
+    {
+        var (ctx, graph, blueprintService) = BuildIdempotencyTestContext();
+
+        blueprintService.FindExistingAgentIdentityAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+        graph.CreateAgentIdentityDelegatedAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns("new-sp-id");
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentIdentityAlreadyExisted.Should().BeFalse(
+            because: "the identity was freshly created, not reused");
+    }
+
+    /// <summary>
+    /// Step 6: When AgentRegistrationId is in config and the GET confirms it still exists,
+    /// AgentRegistrationAlreadyExisted must be true and RegisterAgentInstanceAsyncV2 must NOT be called.
+    /// </summary>
+    [Fact]
+    public async Task Step6_SetsAlreadyExistedFlag_WhenFoundInConfigAndVerified()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+            AgentRegistrationId = "reg-id-from-config",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+
+        // Verification GET returns true — registration still exists
+        graph.AgentRegistrationExistsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentRegistrationAlreadyExisted.Should().BeTrue(
+            because: "the registration was verified in the registry, not freshly registered");
+        await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Step 6: When AgentRegistrationId is in config but the GET returns false (stale ID),
+    /// a new registration must be created and AgentRegistrationAlreadyExisted must be false.
+    /// </summary>
+    [Fact]
+    public async Task Step6_CreatesNewRegistration_WhenStoredIdIsStale()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+            AgentRegistrationId = "stale-reg-id",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+
+        // Verification GET returns false — stored registration no longer exists
+        graph.AgentRegistrationExistsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(false);
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentInstanceId.Should().Be("new-reg-id",
+            because: "stale registration must be replaced by a new one");
+        ctx.Results.AgentRegistrationAlreadyExisted.Should().BeFalse(
+            because: "the registration was freshly created after the stored ID was found stale");
+        await graph.Received(1).RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Step 6: When a new registration is created (no ID in config),
+    /// AgentRegistrationAlreadyExisted must remain false so the summary shows "registered".
+    /// </summary>
+    [Fact]
+    public async Task Step6_AlreadyExistedFlag_IsFalse_WhenNewlyRegistered()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns("new-reg-id");
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentRegistrationAlreadyExisted.Should().BeFalse(
+            because: "the registration was freshly created, not reused");
+        await graph.DidNotReceive().AgentRegistrationExistsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
 }

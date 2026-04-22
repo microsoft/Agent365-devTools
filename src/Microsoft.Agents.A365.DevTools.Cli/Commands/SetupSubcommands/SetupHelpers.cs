@@ -455,14 +455,20 @@ internal static class SetupHelpers
             else
             {
                 if (results.AgentIdentityCreated)
-                    logger.LogInformation(DryRunRow(5, "Agent identity") + "created   '{Name}' (ID: {Id})",
+                {
+                    var identityVerb = (results.AgentIdentityAlreadyExisted ? "reused" : "created").PadRight(9);
+                    logger.LogInformation(DryRunRow(5, "Agent identity") + identityVerb + " '{Name}' (ID: {Id})",
                         results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
+                }
                 else if (results.AgentIdentityFailed)
                     logger.LogWarning(DryRunRow(5, "Agent identity") + "failed — see warnings");
 
                 if (results.AgentInstanceRegistered)
-                    logger.LogInformation(DryRunRow(6, "Agent Registration") + "registered   '{Name}' (ID: {Id})",
+                {
+                    var registrationVerb = (results.AgentRegistrationAlreadyExisted ? "reused" : "registered").PadRight(12);
+                    logger.LogInformation(DryRunRow(6, "Agent Registration") + registrationVerb + " '{Name}' (ID: {Id})",
                         results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
+                }
                 else if (results.AgentRegistrationFailed)
                     logger.LogWarning(DryRunRow(6, "Agent Registration") + "failed — see warnings");
             }

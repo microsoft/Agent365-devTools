@@ -296,6 +296,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             ctx.Logger.LogInformation("Agent identity already created (ID: {AgentId}). Skipping.", ctx.Config.AgenticAppId);
             ctx.Results.AgentIdentityCreated = true;
+            ctx.Results.AgentIdentityAlreadyExisted = true;
             ctx.Results.AgentIdentityId = ctx.Config.AgenticAppId;
             ctx.Results.AgentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName;
         }
@@ -304,31 +305,52 @@ internal static class NonDwBlueprintSetupOrchestrator
             var agentIdentityDisplayName = ctx.Config.AgentIdentityDisplayName
                 ?? "Agent";
 
-            // Agent identity creation via delegated flow (AgentIdentity.Create.All).
-            // Agent ID Developer role is sufficient — client credentials are not required.
-            ctx.Logger.LogInformation("Creating agent identity...");
-            var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
+            // API-level idempotency: check if an identity with this display name already exists
+            // for the blueprint. Handles re-runs where the generated config was cleared.
+            var existingIdentityId = await ctx.BlueprintService.FindExistingAgentIdentityAsync(
                 ctx.Config.TenantId!,
                 ctx.Config.AgentBlueprintId!,
                 agentIdentityDisplayName,
                 ctx.CancellationToken);
 
-            if (agentId is not null)
+            if (!string.IsNullOrWhiteSpace(existingIdentityId))
             {
-                ctx.Config.AgenticAppId = agentId;
+                ctx.Logger.LogInformation("Found existing agent identity (ID: {AgentId}). Skipping creation.", existingIdentityId);
+                ctx.Config.AgenticAppId = existingIdentityId;
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
                 ctx.Results.AgentIdentityCreated = true;
-                ctx.Results.AgentIdentityId = agentId;
+                ctx.Results.AgentIdentityAlreadyExisted = true;
+                ctx.Results.AgentIdentityId = existingIdentityId;
                 ctx.Results.AgentIdentityDisplayName = agentIdentityDisplayName;
-                using (ctx.Logger.Indent())
-                    ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
-                ctx.Logger.LogInformation("");
             }
-            else if (!ctx.Results.AgentIdentityFailed)
+            else
             {
-                ctx.Results.AgentIdentityFailed = true;
-                ctx.Results.Warnings.Add("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
-                ctx.Logger.LogWarning("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
+                // Agent identity creation via delegated flow (AgentIdentity.Create.All).
+                // Agent ID Developer role is sufficient — client credentials are not required.
+                ctx.Logger.LogInformation("Creating agent identity...");
+                var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
+                    ctx.Config.TenantId!,
+                    ctx.Config.AgentBlueprintId!,
+                    agentIdentityDisplayName,
+                    ctx.CancellationToken);
+
+                if (agentId is not null)
+                {
+                    ctx.Config.AgenticAppId = agentId;
+                    await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                    ctx.Results.AgentIdentityCreated = true;
+                    ctx.Results.AgentIdentityId = agentId;
+                    ctx.Results.AgentIdentityDisplayName = agentIdentityDisplayName;
+                    using (ctx.Logger.Indent())
+                        ctx.Logger.LogInformation("Agent identity created (ID: {AgentId})", agentId);
+                    ctx.Logger.LogInformation("");
+                }
+                else if (!ctx.Results.AgentIdentityFailed)
+                {
+                    ctx.Results.AgentIdentityFailed = true;
+                    ctx.Results.Warnings.Add("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
+                    ctx.Logger.LogWarning("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
+                }
             }
         }
 
@@ -349,21 +371,42 @@ internal static class NonDwBlueprintSetupOrchestrator
             agentDisplayName = agentDisplayName[..^" Identity".Length].TrimEnd() + " Agent";
 
         ctx.Logger.LogInformation("");
+        ctx.Logger.LogInformation("Registering agent...");
+
+        // If a registration ID is already stored, verify it still exists before skipping creation.
+        string? registrationId = null;
+        bool registrationAlreadyExisted = false;
+
         if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
         {
-            ctx.Logger.LogInformation("Registering agent...");
-            using (ctx.Logger.Indent())
-                ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", ctx.Config.AgentRegistrationId);
-            ctx.Logger.LogInformation("");
-            ctx.Results.AgentInstanceRegistered = true;
-            ctx.Results.AgentInstanceId = ctx.Config.AgentRegistrationId;
-            ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
-        }
-        else
-        {
-            ctx.Logger.LogInformation("Registering agent...");
+            var exists = await ctx.GraphApiService.AgentRegistrationExistsAsync(
+                ctx.Config.TenantId!,
+                ctx.Config.AgentRegistrationId!,
+                ctx.CancellationToken);
 
-            var registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
+            if (exists)
+            {
+                registrationId = ctx.Config.AgentRegistrationId;
+                registrationAlreadyExisted = true;
+                using (ctx.Logger.Indent())
+                    ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", registrationId);
+                ctx.Logger.LogInformation("");
+            }
+            else
+            {
+                // Stored ID no longer exists in the registry — clear it and create a new registration.
+                using (ctx.Logger.Indent())
+                    ctx.Logger.LogInformation("Stored registration ID {RegistrationId} no longer exists; creating a new registration.", ctx.Config.AgentRegistrationId);
+                ctx.Config.AgentRegistrationId = null;
+                // Persist the cleared ID immediately so a subsequent failure does not leave a
+                // stale value on disk that would cause the same stale-ID check to repeat.
+                await ctx.ConfigService.SaveStateAsync(ctx.Config);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(registrationId))
+        {
+            registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
                 ctx.Config.TenantId!,
                 agentDisplayName,
                 ctx.Config.AgentDescription,
@@ -371,24 +414,28 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Config.AgenticAppId,
                 ctx.Config.ClientAppId,
                 ctx.CancellationToken);
+        }
 
-            if (registrationId is not null)
+        if (registrationId is not null)
+        {
+            ctx.Config.AgentRegistrationId = registrationId;
+            await ctx.ConfigService.SaveStateAsync(ctx.Config);
+            ctx.Results.AgentInstanceRegistered = true;
+            ctx.Results.AgentRegistrationAlreadyExisted = registrationAlreadyExisted;
+            ctx.Results.AgentInstanceId = registrationId;
+            ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
+            if (!registrationAlreadyExisted)
             {
-                ctx.Config.AgentRegistrationId = registrationId;
-                await ctx.ConfigService.SaveStateAsync(ctx.Config);
-                ctx.Results.AgentInstanceRegistered = true;
-                ctx.Results.AgentInstanceId = registrationId;
-                ctx.Results.AgentRegistrationDisplayName = agentDisplayName;
                 using (ctx.Logger.Indent())
                     ctx.Logger.LogInformation("Agent registered (ID: {RegistrationId})", registrationId);
                 ctx.Logger.LogInformation("");
             }
-            else
-            {
-                ctx.Results.AgentRegistrationFailed = true;
-                ctx.Results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
-                ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
-            }
+        }
+        else
+        {
+            ctx.Results.AgentRegistrationFailed = true;
+            ctx.Results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
+            ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
         }
 
         // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.

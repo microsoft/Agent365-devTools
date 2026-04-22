@@ -228,6 +228,35 @@ public class AgentBlueprintService
     }
 
     /// <summary>
+    /// Returns the service principal ID of an existing agent identity for the given blueprint
+    /// whose display name matches <paramref name="displayName"/>, or null if none is found.
+    /// Wraps <see cref="GetAgentInstancesForBlueprintAsync"/>; exceptions are caught and logged
+    /// non-fatally so callers can fall through to creation.
+    /// </summary>
+    public virtual async Task<string?> FindExistingAgentIdentityAsync(
+        string tenantId,
+        string blueprintId,
+        string displayName,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var instances = await GetAgentInstancesForBlueprintAsync(tenantId, blueprintId, cancellationToken);
+            var match = instances.FirstOrDefault(i =>
+                string.Equals(i.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+            // IdentitySpId is the Graph SP object ID — the same value CreateAgentIdentityDelegatedAsync
+            // returns and stores in AgenticAppId (both are /beta/servicePrincipals/{id} object IDs).
+            return match?.IdentitySpId;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not look up existing agent identities for blueprint {BlueprintId} (non-fatal): {Message}",
+                blueprintId, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Fetches all pages of a Graph API collection, following @odata.nextLink pagination.
     /// Returns the deserialized "value" array items from all pages.
     /// </summary>

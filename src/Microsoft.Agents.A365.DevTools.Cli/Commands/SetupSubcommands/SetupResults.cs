@@ -121,6 +121,13 @@ public class SetupResults
     public bool AgentIdentityCreated { get; set; }
 
     /// <summary>
+    /// True when <see cref="AgentIdentityCreated"/> is set because an existing identity was
+    /// found (via config or API lookup) rather than freshly created. Drives "reused" vs "created"
+    /// in the setup summary.
+    /// </summary>
+    public bool AgentIdentityAlreadyExisted { get; set; }
+
+    /// <summary>
     /// The Agent Identity ID returned after agent identity creation.
     /// Non-null when <see cref="AgentIdentityCreated"/> is true.
     /// </summary>
@@ -136,6 +143,13 @@ public class SetupResults
     /// Populated by the non-DW blueprint setup flow only.
     /// </summary>
     public bool AgentInstanceRegistered { get; set; }
+
+    /// <summary>
+    /// True when <see cref="AgentInstanceRegistered"/> is set because an existing registration was
+    /// found (via config or API lookup) rather than freshly registered. Drives "reused" vs "registered"
+    /// in the setup summary.
+    /// </summary>
+    public bool AgentRegistrationAlreadyExisted { get; set; }
 
     /// <summary>
     /// The Agent Instance ID returned by the Agent Instance Graph API after registration.

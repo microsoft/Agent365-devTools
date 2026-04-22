@@ -1311,6 +1311,32 @@ public class GraphApiService
             return registrationId;
         }
 
+        // 409 Conflict means an agent with the same sourceAgentId already exists.
+        // The contract guarantees sourceAgentId uniqueness, so this is an idempotent re-run.
+        // Extract the existing registration ID from the response body and return it.
+        if (response.StatusCode == 409)
+        {
+            _logger.LogDebug("Agent registration returned 409 Conflict (sourceAgentId already exists). Body: {Body}", response.Body);
+
+            string? existingId = null;
+            if (response.Json != null && response.Json.RootElement.TryGetProperty("id", out var existingIdProp))
+                existingId = existingIdProp.GetString();
+
+            response.Json?.Dispose();
+
+            if (!string.IsNullOrWhiteSpace(existingId))
+            {
+                _logger.LogInformation("Agent already registered (existing ID: {RegistrationId}). Skipping.", existingId);
+                return existingId;
+            }
+
+            // 409 but no ID in the body — server did not return the existing resource.
+            _logger.LogWarning(
+                "Agent registration returned 409 Conflict but the response body did not include an 'id'. " +
+                "Record the registration ID manually and add it to the generated config as 'agentRegistrationId'.");
+            return null;
+        }
+
         if (response.StatusCode == 403)
             _logger.LogError(
                 "Agent registration failed (403 Forbidden). " +
@@ -1346,6 +1372,36 @@ public class GraphApiService
             ct,
             treatNotFoundAsSuccess: true,
             scopes: scopes);
+    }
+
+    /// <summary>
+    /// Checks whether an existing agent registration is still present by fetching
+    /// GET <see cref="AgentRegistrationsPath"/>/{registrationId}.
+    /// Returns true if the registration exists (200 OK), false if it is gone (404) or the call fails.
+    /// </summary>
+    public virtual async Task<bool> AgentRegistrationExistsAsync(
+        string tenantId,
+        string registrationId,
+        CancellationToken ct = default)
+    {
+        IEnumerable<string>? scopes = _tokenProvider != null
+            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            : null;
+
+        var path = $"{AgentRegistrationsPath}/{Uri.EscapeDataString(registrationId)}";
+        _logger.LogDebug("GET https://graph.microsoft.com{Path}", path);
+
+        try
+        {
+            using var doc = await GraphGetAsync(tenantId, path, ct, scopes);
+            return doc != null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not verify agent registration {RegistrationId} (non-fatal): {Message}",
+                registrationId, ex.Message);
+            return false;
+        }
     }
 
     /// <summary>
