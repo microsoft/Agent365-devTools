@@ -7,13 +7,30 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, closed]
 
-permissions:
-  contents: write
-  pull-requests: read
+# No global permissions — each job declares only what it needs.
 
 jobs:
+  # On push to main: update the draft release (requires contents: write).
   update_release_draft:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # On pull_request: run the autolabeler (labels PRs by branch/title/files).
+  # contents: write is intentionally omitted — PR events do not need to
+  # create or modify releases. pull-requests: write is required for autolabeler.
+  label_pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: release-drafter/release-drafter@v6
         env:

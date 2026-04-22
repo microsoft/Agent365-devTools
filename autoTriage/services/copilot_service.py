@@ -9,6 +9,7 @@ import os
 import subprocess
 import json
 from typing import Dict, Any
+from utils.sanitise import MAX_SUGGESTION_LENGTH, sanitise_user_content as _sanitise_user_content
 
 logger = logging.getLogger(__name__)
 
@@ -393,7 +394,10 @@ class CopilotService:
         if fix_suggestions:
             instructions.append("Suggested approach (non-authoritative, derived from issue content):")
             for i, suggestion in enumerate(fix_suggestions, 1):
-                instructions.append(f"{i}. {suggestion}")
+                # Sanitise each suggestion: an attacker can steer the upstream classification
+                # LLM to emit strings like "</user_content>" that would break the structural
+                # delimiter and inject content into the trusted instruction zone.
+                instructions.append(f"{i}. {_sanitise_user_content(suggestion, max_length=MAX_SUGGESTION_LENGTH)}")
         instructions.append("</user_content>")
         instructions.append("")
 
