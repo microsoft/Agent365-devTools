@@ -68,7 +68,7 @@ a365 --version
 #### Test 1.3: Check for Updates
 ```bash
 # Run any command to trigger update check
-a365 config init --help
+a365 setup all --agent-name --help
 
 # Expected: May show update notification or proceed normally
 # Record: Update check performed (Yes/No)
@@ -85,7 +85,7 @@ a365 config init --help
 #### Test 2.1: Interactive Configuration Wizard
 ```bash
 # Start interactive configuration
-a365 config init
+a365 setup all --agent-name
 
 # User will be prompted for:
 # 1. Agent name (alphanumeric only) - suggest: "TestAgent$(Get-Random -Maximum 9999)"
@@ -103,7 +103,7 @@ a365 config init
 #### Test 2.2: Validate Generated Configuration
 ```bash
 # Display configuration
-a365 config display
+a365 status
 
 # Expected: Shows all configuration values in table format
 # Verify required fields are present:
@@ -137,7 +137,7 @@ $testConfig = @{
 $testConfig | Out-File -FilePath "test-config.json"
 
 # Import configuration
-a365 config init -c test-config.json
+a365 setup all --agent-name -c test-config.json
 
 # Expected: Configuration imported and validated
 # Record: Import succeeded (Yes/No)
@@ -146,7 +146,7 @@ a365 config init -c test-config.json
 #### Test 2.4: Global Configuration
 ```bash
 # Create global configuration
-a365 config init --global
+a365 setup all --agent-name --global
 
 # Expected: Configuration created in global directory (AppData)
 # Verify file exists at: $env:APPDATA\Microsoft\Agent365DevTools\a365.config.json
@@ -157,7 +157,7 @@ a365 config init --global
 #### Test 2.5: Configure Custom Blueprint Permissions
 ```bash
 # Add Microsoft Graph extended permissions
-a365 config permissions \
+a365 setup permissions custom \
   --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
 
@@ -167,13 +167,13 @@ a365 config permissions \
 # Record: Custom permission added (Yes/No)
 
 # View configured permissions
-a365 config permissions
+a365 setup permissions custom
 
 # Expected: Lists all configured custom permissions (may show appId only until setup runs)
 # Record: Permissions displayed correctly (Yes/No)
 
 # Add second custom resource
-a365 config permissions \
+a365 setup permissions custom \
   --resource-app-id 12345678-1234-1234-1234-123456789012 \
   --scopes CustomScope.Read,CustomScope.Write
 
@@ -403,7 +403,7 @@ $response | ConvertTo-Json -Depth 10
 a365 cleanup
 
 # Create new test config for all-in-one setup
-# Use a365 config init with new agent name
+# Use a365 setup all --agent-name with new agent name
 
 # Run complete setup
 a365 setup all
@@ -856,7 +856,7 @@ a365 deploy --verbose
 ```bash
 # Test help for each command
 a365 --help
-a365 config --help
+a365 status --help
 a365 setup --help
 a365 deploy --help
 a365 publish --help

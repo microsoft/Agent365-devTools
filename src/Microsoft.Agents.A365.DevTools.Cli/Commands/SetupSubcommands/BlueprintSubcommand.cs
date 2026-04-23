@@ -122,9 +122,10 @@ internal static class BlueprintSubcommand
         AgentBlueprintService blueprintService,
         IClientAppValidator clientAppValidator,
         BlueprintLookupService blueprintLookupService,
-        FederatedCredentialService federatedCredentialService)
+        FederatedCredentialService federatedCredentialService,
+        IBootstrapConfigResolver? resolver = null)
     {
-        var command = new Command("blueprint", 
+        var command = new Command("blueprint",
             "Create agent blueprint (Entra ID application registration)\n" +
             "Minimum required permissions: Agent ID Developer role\n");
 
@@ -132,6 +133,15 @@ internal static class BlueprintSubcommand
             ["--config", "-c"],
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.\n" +
+                         "TenantId is auto-detected from 'az account show' (override with --tenant-id).");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -159,6 +169,8 @@ internal static class BlueprintSubcommand
                         "Use with caution: setup may fail if prerequisites are not met");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
@@ -169,6 +181,8 @@ internal static class BlueprintSubcommand
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipEndpointRegistration = context.ParseResult.GetValueForOption(skipEndpointRegistrationOption);
@@ -188,10 +202,16 @@ internal static class BlueprintSubcommand
                 skipEndpointRegistration: skipEndpointRegistration,
                 logger: logger))
             {
-                Environment.Exit(1);
+                context.ExitCode = 1;
+                return;
             }
 
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: false, ct);
+            else
+                setupConfig = await configService.LoadAsync(config.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
 
             // Configure GraphApiService with custom client app ID if available
             // This ensures inheritable permissions operations use the validated custom app

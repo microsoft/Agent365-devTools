@@ -55,9 +55,23 @@ public class PublishCommand
         ILogger<PublishCommand> logger,
         IConfigService configService,
         ManifestTemplateService manifestTemplateService,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
+
+        var configOption = new Option<FileInfo>(
+            ["--config", "-c"],
+            getDefaultValue: () => new FileInfo("a365.config.json"),
+            description: "Configuration file path");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
@@ -71,21 +85,38 @@ public class PublishCommand
             description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
                         "Only meaningful with --aiteammate false");
 
+        command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(dryRunOption);
         command.AddOption(aiTeammateOption);
         command.AddOption(useBlueprintOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
             var useBlueprintFlag = context.ParseResult.GetValueForOption(useBlueprintOption);
+            var ct = context.GetCancellationToken();
 
             var isNormalExit = false;
 
             try
             {
-                var config = await configService.LoadAsync();
+                Agent365Config config;
+                if (resolver != null)
+                {
+                    var resolved = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: false, ct);
+                    if (resolved is null) { context.ExitCode = 1; return; }
+                    config = resolved;
+                }
+                else
+                {
+                    config = await configService.LoadAsync(configFile.FullName);
+                }
 
                 // Effective agent type: CLI flag > config value > default (digital-worker)
                 var isNonAiTeammate =

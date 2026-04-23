@@ -79,7 +79,7 @@ internal static class AddPermissionsSubcommand
                     logger.LogError("Configuration file not found: {ConfigPath}", config.FullName);
                     logger.LogInformation("");
                     logger.LogInformation("To add MCP server permissions, you must either:");
-                    logger.LogInformation("  1. Create a config file using: a365 config init");
+                    logger.LogInformation("  1. Run 'a365 setup all --agent-name <name>' to create a config file.");
                     logger.LogInformation("  2. Specify the application ID using: a365 develop addpermissions --app-id <your-app-id>");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop addpermissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");

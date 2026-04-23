@@ -141,25 +141,22 @@ class Program
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
             var processService = serviceProvider.GetRequiredService<IProcessService>();
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
+            var bootstrapResolver = serviceProvider.GetRequiredService<IBootstrapConfigResolver>();
 
             // Add commands
+            rootCommand.AddCommand(StatusCommand.CreateCommand(developLogger, configService, graphApiService, resolver: bootstrapResolver));
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
+                botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
-                graphApiService));
+                graphApiService, resolver: bootstrapResolver));
 
-            // Register ConfigCommand
-            var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
-            var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
-            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
-            rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService));
+            rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService, resolver: bootstrapResolver));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService, resolver: bootstrapResolver));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
@@ -328,12 +325,15 @@ class Program
         // Register ProcessService for cross-platform process launching
         services.AddSingleton<IProcessService, ProcessService>();
 
-        // Register Azure CLI service and Configuration Wizard
+        // Register Azure CLI service
         services.AddSingleton<IAzureCliService, AzureCliService>();
-        services.AddSingleton<IConfigurationWizardService, ConfigurationWizardService>();
         
         // Register confirmation provider for user prompts
         services.AddSingleton<IConfirmationProvider, ConsoleConfirmationProvider>();
+
+        // Register bootstrap config resolver — centralizes the three-mode config resolution
+        // used by all subcommands that can run without a365.config.json.
+        services.AddSingleton<IBootstrapConfigResolver, BootstrapConfigResolver>();
     }
 
     public static string GetDisplayVersion()

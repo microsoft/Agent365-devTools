@@ -41,7 +41,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             IClientAppValidator clientAppValidator,
             IConfirmationProvider confirmationProvider,
             ArmApiService? armApiService = null,
-            IEnumerable<IRequirementCheck>? requirementChecksOverride = null)
+            IEnumerable<IRequirementCheck>? requirementChecksOverride = null,
+            IBootstrapConfigResolver? resolver = null)
         {
             var command = new Command("setup",
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
@@ -60,16 +61,16 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, authValidator, clientAppValidator, requirementChecksOverride));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, resolver: resolver));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
-                logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider));
+                logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver: resolver));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService, confirmationProvider));
+                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService, confirmationProvider, resolver));
 
             command.AddCommand(AdminSubcommand.CreateCommand(
-                logger, configService, authValidator, graphApiService, confirmationProvider, blueprintService));
+                logger, configService, authValidator, graphApiService, confirmationProvider, blueprintService, resolver: resolver));
 
             return command;
         }

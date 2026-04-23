@@ -47,17 +47,18 @@ internal static class PermissionsSubcommand
         CommandExecutor executor,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
-        IConfirmationProvider confirmationProvider)
+        IConfirmationProvider confirmationProvider,
+        IBootstrapConfigResolver? resolver = null)
     {
         var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
-        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider));
-        permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
-        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
-        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver));
+        permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
+        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
+        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
 
         return permissionsCommand;
     }
@@ -72,7 +73,8 @@ internal static class PermissionsSubcommand
         CommandExecutor executor,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
-        IConfirmationProvider confirmationProvider)
+        IConfirmationProvider confirmationProvider,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
@@ -82,6 +84,14 @@ internal static class PermissionsSubcommand
             ["--config", "-c"],
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -97,13 +107,28 @@ internal static class PermissionsSubcommand
                          "Only use after V2 SDK is confirmed live — agents on V1 SDK will lose tool access.");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(removeLegacyScopesOption);
 
-        command.SetHandler(async (config, verbose, dryRun, removeLegacyScopes) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var removeLegacyScopes = context.ParseResult.GetValueForOption(removeLegacyScopesOption);
+            var ct = context.GetCancellationToken();
+
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+            else
+                setupConfig = await configService.LoadAsync(config.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
@@ -198,7 +223,7 @@ internal static class PermissionsSubcommand
                 false,
                 removeLegacyAtgScopes: removeLegacyScopes);
 
-        }, configOption, verboseOption, dryRunOption, removeLegacyScopesOption);
+        });
 
         return command;
     }
@@ -212,7 +237,8 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("bot",
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
@@ -225,6 +251,14 @@ internal static class PermissionsSubcommand
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
 
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
+
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Show detailed output");
@@ -234,12 +268,26 @@ internal static class PermissionsSubcommand
             description: "Show what would be done without executing");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+            else
+                setupConfig = await configService.LoadAsync(config.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
@@ -283,7 +331,7 @@ internal static class PermissionsSubcommand
                 blueprintService,
                 false);
 
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -297,7 +345,8 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("custom",
             "Configure custom resource OAuth2 grants and inheritable permissions\n" +
@@ -309,6 +358,14 @@ internal static class PermissionsSubcommand
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
 
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
+
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Show detailed output");
@@ -317,13 +374,39 @@ internal static class PermissionsSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
+        var resourceAppIdOption = new Option<string?>(
+            "--resource-app-id",
+            description: "Resource application ID (GUID) for an inline custom permission. Use with --scopes.");
+
+        var scopesOption = new Option<string?>(
+            "--scopes",
+            description: "Comma-separated delegated scopes for the inline custom permission. Use with --resource-app-id.");
+
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
+        command.AddOption(resourceAppIdOption);
+        command.AddOption(scopesOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var resourceAppId = context.ParseResult.GetValueForOption(resourceAppIdOption);
+            var scopesRaw = context.ParseResult.GetValueForOption(scopesOption);
+            var ct = context.GetCancellationToken();
+
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+            else
+                setupConfig = await configService.LoadAsync(config.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
@@ -337,6 +420,21 @@ internal static class PermissionsSubcommand
                 graphApiService.CustomClientAppId = setupConfig.ClientAppId;
             }
 
+            // Inline mode: --resource-app-id + --scopes bypass the config-file permission list.
+            bool isInlineMode = !string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(scopesRaw);
+            if (!string.IsNullOrWhiteSpace(resourceAppId) && !isInlineMode)
+            {
+                logger.LogError("--resource-app-id requires --scopes.");
+                context.ExitCode = 1;
+                return;
+            }
+            if (!string.IsNullOrWhiteSpace(scopesRaw) && !isInlineMode)
+            {
+                logger.LogError("--scopes requires --resource-app-id.");
+                context.ExitCode = 1;
+                return;
+            }
+
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
             // which would be a side effect in a mode that is supposed to be non-mutating.
@@ -348,39 +446,66 @@ internal static class PermissionsSubcommand
 
             if (dryRun)
             {
-                logger.LogInformation("DRY RUN: Configure Custom Blueprint Permissions");
-                if (setupConfig.CustomBlueprintPermissions == null || setupConfig.CustomBlueprintPermissions.Count == 0)
+                if (isInlineMode)
                 {
-                    logger.LogInformation("No custom permissions in config. Any stale permissions in Azure AD would be removed.");
+                    logger.LogInformation("DRY RUN: Configure inline custom permission");
+                    logger.LogInformation("  Resource app ID : {ResourceAppId}", resourceAppId);
+                    logger.LogInformation("  Scopes          : {Scopes}", scopesRaw);
                 }
                 else
                 {
-                    logger.LogInformation("Would configure the following custom permissions:");
-                    foreach (var customPerm in setupConfig.CustomBlueprintPermissions)
+                    logger.LogInformation("DRY RUN: Configure Custom Blueprint Permissions");
+                    if (setupConfig.CustomBlueprintPermissions == null || setupConfig.CustomBlueprintPermissions.Count == 0)
                     {
-                        var resourceDisplayName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                            ? customPerm.ResourceAppId
-                            : customPerm.ResourceName;
-                        logger.LogInformation("  - {ResourceName} ({ResourceAppId})",
-                            resourceDisplayName, customPerm.ResourceAppId);
-                        logger.LogInformation("    Scopes: {Scopes}",
-                            string.Join(", ", customPerm.Scopes));
+                        logger.LogInformation("No custom permissions in config. Any stale permissions in Azure AD would be removed.");
+                    }
+                    else
+                    {
+                        logger.LogInformation("Would configure the following custom permissions:");
+                        foreach (var customPerm in setupConfig.CustomBlueprintPermissions)
+                        {
+                            var resourceDisplayName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                                ? customPerm.ResourceAppId
+                                : customPerm.ResourceName;
+                            logger.LogInformation("  - {ResourceName} ({ResourceAppId})",
+                                resourceDisplayName, customPerm.ResourceAppId);
+                            logger.LogInformation("    Scopes: {Scopes}",
+                                string.Join(", ", customPerm.Scopes));
+                        }
                     }
                 }
                 return;
             }
 
-            await ConfigureCustomPermissionsAsync(
-                config.FullName,
-                logger,
-                configService,
-                executor,
-                graphApiService,
-                blueprintService,
-                setupConfig,
-                false);
+            if (isInlineMode)
+            {
+                if (!Guid.TryParse(resourceAppId, out _))
+                {
+                    logger.LogError("--resource-app-id must be a valid GUID. Got: {Value}", resourceAppId);
+                    context.ExitCode = 1;
+                    return;
+                }
 
-        }, configOption, verboseOption, dryRunOption);
+                var scopes = scopesRaw!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                await SetupHelpers.EnsureResourcePermissionsAsync(
+                    graphApiService, blueprintService, setupConfig,
+                    resourceAppId!, resourceAppId!,
+                    scopes, logger, ct: ct);
+            }
+            else
+            {
+                await ConfigureCustomPermissionsAsync(
+                    config.FullName,
+                    logger,
+                    configService,
+                    executor,
+                    graphApiService,
+                    blueprintService,
+                    setupConfig,
+                    false);
+            }
+
+        });
 
         return command;
     }

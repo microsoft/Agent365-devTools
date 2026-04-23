@@ -43,7 +43,8 @@ internal static class CopilotStudioSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("copilotstudio",
             "Configure Power Platform CopilotStudio.Copilots.Invoke permission\n" +
@@ -55,6 +56,14 @@ internal static class CopilotStudioSubcommand
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
 
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
+
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Show detailed output");
@@ -64,17 +73,30 @@ internal static class CopilotStudioSubcommand
             description: "Show what would be done without executing");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var ct = context.GetCancellationToken();
 
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            Agent365Config? setupConfig;
+            if (resolver != null)
+            {
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+                if (setupConfig == null) { context.ExitCode = 1; return; }
+            }
+            else
+            {
+                setupConfig = await configService.LoadAsync(config.FullName);
+            }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {

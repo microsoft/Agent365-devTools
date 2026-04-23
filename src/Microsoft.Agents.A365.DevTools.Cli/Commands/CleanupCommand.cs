@@ -36,7 +36,8 @@ public class CleanupCommand
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
         AzureAuthValidator authValidator,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
@@ -87,8 +88,10 @@ public class CleanupCommand
             Agent365Config? bootstrapConfig = null;
             if (!string.IsNullOrWhiteSpace(agentName))
             {
-                bootstrapConfig = await BuildBootstrapConfigForCleanupAsync(
-                    agentName, tenantIdFlag, executor, graphApiService, logger);
+                var bootstrapConfigFile = configFile ?? new FileInfo("a365.config.json");
+                bootstrapConfig = resolver != null
+                    ? await resolver.ResolveAsync(agentName, tenantIdFlag, bootstrapConfigFile, isCleanupMode: true, context.GetCancellationToken())
+                    : await BuildBootstrapConfigForCleanupAsync(agentName, tenantIdFlag, executor, graphApiService, logger);
                 if (bootstrapConfig is null)
                 {
                     context.ExitCode = 1;
@@ -104,9 +107,9 @@ public class CleanupCommand
         });
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, graphApiService: graphApiService));
-        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator));
-        cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, graphApiService: graphApiService, resolver: resolver));
+        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator, resolver: resolver));
+        cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor, resolver: resolver));
 
         return cleanupCommand;
     }
@@ -120,16 +123,25 @@ public class CleanupCommand
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
         string? correlationId = null,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
-        
+
         var configOption = new Option<FileInfo?>(
             new[] { "--config", "-c" },
             "Path to configuration file")
         {
             ArgumentHelpName = "file"
         };
+
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             new[] { "--verbose", "-v" },
@@ -140,19 +152,32 @@ public class CleanupCommand
             description: "Delete only the messaging endpoint, keep the blueprint application");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(endpointOnlyOption);
 
-        command.SetHandler(async (configFile, verbose, endpointOnly) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
+            var ct = context.GetCancellationToken();
             try
             {
+                var effectiveConfigFile = configFile ?? new FileInfo("a365.config.json");
+                Agent365Config? config;
+                if (resolver != null)
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, effectiveConfigFile, isCleanupMode: true, ct);
+                else
+                    config = await LoadConfigAsync(configFile, logger, configService);
+                if (config == null) { context.ExitCode = 1; return; }
+
                 // Generate correlation ID at workflow entry point
                 var correlationId = HttpClientFactory.GenerateCorrelationId();
                 logger.LogInformation("Starting blueprint cleanup (CorrelationId: {CorrelationId})", correlationId);
-                
-                var config = await LoadConfigAsync(configFile, logger, configService);
-                if (config == null) return;
                 
                 // Configure AgentBlueprintService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(config.ClientAppId))
@@ -259,7 +284,7 @@ public class CleanupCommand
                         var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
                             config.TenantId,
                             config.AgentRegistrationId,
-                            CancellationToken.None);
+                            ct);
 
                         if (registrationDeleted)
                         {
@@ -286,7 +311,7 @@ public class CleanupCommand
                         var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
                             config.TenantId,
                             config.AgentInstanceId,
-                            CancellationToken.None);
+                            ct);
 
                         if (instanceDeleted)
                         {
@@ -418,7 +443,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Blueprint cleanup failed");
             }
-        }, configOption, verboseOption, endpointOnlyOption);
+        });
 
         return command;
     }
@@ -433,7 +458,8 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        AzureAuthValidator authValidator)
+        AzureAuthValidator authValidator,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
 
@@ -444,6 +470,14 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
+
         var verboseOption = new Option<bool>(
             new[] { "--verbose", "-v" },
             description: "Enable verbose logging");
@@ -451,18 +485,31 @@ public class CleanupCommand
         var dryRunOption = new Option<bool>("--dry-run", "Show resources that would be deleted without making any changes");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (configFile, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
             try
             {
+                var effectiveConfigFile = configFile ?? new FileInfo("a365.config.json");
+                Agent365Config? config;
+                if (resolver != null)
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, effectiveConfigFile, isCleanupMode: true, ct);
+                else
+                    config = await LoadConfigAsync(configFile, logger, configService);
+                if (config == null) { context.ExitCode = 1; return; }
+
                 if (!dryRun)
                     logger.LogInformation("Starting Azure cleanup...");
-
-                var config = await LoadConfigAsync(configFile, logger, configService);
-                if (config == null) return;
 
                 if (!dryRun)
                 {
@@ -499,7 +546,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Azure cleanup failed with exception");
             }
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -507,10 +554,11 @@ public class CleanupCommand
     private static Command CreateInstanceCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("instance", "Remove agent instance identity and user from Entra ID");
-        
+
         var configOption = new Option<FileInfo?>(
             new[] { "--config", "-c" },
             "Path to configuration file")
@@ -518,21 +566,41 @@ public class CleanupCommand
             ArgumentHelpName = "file"
         };
 
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
+
         var verboseOption = new Option<bool>(
             new[] { "--verbose", "-v" },
             description: "Enable verbose logging");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
 
-        command.SetHandler(async (configFile, verbose) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var ct = context.GetCancellationToken();
             try
             {
+                var effectiveConfigFile = configFile ?? new FileInfo("a365.config.json");
+                Agent365Config? config;
+                if (resolver != null)
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, effectiveConfigFile, isCleanupMode: true, ct);
+                else
+                    config = await LoadConfigAsync(configFile, logger, configService);
+                if (config == null) { context.ExitCode = 1; return; }
+
                 logger.LogInformation("Starting instance cleanup...");
-                
-                var config = await LoadConfigAsync(configFile, logger, configService);
-                if (config == null) return;
 
                 logger.LogInformation("");
                 logger.LogInformation("Instance Cleanup Preview:");
@@ -617,7 +685,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Instance cleanup failed: {Message}", ex.Message);
             }
-        }, configOption, verboseOption);
+        });
 
         return command;
     }

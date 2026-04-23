@@ -27,6 +27,19 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 ```
 
 ### Added
+- `a365 status` — new command displaying agent configuration and live Entra registration state. Supports `--offline` to skip live Graph lookups, `--field <name>` for machine-readable single-value output, and `--agent-name` / `--tenant-id` for config-free use.
+- `--agent-name` and `--tenant-id` options added to `setup blueprint`, `setup permissions` (all subcommands), `create-instance`, `publish`, and `query-entra` — all commands can now resolve configuration from Entra ID without requiring `a365.config.json`.
+- `setup permissions custom --resource-app-id <guid> --scopes <scopes>` — apply inline custom API permissions to the agent blueprint without editing `a365.config.json`.
+
+### Removed
+- `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name`, `a365 status`, and `a365 setup permissions custom`.
+
+### Breaking Changes
+- **`a365 config init` removed** — replace with `a365 setup all --agent-name <name>`. This creates the agent blueprint, configures permissions, and registers the messaging endpoint in one step without requiring a pre-existing config file.
+- **`a365 config display` removed** — replace with `a365 status`. Use `a365 status --field <FieldName>` for scripting (e.g., `a365 status --field AgentBlueprintId`).
+- **`a365 config permissions` removed** — replace with `a365 setup permissions custom --resource-app-id <guid> --scopes <scopes>`.
+
+### Added
 - `a365 setup` now writes the `Agent365Observability` placeholder section (`AgentId`, `AgentBlueprintId`, `TenantId`, `AgentName`, `AgentDescription`) and `EnableAgent365Exporter: false` to `appsettings.json` (.NET) and `ENABLE_A365_OBSERVABILITY_EXPORTER=false` to `.env` (Python/Node.js), so observability configuration is pre-populated for all three platforms after running setup
 - Re-enabled `a365 create-instance` command (previously deprecated) — creates agent identity, agent user, and assigns licenses in a single command. The custom client app now requires the `User.ReadWrite.All` delegated permission for user creation and license assignment; existing users may need to update admin consent on their client app.
 - `Agent365.Observability.OtelWrite` granted to all provisioned agent identities on the Observability API as both a **delegated** permission (OAuth2 grant) and an **application** permission (S2S app role assignment), enabling agents to write OpenTelemetry data to the Agent 365 observability service

@@ -67,7 +67,7 @@ After both questions are answered, set `isAITeammate = true` if `capabilities = 
 
 You are an AI coding agent with access to execute shell commands, read the Agent365-devTools repository (code and docs), and browse the web for documentation or GitHub issues. Your task is to set up, configure, and deploy all prerequisite components for a Microsoft Agent 365–compliant agent using the Agent 365 CLI. You must handle this end-to-end: from installation and configuration to deployment. Work step-by-step, and adapt to any issues or differences in CLI versions along the way.
 
-> **CRITICAL BLOCKING PREREQUISITE:** Before running ANY `a365` CLI commands (including `config init`, `setup`, `publish`, or `deploy`), you MUST validate that the custom client app registration exists in Entra ID with all required permissions and admin consent. This is validated in Step 2. Failure to validate this will cause all CLI commands to fail. Do NOT skip this validation step.
+> **CRITICAL BLOCKING PREREQUISITE:** Before running ANY `a365` CLI commands (including `setup all`, `publish`, or `deploy`), you MUST validate that the custom client app registration exists in Entra ID with all required permissions and admin consent. This is validated in Step 2. Failure to validate this will cause all CLI commands to fail. Do NOT skip this validation step.
 
 ---
 
@@ -240,239 +240,52 @@ pip --version
 > 
 > **If ANY checkbox above is not satisfied, STOP. Go back to the incomplete step and finish it first.**
 > 
-> Common mistake: Jumping to this step first because it has `az account show` commands. Those commands are for Step 3 ONLY — Steps 1 and 2 must be done first.
+> Common mistake: Jumping to this step before completing Steps 1 and 2. The CLI requires a working Azure CLI login and a validated custom client app before setup will succeed.
 
-Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), create the Agent 365 CLI configuration file. The `a365 config init` command is non-interactive, so you must create an `a365.config.json` file directly and then import it.
+Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --aiteammate true --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed before running — the CLI creates `a365.config.json` automatically and auto-detects your tenant ID and client app ID from your Azure CLI session.
 
-### Gather auto-detected values
+### Collect setup inputs
 
-Retrieve the following values automatically using the Azure CLI:
+Ask the user for the agent base name only. No other values are needed for this path — the CLI auto-detects everything else.
 
-```bash
-# Get tenant ID and subscription ID
-az account show --query "{tenantId:tenantId, subscriptionId:id}" -o json
-```
-
-You should already have the `clientAppId` from the Step 2 validation.
-
-Set `deploymentProjectPath` to the current working directory (use absolute path).
-
-### Ask deployment type
-
-Send the user the following message and then **STOP and WAIT for their reply**. Your message must contain **ONLY** the text below — no tables, no input fields, no additional questions, no follow-up content:
-
----
-
-**Do you want to create a web app in Azure for this agent? (yes/no)**
-
-- **Yes** = Azure-hosted (recommended for production)
-- **No** = Self-hosted (e.g., local development with dev tunnel)
-
----
-
-> ⛔ **STOP. OUTPUT ONLY THE QUESTION ABOVE. DO NOT INCLUDE ANYTHING ELSE.**
-> Do NOT show input fields. Do NOT show a table. Do NOT mention resource groups, agent names, or any configuration values.
-> The next section ("Collect configuration inputs") must NOT appear in this message.
-> WAIT for the user to respond before doing anything else.
-
-After the user responds, set the internal value:
-- If **yes**: `needDeployment: true`
-- If **no**: `needDeployment: false`
-
-Then proceed to "Collect configuration inputs" below.
-
----
-
-### Collect configuration inputs
-
-> ⛔ **DO NOT EXECUTE THIS SECTION** until the user has answered the deployment type question above.
-> If you have not yet received the user's yes/no answer, STOP and go back to ask it.
-
-#### First: Query the subscription for real example values
-
-Before presenting input fields, run the following **single command** to gather real values from the user's Azure subscription. Use these values as **examples** in the input table so the user sees context-specific suggestions instead of generic placeholders.
-
-```bash
-az ad signed-in-user show --query userPrincipalName -o tsv; az group list --query "[].{Name:name, Location:location}" -o table; az appservice plan list --query "[].{Name:name, ResourceGroup:resourceGroup, Location:location}" -o table
-```
-
-> **Run this as ONE command.** Do NOT split into separate terminal calls.
-
-From the output, extract:
-- `{loggedInUser}` — the signed-in user's UPN (e.g., `admin@contoso.onmicrosoft.com`)
-- `{existingResourceGroup}` — name of an existing resource group (e.g., `agent365-rg`)
-- `{existingLocations}` — locations from the resource groups (e.g., `eastus, canadacentral, westus2`)
-- `{existingAppServicePlan}` — name of an existing App Service plan (e.g., `agent365-plan`)
-
-If a query returns no results (e.g., no existing resource groups or App Service plans), use a descriptive fallback like `my-agent-rg` or `my-agent-plan`.
-
-#### Present the input fields
-
-Based on the user's deployment type answer, present the appropriate set of input fields **with the real values you queried above as examples**.
-
-#### If Azure-hosted (`needDeployment: true`)
-
-Present the following fields in a single prompt:
-
-**"Please provide the following values to configure your Azure-hosted agent:"**
+**"Please provide the following value to set up your AI Teammate agent:"**
 
 | Field | Description | Example |
 |-------|-------------|---------|
-| **Resource Group** | Azure Resource Group (new or existing) | `{existingResourceGroup}` |
-| **Location** | Azure region for deployment | `{existingLocations}` |
-| **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
-| **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
-| **App Service Plan** | Azure App Service Plan name | `{existingAppServicePlan}` |
+| **Agent Name** | Unique base name for your agent | `contoso-support-agent` |
 
-> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive the web app URL (`{name}-webapp.azurewebsites.net`), Agent Identity, Blueprint, and User Principal Name. Letters, numbers, hyphens only; any casing is accepted. Start with a letter. 3-20 chars recommended. Tip: include your org name.
+> **Agent Name rules:** Must be **globally unique across all of Azure**. Letters, numbers, hyphens only; any casing is accepted. Start with a letter. 3-20 chars recommended. Tip: include your org name.
 >
-> **Examples** show real values from your subscription. You can reuse existing resources or provide new names — the CLI will create them if they don't exist.
+> The CLI derives all other identifiers from this name: `{name} Identity`, `{name} Blueprint`, etc.
 >
-> **Do NOT ask for `clientAppId` here.** It was already collected and validated in Step 2. Present ONLY the 5 fields listed above.
+> **Do NOT ask for** `tenantId`, `subscriptionId`, `clientAppId`, resource group, location, or any other values. The CLI auto-detects or auto-derives all of these from your Azure CLI session and Entra lookup.
 
-#### If self-hosted (`needDeployment: false`)
+### Run setup all
 
-Present the following fields in a single prompt:
-
-**"Please provide the following values to configure your self-hosted agent:"**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| **Resource Group** | Azure Resource Group (new or existing) | `{existingResourceGroup}` |
-| **Location** | Azure region for deployment | `{existingLocations}` |
-| **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
-| **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
-
-> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive Agent Identity, Blueprint, and User Principal Name. Letters, numbers, hyphens only; any casing is accepted. Start with a letter. 3-20 chars recommended. Tip: include your org name.
-
-After collecting these inputs, proceed to Step 3.3.1 to determine the messaging endpoint.
-
-#### After receiving the user's answers
-
-1. **Validate the inputs** — Check that all required fields are provided, the email format looks valid, and the agent name meets the naming requirements.
-2. **If any field is missing or unclear**, ask only about that specific field — do not re-ask for all inputs.
-3. **Proceed** to derive naming values (or determine the messaging endpoint first for self-hosted deployments).
-
-#### Determine messaging endpoint (non-Azure deployments only)
-
-Only perform this step if the user chose self-hosted deployment.
-
-Ask: **"Would you like to use a dev tunnel for local development, or provide a custom messaging endpoint? (devtunnel/custom)"**
-
-Provide this context:
-- **Dev tunnel**: Creates a secure tunnel from the internet to your local machine. Ideal for development and testing - no need to deploy your code anywhere. The tunnel URL will be your messaging endpoint.
-- **Custom endpoint**: Use this if you already have a publicly accessible HTTPS URL where your agent is hosted (e.g., on another cloud provider, on-premises with a public IP, or behind a reverse proxy).
-
-- If **devtunnel**: Proceed to set up a dev tunnel (next section). The dev tunnel URL will be used as the `messagingEndpoint`.
-- If **custom**: Ask the user to provide their `messagingEndpoint` URL (e.g., `https://myagent.example.com/api/messages`).
-
-#### Set up a dev tunnel (for local development)
-
-### Derive naming values from base name
-
-Using the `agentBaseName` provided by the user and the domain extracted from `managerEmail`, derive the following values:
-
-| Field | Pattern | Example (baseName=`mya365agent`, domain=`contoso.onmicrosoft.com`) |
-|-------|---------|---------|
-| `agentIdentityDisplayName` | `{baseName} Identity` | `mya365agent Identity` |
-| `agentBlueprintDisplayName` | `{baseName} Blueprint` | `mya365agent Blueprint` |
-| `agentUserPrincipalName` | `UPN.{baseName}@{domain}` | `UPN.mya365agent@contoso.onmicrosoft.com` |
-| `agentUserDisplayName` | `{baseName} Agent User` | `mya365agent Agent User` |
-| `agentDescription` | `{baseName} - Agent 365 Agent` | `mya365agent - Agent 365 Agent` |
-| `webAppName` (Azure-hosted only) | `{baseName}-webapp` | `mya365agent-webapp` |
-
-### Confirm derived values with user
-
-After deriving the values above, present them to the user and ask for confirmation. Display the derived values in a clear format:
-
-**"Based on your inputs, the following values have been derived as defaults:"**
-
-| Field | Derived Value |
-|-------|---------------|
-| `agentIdentityDisplayName` | `{baseName} Identity` |
-| `agentBlueprintDisplayName` | `{baseName} Blueprint` |
-| `agentUserPrincipalName` | `UPN.{baseName}@{domain}` |
-| `agentUserDisplayName` | `{baseName} Agent User` |
-| `agentDescription` | `{baseName} - Agent 365 Agent` |
-| `webAppName` (if Azure-hosted) | `{baseName}-webapp` |
-
-Then ask: **"Would you like to update any of these derived values, or proceed with the defaults? (update/proceed)"**
-
-- If the user chooses **"proceed"**: Continue to create the config file with the derived default values.
-- If the user chooses **"update"**: Ask which field(s) they want to change and collect the new value(s). After updates, display the final values again for confirmation before proceeding.
-
-### Create the a365.config.json file
-
-Create the `a365.config.json` file in the current working directory with all gathered and derived values.
-
-**Template for Azure-hosted deployment** (`needDeployment: true`):
-
-```json
-{
-  "tenantId": "<from az account show>",
-  "subscriptionId": "<from az account show>",
-  "resourceGroup": "<user provided>",
-  "location": "<user provided>",
-  "environment": "prod",
-  "needDeployment": true,
-  "clientAppId": "<from Step 2 validation>",
-  "appServicePlanName": "<user provided>",
-  "webAppName": "<derived from baseName>",
-  "agentIdentityDisplayName": "<derived from baseName>",
-  "agentBlueprintDisplayName": "<derived from baseName>",
-  "agentUserPrincipalName": "<derived from baseName and domain>",
-  "agentUserDisplayName": "<derived from baseName>",
-  "managerEmail": "<user provided>",
-  "agentUserUsageLocation": "US",
-  "deploymentProjectPath": "<current working directory>",
-  "agentDescription": "<derived from baseName>"
-}
-```
-
-**Template for non-Azure hosted deployment** (`needDeployment: false`):
-
-```json
-{
-  "tenantId": "<from az account show>",
-  "subscriptionId": "<from az account show>",
-  "resourceGroup": "<user provided>",
-  "location": "<user provided>",
-  "environment": "prod",
-  "messagingEndpoint": "<user provided>",
-  "needDeployment": false,
-  "clientAppId": "<from Step 2 validation>",
-  "agentIdentityDisplayName": "<derived from baseName>",
-  "agentBlueprintDisplayName": "<derived from baseName>",
-  "agentUserPrincipalName": "<derived from baseName and domain>",
-  "agentUserDisplayName": "<derived from baseName>",
-  "managerEmail": "<user provided>",
-  "agentUserUsageLocation": "US",
-  "deploymentProjectPath": "<current working directory>",
-  "agentDescription": "<derived from baseName>"
-}
-```
-
-### Import the configuration
-
-After creating the `a365.config.json` file, import it using:
+Run setup using the agent name. The CLI bootstraps configuration from Entra and provisions all resources:
 
 ```bash
-a365 config init -c ./a365.config.json
+a365 setup all --aiteammate true --agent-name <agent-base-name>
 ```
+
+The CLI will:
+- Auto-detect the tenant ID from `az account show`
+- Look up the Client App ID from Entra
+- Derive `<name> Identity` and `<name> Blueprint` display names
+- Create `a365.config.json` and `a365.generated.config.json` in the current directory
 
 ### Validation
 
-The `config init` process will attempt to validate your inputs. Notably, it will check:
+The `setup all` process validates your inputs. Notably, it will check:
 
-- That the provided Application (client) ID corresponds to an existing app in the tenant and that it has the required permissions (the CLI might automatically verify the presence of the Graph permissions and admin consent). If this validation fails (for example, "app not found" or "missing permission X"), do not proceed further until the issue is resolved. Refer back to the app registration guide and fix the configuration (you may need the user's help to adjust the app's settings or wait for an admin consent).
-- **Azure subscription and resource availability:** it might check that the subscription ID is accessible and you have Contributor rights (if you logged in via Azure CLI, this should be okay).
-- It could also test the project path for a recognizable project (looking for a `.csproj`, `package.json`, or `pyproject.toml` to identify .NET/Node/Python). If it warns that it "could not detect project platform" or similar, double-check the `deploymentProjectPath` you provided. If it's wrong, update it and re-import the configuration.
+- That the CLI client app exists in the tenant and has the required permissions. If this validation fails, refer back to the app registration guide and fix the configuration.
+- It also detects the project platform from the directory (looking for a `.csproj`, `package.json`, or `pyproject.toml`). If it warns it could not detect the project platform, run the command from the agent project directory.
 
-If any validation fails, correct the `a365.config.json` file and re-run `a365 config init -c ./a365.config.json`.
+If any validation fails, correct the issues and re-run `a365 setup all --aiteammate true --agent-name <agent-base-name>`.
 
-### Proceed when config is successful
+### Proceed when setup is successful
 
-Once `a365 config init` completes without errors, you have a baseline configuration ready. The CLI now knows your environment details and is authenticated. This configuration will be used by subsequent commands.
+Once `a365 setup all` completes without errors, the CLI has provisioned your environment. An `a365.config.json` and `a365.generated.config.json` will be written to the current directory. Subsequent commands will use these files automatically.
 
 ---
 
@@ -500,7 +313,7 @@ Ask the user two questions (one at a time, wait for each response):
 **For the AI Teammate path (`isAITeammate = true`):**
 
 - `agent_name` is derived from `agentBaseName` collected in Step 3 — do NOT ask again.
-- `project_dir` is the `deploymentProjectPath` from the config — do NOT ask again.
+- `project_dir` is the directory where Step 3 was run (where `a365.config.json` now exists) — do NOT ask again.
 
 ---
 
@@ -730,7 +543,7 @@ Provide the user with the following instructions:
 
 1. **Get your blueprint ID** by running:
    ```bash
-   a365 config display -g --field agentBlueprintId
+   a365 status --field AgentBlueprintId
    ```
 
 2. **Navigate to Developer Portal** by opening your browser and going to:
@@ -743,7 +556,7 @@ Provide the user with the following instructions:
    - Set **Agent Type** to `API Based`
    - Set **Notification URL** to your agent's messaging endpoint. Get the value by running:
      ```bash
-     a365 config display -g --field messagingEndpoint
+     a365 status --field MessagingEndpoint
      ```
    - Select **Save**
 

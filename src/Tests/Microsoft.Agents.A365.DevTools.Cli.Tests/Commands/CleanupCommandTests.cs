@@ -203,9 +203,9 @@ public class CleanupCommandTests
         var result = await command.InvokeAsync(args);
 
         // Assert
-        // Note: Current implementation catches exceptions and returns 0, but logs error
-        // This tests the actual behavior, not ideal behavior
-        Assert.Equal(0, result); 
+        // Config load failure returns exit code 1: LoadConfigAsync catches the exception and
+        // returns null, then the azure cleanup handler explicitly exits with code 1 on null config.
+        Assert.Equal(1, result);
         
         // Verify no Azure CLI commands are executed when config loading fails
         await _mockExecutor.DidNotReceive().ExecuteAsync(

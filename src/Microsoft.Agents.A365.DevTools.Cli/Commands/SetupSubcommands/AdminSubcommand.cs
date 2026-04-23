@@ -40,7 +40,8 @@ internal static class AdminSubcommand
         AzureAuthValidator authValidator,
         GraphApiService graphApiService,
         IConfirmationProvider confirmationProvider,
-        AgentBlueprintService? blueprintService = null)
+        AgentBlueprintService? blueprintService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command(
             "admin",
@@ -63,6 +64,15 @@ internal static class AdminSubcommand
             ["--blueprint-id", "-id"],
             description: "Blueprint app ID (client ID). Config-free mode: skips loading config files.\n" +
                          "Use the ID shown in the 'a365 setup all' output. Tenant is auto-detected from 'az account show'.");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. Alias for config-free mode: resolves blueprint ID from Entra by display name.\n" +
+                         "Equivalent to passing --blueprint-id with the ID looked up automatically.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var configDirOption = new Option<DirectoryInfo>(
             ["--config-dir", "-d"],
@@ -87,6 +97,8 @@ internal static class AdminSubcommand
             description: "Skip confirmation prompt and proceed automatically");
 
         command.AddOption(blueprintIdOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(configDirOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
@@ -96,11 +108,30 @@ internal static class AdminSubcommand
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext ctx) =>
         {
             var blueprintId      = ctx.ParseResult.GetValueForOption(blueprintIdOption);
+            var agentName        = ctx.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag     = ctx.ParseResult.GetValueForOption(tenantIdOption);
             var configDir        = ctx.ParseResult.GetValueForOption(configDirOption)!;
             var dryRun           = ctx.ParseResult.GetValueForOption(dryRunOption);
             var skipRequirements = ctx.ParseResult.GetValueForOption(skipRequirementsOption);
             var yes              = ctx.ParseResult.GetValueForOption(yesOption);
             var ct               = ctx.GetCancellationToken();
+
+            // --agent-name is an alias for config-free mode: resolve blueprint ID via Entra lookup.
+            if (string.IsNullOrWhiteSpace(blueprintId) && !string.IsNullOrWhiteSpace(agentName) && resolver != null)
+            {
+                var bootstrapConfig = await resolver.ResolveAsync(
+                    agentName, tenantIdFlag, new FileInfo("a365.config.json"), isCleanupMode: true, ct);
+                if (bootstrapConfig is null) { ctx.ExitCode = 1; return; }
+                blueprintId = bootstrapConfig.AgentBlueprintId;
+                if (string.IsNullOrWhiteSpace(blueprintId))
+                {
+                    logger.LogError(
+                        "Blueprint for agent '{Name}' not found in Entra. " +
+                        "Run 'a365 setup blueprint --agent-name {Name}' first.", agentName, agentName);
+                    ctx.ExitCode = 1;
+                    return;
+                }
+            }
 
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogDebug("Starting setup admin (CorrelationId: {CorrelationId})", correlationId);
@@ -166,12 +197,11 @@ internal static class AdminSubcommand
                     if (!File.Exists(configPath))
                     {
                         logger.LogError(
-                            "Configuration file not found: {ConfigPath}",
-                            configPath);
+                            "No configuration file found at {ConfigPath}.", configPath);
                         logger.LogError(
                             "Ensure the Agent ID Admin has run 'a365 setup all' and shared the config folder, " +
-                            "or pass --blueprint-id to skip config file loading.");
-                        ExceptionHandler.ExitWithCleanup(1);
+                            "or pass --blueprint-id (or --agent-name) to skip config file loading.");
+                        ctx.ExitCode = 1;
                         return;
                     }
 

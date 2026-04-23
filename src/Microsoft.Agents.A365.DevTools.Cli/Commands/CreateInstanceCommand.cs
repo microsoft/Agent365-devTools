@@ -19,18 +19,22 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public class CreateInstanceCommand
 {
     public static Command CreateCommand(ILogger<CreateInstanceCommand> logger, IConfigService configService, CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService, IBootstrapConfigResolver? resolver = null)
     {
-        // Command description
-        // Create and configure agent user identities with appropriate
-        // licenses and notification settings for your deployed agent
         var command = new Command("create-instance", "Create and configure agent user identities with appropriate licenses and notification settings for your deployed agent");
 
-        // Options for the main create-instance command
         var configOption = new Option<FileInfo>(
             ["--config", "-c"],
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -41,16 +45,25 @@ public class CreateInstanceCommand
             description: "Show what would be done without executing");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
         // Subcommands
-        command.AddCommand(CreateIdentitySubcommand(logger, configService, executor, graphApiService));
-        command.AddCommand(CreateLicensesSubcommand(logger, configService, executor, graphApiService));
+        command.AddCommand(CreateIdentitySubcommand(logger, configService, executor, graphApiService, resolver));
+        command.AddCommand(CreateLicensesSubcommand(logger, configService, executor, graphApiService, resolver));
 
         // Default handler
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Agent 365 Instance Creation - All Steps");
@@ -61,14 +74,23 @@ public class CreateInstanceCommand
                 return;
             }
 
-            logger.LogInformation("Agent 365 Instance Creation - All Steps");
-            logger.LogInformation("Creating agent instance with full configuration...\n");
-            
             try
             {
-                // Load configuration from specified config file
-                var instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
-                if (instanceConfig == null) Environment.Exit(1);
+                Agent365Config? instanceConfig;
+                if (resolver != null)
+                {
+                    instanceConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: false, ct);
+                    if (instanceConfig != null && !config.Exists)
+                        await resolver.WriteBootstrapConfigAsync(instanceConfig, config.FullName);
+                }
+                else
+                {
+                    instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
+                }
+                if (instanceConfig == null) { context.ExitCode = 1; return; }
+
+                logger.LogInformation("Agent 365 Instance Creation - All Steps");
+                logger.LogInformation("Creating agent instance with full configuration...\n");
 
                 logger.LogInformation("");
 
@@ -269,7 +291,7 @@ public class CreateInstanceCommand
                 logger.LogError(ex, "Instance creation failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -281,7 +303,8 @@ public class CreateInstanceCommand
         ILogger<CreateInstanceCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("identity", "Create Agent Identity and Agent User");
 
@@ -289,6 +312,14 @@ public class CreateInstanceCommand
             ["--config", "-c"],
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -299,11 +330,20 @@ public class CreateInstanceCommand
             description: "Show what would be done without executing");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Creating Agent Identity and Agent User");
@@ -311,14 +351,23 @@ public class CreateInstanceCommand
                 return;
             }
 
-            logger.LogInformation("Creating Agent Identity and Agent User...");
-            logger.LogInformation(""); // Empty line for readability
-            
             try
             {
-                // Load configuration from specified file
-                var instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
-                if (instanceConfig == null) Environment.Exit(1);
+                Agent365Config? instanceConfig;
+                if (resolver != null)
+                {
+                    instanceConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: false, ct);
+                    if (instanceConfig != null && !config.Exists)
+                        await resolver.WriteBootstrapConfigAsync(instanceConfig, config.FullName);
+                }
+                else
+                {
+                    instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
+                }
+                if (instanceConfig == null) { context.ExitCode = 1; return; }
+
+                logger.LogInformation("Creating Agent Identity and Agent User...");
+                logger.LogInformation("");
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
                 var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
@@ -373,7 +422,7 @@ public class CreateInstanceCommand
                 logger.LogError(ex, "Identity creation failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -385,7 +434,8 @@ public class CreateInstanceCommand
         ILogger<CreateInstanceCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        GraphApiService graphApiService)
+        GraphApiService graphApiService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("licenses", "Add licenses to Agent User");
 
@@ -393,6 +443,14 @@ public class CreateInstanceCommand
             ["--config", "-c"],
             getDefaultValue: () => new FileInfo("a365.config.json"),
             description: "Configuration file path");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -403,11 +461,20 @@ public class CreateInstanceCommand
             description: "Show what would be done without executing");
 
         command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
             if (dryRun)
             {
                 logger.LogInformation("DRY RUN: Adding licenses to Agent User");
@@ -415,13 +482,23 @@ public class CreateInstanceCommand
                 return;
             }
 
-            logger.LogInformation("Adding licenses to Agent User...");
-            logger.LogInformation("");
-
             try
             {
-                var instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
-                if (instanceConfig == null) Environment.Exit(1);
+                Agent365Config? instanceConfig;
+                if (resolver != null)
+                {
+                    instanceConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: false, ct);
+                    if (instanceConfig != null && !config.Exists)
+                        await resolver.WriteBootstrapConfigAsync(instanceConfig, config.FullName);
+                }
+                else
+                {
+                    instanceConfig = await LoadConfigAsync(logger, configService, config.FullName);
+                }
+                if (instanceConfig == null) { context.ExitCode = 1; return; }
+
+                logger.LogInformation("Adding licenses to Agent User...");
+                logger.LogInformation("");
 
                 // Use C# runner with the DI-injected GraphApiService (has MSAL auth context)
                 var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
@@ -451,7 +528,7 @@ public class CreateInstanceCommand
                 logger.LogError(ex, "License assignment failed: {Message}", ex.Message);
                 throw;
             }
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }

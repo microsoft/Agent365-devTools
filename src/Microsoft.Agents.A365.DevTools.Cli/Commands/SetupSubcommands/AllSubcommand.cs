@@ -78,7 +78,8 @@ internal static class AllSubcommand
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         ArmApiService? armApiService = null,
-        IConfirmationProvider? confirmationProvider = null)
+        IConfirmationProvider? confirmationProvider = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("all",
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -191,8 +192,9 @@ internal static class AllSubcommand
                         logger.LogInformation("");
 
                         // Real run: resolve client app ID from Entra
-                        nonDwConfig = await BuildBootstrapConfigAsync(
-                            agentName!, tenantIdFlag, executor, graphApiService, logger, ct);
+                        nonDwConfig = resolver != null
+                            ? await resolver.ResolveAsync(agentName!, tenantIdFlag, config, isCleanupMode: false, ct)
+                            : await BuildBootstrapConfigAsync(agentName!, tenantIdFlag, executor, graphApiService, logger, ct);
                         if (nonDwConfig is null)
                         {
                             context.ExitCode = 1;
@@ -213,12 +215,20 @@ internal static class AllSubcommand
                         // If existing config files belong to a different tenant (e.g. the user ran
                         // 'az login' with a different account), back them up and remove them so this
                         // run starts with a clean state and does not inherit stale resource IDs.
-                        await BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!, logger);
+                        if (resolver != null)
+                            await resolver.BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!);
+                        else
+                            await BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!, logger);
 
                         // Write a365.config.json so the resolved bootstrap settings are persisted in the
                         // current working directory and reused consistently by later setup and cleanup steps.
                         if (!File.Exists(config.FullName))
-                            await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
+                        {
+                            if (resolver != null)
+                                await resolver.WriteBootstrapConfigAsync(nonDwConfig, config.FullName);
+                            else
+                                await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
+                        }
                     }
                 }
                 else
@@ -302,7 +312,40 @@ internal static class AllSubcommand
             try
             {
                 // Load configuration
-                var setupConfig = await configService.LoadAsync(config.FullName);
+                Agent365Config setupConfig;
+                if (isBootstrap)
+                {
+                    var banner = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
+                    logger.LogInformation("Running \"a365 {Args}\"...", string.Join(" ", banner));
+                    logger.LogInformation("");
+                    var btTenantId = tenantIdFlag;
+                    if (string.IsNullOrWhiteSpace(btTenantId))
+                        btTenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(null, executor, logger);
+                    if (string.IsNullOrWhiteSpace(btTenantId)) { context.ExitCode = 1; return; }
+                    var btClientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(btTenantId, graphApiService, logger, ct);
+                    if (!string.IsNullOrWhiteSpace(btClientAppId))
+                        graphApiService.CustomClientAppId = btClientAppId;
+                    var dwBootstrap = new Agent365Config
+                    {
+                        TenantId = btTenantId,
+                        ClientAppId = btClientAppId ?? string.Empty,
+                        AgentIdentityDisplayName = $"{agentName} Identity",
+                        AgentBlueprintDisplayName = $"{agentName} Blueprint",
+                        AgentDescription = agentName!,
+                        AiTeammate = true,
+                    };
+                    if (resolver != null)
+                    {
+                        await resolver.BackupAndClearStaleConfigAsync(config.FullName, dwBootstrap.TenantId!);
+                        if (!File.Exists(config.FullName))
+                            await resolver.WriteBootstrapConfigAsync(dwBootstrap, config.FullName);
+                    }
+                    setupConfig = dwBootstrap;
+                }
+                else
+                {
+                    setupConfig = await configService.LoadAsync(config.FullName);
+                }
 
                 // Configure GraphApiService with custom client app ID if available
                 // This ensures inheritable permissions operations use the validated custom app
@@ -352,7 +395,7 @@ internal static class AllSubcommand
                     configFile: config,
                     generatedConfigPath: generatedConfigPath,
                     correlationId: correlationId,
-                    skipInfrastructure: skipInfrastructure,
+                    skipInfrastructure: skipInfrastructure || isBootstrap,
                     skipRequirements: skipRequirements,
                     cancellationToken: ct,
                     configService: configService,
