@@ -36,22 +36,13 @@ public static class ConfigConstants
     public const string CustomClientAppRegistrationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration";
 
     /// <summary>
-    /// Microsoft Learn documentation URL for configuring the messaging endpoint manually
-    /// in the Teams Developer Portal. Used as the fallback action item when the M365 Teams
-    /// Graph backend configuration is skipped (e.g., during the rollout window).
+    /// Microsoft Learn documentation URL for configuring the messaging endpoint manually in
+    /// the Teams Developer Portal. Used as the fallback action item whenever automated Teams
+    /// Graph backend configuration cannot complete (non-M365 agents, contract-mismatch
+    /// responses, ownership/permission failures).
     /// </summary>
     public const string TeamsDeveloperPortalConfigureEndpointUrl =
         "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal";
-
-    /// <summary>
-    /// Cutoff date (UTC) after which the MCP Platform Teams Graph rollout is expected to be
-    /// complete in all environments. Before this date, a contract-mismatch response is logged
-    /// as INFO (rollout in progress). On or after this date, it is logged as WARNING since it
-    /// is no longer expected.
-    /// TEMPORARY: remove along with <see cref="Models.EndpointRegistrationResult.SkippedDueToRollout"/>
-    /// once v1/v2 contract versioning replaces this heuristic.
-    /// </summary>
-    public static readonly DateTime TeamsGraphRolloutCompleteOnUtc = new(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc);
 
     /// <summary>
     /// Agent 365 Tools Discover endpoint URL (V2)

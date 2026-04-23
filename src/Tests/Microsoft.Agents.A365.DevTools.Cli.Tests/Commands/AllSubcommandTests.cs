@@ -242,22 +242,22 @@ public class AllSubcommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteMessagingEndpointStepAsync_WhenConfiguratorReturnsSkippedDueToRollout_SetsResultButNotRegistered()
+    public async Task ExecuteMessagingEndpointStepAsync_WhenConfiguratorReturnsSkippedContractMismatch_SetsResultButNotRegistered()
     {
         var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
         backend.SetBackendConfigurationAsync(
             "blueprint-id",
             "https://example.com/api/messages",
             "test-correlation-id")
-            .Returns((EndpointRegistrationResult.SkippedDueToRollout, (string?)null));
+            .Returns((EndpointRegistrationResult.SkippedContractMismatch, (string?)null));
 
         var ctx = BuildMessagingEndpointContext(backend, isM365: true);
 
         await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
 
-        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.SkippedDueToRollout);
+        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.SkippedContractMismatch);
         ctx.Results.MessagingEndpointRegistered.Should().BeFalse(
-            because: "SkippedDueToRollout means the server still runs the pre-migration contract — the user must register manually");
+            because: "SkippedContractMismatch means the server still runs the pre-migration contract — the user must register manually");
         ctx.Results.MessagingEndpointFailureReason.Should().BeNull();
     }
 

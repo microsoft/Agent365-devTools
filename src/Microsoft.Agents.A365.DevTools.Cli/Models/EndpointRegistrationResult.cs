@@ -24,11 +24,14 @@ public enum EndpointRegistrationResult
     AlreadyExists,
 
     /// <summary>
-    /// The server rejected the request with a contract-mismatch signature, indicating the
-    /// Teams Graph rollout is still in progress on that environment. The caller should treat
-    /// this as non-fatal, surface it in the summary as "Teams registration not done", and
-    /// point the user at the Teams Developer Portal for manual configuration.
-    /// TEMPORARY: remove once rollout completes and v1/v2 contract versioning is in place.
+    /// Defensive fallback: the server rejected the request with a known contract-mismatch
+    /// signature (e.g. a breaking API change the CLI hasn't been updated for). Callers should
+    /// treat this as non-fatal, surface it in the summary as "manual config required", and
+    /// direct the user to the Teams Developer Portal to register the endpoint manually.
+    /// The current detection heuristic keys on the pre-migration ABS field name
+    /// (<c>AzureBotServiceInstanceName</c>) — extend the heuristic in
+    /// <c>TeamsGraphBackendConfigurator.IsContractMismatchResponse</c> if a future contract
+    /// break needs to be caught the same way.
     /// </summary>
-    SkippedDueToRollout
+    SkippedContractMismatch
 }

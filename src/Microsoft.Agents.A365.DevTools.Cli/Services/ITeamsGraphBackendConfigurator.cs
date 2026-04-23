@@ -22,7 +22,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
         /// Result is:
         /// <see cref="Models.EndpointRegistrationResult.Created"/> on success,
         /// <see cref="Models.EndpointRegistrationResult.AlreadyExists"/> if the server reports a duplicate,
-        /// <see cref="Models.EndpointRegistrationResult.SkippedDueToRollout"/> if the server rejects the
+        /// <see cref="Models.EndpointRegistrationResult.SkippedContractMismatch"/> if the server rejects the
         /// new Teams Graph contract (rollout still in progress — non-fatal),
         /// <see cref="Models.EndpointRegistrationResult.Failed"/> otherwise.
         /// FailureReason is "NotOwner" when the server rejected with a "not the owner" 403-wrapped-as-400,

@@ -2146,7 +2146,7 @@ internal static class BlueprintSubcommand
     /// Registers blueprint messaging endpoint and syncs project settings.
     /// Public method that can be called by AllSubcommand.
     /// Returns the raw <see cref="Models.EndpointRegistrationResult"/> so callers can distinguish
-    /// Created / AlreadyExists / SkippedDueToRollout / Failed for summary output.
+    /// Created / AlreadyExists / SkippedContractMismatch / Failed for summary output.
     /// </summary>
     public static async Task<Models.EndpointRegistrationResult> RegisterEndpointAndSyncAsync(
         string configPath,
@@ -2188,7 +2188,7 @@ internal static class BlueprintSubcommand
             case Models.EndpointRegistrationResult.AlreadyExists:
                 logger.LogInformation("Blueprint messaging endpoint already registered");
                 break;
-            case Models.EndpointRegistrationResult.SkippedDueToRollout:
+            case Models.EndpointRegistrationResult.SkippedContractMismatch:
                 logger.LogInformation("Action required: register the messaging endpoint in the Teams Developer Portal:");
                 logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
                 break;
@@ -2287,7 +2287,7 @@ internal static class BlueprintSubcommand
             throw new Exceptions.SetupValidationException("Failed to register new messaging endpoint.");
         }
 
-        if (registerResult == Models.EndpointRegistrationResult.SkippedDueToRollout)
+        if (registerResult == Models.EndpointRegistrationResult.SkippedContractMismatch)
         {
             logger.LogInformation("Action required: register the messaging endpoint in the Teams Developer Portal:");
             logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);

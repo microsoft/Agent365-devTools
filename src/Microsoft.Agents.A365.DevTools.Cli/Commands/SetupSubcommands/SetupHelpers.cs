@@ -498,7 +498,7 @@ internal static class SetupHelpers
                         DryRunRow(endpointStep, "Messaging endpoint") + "reused       '{Endpoint}'",
                         results.MessagingEndpoint ?? "unknown");
                     break;
-                case Models.EndpointRegistrationResult.SkippedDueToRollout:
+                case Models.EndpointRegistrationResult.SkippedContractMismatch:
                     logger.LogWarning(
                         DryRunRow(endpointStep, "Messaging endpoint") + "manual config required — see Action Required");
                     break;
@@ -525,7 +525,7 @@ internal static class SetupHelpers
 
         // ── Action Required ────────────────────────────────────────────────────
         var messagingEndpointManualRequired =
-            results.MessagingEndpointResult == Models.EndpointRegistrationResult.SkippedDueToRollout;
+            results.MessagingEndpointResult == Models.EndpointRegistrationResult.SkippedContractMismatch;
         var messagingEndpointFailureRequired =
             results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed;
         var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction || messagingEndpointManualRequired || messagingEndpointFailureRequired;
@@ -1205,7 +1205,7 @@ internal static class SetupHelpers
     /// <param name="correlationId">Optional correlation ID for tracing.</param>
     /// <returns>
     /// A tuple of (Result, FailureReason) from the Teams Graph call. Callers are expected to
-    /// check for <see cref="Models.EndpointRegistrationResult.SkippedDueToRollout"/> to surface
+    /// check for <see cref="Models.EndpointRegistrationResult.SkippedContractMismatch"/> to surface
     /// the rollout-in-progress fallback messaging in their summary. FailureReason is "NotOwner"
     /// or "Other" when Result is Failed, null otherwise.
     /// </returns>

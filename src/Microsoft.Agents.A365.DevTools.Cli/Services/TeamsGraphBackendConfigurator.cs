@@ -119,7 +119,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 if (IsContractMismatchResponse(response, errorContent))
                 {
                     LogContractMismatch(errorContent);
-                    return (EndpointRegistrationResult.SkippedDueToRollout, null);
+                    return (EndpointRegistrationResult.SkippedContractMismatch, null);
                 }
 
                 _logger.LogError("Failed to set backend configuration. Status: {Status}", response.StatusCode);
@@ -270,11 +270,18 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     }
 
     /// <summary>
-    /// Detects whether the server rejected the request because it is still running the
-    /// pre-migration ABS contract. The signature is HTTP 400 + validation errors naming any
-    /// legacy field (e.g. AzureBotServiceInstanceName or MessagingEndpoint).
-    /// TEMPORARY: remove along with SkippedDueToRollout once v1/v2 versioning is in place.
+    /// Defensive detector: returns true when the server rejected the request with a known
+    /// "wrong contract" signature the CLI can recognize. Today the only recognized signature
+    /// is the pre-migration Azure Bot Service validator rejecting on <c>AzureBotServiceInstanceName</c>;
+    /// extend this with additional patterns if a future breaking contract change lands.
+    /// Callers translate a true result into <see cref="EndpointRegistrationResult.SkippedContractMismatch"/>
+    /// and direct the user at the Teams Developer Portal.
     /// </summary>
+    /// <remarks>
+    /// Deliberately narrow: do NOT match on generic field names like "MessagingEndpoint" or
+    /// "CallbackUri" — the new Teams Graph contract validates those fields itself, so matching
+    /// them would silently mask real 400s as contract mismatches.
+    /// </remarks>
     private static bool IsContractMismatchResponse(HttpResponseMessage response, string errorContent)
     {
         if (response.StatusCode != HttpStatusCode.BadRequest &&
@@ -288,34 +295,20 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             return false;
         }
 
-        // Only match on AzureBotServiceInstanceName — it is uniquely ABS-shaped and cannot
-        // plausibly appear in a Teams Graph validation error. Do NOT match on generic field
-        // names like "MessagingEndpoint"/"CallbackUri"; the new Teams Graph contract itself
-        // validates those fields, so matching them would silently mask real 400s as rollout
-        // skips.
         return errorContent.Contains("AzureBotServiceInstanceName", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
-    /// Logs the contract-mismatch condition at INFO level before the rollout cutoff and
-    /// WARNING after, so the operator sees it escalate if it persists past the expected date.
+    /// Logs the contract-mismatch condition at INFO level with a user-friendly message. The
+    /// loud signal (summary row + Action Required entry) lives in <c>DisplaySetupSummary</c>;
+    /// this log is just the inline breadcrumb during the step. Response body is logged at
+    /// DEBUG for diagnostics.
     /// </summary>
     private void LogContractMismatch(string errorContent)
     {
-        if (DateTime.UtcNow < ConfigConstants.TeamsGraphRolloutCompleteOnUtc)
-        {
-            _logger.LogInformation(
-                "Automated messaging endpoint registration is not available for this tenant yet. " +
-                "You'll need to configure it manually.");
-        }
-        else
-        {
-            _logger.LogWarning(
-                "Automated messaging endpoint registration is still returning a compatibility error. " +
-                "This was expected to be resolved by {CutoffUtc:O}. File an issue if this persists. " +
-                "For now, configure the endpoint manually in the Teams Developer Portal.",
-                ConfigConstants.TeamsGraphRolloutCompleteOnUtc);
-        }
+        _logger.LogInformation(
+            "Automated messaging endpoint registration is not available for this tenant yet. " +
+            "You'll need to configure it manually.");
 
         _logger.LogDebug("Server response body: {Body}", errorContent);
     }
