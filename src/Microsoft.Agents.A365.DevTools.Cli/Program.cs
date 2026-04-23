@@ -276,26 +276,9 @@ class Program
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
 
-            // Determine environment: try to load from config if --config option is provided, otherwise default to prod
-            string environment = "prod"; // Default
-
-            // Check if --config argument was provided (for internal developers)
-            var args = Environment.GetCommandLineArgs();
-            var configIndex = Array.FindIndex(args, arg => arg == "--config" || arg == "-c");
-            if (configIndex >= 0 && configIndex < args.Length - 1)
-            {
-                try
-                {
-                    // Try to load config file to get environment
-                    var config = configService.LoadAsync(args[configIndex + 1]).Result;
-                    environment = config.Environment;
-                }
-                catch
-                {
-                    // If config loading fails, stick with default "prod"
-                    // This is fine - the service will work with default environment
-                }
-            }
+            // Default to "prod". The service will work with default environment
+            // even when the config file does not yet exist.
+            string environment = "prod";
 
             return new Agent365ToolingService(configService, authService, logger, environment);
         });

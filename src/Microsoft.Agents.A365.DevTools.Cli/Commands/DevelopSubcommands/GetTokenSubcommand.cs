@@ -27,11 +27,6 @@ internal static class GetTokenSubcommand
             "Retrieve bearer tokens for MCP server authentication\n" +
             "Scopes are read from ToolingManifest.json or specified via command line");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var appIdOption = new Option<string?>(
             ["--app-id"],
             description: "Application (client) ID to get token for. If not specified, uses the client app ID from config")
@@ -79,7 +74,6 @@ internal static class GetTokenSubcommand
             IsRequired = false
         };
 
-        command.AddOption(configOption);
         command.AddOption(appIdOption);
         command.AddOption(manifestOption);
         command.AddOption(scopesOption);
@@ -92,7 +86,7 @@ internal static class GetTokenSubcommand
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             // Extract option values from context
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var appId = context.ParseResult.GetValueForOption(appIdOption);
             var manifest = context.ParseResult.GetValueForOption(manifestOption);
             var scopes = context.ParseResult.GetValueForOption(scopesOption);

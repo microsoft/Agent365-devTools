@@ -134,10 +134,8 @@ a365 --version
 
 ### Configuration
 ```bash
-a365 setup all --agent-name                    # Interactive wizard
-a365 setup all --agent-name -c config.json     # Import from file
-a365 setup all --agent-name --global           # Global config
-a365 status                 # Show current config
+a365 setup all --agent-name <agent-base-name>  # Bootstrap setup
+a365 status                                    # Show current config
 ```
 
 ### Setup
@@ -309,7 +307,7 @@ a365 status
 
 # Check for missing required fields
 # Reinitialize if needed
-a365 setup all --agent-name
+a365 setup all --agent-name <agent-base-name>
 ```
 
 ---
@@ -397,11 +395,8 @@ Issues: ___________________
 # Install
 dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli --prerelease
 
-# Configure
-a365 setup all --agent-name
-
-# Setup everything
-a365 setup all
+# Configure and set up
+a365 setup all --agent-name <agent-base-name>
 
 # Create test app
 dotnet new webapi -n TestAgent
@@ -422,7 +417,7 @@ a365 cleanup
 ### Quick Sanity Check (5 min)
 ```bash
 a365 --version
-a365 setup all --agent-name
+a365 setup all --agent-name <agent-base-name>
 a365 setup requirements
 a365 deploy --dry-run
 a365 cleanup --dry-run
@@ -430,10 +425,8 @@ a365 cleanup --dry-run
 
 ### Configuration Only (5 min)
 ```bash
-a365 setup all --agent-name
+a365 setup all --agent-name <agent-base-name>
 a365 status
-a365 setup all --agent-name -c test-config.json
-a365 setup all --agent-name --global
 ```
 
 ---

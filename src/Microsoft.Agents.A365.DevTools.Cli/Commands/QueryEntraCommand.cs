@@ -45,11 +45,6 @@ public class QueryEntraCommand
     {
         var command = new Command("blueprint-scopes", "List configured scopes and consent status for the agent blueprint");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -58,13 +53,12 @@ public class QueryEntraCommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var ct = context.GetCancellationToken();
@@ -74,9 +68,9 @@ public class QueryEntraCommand
 
                 Agent365Config? setupConfig;
                 if (resolver != null)
-                    setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+                    setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
                 else
-                    setupConfig = await LoadConfigAsync(config, logger, configService);
+                    setupConfig = await LoadConfigAsync(configFile, logger, configService);
                 if (setupConfig == null)
                 {
                     logger.LogError("Failed to load configuration");
@@ -217,11 +211,6 @@ public class QueryEntraCommand
     {
         var command = new Command("instance-scopes", "List configured scopes and consent status for the agent instance");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -230,13 +219,12 @@ public class QueryEntraCommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var ct = context.GetCancellationToken();
@@ -246,9 +234,9 @@ public class QueryEntraCommand
 
                 Agent365Config? instanceConfig;
                 if (resolver != null)
-                    instanceConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+                    instanceConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
                 else
-                    instanceConfig = await LoadConfigAsync(config, logger, configService);
+                    instanceConfig = await LoadConfigAsync(configFile, logger, configService);
                 if (instanceConfig == null)
                 {
                     logger.LogError("Failed to load configuration");

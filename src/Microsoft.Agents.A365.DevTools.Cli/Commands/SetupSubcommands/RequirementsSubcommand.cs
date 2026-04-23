@@ -33,11 +33,6 @@ internal static class RequirementsSubcommand
             "  - Continue checking all requirements even if some fail\n" +
             "  - Provide a summary of all checks at the end\n\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Show detailed output for all checks");
@@ -46,11 +41,10 @@ internal static class RequirementsSubcommand
             ["--category"],
             description: "Run checks for a specific category only (e.g., 'Azure', 'Authentication', 'Configuration')");
 
-        command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(categoryOption);
 
-        command.SetHandler(async (config, verbose, category) =>
+        command.SetHandler(async (verbose, category) =>
         {
             logger.LogInformation("Agent 365 Requirements Check");
             logger.LogInformation(new string('-', 28));
@@ -59,7 +53,8 @@ internal static class RequirementsSubcommand
             try
             {
                 // Load configuration
-                var setupConfig = await configService.LoadAsync(config.FullName);
+                var configFile = new FileInfo("a365.config.json");
+                var setupConfig = await configService.LoadAsync(configFile.FullName);
                 var requirementChecks = requirementChecksOverride?.ToList() ?? GetRequirementChecks(authValidator, clientAppValidator);
                 await RunRequirementChecksAsync(requirementChecks, setupConfig, logger, category);
             }
@@ -68,7 +63,7 @@ internal static class RequirementsSubcommand
                 logger.LogError("Requirements check failed: {Message}", ex.Message);
                 logger.LogDebug(ex, "Requirements check failed exception details");
             }
-        }, configOption, verboseOption, categoryOption);
+        }, verboseOption, categoryOption);
 
         return command;
     }

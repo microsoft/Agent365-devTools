@@ -41,14 +41,6 @@ public class CleanupCommand
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
 
-        // Add options for default cleanup behavior (when no subcommand is used)
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
-
         var agentNameOption = new Option<string?>(
             new[] { "--agent-name", "-n" },
             description: "Agent base name used with 'setup all --agent-name'. When provided, no config file is required.\n" +
@@ -66,7 +58,6 @@ public class CleanupCommand
             ["--verbose", "-v"],
             description: "Enable verbose logging");
 
-        cleanupCommand.AddOption(configOption);
         cleanupCommand.AddOption(agentNameOption);
         cleanupCommand.AddOption(tenantIdOption);
         cleanupCommand.AddOption(yesOption);
@@ -75,7 +66,7 @@ public class CleanupCommand
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var yes = context.ParseResult.GetValueForOption(yesOption);
@@ -88,9 +79,8 @@ public class CleanupCommand
             Agent365Config? bootstrapConfig = null;
             if (!string.IsNullOrWhiteSpace(agentName))
             {
-                var bootstrapConfigFile = configFile ?? new FileInfo("a365.config.json");
                 bootstrapConfig = resolver != null
-                    ? await resolver.ResolveAsync(agentName, tenantIdFlag, bootstrapConfigFile, isCleanupMode: true, context.GetCancellationToken())
+                    ? await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, context.GetCancellationToken())
                     : await BuildBootstrapConfigForCleanupAsync(agentName, tenantIdFlag, executor, graphApiService, logger);
                 if (bootstrapConfig is null)
                 {
@@ -128,13 +118,6 @@ public class CleanupCommand
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
 
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
-
         var agentNameOption = new Option<string?>(
             new[] { "--agent-name", "-n" },
             description: "Agent base name. When provided, no config file is required.");
@@ -151,7 +134,6 @@ public class CleanupCommand
             new[] { "--endpoint-only" },
             description: "Delete only the messaging endpoint, keep the blueprint application");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -159,7 +141,7 @@ public class CleanupCommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -167,10 +149,9 @@ public class CleanupCommand
             var ct = context.GetCancellationToken();
             try
             {
-                var effectiveConfigFile = configFile ?? new FileInfo("a365.config.json");
                 Agent365Config? config;
                 if (resolver != null)
-                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, effectiveConfigFile, isCleanupMode: true, ct);
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
                 else
                     config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) { context.ExitCode = 1; return; }
@@ -463,13 +444,6 @@ public class CleanupCommand
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
 
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
-
         var agentNameOption = new Option<string?>(
             new[] { "--agent-name", "-n" },
             description: "Agent base name. When provided, no config file is required.");
@@ -484,7 +458,6 @@ public class CleanupCommand
 
         var dryRunOption = new Option<bool>("--dry-run", "Show resources that would be deleted without making any changes");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -492,7 +465,7 @@ public class CleanupCommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -500,10 +473,9 @@ public class CleanupCommand
             var ct = context.GetCancellationToken();
             try
             {
-                var effectiveConfigFile = configFile ?? new FileInfo("a365.config.json");
                 Agent365Config? config;
                 if (resolver != null)
-                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, effectiveConfigFile, isCleanupMode: true, ct);
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
                 else
                     config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) { context.ExitCode = 1; return; }
@@ -559,13 +531,6 @@ public class CleanupCommand
     {
         var command = new Command("instance", "Remove agent instance identity and user from Entra ID");
 
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
-
         var agentNameOption = new Option<string?>(
             new[] { "--agent-name", "-n" },
             description: "Agent base name. When provided, no config file is required.");
@@ -578,24 +543,22 @@ public class CleanupCommand
             new[] { "--verbose", "-v" },
             description: "Enable verbose logging");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var ct = context.GetCancellationToken();
             try
             {
-                var effectiveConfigFile = configFile ?? new FileInfo("a365.config.json");
                 Agent365Config? config;
                 if (resolver != null)
-                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, effectiveConfigFile, isCleanupMode: true, ct);
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
                 else
                     config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) { context.ExitCode = 1; return; }

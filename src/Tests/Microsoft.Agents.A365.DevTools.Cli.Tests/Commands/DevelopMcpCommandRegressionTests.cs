@@ -210,7 +210,7 @@ public class DevelopMcpCommandRegressionTests
     public void CommandStructure_AllSubcommandsHaveConsistentOptions()
     {
         // Regression test: Ensures consistent option patterns across all commands
-        
+
         // Act
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
@@ -218,19 +218,10 @@ public class DevelopMcpCommandRegressionTests
         foreach (var subcommand in command.Subcommands)
         {
             var options = subcommand.Options.ToList();
-            
-            // All commands should have config option
-            options.Should().Contain(o => o.Name == "config", 
-                $"Subcommand '{subcommand.Name}' should have --config option");
-            
-            // All commands should have dry-run option  
+
+            // All commands should have dry-run option
             options.Should().Contain(o => o.Name == "dry-run",
                 $"Subcommand '{subcommand.Name}' should have --dry-run option");
-
-            // Config option should have -c alias
-            var configOption = options.First(o => o.Name == "config");
-            configOption.Aliases.Should().Contain("-c",
-                $"Config option in '{subcommand.Name}' should have -c alias");
         }
     }
 }

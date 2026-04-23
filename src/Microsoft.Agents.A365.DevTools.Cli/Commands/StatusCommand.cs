@@ -21,12 +21,7 @@ public class StatusCommand
         GraphApiService? graphApiService = null,
         IBootstrapConfigResolver? resolver = null)
     {
-        var command = new Command("status", "Display agent configuration and live Entra registration state");
-
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
+        var command = new Command("status", "Display the status of an agent");
 
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
@@ -42,9 +37,9 @@ public class StatusCommand
 
         var fieldOption = new Option<string?>(
             "--field",
-            description: "Output a single field value (e.g. AgentBlueprintId). Useful in scripts.");
+            description: "Output a single field value for scripting. " +
+                         "Valid: TenantId, ClientAppId, AgentBlueprintId, AgentInstanceId, AgentRegistrationId, AgenticAppId.");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(offlineOption);
@@ -52,7 +47,7 @@ public class StatusCommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var configFile = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var offline = context.ParseResult.GetValueForOption(offlineOption);
@@ -62,63 +57,77 @@ public class StatusCommand
             Agent365Config? config = null;
             string? loadError = null;
 
-            if (resolver != null)
+            // Only invoke the resolver when it can actually do something:
+            // - --agent-name given  → bootstrap from Entra
+            // - config file present → load from file
+            // When neither is true, leave config null and let the "Files" section explain the state.
+            bool shouldResolve = !string.IsNullOrWhiteSpace(agentName) || configFile.Exists;
+
+            if (shouldResolve)
             {
-                try
+                if (resolver != null)
                 {
-                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: false, ct);
+                    try
+                    {
+                        config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: false, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        loadError = ex.Message;
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    loadError = ex.Message;
-                }
-            }
-            else
-            {
-                try
-                {
-                    config = await configService.LoadAsync(configFile.FullName);
-                }
-                catch (Exception ex)
-                {
-                    loadError = ex.Message;
+                    try
+                    {
+                        config = await configService.LoadAsync(configFile.FullName);
+                    }
+                    catch (Exception ex)
+                    {
+                        loadError = ex.Message;
+                    }
                 }
             }
 
             // --field: machine-readable single-value output
             if (!string.IsNullOrWhiteSpace(fieldFilter))
             {
-                if (config is null)
+                var supportedFields = new Dictionary<string, Func<Agent365Config, string?>>(StringComparer.OrdinalIgnoreCase)
                 {
-                    Console.WriteLine("(not set)");
+                    ["TenantId"]                  = c => c.TenantId,
+                    ["ClientAppId"]               = c => c.ClientAppId,
+                    ["AgentIdentityDisplayName"]  = c => c.AgentIdentityDisplayName,
+                    ["AgentBlueprintDisplayName"] = c => c.AgentBlueprintDisplayName,
+                    ["MessagingEndpoint"]         = c => c.MessagingEndpoint,
+                    ["AgentBlueprintId"]          = c => c.AgentBlueprintId,
+                    ["AgentInstanceId"]           = c => c.AgentInstanceId,
+                    ["AgentRegistrationId"]       = c => c.AgentRegistrationId,
+                    ["AgenticAppId"]              = c => c.AgenticAppId,
+                };
+
+                if (!supportedFields.TryGetValue(fieldFilter, out var accessor))
+                {
+                    var valid = string.Join(", ", supportedFields.Keys);
+                    logger.LogError("Unknown field '{Field}'. Valid fields: {Valid}.", fieldFilter, valid);
+                    context.ExitCode = 1;
                     return;
                 }
-                var prop = typeof(Agent365Config).GetProperty(fieldFilter,
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance |
-                    System.Reflection.BindingFlags.IgnoreCase);
-                var value = prop?.GetValue(config)?.ToString() ?? "(not set)";
+
+                var value = config is null ? "(not set)" : accessor(config).OrNone();
                 Console.WriteLine(value);
                 return;
             }
 
-            // File presence
-            var generatedPath = Path.Combine(
-                configFile.DirectoryName ?? Environment.CurrentDirectory,
-                "a365.generated.config.json");
-
-            logger.LogInformation("Files");
-            logger.LogInformation("  a365.config.json          : {Status}", configFile.Exists ? $"found ({configFile.FullName})" : "not found");
-            logger.LogInformation("  a365.generated.config.json: {Status}", File.Exists(generatedPath) ? $"found ({generatedPath})" : "not found");
-
             if (config is null)
             {
-                logger.LogInformation("");
                 if (!string.IsNullOrWhiteSpace(loadError))
                     logger.LogWarning("Could not load configuration: {Error}", loadError);
                 else
-                    logger.LogInformation("No configuration loaded. Run 'a365 setup all --agent-name <name>' to get started.");
+                    logger.LogInformation("No agent configuration found. Pass --agent-name <name> to check agent status.");
                 return;
             }
+
+            logger.LogDebug("Configuration loaded from {ConfigFile}", configFile.FullName);
 
             // Static config
             logger.LogInformation("");

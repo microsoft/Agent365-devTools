@@ -95,26 +95,6 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public void CreateCommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert
-        var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
-    }
-
-    [Fact]
     public void CreateCommand_ShouldHaveVerboseOption()
     {
         // Act
@@ -301,42 +281,6 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public async Task DryRun_WithCustomConfigPath_ShouldLoadCorrectFile()
-    {
-        // Arrange
-        var customPath = "custom-config.json";
-        var config = new Agent365Config
-        {
-            TenantId = "test-tenant",
-            AgentBlueprintDisplayName = "Test Blueprint"
-        };
-
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-            .Returns(Task.FromResult(config));
-
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        var parser = new CommandLineBuilder(command).Build();
-        var testConsole = new TestConsole();
-
-        // Act
-        var result = await parser.InvokeAsync($"--config {customPath} --dry-run", testConsole);
-
-        // Assert
-        result.Should().Be(0);
-        await _mockConfigService.Received(1).LoadAsync(
-            Arg.Is<string>(s => s.Contains(customPath)),
-            Arg.Any<string>());
-    }
-
-    [Fact]
     public async Task DryRun_ShouldNotCreateServicePrincipal()
     {
         // Arrange
@@ -386,10 +330,9 @@ public class BlueprintSubcommandTests
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify all expected options are present
-        command.Options.Should().HaveCountGreaterOrEqualTo(3);
-        
+        command.Options.Should().HaveCountGreaterOrEqualTo(2);
+
         var optionNames = command.Options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("verbose");
         optionNames.Should().Contain("dry-run");
     }
@@ -416,26 +359,6 @@ public class BlueprintSubcommandTests
         // Act & Assert
         await Assert.ThrowsAsync<FileNotFoundException>(
             async () => await parser.InvokeAsync("--dry-run", testConsole));
-    }
-
-    [Fact]
-    public void CreateCommand_DefaultConfigPath_ShouldBeA365ConfigJson()
-    {
-        // Act
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert - Verify the config option exists and has expected aliases
-        var configOption = command.Options.First(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
     }
 
     [Fact]

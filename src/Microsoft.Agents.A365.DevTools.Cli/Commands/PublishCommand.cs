@@ -60,11 +60,6 @@ public class PublishCommand
     {
         var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -85,7 +80,6 @@ public class PublishCommand
             description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
                         "Only meaningful with --aiteammate false");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(dryRunOption);
@@ -94,7 +88,7 @@ public class PublishCommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var configFile = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);

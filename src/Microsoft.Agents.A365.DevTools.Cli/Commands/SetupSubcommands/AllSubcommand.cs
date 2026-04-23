@@ -89,11 +89,6 @@ internal static class AllSubcommand
             "  - Agent ID Developer role (for blueprint creation)\n" +
             "  - Global Administrator (for permission grants and admin consent)\n\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Show detailed output");
@@ -132,7 +127,6 @@ internal static class AllSubcommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'.");
 
-        command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -144,7 +138,7 @@ internal static class AllSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);

@@ -80,11 +80,6 @@ internal static class PermissionsSubcommand
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -106,7 +101,6 @@ internal static class PermissionsSubcommand
             description: "Remove shared ATG audience scopes from the blueprint.\n" +
                          "Only use after V2 SDK is confirmed live — agents on V1 SDK will lose tool access.");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -115,7 +109,7 @@ internal static class PermissionsSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -125,9 +119,9 @@ internal static class PermissionsSubcommand
 
             Agent365Config? setupConfig;
             if (resolver != null)
-                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
             else
-                setupConfig = await configService.LoadAsync(config.FullName);
+                setupConfig = await configService.LoadAsync(configFile.FullName);
             if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
@@ -213,7 +207,7 @@ internal static class PermissionsSubcommand
             }
 
             await ConfigureMcpPermissionsAsync(
-                config.FullName,
+                configFile.FullName,
                 logger,
                 configService,
                 executor,
@@ -246,11 +240,6 @@ internal static class PermissionsSubcommand
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
             "Next step: Deploy your agent (run 'a365 deploy' if hosting on Azure)");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -267,7 +256,6 @@ internal static class PermissionsSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -275,7 +263,7 @@ internal static class PermissionsSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -284,9 +272,9 @@ internal static class PermissionsSubcommand
 
             Agent365Config? setupConfig;
             if (resolver != null)
-                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
             else
-                setupConfig = await configService.LoadAsync(config.FullName);
+                setupConfig = await configService.LoadAsync(configFile.FullName);
             if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
@@ -322,7 +310,7 @@ internal static class PermissionsSubcommand
             }
 
             await ConfigureBotPermissionsAsync(
-                config.FullName,
+                configFile.FullName,
                 logger,
                 configService,
                 executor,
@@ -353,11 +341,6 @@ internal static class PermissionsSubcommand
             "Minimum required permissions: Global Administrator\n\n" +
             "Prerequisites: Blueprint created (run 'a365 setup blueprint' first)\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -382,7 +365,6 @@ internal static class PermissionsSubcommand
             "--scopes",
             description: "Comma-separated delegated scopes for the inline custom permission. Use with --resource-app-id.");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -392,7 +374,7 @@ internal static class PermissionsSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -403,9 +385,9 @@ internal static class PermissionsSubcommand
 
             Agent365Config? setupConfig;
             if (resolver != null)
-                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
             else
-                setupConfig = await configService.LoadAsync(config.FullName);
+                setupConfig = await configService.LoadAsync(configFile.FullName);
             if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
@@ -486,7 +468,16 @@ internal static class PermissionsSubcommand
                     return;
                 }
 
-                var scopes = scopesRaw!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var scopes = scopesRaw!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Distinct()
+                    .ToArray();
+                if (scopes.Length == 0)
+                {
+                    logger.LogError("--scopes must contain at least one non-empty scope value.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
                 await SetupHelpers.EnsureResourcePermissionsAsync(
                     graphApiService, blueprintService, setupConfig,
                     resourceAppId!, resourceAppId!,
@@ -495,7 +486,7 @@ internal static class PermissionsSubcommand
             else
             {
                 await ConfigureCustomPermissionsAsync(
-                    config.FullName,
+                    configFile.FullName,
                     logger,
                     configService,
                     executor,

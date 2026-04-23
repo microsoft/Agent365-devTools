@@ -129,11 +129,6 @@ internal static class BlueprintSubcommand
             "Create agent blueprint (Entra ID application registration)\n" +
             "Minimum required permissions: Agent ID Developer role\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.\n" +
@@ -168,7 +163,6 @@ internal static class BlueprintSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -180,7 +174,7 @@ internal static class BlueprintSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);

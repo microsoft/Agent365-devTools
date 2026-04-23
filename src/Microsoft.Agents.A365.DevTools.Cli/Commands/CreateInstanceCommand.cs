@@ -23,11 +23,6 @@ public class CreateInstanceCommand
     {
         var command = new Command("create-instance", "Create and configure agent user identities with appropriate licenses and notification settings for your deployed agent");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -44,7 +39,6 @@ public class CreateInstanceCommand
             "--dry-run",
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -57,7 +51,7 @@ public class CreateInstanceCommand
         // Default handler
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -308,11 +302,6 @@ public class CreateInstanceCommand
     {
         var command = new Command("identity", "Create Agent Identity and Agent User");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -329,7 +318,6 @@ public class CreateInstanceCommand
             ["--dry-run"],
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -337,7 +325,7 @@ public class CreateInstanceCommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -439,11 +427,6 @@ public class CreateInstanceCommand
     {
         var command = new Command("licenses", "Add licenses to Agent User");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -460,7 +443,6 @@ public class CreateInstanceCommand
             ["--dry-run"],
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -468,7 +450,7 @@ public class CreateInstanceCommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);

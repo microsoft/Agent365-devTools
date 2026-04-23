@@ -51,11 +51,6 @@ internal static class CopilotStudioSubcommand
             "Minimum required permissions: Global Administrator\n\n" +
             "Prerequisites: Blueprint (run 'a365 setup blueprint' first)");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
             description: "Agent base name. When provided, no config file is required.");
@@ -72,7 +67,6 @@ internal static class CopilotStudioSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -80,7 +74,7 @@ internal static class CopilotStudioSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
@@ -90,12 +84,12 @@ internal static class CopilotStudioSubcommand
             Agent365Config? setupConfig;
             if (resolver != null)
             {
-                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: true, ct);
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
                 if (setupConfig == null) { context.ExitCode = 1; return; }
             }
             else
             {
-                setupConfig = await configService.LoadAsync(config.FullName);
+                setupConfig = await configService.LoadAsync(configFile.FullName);
             }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
@@ -130,7 +124,7 @@ internal static class CopilotStudioSubcommand
             }
 
             await ConfigureAsync(
-                config.FullName,
+                configFile.FullName,
                 logger,
                 configService,
                 executor,

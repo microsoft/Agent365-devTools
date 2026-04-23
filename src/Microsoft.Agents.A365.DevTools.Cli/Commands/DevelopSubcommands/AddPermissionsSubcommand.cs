@@ -24,11 +24,6 @@ internal static class AddPermissionsSubcommand
             "add-permissions",
             "Add MCP server API permissions to a custom application");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var manifestOption = new Option<FileInfo?>(
             ["--manifest", "-m"],
             description: "Path to ToolingManifest.json (defaults to current directory)");
@@ -55,28 +50,28 @@ internal static class AddPermissionsSubcommand
             ["--dry-run"],
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(manifestOption);
         command.AddOption(appIdOption);
         command.AddOption(scopesOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, manifest, appId, scopes, verbose, dryRun) =>
+        command.SetHandler(async (manifest, appId, scopes, verbose, dryRun) =>
         {
             try
             {
+                var configFile = new FileInfo("a365.config.json");
                 logger.LogInformation("Adding MCP server permissions to application...");
                 logger.LogInformation("");
 
                 // Check if config file exists or if --app-id was provided
-                var setupConfig = File.Exists(config.FullName) 
-                    ? await configService.LoadAsync(config.FullName) 
+                var setupConfig = File.Exists(configFile.FullName)
+                    ? await configService.LoadAsync(configFile.FullName)
                     : null;
 
                 if (setupConfig == null && string.IsNullOrWhiteSpace(appId))
                 {
-                    logger.LogError("Configuration file not found: {ConfigPath}", config.FullName);
+                    logger.LogError("Configuration file not found: {ConfigPath}", configFile.FullName);
                     logger.LogInformation("");
                     logger.LogInformation("To add MCP server permissions, you must either:");
                     logger.LogInformation("  1. Run 'a365 setup all --agent-name <name>' to create a config file.");
@@ -256,7 +251,7 @@ internal static class AddPermissionsSubcommand
                 logger.LogError(ex, "Failed to add MCP server permissions: {Message}", ex.Message);
                 Environment.Exit(1);
             }
-        }, configOption, manifestOption, appIdOption, scopesOption, verboseOption, dryRunOption);
+        }, manifestOption, appIdOption, scopesOption, verboseOption, dryRunOption);
 
         return command;
     }

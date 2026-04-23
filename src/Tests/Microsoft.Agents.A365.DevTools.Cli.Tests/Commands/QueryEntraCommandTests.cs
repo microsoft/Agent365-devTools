@@ -97,43 +97,4 @@ public class QueryEntraCommandTests
         Assert.Equal("List configured scopes and consent status for the agent instance", instanceScopesSubcommand.Description);
     }
 
-    [Fact]
-    public void QueryEntraCommand_BlueprintScopes_Should_Have_Config_Option()
-    {
-        // Arrange
-        var command = QueryEntraCommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
-
-        // Act
-        var blueprintScopesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "blueprint-scopes");
-        var configOption = blueprintScopesSubcommand?.Options.FirstOrDefault(o => o.Name == "config");
-
-        // Assert
-        Assert.NotNull(blueprintScopesSubcommand);
-        Assert.NotNull(configOption);
-        Assert.Equal("Configuration file path", configOption.Description);
-    }
-
-    [Fact]
-    public void QueryEntraCommand_InstanceScopes_Should_Have_Config_Option()
-    {
-        // Arrange
-        var command = QueryEntraCommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService);
-
-        // Act
-        var instanceScopesSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "instance-scopes");
-        var configOption = instanceScopesSubcommand?.Options.FirstOrDefault(o => o.Name == "config");
-
-        // Assert
-        Assert.NotNull(instanceScopesSubcommand);
-        Assert.NotNull(configOption);
-        Assert.Equal("Configuration file path", configOption.Description);
-    }
 }

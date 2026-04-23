@@ -253,7 +253,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         if (_graphApiService != null)
         {
             resolvedBlueprintId = await _graphApiService.FindApplicationByDisplayNameAsync(
-                tenantId, blueprintDisplayName);
+                tenantId, blueprintDisplayName, ct);
             if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
                 _logger.LogWarning(
                     "Blueprint '{Name}' not found in Entra — resource IDs may be incomplete.",

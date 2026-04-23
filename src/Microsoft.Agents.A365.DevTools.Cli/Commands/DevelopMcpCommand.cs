@@ -51,13 +51,6 @@ public static class DevelopMcpCommand
     {
         var command = new Command("list-environments", "List all Dataverse environments available for MCP server management");
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
@@ -70,13 +63,13 @@ public static class DevelopMcpCommand
         );
         command.AddOption(verboseOption);
 
-        command.SetHandler(async (configPath, dryRun, verbose) =>
+        command.SetHandler(async (dryRun, verbose) =>
         {
             logger.LogInformation("Starting list-environments operation...");
 
             if (dryRun)
             {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
                 logger.LogInformation("[DRY RUN] Would query Dataverse environments endpoint");
                 logger.LogInformation("[DRY RUN] Would display list of available environments");
                 await Task.CompletedTask;
@@ -126,7 +119,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Listed {Count} Dataverse environment(s)", environmentsResponse.Environments.Length);
 
-        }, configOption, dryRunOption, verboseOption);
+        }, dryRunOption, verboseOption);
 
         return command;
     }
@@ -147,13 +140,6 @@ public static class DevelopMcpCommand
         envIdOption.IsRequired = false; // Allow null so we can prompt
         command.AddOption(envIdOption);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
@@ -166,7 +152,7 @@ public static class DevelopMcpCommand
         );
         command.AddOption(verboseOption);
 
-        command.SetHandler(async (envId, configPath, dryRun, verbose) =>
+        command.SetHandler(async (envId, dryRun, verbose) =>
         {
             try
             {
@@ -201,7 +187,7 @@ public static class DevelopMcpCommand
 
             if (dryRun)
             {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
                 logger.LogInformation("[DRY RUN] Would query MCP servers in environment {EnvId}", envId);
                 logger.LogInformation("[DRY RUN] Would display list of MCP servers");
                 await Task.CompletedTask;
@@ -281,7 +267,7 @@ public static class DevelopMcpCommand
             }
             logger.LogInformation("Listed {Count} MCP server(s) in environment {EnvId}", servers.Length, envId);
 
-        }, envIdOption, configOption, dryRunOption, verboseOption);
+        }, envIdOption, dryRunOption, verboseOption);
 
         return command;
     }
@@ -321,20 +307,13 @@ public static class DevelopMcpCommand
         );
         command.AddOption(displayNameOption);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (envId, serverName, alias, displayName, configPath, dryRun) =>
+        command.SetHandler(async (envId, serverName, alias, displayName, dryRun) =>
         {
             try
             {
@@ -383,7 +362,7 @@ public static class DevelopMcpCommand
 
                 if (dryRun)
                 {
-                    logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                    logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
                     logger.LogInformation("[DRY RUN] Would publish MCP server {ServerName} to environment {EnvId}", serverName, envId);
                     logger.LogInformation("[DRY RUN] Alias: {Alias}", alias ?? "[would prompt]");
                     logger.LogInformation("[DRY RUN] Display Name: {DisplayName}", displayName ?? "[would prompt]");
@@ -463,7 +442,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully published MCP server {ServerName} to environment {EnvId}", serverName, envId);
 
-        }, envIdOption, serverNameOption, aliasOption, displayNameOption, configOption, dryRunOption);
+        }, envIdOption, serverNameOption, aliasOption, displayNameOption, dryRunOption);
 
         return command;
     }
@@ -491,20 +470,13 @@ public static class DevelopMcpCommand
         serverNameOption.IsRequired = false; // Allow null so we can prompt
         command.AddOption(serverNameOption);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (envId, serverName, configPath, dryRun) =>
+        command.SetHandler(async (envId, serverName, dryRun) =>
         {
             try
             {
@@ -559,7 +531,7 @@ public static class DevelopMcpCommand
 
             if (dryRun)
             {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
                 logger.LogInformation("[DRY RUN] Would unpublish MCP server {ServerName} from environment {EnvId}", serverName, envId);
                 await Task.CompletedTask;
                 return;
@@ -576,7 +548,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully unpublished MCP server {ServerName} from environment {EnvId}", serverName, envId);
 
-        }, envIdOption, serverNameOption, configOption, dryRunOption);
+        }, envIdOption, serverNameOption, dryRunOption);
 
         return command;
     }
@@ -595,20 +567,13 @@ public static class DevelopMcpCommand
         serverNameOption.IsRequired = false; // Allow null so we can prompt
         command.AddOption(serverNameOption);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (serverName, configPath, dryRun) =>
+        command.SetHandler(async (serverName, dryRun) =>
         {
             try
             {
@@ -643,7 +608,7 @@ public static class DevelopMcpCommand
 
             if (dryRun)
             {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
                 logger.LogInformation("[DRY RUN] Would approve MCP server {ServerName}", serverName);
                 await Task.CompletedTask;
                 return;
@@ -660,7 +625,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully approved MCP server {ServerName}", serverName);
 
-        }, serverNameOption, configOption, dryRunOption);
+        }, serverNameOption, dryRunOption);
 
         return command;
     }
@@ -679,20 +644,13 @@ public static class DevelopMcpCommand
         serverNameOption.IsRequired = false; // Allow null so we can prompt
         command.AddOption(serverNameOption);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (serverName, configPath, dryRun) =>
+        command.SetHandler(async (serverName, dryRun) =>
         {
             try
             {
@@ -727,7 +685,7 @@ public static class DevelopMcpCommand
 
             if (dryRun)
             {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
                 logger.LogInformation("[DRY RUN] Would block MCP server {ServerName}", serverName);
                 await Task.CompletedTask;
                 return;
@@ -744,7 +702,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully blocked MCP server {ServerName}", serverName);
 
-        }, serverNameOption, configOption, dryRunOption);
+        }, serverNameOption, dryRunOption);
 
         return command;
     }
@@ -761,14 +719,12 @@ public static class DevelopMcpCommand
         var iconUrlOption = new Option<string>("--icon-url", "Public URL to a PNG icon for the MCP server") { IsRequired = true };
         var outputPathOption = new Option<string>("--output-path", "Target directory for the generated ZIP package") { IsRequired = true };
         var dryRunOption = new Option<bool>(name: "--dry-run", description: "Show what would be done without executing");
-        var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
 
         command.AddOption(serverNameOption);
         command.AddOption(developerNameOption);
         command.AddOption(iconUrlOption);
         command.AddOption(outputPathOption);
         command.AddOption(dryRunOption);
-        command.AddOption(configOption);
 
         command.SetHandler(async (serverName, developerName, iconUrl, outputPath, dryRun) =>
         {

@@ -38,10 +38,14 @@ public class BootstrapConfigResolverTests : IDisposable
             _executor,
             (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
 
-        _loggerFactory = new NullLoggerFactory();
+        _loggerFactory = NullLoggerFactory.Instance;
     }
 
-    public void Dispose() => Directory.Delete(_tempDir, recursive: true);
+    public void Dispose()
+    {
+        try { Directory.Delete(_tempDir, recursive: true); }
+        catch { /* temp dir cleanup is best-effort */ }
+    }
 
     private IBootstrapConfigResolver CreateResolver() =>
         new BootstrapConfigResolver(_configService, _executor, _graphApiService, _loggerFactory);

@@ -31,17 +31,10 @@ public static class DevelopCommand
     {
         var developCommand = new Command("develop", "Manage MCP tool servers for agent development");
 
-        // Add common options
-        var configOption = new Option<string>(
-            ["--config", "-c"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path");
-
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Enable verbose logging");
 
-        developCommand.AddOption(configOption);
         developCommand.AddOption(verboseOption);
 
         // Add subcommands
@@ -67,13 +60,6 @@ public static class DevelopCommand
     {
         var command = new Command("list-available", "List all MCP servers available in the catalog (what you can install)");
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
@@ -86,13 +72,13 @@ public static class DevelopCommand
         );
         command.AddOption(skipAuthOption);
 
-        command.SetHandler(async (configPath, dryRun, skipAuth) =>
+        command.SetHandler(async (dryRun, skipAuth) =>
         {
             logger.LogInformation("Starting list-available MCP Servers operation...");
 
             if (dryRun)
             {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
                 logger.LogInformation("[DRY RUN] Would query endpoint directly for available MCP Servers");
                 logger.LogInformation("[DRY RUN] Would display catalog of available MCP Servers");
                 await Task.CompletedTask;
@@ -111,7 +97,7 @@ public static class DevelopCommand
             // Success - exit here
             return;
 
-        }, configOption, dryRunOption, skipAuthOption);
+        }, dryRunOption, skipAuthOption);
 
         return command;
     }
@@ -260,20 +246,13 @@ public static class DevelopCommand
     {
         var command = new Command("list-configured", "List currently configured MCP servers from your local ToolingManifest.json");
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (configPath, dryRun) =>
+        command.SetHandler(async (dryRun) =>
         {
             logger.LogInformation("Starting list-configured MCP Servers operation...");
 
@@ -290,7 +269,7 @@ public static class DevelopCommand
             Agent365Config config;
             try
             {
-                config = await configService.LoadAsync(configPath);
+                config = await configService.LoadAsync("a365.config.json");
             }
             catch (Exception ex)
             {
@@ -432,7 +411,7 @@ public static class DevelopCommand
                 logger.LogError(ex, "Failed to read or parse {FileName}", McpConstants.ToolingManifestFileName);
                 return;
             }
-        }, configOption, dryRunOption);
+        }, dryRunOption);
 
         return command;
     }
@@ -450,20 +429,13 @@ public static class DevelopCommand
         );
         command.AddArgument(serversArgument);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (servers, configPath, dryRun) =>
+        command.SetHandler(async (servers, dryRun) =>
         {
             logger.LogInformation("Starting add-mcp-servers operation...");
 
@@ -517,7 +489,7 @@ public static class DevelopCommand
             Agent365Config config;
             try
             {
-                config = await configService.LoadAsync(configPath);
+                config = await configService.LoadAsync("a365.config.json");
             }
             catch (Exception ex)
             {
@@ -576,7 +548,7 @@ public static class DevelopCommand
                 throw;
             }
 
-        }, serversArgument, configOption, dryRunOption);
+        }, serversArgument, dryRunOption);
 
         return command;
     }
@@ -594,20 +566,13 @@ public static class DevelopCommand
         );
         command.AddArgument(serversArgument);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (servers, configPath, dryRun) =>
+        command.SetHandler(async (servers, dryRun) =>
         {
             logger.LogInformation("Starting remove-mcp-servers operation...");
 
@@ -636,7 +601,7 @@ public static class DevelopCommand
             Agent365Config config;
             try
             {
-                config = await configService.LoadAsync(configPath);
+                config = await configService.LoadAsync("a365.config.json");
             }
             catch (Exception ex)
             {
@@ -742,7 +707,7 @@ public static class DevelopCommand
                 throw;
             }
 
-        }, serversArgument, configOption, dryRunOption);
+        }, serversArgument, dryRunOption);
 
         return command;
     }
