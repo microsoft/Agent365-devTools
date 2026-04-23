@@ -32,7 +32,7 @@ public class AzureAuthRequirementCheckTests
     {
         // Arrange
         var check = new AzureAuthRequirementCheck(_mockAuthValidator);
-        var config = new Agent365Config { SubscriptionId = "test-sub-id" };
+        var config = new Agent365Config();
 
         _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
@@ -51,7 +51,7 @@ public class AzureAuthRequirementCheckTests
     {
         // Arrange
         var check = new AzureAuthRequirementCheck(_mockAuthValidator);
-        var config = new Agent365Config { SubscriptionId = "test-sub-id" };
+        var config = new Agent365Config();
 
         _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>())
             .Returns(false);
@@ -67,24 +67,7 @@ public class AzureAuthRequirementCheckTests
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldPassSubscriptionIdToValidator()
-    {
-        // Arrange
-        var check = new AzureAuthRequirementCheck(_mockAuthValidator);
-        var config = new Agent365Config { SubscriptionId = "specific-sub-id" };
-
-        _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns(true);
-
-        // Act
-        await check.CheckAsync(config, _mockLogger);
-
-        // Assert
-        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync("specific-sub-id", Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task CheckAsync_WithEmptySubscriptionId_ShouldPassEmptyStringToValidator()
+    public async Task CheckAsync_WhenNoSubscriptionInConfig_ShouldPassNullToValidator()
     {
         // Arrange
         var check = new AzureAuthRequirementCheck(_mockAuthValidator);
@@ -96,8 +79,11 @@ public class AzureAuthRequirementCheckTests
         // Act
         await check.CheckAsync(config, _mockLogger);
 
-        // Assert
-        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync(string.Empty, Arg.Any<CancellationToken>());
+        // Assert — null, not empty string: SubscriptionId was removed from config model;
+        // AzureAuthRequirementCheck must not fabricate an empty-string subscription ID.
+        await _mockAuthValidator.Received(1).ValidateAuthenticationAsync(
+            null,
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

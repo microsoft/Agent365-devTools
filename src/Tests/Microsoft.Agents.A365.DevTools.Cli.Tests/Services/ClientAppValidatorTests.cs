@@ -33,13 +33,19 @@ public class ClientAppValidatorTests
 
     // Stable test GUIDs for required permissions — must match between SetupPermissionResolution
     // and SetupAppInfoWithAllPermissions so the validation resolves all permissions as present.
-    private const string ApplicationReadWriteAllId = "aaaa0001-0000-0000-0000-000000000000";
+    private const string AgentBlueprintPrincipalCreateId = "aaaa0001-0000-0000-0000-000000000000";
     private const string AgentBlueprintReadWriteAllId = "aaaa0002-0000-0000-0000-000000000000";
     private const string AgentBlueprintUpdateAuthId = "aaaa0003-0000-0000-0000-000000000000";
     private const string AgentBlueprintAddRemoveCredsId = "aaaa0004-0000-0000-0000-000000000000";
     private const string DelegatedPermissionGrantReadWriteAllId = "aaaa0005-0000-0000-0000-000000000000";
     private const string DirectoryReadAllId = "aaaa0006-0000-0000-0000-000000000000";
-    private const string UserReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
+    private const string AgentInstanceReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
+    private const string UserReadId = "aaaa0008-0000-0000-0000-000000000000";
+    private const string UserReadWriteAllId = "aaaa0009-0000-0000-0000-000000000000";
+
+    // Separate SP object ID used only by the consent-grant path (GetConsentedPermissionsAsync)
+    // so it does not conflict with SetupAdminConsentSp / SetupAdminConsentGrantsEmpty.
+    private const string ConsentSpObjId = "consent-check-sp-id-999";
 
     public ClientAppValidatorTests()
     {
@@ -185,13 +191,13 @@ public class ClientAppValidatorTests
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenAppMissingSomePermissions_ThrowsClientAppValidationException()
     {
-        // Only Application.ReadWrite.All present — missing the other 5
+        // Only AgentIdentityBlueprintPrincipal.Create present — missing the other required permissions
         var requiredResourceAccess = $$"""
         [
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"}
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -337,12 +343,15 @@ public class ClientAppValidatorTests
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"}
+                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
+                    {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"},
+                    {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -377,12 +386,15 @@ public class ClientAppValidatorTests
             "value": [{
                 "id": "graph-sp-id-123",
                 "oauth2PermissionScopes": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "value": "Application.ReadWrite.All"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"},
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
-                    {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"}
+                    {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
+                    {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
+                    {"id": "{{UserReadId}}", "value": "User.Read"},
+                    {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
                 ]
             }]
         }
@@ -437,7 +449,7 @@ public class ClientAppValidatorTests
             "value": [{
                 "id": "graph-sp-id-123",
                 "oauth2PermissionScopes": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "value": "Application.ReadWrite.All"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"}
                 ]
             }]
@@ -450,6 +462,9 @@ public class ClientAppValidatorTests
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(permJson)));
+
+        graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
 
         var validator = new ClientAppValidator(_logger, graphApiService, confirmationProvider);
 
@@ -497,6 +512,8 @@ public class ClientAppValidatorTests
         // Build a fresh validator wired to _graphApiService so the redirect URI mock is reachable
         SetupAppInfoWithAllPermissions(ValidClientAppId);
         SetupPermissionResolution();
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
         var validatorWithSharedGraph = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
@@ -519,6 +536,8 @@ public class ClientAppValidatorTests
         SetupAppInfoWithAllPermissions(ValidClientAppId);
         SetupPermissionResolution();
         SetupPublicClientFlowsGet(enabled: false);
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
 
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
@@ -559,6 +578,9 @@ public class ClientAppValidatorTests
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(redirectUriJson)));
 
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
@@ -583,6 +605,8 @@ public class ClientAppValidatorTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult(true));
+        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
 
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
@@ -798,8 +822,10 @@ public class ClientAppValidatorTests
     }
 
     /// <summary>
-    /// Sets up the app info GET with all 7 required permissions.
+    /// Sets up the app info GET with all required permissions (8 with GUIDs + AgentIdentity.Create.All,
+    /// AgentIdentityBlueprint.DeleteRestore.All, and AgentIdentity.DeleteRestore.All via consent grant).
     /// The permission GUIDs match those returned by SetupPermissionResolution so validation passes.
+    /// The three no-GUID scopes are resolved via GetConsentedPermissionsAsync fallback.
     /// </summary>
     private void SetupAppInfoWithAllPermissions(string appId)
     {
@@ -808,12 +834,14 @@ public class ClientAppValidatorTests
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{ApplicationReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
                     {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
                     {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
+                    {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"},
                     {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
                 ]
             }
@@ -821,6 +849,7 @@ public class ClientAppValidatorTests
         """;
 
         SetupAppInfoGet(appId, requiredResourceAccess: requiredResourceAccess);
+        SetupConsentGrantForAgentIdentityCreate();
     }
 
     /// <summary>
@@ -835,12 +864,14 @@ public class ClientAppValidatorTests
                 {
                     "id": "graph-sp-id-123",
                     "oauth2PermissionScopes": [
-                        {"id": "{{ApplicationReadWriteAllId}}", "value": "Application.ReadWrite.All"},
+                        {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                         {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"},
                         {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
                         {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
                         {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
                         {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
+                        {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
+                        {"id": "{{UserReadId}}", "value": "User.Read"},
                         {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
                     ]
                 }
@@ -854,6 +885,34 @@ public class ClientAppValidatorTests
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
+    }
+
+    /// <summary>
+    /// Sets up the consent-grant fallback path for AgentIdentity.Create.All.
+    /// This permission has no GUID in v1.0 oauth2PermissionScopes, so ClientAppValidator
+    /// resolves it via GetConsentedPermissionsAsync (step 3.5). Uses a distinct SP object ID
+    /// (ConsentSpObjId) so this mock does not interfere with SetupAdminConsentSp/SetupAdminConsentGrantsEmpty.
+    /// </summary>
+    private void SetupConsentGrantForAgentIdentityCreate()
+    {
+        // SP lookup used by GetConsentedPermissionsAsync: $select=id (no extra fields).
+        // Discriminated from ValidateAdminConsentAsync ($select=id,appId) by EndsWith.
+        var spJson = $$"""{"value": [{"id": "{{ConsentSpObjId}}"}]}""";
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("servicePrincipals") && p.EndsWith("&$select=id")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(spJson)));
+
+        // Grants for ConsentSpObjId — contains all three no-GUID scopes so they are removed from missingPermissions.
+        var grantsJson = """{"value": [{"scope": "AgentIdentity.Create.All AgentIdentityBlueprint.DeleteRestore.All AgentIdentity.DeleteRestore.All"}]}""";
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(grantsJson)));
     }
 
     /// <summary>

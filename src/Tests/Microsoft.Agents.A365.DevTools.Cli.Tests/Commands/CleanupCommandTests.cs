@@ -106,16 +106,7 @@ public class CleanupCommandTests
         // Assert
         Assert.Equal(0, result);
         
-        // Verify Azure resource deletion commands are executed (command and arguments separately)
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("webapp delete") && args.Contains(config.WebAppName)),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-        
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("appservice plan delete") && args.Contains(config.AppServicePlanName)),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Azure resource deletion has been removed - no commands to verify
     }
 
     [Fact]
@@ -173,11 +164,7 @@ public class CleanupCommandTests
             Arg.Is<string>(args => args.Contains("ad app delete") && args.Contains(config.AgentBlueprintId!)),
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         
-        // Verify Azure resource deletion
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("webapp delete") && args.Contains(config.WebAppName)),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Azure resource deletion has been removed
     }
 
     [Fact(Skip = "Test requires interactive confirmation - cleanup commands now enforce user confirmation instead of --force")]
@@ -196,12 +183,7 @@ public class CleanupCommandTests
         // Assert
         Assert.Equal(0, result);
         
-        // Test current behavior: Commands execute even with empty web app name 
-        // (This exposes a potential improvement - command should validate before executing)
-        await _mockExecutor.Received().ExecuteAsync(
-            "az",
-            Arg.Is<string>(args => args.Contains("webapp delete")),
-            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Azure resource deletion has been removed
     }
 
     [Fact]
@@ -366,8 +348,8 @@ public class CleanupCommandTests
     }
 
     /// <summary>
-    /// Verifies that blueprint cleanup with no instances proceeds exactly as before
-    /// (no instance deletion calls made).
+    /// Verifies that blueprint cleanup with no DW instances still deletes agent identity
+    /// when AgenticAppId is present (data-driven cleanup — no IsNonDwBlueprint flag required).
     /// </summary>
     [Fact]
     public async Task CleanupBlueprint_WithNoInstances_ProceedsAsNormal()
@@ -376,6 +358,7 @@ public class CleanupCommandTests
         var config = CreateValidConfig();
         // Capture blueprint ID before the command clears it during config save
         var expectedBlueprintId = config.AgentBlueprintId!;
+        var expectedIdentityId = config.AgenticAppId!;
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
@@ -395,10 +378,16 @@ public class CleanupCommandTests
         // Assert
         result.Should().Be(0);
 
+        // No DW agentic users to delete (no instances)
         await spyService.DidNotReceive().DeleteAgentUserAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-        await spyService.DidNotReceive().DeleteAgentIdentityAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        // Requirement: CleanupCommand must always delete the agent identity when AgenticAppId is present,
+        // regardless of DW/non-DW path — deletion is data-driven (config presence), not flag-based.
+        // Previously this test asserted DidNotReceive; the requirement changed when the non-DW blueprint
+        // path was added and identity deletion was unified across both paths.
+        await spyService.Received(1).DeleteAgentIdentityAsync(
+            config.TenantId, expectedIdentityId, Arg.Any<CancellationToken>());
 
         await spyService.Received(1).DeleteAgentBlueprintAsync(
             config.TenantId, expectedBlueprintId, Arg.Any<CancellationToken>());
@@ -531,11 +520,7 @@ public class CleanupCommandTests
         return new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            WebAppName = "test-web-app",
-            AppServicePlanName = "test-app-service-plan",
+            MessagingEndpoint = "https://test-bot.example.com/api/messages",
             AgentBlueprintId = "test-blueprint-id",
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",
@@ -548,10 +533,6 @@ public class CleanupCommandTests
         return new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            WebAppName = string.Empty, // Missing web app name
-            AppServicePlanName = "test-app-service-plan"
         };
     }
 
@@ -712,7 +693,7 @@ public class CleanupCommandTests
 
             // Verify endpoint deletion was called
             await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId!, Arg.Any<string?>());
-            
+
             // Verify blueprint deletion was NOT called (no az ad app delete command)
             await _mockExecutor.DidNotReceive().ExecuteAsync(
                 "az",
@@ -737,11 +718,6 @@ public class CleanupCommandTests
         var config = new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            WebAppName = "test-web-app",
-            AppServicePlanName = "test-app-service-plan",
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",
             AgentDescription = "test-agent-description"
@@ -821,11 +797,6 @@ public class CleanupCommandTests
         var config = new Agent365Config
         {
             TenantId = "test-tenant-id",
-            SubscriptionId = "test-subscription-id",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            WebAppName = "test-web-app",
-            AppServicePlanName = "test-app-service-plan",
             AgentBlueprintId = "   ", // Whitespace-only blueprint ID
             AgenticAppId = "test-identity-id",
             AgenticUserId = "test-user-id",
@@ -920,6 +891,135 @@ public class CleanupCommandTests
         {
             Console.SetIn(originalIn);
         }
+    }
+
+    /// <summary>
+    /// Verifies the Entra-discovery fallback in ExecuteAllCleanupAsync:
+    /// when AgenticAppId is absent from config, linked SPs are discovered via
+    /// GetAgentInstancesForBlueprintAsync and deleted. This covers the bug where
+    /// 'a365 cleanup' without '--agent-name' silently skipped agent identity deletion
+    /// because AgenticAppId was not populated in config.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAllCleanup_WhenAgenticAppIdEmpty_DeletesLinkedSpDiscoveredFromEntra()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            AgentBlueprintId = "test-blueprint-id",
+            AgenticAppId = null  // Not in config — Entra discovery path must pick it up
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+
+        var linkedInstance = new AgentInstanceInfo { IdentitySpId = "sp-entra-id", DisplayName = "Entra SP" };
+        var stubbedBlueprintService = CreateStubbedBlueprintService(
+            instances: new List<AgentInstanceInfo> { linkedInstance },
+            deleteIdentityResult: true,
+            deleteBlueprintResult: true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBackendConfigurator,
+            _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService,
+            _mockAuthValidator, graphApiService: _graphApiService);
+        var args = new[] { "cleanup", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0);
+        // Requirement: when AgenticAppId is absent from config, the Entra-discovery path must locate
+        // and delete linked identity SPs — previously they were silently skipped.
+        await stubbedBlueprintService.Received(1).DeleteAgentIdentityAsync(
+            config.TenantId, "sp-entra-id", Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies that when the same SP appears in both config.AgenticAppId and the Entra query
+    /// result, DeleteAgentIdentityAsync is called only once — the deletedIdentityIds HashSet
+    /// deduplicates it to prevent double-delete.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAllCleanup_WhenSpInBothConfigAndEntra_DeletesIdentityOnlyOnce()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            AgentBlueprintId = "test-blueprint-id",
+            AgenticAppId = "sp-config-id"  // Same ID as Entra result below
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+
+        // Entra returns the same SP that is already in config — dedup must prevent double-delete.
+        var linkedInstance = new AgentInstanceInfo { IdentitySpId = "sp-config-id", DisplayName = "Config SP" };
+        var stubbedBlueprintService = CreateStubbedBlueprintService(
+            instances: new List<AgentInstanceInfo> { linkedInstance },
+            deleteIdentityResult: true,
+            deleteBlueprintResult: true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBackendConfigurator,
+            _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService,
+            _mockAuthValidator, graphApiService: _graphApiService);
+        var args = new[] { "cleanup", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0);
+        // Requirement: deletedIdentityIds dedup must prevent double-deletes when the same SP appears
+        // in both config.AgenticAppId and GetAgentInstancesForBlueprintAsync results.
+        await stubbedBlueprintService.Received(1).DeleteAgentIdentityAsync(
+            config.TenantId, "sp-config-id", Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies that when GetAgentInstancesForBlueprintAsync throws, the exception is swallowed
+    /// and the overall cleanup continues — the Entra discovery path is non-fatal.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAllCleanup_WhenEntraQueryThrows_CleanupContinuesNonfatally()
+    {
+        // Arrange
+        var config = new Agent365Config
+        {
+            TenantId = "test-tenant-id",
+            AgentBlueprintId = "test-blueprint-id",
+            AgenticAppId = null
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+
+        // Build stub manually so the query can be configured to throw.
+        var mockBlueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
+        var stubbedBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(mockBlueprintLogger, _graphApiService);
+        stubbedBlueprintService.GetAgentInstancesForBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<IReadOnlyList<AgentInstanceInfo>>(
+                new InvalidOperationException("Simulated Entra query failure")));
+        stubbedBlueprintService.DeleteAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+        stubbedBlueprintService.DeleteAgentBlueprintAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        var command = CleanupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockBackendConfigurator,
+            _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService,
+            _mockAuthValidator, graphApiService: _graphApiService);
+        var args = new[] { "cleanup", "--config", "test.json" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(0, because: "Entra discovery failure is non-fatal; cleanup must complete");
+        // AgenticAppId was empty and Entra query threw — no identity deletion should have occurred.
+        await stubbedBlueprintService.DidNotReceive().DeleteAgentIdentityAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>

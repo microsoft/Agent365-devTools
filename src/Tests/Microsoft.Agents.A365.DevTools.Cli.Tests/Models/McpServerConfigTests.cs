@@ -188,4 +188,66 @@ public class McpServerConfigTests
         Assert.Equal("McpServers.Calendar.All", config.Scope);
         Assert.Equal("api://mcp-calendar", config.Audience);
     }
+
+    [Fact]
+    public void McpServerConfig_V2Fields_DefaultToNull()
+    {
+        // Arrange & Act
+        var config = new McpServerConfig();
+
+        // Assert
+        Assert.Null(config.Id);
+        Assert.Null(config.Publisher);
+    }
+
+    [Fact]
+    public void McpServerConfig_V2JsonDeserialization_PopulatesIdAndPublisher()
+    {
+        // Arrange
+        var json = """
+        {
+          "mcpServerName": "mcp_MailTools",
+          "id": "3fb34f44-7f4e-4e9e-855f-072404166824",
+          "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_MailTools",
+          "scope": "McpServers.Mail.All",
+          "audience": "05879165-0320-489e-b644-f72b33f3edf0",
+          "publisher": "Microsoft"
+        }
+        """;
+
+        // Act
+        var config = JsonSerializer.Deserialize<McpServerConfig>(json);
+
+        // Assert
+        Assert.NotNull(config);
+        Assert.Equal("3fb34f44-7f4e-4e9e-855f-072404166824", config.Id);
+        Assert.Equal("Microsoft", config.Publisher);
+        Assert.Equal("McpServers.Mail.All", config.Scope);
+        Assert.Equal("05879165-0320-489e-b644-f72b33f3edf0", config.Audience);
+    }
+
+    [Fact]
+    public void McpServerConfig_V1JsonDeserialization_LeavesV2FieldsNull()
+    {
+        // Arrange — V1 entry has no id or publisher
+        var json = """
+        {
+          "mcpServerName": "mcp_MailTools",
+          "mcpServerUniqueName": "mcp_MailTools",
+          "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
+          "scope": "McpServers.Mail.All",
+          "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+        }
+        """;
+
+        // Act
+        var config = JsonSerializer.Deserialize<McpServerConfig>(json);
+
+        // Assert — V2 fields are null, V1 fields are intact
+        Assert.NotNull(config);
+        Assert.Null(config.Id);
+        Assert.Null(config.Publisher);
+        Assert.Equal("mcp_MailTools", config.McpServerName);
+        Assert.Equal("ea9ffc3e-8a23-4a7d-836d-234d7c7565c1", config.Audience);
+    }
 }

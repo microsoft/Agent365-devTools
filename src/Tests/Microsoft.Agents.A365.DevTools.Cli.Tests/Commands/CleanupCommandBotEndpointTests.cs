@@ -89,26 +89,11 @@ public class CleanupCommandBotEndpointTests
     }
 
     [Fact]
-    public void CleanupPreview_WithBotNameButNoWebApp_ShouldShowBotEndpoint()
-    {
-        var config = new Agent365Config
-        {
-            WebAppName = "test-webapp",
-            AgentBlueprintId = "test-blueprint"
-        };
-
-        Assert.NotEmpty(config.BotName);
-        Assert.Equal("test-webapp-endpoint", config.BotName);
-    }
-
-    [Fact]
     public void BotConfigurator_DeleteEndpoint_ShouldBeCalledIndependentlyOfWebApp()
     {
         var config = new Agent365Config
         {
             TenantId = "tenant-id",
-            WebAppName = "test-bot",
-            Location = "westus",
             AgentBlueprintId = "blueprint-id"
         };
         var command = CleanupCommand.CreateCommand(

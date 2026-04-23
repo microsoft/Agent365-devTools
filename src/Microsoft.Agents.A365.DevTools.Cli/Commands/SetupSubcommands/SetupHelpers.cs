@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -16,9 +17,33 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// </summary>
 internal static class SetupHelpers
 {
+    // ── Dry-run layout helpers ─────────────────────────────────────────────────
+    // Shared by PrintDwSetupAllDryRunPlan (DW path) and NonDwBlueprintSetupOrchestrator.PrintDryRunPlan
+    // (non-DW path) so the column width and blueprint-reuse wording stay in sync.
+
+    internal const int DryRunValCol = 30;
+    internal static string DryRunRow(string label) => ("  " + label).PadRight(DryRunValCol);
+    internal static string DryRunRow(int step, string label) => $"  {step}. {label}".PadRight(DryRunValCol);
+
+    /// <summary>
+    /// Prints the six blueprint-reuse rows common to both DW and non-DW dry-run plans.
+    /// Called when <c>AgentBlueprintId</c> is already present in config.
+    /// </summary>
+    internal static void PrintDryRunBlueprintReuseRows(ILogger logger, string blueprintId, int step = 3)
+    {
+        var sub = new string(' ', DryRunValCol);
+        logger.LogInformation(DryRunRow(step, "Blueprint") + "reuse (ID: {BlueprintId})", blueprintId);
+        logger.LogInformation(sub + "verify or create service principal");
+        logger.LogInformation(sub + "create client secret");
+        logger.LogInformation(sub + "verify or create federated identity credential (FIC)");
+        logger.LogInformation(sub + "verify or create managed identity");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+
     /// <summary>
     /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
-    /// agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
+    /// DW (AI Teammate) agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
     /// Callers control whether the specs set inheritable permissions on the blueprint.
     /// </summary>
     internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) =>
@@ -31,14 +56,286 @@ internal static class SetupHelpers
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope },
-            setInheritable),
+            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+            setInheritable,
+            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }),
         new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             "Power Platform API",
             new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead },
             setInheritable),
     ];
+
+    /// <summary>
+    /// Returns the fixed-scope ResourcePermissionSpecs for the non-DW (blueprint) path:
+    /// Observability API and Power Platform API only.
+    /// Messaging Bot API is DW-only. Microsoft Graph and Agent 365 Tools (MCP) are not
+    /// included — they are added by the DW flow via BuildPermissionSpecsAsync.
+    /// To enable MCP or Messaging Bot API for non-DW, add their specs here and update
+    /// the corresponding consent URL guards in BuildAdminConsentUrls / BuildCombinedConsentUrl.
+    /// </summary>
+    internal static ResourcePermissionSpec[] GetNonDwFixedApiPermissionSpecs(bool setInheritable) =>
+    [
+        new ResourcePermissionSpec(
+            ConfigConstants.ObservabilityApiAppId,
+            "Observability API",
+            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+            setInheritable,
+            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }),
+        new ResourcePermissionSpec(
+            PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            "Power Platform API",
+            new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead },
+            setInheritable),
+    ];
+
+    /// <summary>
+    /// Builds the full resource permission spec list from config for the DW/config-dir flows.
+    /// Includes Microsoft Graph, manifest-derived Agent 365 Tools scopes, fixed platform APIs,
+    /// and any custom blueprint permissions.
+    /// <para>
+    /// Pass a pre-computed <paramref name="scopesByAudience"/> to avoid reading the MCP manifest
+    /// a second time when the caller already has it (e.g. <c>AllSubcommand.BuildPermissionSpecsAsync</c>).
+    /// When <c>null</c>, the manifest is read from <c>config.DeploymentProjectPath</c>.
+    /// </para>
+    /// </summary>
+    internal static async Task<List<ResourcePermissionSpec>> BuildConfiguredPermissionSpecsAsync(
+        Agent365Config config,
+        bool setInheritable,
+        Dictionary<string, string[]>? scopesByAudience = null)
+    {
+        if (scopesByAudience is null)
+        {
+            var mcpManifestPath = Path.Combine(
+                config.DeploymentProjectPath ?? string.Empty,
+                McpConstants.ToolingManifestFileName);
+            var atgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: atgAppId);
+        }
+
+        var specs = new List<ResourcePermissionSpec>
+        {
+            new(
+                AuthenticationConstants.MicrosoftGraphResourceAppId,
+                "Microsoft Graph",
+                config.AgentApplicationScopes.ToArray(),
+                SetInheritable: setInheritable),
+        };
+
+        specs.AddRange(scopesByAudience.Select(kvp =>
+            new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: setInheritable)));
+        specs.AddRange(GetFixedApiPermissionSpecs(setInheritable));
+
+        foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+        {
+            var (isValid, _) = customPerm.Validate();
+            if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
+            {
+                var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                    ? customPerm.ResourceAppId
+                    : customPerm.ResourceName;
+                specs.Add(new ResourcePermissionSpec(
+                    customPerm.ResourceAppId,
+                    resourceName,
+                    customPerm.Scopes.ToArray(),
+                    SetInheritable: setInheritable));
+            }
+        }
+
+        return specs;
+    }
+
+    /// <summary>
+    /// Resolves the tenant ID for config-free bootstrap flows.
+    /// Uses the explicit flag first, then falls back to the current Azure CLI context.
+    /// </summary>
+    internal static Task<string?> ResolveBootstrapTenantIdAsync(
+        string? tenantIdFlag,
+        CommandExecutor executor,
+        ILogger logger) =>
+        string.IsNullOrWhiteSpace(tenantIdFlag)
+            ? TenantDetectionHelper.DetectTenantIdAsync(null, logger, executor)
+            : Task.FromResult<string?>(tenantIdFlag);
+
+    /// <summary>
+    /// Resolves the client app ID for config-free bootstrap flows.
+    /// Optionally prefers a matching local <c>a365.config.json</c> value before falling back to
+    /// the well-known Entra display name lookup.
+    /// </summary>
+    internal static async Task<string?> ResolveBootstrapClientAppIdAsync(
+        string tenantId,
+        GraphApiService? graphApiService,
+        ILogger logger,
+        CancellationToken ct,
+        bool preferLocalConfig = false)
+    {
+        string? clientAppId = null;
+
+        if (preferLocalConfig)
+        {
+            clientAppId = await TryGetLocalClientAppIdAsync(tenantId, logger, ct);
+            if (!string.IsNullOrWhiteSpace(clientAppId))
+                logger.LogDebug("Using client app ID from local a365.config.json (tenant matches).");
+        }
+
+        if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
+        {
+            logger.LogInformation("Resolving client app by display name \"{Name}\"...",
+                AuthenticationConstants.WellKnownClientAppDisplayName);
+            clientAppId = await graphApiService.FindApplicationByDisplayNameAsync(
+                tenantId,
+                AuthenticationConstants.WellKnownClientAppDisplayName,
+                ct);
+        }
+
+        return clientAppId;
+    }
+
+    private static async Task<string?> TryGetLocalClientAppIdAsync(
+        string tenantId,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var localStaticConfigPath = Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
+        if (!File.Exists(localStaticConfigPath))
+            return null;
+
+        try
+        {
+            var staticJson = await File.ReadAllTextAsync(localStaticConfigPath, ct);
+            using var staticDoc = JsonDocument.Parse(staticJson);
+            var staticRoot = staticDoc.RootElement;
+            var configTenantId = GetJsonString(staticRoot, "tenantId");
+            var configClientAppId = GetJsonString(staticRoot, "clientAppId");
+            return string.Equals(configTenantId, tenantId, StringComparison.OrdinalIgnoreCase) &&
+                   !string.IsNullOrWhiteSpace(configClientAppId)
+                ? configClientAppId
+                : null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not parse {Path} for clientAppId.", localStaticConfigPath);
+            return null;
+        }
+    }
+
+    internal static string? GetJsonString(JsonElement element, string key) =>
+        element.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String
+            ? val.GetString()
+            : null;
+
+    /// <summary>
+    /// Fixed permission specs for the non-DW admin consent flow.
+    /// Observability API requires both Application (app role for S2S) and Delegated (oauth2 grant for OBO).
+    /// Power Platform API requires Delegated only.
+    /// Extend this list or pass an override to <see cref="LogNonDwAdminConsentInstructions"/>
+    /// when additional APIs are required (e.g. dynamic MCP scopes, custom permissions).
+    /// </summary>
+    internal static readonly IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)> NonDwAdminConsentSpecs =
+    [
+        ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Application"),
+        ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Delegated"),
+        ("Power Platform API", PowerPlatformConstants.PowerPlatformApiResourceAppId,           PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,  "Delegated"),
+    ];
+
+    /// <summary>
+    /// Logs step-by-step instructions for a Global Administrator to grant admin consent
+    /// for the blueprint app, with two options: Entra portal and PowerShell.
+    /// <para>
+    /// Defaults to <see cref="NonDwAdminConsentSpecs"/> (Observability API + Power Platform API).
+    /// Pass an explicit <paramref name="specs"/> list to support dynamic or extended permission sets.
+    /// </para>
+    /// </summary>
+    internal static void LogNonDwAdminConsentInstructions(
+        ILogger logger,
+        string blueprintId,
+        string? agentIdentityAppId = null,
+        IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null)
+    {
+        specs ??= NonDwAdminConsentSpecs;
+
+        var appSpecs = specs.Where(s => s.PermissionType == "Application").ToList();
+        var delegatedSpecs = specs.Where(s => s.PermissionType == "Delegated").ToList();
+        var hasAgentIdentity = !string.IsNullOrWhiteSpace(agentIdentityAppId);
+
+        // Option A — Entra portal
+        logger.LogInformation("     Option A — Entra portal:");
+        logger.LogInformation("       1. Open https://entra.microsoft.com");
+        logger.LogInformation("       2. Navigate to: Identity > Applications > App registrations");
+        logger.LogInformation("       3. Search for the blueprint app by ID: {BlueprintId}", blueprintId);
+        logger.LogInformation("          (switch to 'All applications' tab if not shown under 'Owned applications')");
+        logger.LogInformation("       4. Open the app, go to: API permissions");
+        logger.LogInformation("       5. Confirm the following permissions are listed:");
+        foreach (var group in specs.GroupBy(s => (s.ResourceName, s.Scope)))
+        {
+            var types = string.Join(", ", group.Select(s => s.PermissionType));
+            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermTypes})", group.Key.ResourceName, group.Key.Scope, types);
+        }
+        logger.LogInformation("       6. Click 'Grant admin consent for your organization' and confirm");
+        if (hasAgentIdentity && appSpecs.Count > 0)
+        {
+            logger.LogInformation("       7. Grant Application permissions to the agent identity (required for S2S token acquisition):");
+            logger.LogInformation("          - Search for the agent identity app by ID: {AgentIdentityAppId}", agentIdentityAppId);
+            logger.LogInformation("          - Open the app, go to: API permissions");
+            logger.LogInformation("          - Confirm the following Application permissions are listed:");
+            foreach (var (resourceName, _, scope, _) in appSpecs)
+                logger.LogInformation("               - {ResourceName,-20}: {Scope} (Application)", resourceName, scope);
+            logger.LogInformation("          - Click 'Grant admin consent for your organization' and confirm");
+        }
+
+        // Option B — PowerShell (Microsoft Graph SDK)
+        // Use Invoke-MgGraphRequest instead of New-MgOauth2PermissionGrant to avoid
+        // assembly conflicts when Microsoft.Graph.Identity.SignIns is already partially loaded.
+        var mgScopes = new List<string> { "\"Directory.Read.All\"" };
+        if (appSpecs.Count > 0) mgScopes.Add("\"AppRoleAssignment.ReadWrite.All\"");
+        if (delegatedSpecs.Count > 0) mgScopes.Add("\"DelegatedPermissionGrant.ReadWrite.All\"");
+
+        logger.LogInformation("");
+        logger.LogInformation("     Option B — PowerShell (Microsoft.Graph module required):");
+        logger.LogInformation("       Install-Module Microsoft.Graph -Scope CurrentUser  # skip if already installed");
+        logger.LogInformation("       Connect-MgGraph -Scopes {Scopes}", string.Join(", ", mgScopes));
+        logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\"", blueprintId);
+        if (hasAgentIdentity)
+            logger.LogInformation("       $ai = Get-MgServicePrincipal -Filter \"appId eq '{AgentIdentityAppId}'\"", agentIdentityAppId);
+
+        if (appSpecs.Count > 0)
+        {
+            logger.LogInformation("       # Application permissions (app role assignments — blueprint and agent identity)");
+            foreach (var (resourceName, resourceAppId, scope, _) in appSpecs)
+            {
+                var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
+                logger.LogInformation("       {Var} = Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\"  # {Name}",
+                    varName, resourceAppId, resourceName);
+                logger.LogInformation("       $rid = ({Var}.AppRoles | Where-Object {{ $_.Value -eq '{Scope}' }}).Id",
+                    varName, scope);
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                    varName);
+                if (hasAgentIdentity)
+                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ai.Id -PrincipalId $ai.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                        varName);
+            }
+        }
+
+        if (delegatedSpecs.Count > 0)
+        {
+            logger.LogInformation("       # Delegated permissions (oauth2PermissionGrants)");
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (resourceName, resourceAppId, _, _) in delegatedSpecs)
+            {
+                var idVarName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant() + "Id";
+                if (seen.Add(idVarName))
+                    logger.LogInformation("       {Var} = (Get-MgServicePrincipal -Filter \"appId eq '{AppId}'\").Id  # {Name}",
+                        idVarName, resourceAppId, resourceName);
+            }
+            foreach (var (resourceName, _, scope, _) in delegatedSpecs)
+            {
+                var idVarName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant() + "Id";
+                logger.LogInformation("       Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' `");
+                logger.LogInformation("         -Body @{{ clientId = $bp.Id; consentType = 'AllPrincipals'; resourceId = {Var}; scope = '{Scope}' }}",
+                    idVarName, scope);
+            }
+        }
+    }
 
     /// <summary>
     /// Display verification URLs after successful setup
@@ -61,19 +358,6 @@ internal static class SetupHelpers
             var root = doc.RootElement;
 
             var urls = new List<(string Label, string Url)>();
-
-            // Azure Web App URL
-            if (root.TryGetProperty("appServiceName", out var appServiceProp) && !string.IsNullOrWhiteSpace(appServiceProp.GetString()))
-            {
-                urls.Add(("Agent Web App", $"https://{appServiceProp.GetString()}.azurewebsites.net"));
-            }
-
-            // Azure Resource Group
-            if (root.TryGetProperty("resourceGroup", out var rgProp) && !string.IsNullOrWhiteSpace(rgProp.GetString()))
-            {
-                var subscriptionId = root.TryGetProperty("subscriptionId", out var subProp) ? subProp.GetString() : "{subscription}";
-                urls.Add(("Azure Resource Group", $"https://portal.azure.com/#@/resource/subscriptions/{subscriptionId}/resourceGroups/{rgProp.GetString()}"));
-            }
 
             // Entra ID Application
             if (root.TryGetProperty("agentBlueprintId", out var blueprintProp) && !string.IsNullOrWhiteSpace(blueprintProp.GetString()))
@@ -101,145 +385,230 @@ internal static class SetupHelpers
     /// <summary>
     /// Display comprehensive setup summary showing what succeeded and what failed
     /// </summary>
-    public static void DisplaySetupSummary(SetupResults results, ILogger logger)
+    public static void DisplaySetupSummary(SetupResults results, ILogger logger, bool isDw = true)
     {
+        // Prefer the flag set on results — it is reliable regardless of which code path calls this.
+        var isNonDw = results.IsNonDwBlueprintFlow || !isDw;
+        var notRun = "not run (previous step failed)";
+
         logger.LogInformation("");
         logger.LogInformation("Setup Summary");
+        logger.LogInformation("");
 
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
+        var pendingS2SAction = results.S2SAppRoleGranted == false;
 
-        // Completed steps — [OK] only
-        logger.LogInformation("Completed Steps:");
-        if (results.InfrastructureCreated)
+        // ── Numbered step rows — mirrors the dry-run step list ─────────────────
+        // Non-DW omits the Azure hosting step, so all steps after 1 are shifted down by 1.
+        var s = isNonDw ? 0 : 1; // step offset: non-DW steps start at 2 (blueprint), DW at 3
+
+        // 1. Prerequisites
+        logger.LogInformation(DryRunRow(1, "Prerequisites") + (results.PrerequisitesSkipped ? "skipped" : "validated"));
+
+        // 2. Azure hosting (DW only — not applicable for non-DW blueprint flow)
+        if (!isNonDw)
         {
-            var status = results.InfrastructureAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Infrastructure {Status}", status);
+            if (results.InfrastructureSkipped)
+                logger.LogInformation(DryRunRow(2, "Azure hosting") + "skipped");
+            else if (results.InfrastructureCreated)
+                logger.LogInformation(DryRunRow(2, "Azure hosting") + (results.InfrastructureAlreadyExisted ? "reused" : "provisioned"));
+            else
+                logger.LogError(DryRunRow(2, "Azure hosting") + "failed");
         }
+
+        // Blueprint: step 2 (non-DW) or step 3 (DW)
         if (results.BlueprintCreated)
         {
-            var status = results.BlueprintAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Agent blueprint {Status}  ID: {BlueprintId}", status, results.BlueprintId ?? "unknown");
+            var bpStatus = results.BlueprintAlreadyExisted ? "reused" : "created";
+            if (!results.BlueprintServicePrincipalCreated)
+                logger.LogWarning(DryRunRow(2 + s, "Blueprint") + "{Status} (service principal failed — see warnings)   '{Name}' (ID: {Id})",
+                    bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
+            else
+                logger.LogInformation(DryRunRow(2 + s, "Blueprint") + "{Status}   '{Name}' (ID: {Id})",
+                    bpStatus, results.BlueprintDisplayName ?? "unknown", results.BlueprintId ?? "unknown");
         }
-        if (results.BatchPermissionsPhase2Completed)
+        else if (results.BlueprintFailed)
+            logger.LogError(DryRunRow(2 + s, "Blueprint") + "failed");
+
+        // Inheritable Permissions: step 3 (non-DW) or step 4 (DW)
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + notRun);
+        else if (results.BatchPermissionsPhase1Completed)
+            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + "configured");
+
+        // Permission Grants: step 4 (non-DW) or step 5 (DW)
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + notRun);
+        else if (results.AgentIdentityPermissionsGranted)
+            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + "ok (developer-scoped)");
+        else if (results.BatchPermissionsPhase2Completed)
+            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
+
+        // Non-DW only: Agent identity (5) and Agent Registration (6)
+        if (isNonDw)
         {
-            logger.LogInformation("  [OK] Inheritable permissions configured and verified");
-            if (results.AdminConsentGranted)
-                logger.LogInformation("  [OK] OAuth2 grants and admin consent configured");
-        }
-        if (results.MessagingEndpointRegistered)
-        {
-            var status = results.EndpointAlreadyExisted ? "(already exists)" : "created";
-            logger.LogInformation("  [OK] Messaging endpoint {Status}", status);
+            if (results.BlueprintFailed)
+            {
+                logger.LogInformation(DryRunRow(5, "Agent identity") + notRun);
+                logger.LogInformation(DryRunRow(6, "Agent Registration") + notRun);
+            }
+            else
+            {
+                if (results.AgentIdentityCreated)
+                {
+                    var identityVerb = (results.AgentIdentityAlreadyExisted ? "reused" : "created").PadRight(9);
+                    logger.LogInformation(DryRunRow(5, "Agent identity") + identityVerb + " '{Name}' (ID: {Id})",
+                        results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
+                }
+                else if (results.AgentIdentityFailed)
+                    logger.LogWarning(DryRunRow(5, "Agent identity") + "failed — see warnings");
+
+                if (results.AgentInstanceRegistered)
+                {
+                    var registrationVerb = (results.AgentRegistrationAlreadyExisted ? "reused" : "registered").PadRight(12);
+                    logger.LogInformation(DryRunRow(6, "Agent Registration") + registrationVerb + " '{Name}' (ID: {Id})",
+                        results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
+                }
+                else if (results.AgentRegistrationFailed)
+                    logger.LogWarning(DryRunRow(6, "Agent Registration") + "failed — see warnings");
+            }
         }
 
-        // Action required — shown as its own section so it isn't conflated with completed work
-        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired;
+        // Project settings: step 7 for non-DW, step 6 for DW
+        var settingsStep = isNonDw ? 7 : 6;
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
+        else if (results.ProjectSettingsWritten)
+            logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
+
+        // ── Action Required ────────────────────────────────────────────────────
+        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction;
         if (hasActionRequired)
         {
+            var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
+            var consentUrl = results.CombinedConsentUrl ?? results.AdminConsentUrl;
+
             logger.LogInformation("");
             logger.LogInformation("Action Required:");
+            int actionCount = 0;
             if (results.ClientSecretManualActionRequired)
-                logger.LogInformation("  Client secret - must be created manually in Entra ID and added to a365.generated.config.json (see instructions above)");
+            {
+                actionCount++;
+                logger.LogInformation("  {N}. Client secret — create manually in the Entra portal for app {AppId}.", actionCount, results.BlueprintId ?? "<blueprint-app-id>");
+                logger.LogInformation("     Add it to a365.generated.config.json as 'agentBlueprintClientSecret', then re-run setup.");
+                logger.LogInformation("     See: https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials");
+            }
             if (pendingAdminAction)
-                logger.LogInformation("  OAuth2 grants — Global Administrator must grant consent (see Next Steps)");
+            {
+                actionCount++;
+                var adminCmdBlueprintId = results.BlueprintId ?? "<blueprint-id>";
+                if (isDw)
+                {
+                    logger.LogInformation("  {N}. Permission Grants — a Global Administrator must run:", actionCount);
+                    logger.LogInformation("     a365 setup admin --blueprint-id {BlueprintId}", adminCmdBlueprintId);
+                    if (!string.IsNullOrWhiteSpace(consentUrl))
+                    {
+                        logger.LogInformation("     Or share this URL with the administrator to grant consent via browser:");
+                        logger.LogInformation("       {ConsentUrl}", consentUrl);
+                    }
+                }
+                else
+                {
+                    logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId);
+                }
+            }
+            if (pendingS2SAction)
+            {
+                actionCount++;
+                logger.LogInformation("  {N}. Observability API S2S app role — run as Global Administrator (PowerShell):", actionCount);
+                logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All'");
+                logger.LogInformation("       $bp  = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
+                logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
+                logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $obs.Id -AppRoleId $rid");
+            }
         }
 
-        // Failed steps
         if (results.Errors.Count > 0)
         {
             logger.LogInformation("");
-            logger.LogInformation("Failed Steps:");
+            logger.LogInformation("Errors:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
-        // Warnings
+        // ── Warnings ───────────────────────────────────────────────────────────
         if (results.Warnings.Count > 0)
         {
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogWarning("  {Warning}", warning);
         }
 
         logger.LogInformation("");
 
-        // Overall status
-
+        // Overall status line
         if (results.HasErrors)
-        {
             logger.LogWarning("Setup completed with errors");
-            logger.LogInformation("");
-            logger.LogInformation("Recovery Actions:");
+        else if (hasActionRequired)
+            logger.LogWarning("Setup completed — action required before proceeding");
+        else if (results.HasWarnings)
+            logger.LogInformation("Setup completed successfully with warnings");
+        else
+            logger.LogInformation("Setup completed successfully");
 
-            if (!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction))
-            {
-                logger.LogInformation("  - Permissions: Run 'a365 setup all' to retry permission configuration");
-            }
-        }
+        // Next steps
+        var hasNextSteps = results.HasErrors
+            || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
+            || !string.IsNullOrEmpty(results.FederatedCredentialError);
 
-        if (pendingAdminAction)
+        if (hasNextSteps)
         {
-            logger.LogInformation("");
-            logger.LogInformation("Next Steps — Global Administrator action required:");
-            logger.LogInformation("  OAuth2 permission grants require a Global Administrator.");
-            logger.LogInformation("  Option 1 — Run the CLI as a Global Administrator:");
-            logger.LogInformation("    a365 setup admin --config-dir \"<path-to-config-folder>\"");
-            if (!string.IsNullOrWhiteSpace(results.CombinedConsentUrl))
-            {
-                logger.LogInformation("  Option 2 — Share a single consent URL with your Global Administrator:");
-                logger.LogInformation("    {ConsentUrl}", results.CombinedConsentUrl);
-            }
-            else if (!string.IsNullOrWhiteSpace(results.AdminConsentUrl))
-            {
-                logger.LogInformation("  Alternatively, a Global Administrator can grant Graph consent at:");
-                logger.LogInformation("    {ConsentUrl}", results.AdminConsentUrl);
-            }
-        }
+            var nextStepLines = new List<Action>();
 
-        if (!results.HasErrors && !hasActionRequired)
-        {
-            if (results.HasWarnings)
-            {
-                logger.LogInformation("Setup completed successfully with warnings");
-                logger.LogInformation("");
-                logger.LogInformation("Recovery Actions:");
+            if ((!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
+                nextStepLines.Add(() => logger.LogInformation("  To retry permissions: a365 setup all"));
 
-                if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
+            if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
+                nextStepLines.Add(() => logger.LogInformation("  To retry Graph inheritable permissions: a365 setup blueprint"));
+
+            if (!string.IsNullOrEmpty(results.FederatedCredentialError))
+            {
+                nextStepLines.Add(() =>
                 {
-                    logger.LogInformation("  - Graph Inheritable Permissions: Run 'a365 setup blueprint' to retry");
-                }
-
-                if (!string.IsNullOrEmpty(results.FederatedCredentialError))
-                {
-                    logger.LogInformation("  - Federated Identity Credential: Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' consented,");
-                    logger.LogInformation("    then run 'a365 setup blueprint' to retry");
-                }
-
-                logger.LogInformation("");
-                logger.LogInformation("Review warnings above and take action if needed");
+                    logger.LogInformation("  Ensure 'AgentIdentityBlueprint.UpdateAuthProperties.All' is consented, then:");
+                    logger.LogInformation("    a365 setup blueprint");
+                });
             }
-            else
+
+            if (nextStepLines.Count > 0)
             {
-                logger.LogInformation("Setup completed successfully");
-                logger.LogInformation("All components configured correctly");
+                logger.LogInformation("");
+                logger.LogInformation("Next steps:");
+                foreach (var line in nextStepLines)
+                    line();
             }
         }
     }
 
     /// <summary>
-    /// Populates <c>resourceConsents[*].consentUrl</c> in the generated config for all five required
+    /// Populates <c>resourceConsents[*].consentUrl</c> in the generated config for the required
     /// resources. Called when the current user lacks the Global Administrator role so that the URLs
     /// can be saved to <c>a365.generated.config.json</c> and shared with a tenant administrator.
+    /// When <paramref name="isDw"/> is false (non-DW blueprint path), only Observability API and
+    /// Power Platform API URLs are generated — Graph, MCP, and Messaging Bot API are excluded.
     /// </summary>
     /// <returns>Display names of the resources for which URLs were saved.</returns>
     internal static List<string> PopulateAdminConsentUrls(
         Agent365Config config,
         string mcpResourceAppId,
-        IEnumerable<string> mcpScopes)
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
     {
-        var graphScopes = config.AgentApplicationScopes;
-        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, graphScopes, mcpScopes);
+        var graphScopes = isDw ? config.AgentApplicationScopes : Enumerable.Empty<string>();
+        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, graphScopes, mcpScopes, isDw);
 
         // Map resource names to App IDs for upsert into ResourceConsents
         var appIdByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -291,30 +660,36 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Builds per-resource admin consent URLs for all five required resources.
-    /// Graph and MCP scopes are taken from config; Bot API, Observability, and Power Platform
-    /// use corrected scope names derived from querying the tenant service principals.
+    /// Builds per-resource admin consent URLs. DW path produces five resources (Graph, MCP,
+    /// Messaging Bot API, Observability API, Power Platform API). Non-DW path produces two
+    /// (Observability API and Power Platform API only) — controlled by <paramref name="isDw"/>.
     /// </summary>
     internal static List<(string ResourceName, string ConsentUrl)> BuildAdminConsentUrls(
         string tenantId,
         string blueprintClientId,
         IEnumerable<string> graphScopes,
-        IEnumerable<string> mcpScopes)
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
     {
         var urls = new List<(string, string)>();
 
         static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes)
             => BuildAdminConsentUrl(tenant, client, scopes.Select(s => $"{resourceUri}/{s}"));
 
-        var graphScopeList = graphScopes.ToList();
-        if (graphScopeList.Count > 0)
-            urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
+        if (isDw)
+        {
+            var graphScopeList = graphScopes.ToList();
+            if (graphScopeList.Count > 0)
+                urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
 
-        var mcpScopeList = mcpScopes.ToList();
-        if (mcpScopeList.Count > 0)
-            urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
+            var mcpScopeList = mcpScopes.ToList();
+            if (mcpScopeList.Count > 0)
+                urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
 
-        urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
+            urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
+        }
+
+        // Observability API is required for both DW and non-DW paths.
         urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
@@ -322,25 +697,60 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Builds a single combined /v2.0/adminconsent URL covering all five required resources.
-    /// All scope tokens from all resources are joined with %20 into one scope parameter,
-    /// allowing a Global Administrator to grant consent with a single browser visit.
+    /// Builds a single combined /v2.0/adminconsent URL for the DW path only.
+    /// Covers Graph, MCP, Messaging Bot API, Observability API, and Power Platform API.
+    ///
+    /// Non-DW path: Observability API and Power Platform API are NOT included here.
+    /// The /v2.0/adminconsent endpoint requires scopes to be registered as
+    /// oauth2PermissionScopes on the resource SP in the tenant. These resource SPs are
+    /// not guaranteed to exist in all tenants, causing AADSTS650053. For non-DW,
+    /// admin consent for these APIs is handled programmatically via 'a365 setup admin'.
     /// </summary>
     internal static string BuildCombinedConsentUrl(
         string tenantId,
         string blueprintClientId,
         IEnumerable<string> graphScopes,
-        IEnumerable<string> mcpScopes)
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
     {
         var allScopes = new List<string>();
-        foreach (var s in graphScopes)
-            allScopes.Add($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
-        foreach (var s in mcpScopes)
-            allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
-        allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
-        allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
+        if (isDw)
+        {
+            foreach (var s in graphScopes)
+                allScopes.Add($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
+            foreach (var s in mcpScopes)
+                allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
+            allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
+            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
+        }
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
+    }
+
+    /// <summary>
+    /// Populates per-resource consent URLs in config and sets <see cref="SetupResults.CombinedConsentUrl"/>
+    /// when the running account is not a Global Administrator. Called by both DW and non-DW setup paths
+    /// after the batch permissions step.
+    /// When <paramref name="isDw"/> is false, only Observability API and Power Platform API URLs are
+    /// generated — Graph, MCP, and Messaging Bot API are excluded.
+    /// No-op if admin consent was already granted or blueprint ID is absent.
+    /// </summary>
+    internal static void ApplyConsentUrlsIfNeeded(
+        SetupContext ctx,
+        string mcpResourceAppId,
+        IEnumerable<string> graphScopes,
+        IEnumerable<string> mcpScopes,
+        bool isDw = true)
+    {
+        if (ctx.Results.AdminConsentGranted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
+            return;
+
+        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isDw);
+        ctx.Results.ConsentUrlsSavedToPath = ctx.GeneratedConfigPath;
+        ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
+        ctx.Results.CombinedConsentUrl = BuildCombinedConsentUrl(
+            ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
+            graphScopes, mcpScopes, isDw);
     }
 
     /// <summary>
@@ -354,19 +764,24 @@ internal static class SetupHelpers
     {
         logger.LogInformation("");
         logger.LogInformation("Admin Setup Summary");
-        logger.LogInformation("Completed Steps:");
+        logger.LogInformation("");
 
-        if (results.AdminConsentGranted)
-        {
-            logger.LogInformation("  [OK] OAuth2 grants configured (tenant-wide)");
-        }
+        // Numbered step rows — mirrors the setup admin dry-run
+        logger.LogInformation(DryRunRow(1, "Prerequisites") + "ok");
+        if (!string.IsNullOrWhiteSpace(blueprintSpObjectId))
+            logger.LogInformation(DryRunRow(2, "Blueprint") + "resolved   (SP: {SpObjectId})", blueprintSpObjectId);
+        else
+            logger.LogInformation(DryRunRow(2, "Blueprint") + "resolved");
+        logger.LogInformation(DryRunRow(3, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "failed"));
+        if (results.S2SAppRoleGranted == true)
+            logger.LogInformation(DryRunRow(4, "S2S app role") + "ok ({Scope})", ConfigConstants.ObservabilityApiOtelWriteScope);
 
         if (results.Errors.Count > 0)
         {
             logger.LogInformation("");
-            logger.LogInformation("Failed Steps:");
+            logger.LogInformation("Errors:");
             foreach (var error in results.Errors)
-                logger.LogError("  [FAILED] {Error}", error);
+                logger.LogError("  {Error}", error);
         }
 
         if (results.Warnings.Count > 0)
@@ -374,15 +789,14 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("Warnings:");
             foreach (var warning in results.Warnings)
-                logger.LogInformation("  [WARN] {Warning}", warning);
+                logger.LogWarning("  {Warning}", warning);
         }
-
-        logger.LogInformation("");
 
         if (!string.IsNullOrWhiteSpace(blueprintSpObjectId))
         {
-            logger.LogInformation("Verify OAuth2 grants in Graph Explorer:");
-            logger.LogInformation("  GET https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{BlueprintSpObjectId}'", blueprintSpObjectId);
+            logger.LogInformation("");
+            logger.LogInformation("Verify grants:");
+            logger.LogInformation("  GET https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{SpObjectId}'", blueprintSpObjectId);
         }
 
         logger.LogInformation("");
@@ -393,6 +807,60 @@ internal static class SetupHelpers
             logger.LogInformation("Admin setup completed with warnings");
         else
             logger.LogInformation("Admin setup completed successfully");
+    }
+
+    /// <summary>
+    /// Prints the dry-run plan for the Digital Worker (--aiteammate true) path of setup all.
+    /// </summary>
+    internal static void PrintDwSetupAllDryRunPlan(
+        ILogger logger,
+        bool skipInfrastructure,
+        bool skipRequirements,
+        string[] rawArgs,
+        Agent365Config? config = null)
+    {
+        var sub = new string(' ', DryRunValCol);
+
+        var cmdArgs = string.Join(' ', rawArgs.Where(a => !a.Equals("--dry-run", StringComparison.OrdinalIgnoreCase)));
+        logger.LogInformation("Dry run: a365 {Args} --dry-run", cmdArgs);
+        logger.LogInformation("");
+        logger.LogInformation("The following steps would be performed.");
+        logger.LogInformation("");
+
+        // 1. Prerequisites
+        if (skipRequirements)
+            logger.LogInformation(DryRunRow(1, "Prerequisites") + "skip (--skip-requirements)");
+        else
+            logger.LogInformation(DryRunRow(1, "Prerequisites") + "validate (PowerShell modules, Azure CLI)");
+
+        // 2. Azure hosting — always externally managed; infrastructure provisioning has been removed
+        logger.LogInformation(DryRunRow(2, "Azure hosting") + "skip — hosting is externally managed (provide messagingEndpoint in config)");
+
+        // 3. Blueprint — context-aware when config is available
+        if (!string.IsNullOrWhiteSpace(config?.AgentBlueprintId))
+        {
+            PrintDryRunBlueprintReuseRows(logger, config.AgentBlueprintId!, step: 3);
+        }
+        else
+        {
+            logger.LogInformation(DryRunRow(3, "Blueprint") + "create (multi-tenant)");
+            logger.LogInformation(sub + "create service principal");
+            logger.LogInformation(sub + "create client secret");
+            logger.LogInformation(sub + "create federated identity credential (FIC)");
+            logger.LogInformation(sub + "create managed identity");
+        }
+
+        // 4. Inheritable Permissions
+        logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configure for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Power Platform API");
+
+        // 5. Permission Grants
+        logger.LogInformation(DryRunRow(5, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id <blueprint-id>");
+
+        // 6. Project settings (DW has no Agent identity or Agent Registration steps)
+        logger.LogInformation(DryRunRow(6, "Project settings") + "write to appsettings.json");
+
+        logger.LogInformation("");
+        logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
     }
 
     /// <summary>
@@ -497,7 +965,7 @@ internal static class SetupHelpers
         {
             throw new SetupValidationException(
                 $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to {resourceName} {resourceAppId}. " +
-                "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All permissions.");
+                "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All permission.");
         }
 
         // 3. Set inheritable permissions (for agent blueprints)
@@ -519,7 +987,7 @@ internal static class SetupHelpers
             if (!ok && !alreadyExists)
             {
                 throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
-                    "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All and Application.ReadWrite.All permissions in your custom client app.");
+                    "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All permission in your custom client app.");
             }
 
             if (alreadyExists)
@@ -701,32 +1169,6 @@ internal static class SetupHelpers
 
             messagingEndpoint = overrideEndpointUrl;
             logger.LogInformation("   - Using override endpoint URL");
-        }
-        else if (setupConfig.NeedDeployment)
-        {
-            if (string.IsNullOrEmpty(setupConfig.WebAppName))
-            {
-                logger.LogError("Web App Name not configured in a365.config.json");
-                throw new SetupValidationException(
-                    issueDescription: "Web App name is required to register a messaging endpoint when needDeployment is 'yes'.",
-                    errorDetails: new List<string>
-                    {
-                        "NeedDeployment is true, but 'webAppName' was not provided in a365.config.json."
-                    },
-                    mitigationSteps: new List<string>
-                    {
-                        "Open a365.config.json and ensure 'webAppName' is set to the Azure Web App name.",
-                        "If you do not want the CLI to deploy an Azure Web App, set \"needDeployment\": \"no\" and provide \"MessagingEndpoint\" instead.",
-                        "Re-run 'a365 setup'."
-                    },
-                    context: new Dictionary<string, string>
-                    {
-                        ["needDeployment"] = setupConfig.NeedDeployment.ToString(),
-                        ["webAppName"] = setupConfig.WebAppName ?? "<null>"
-                    });
-            }
-
-            messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
         }
         else
         {

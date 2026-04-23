@@ -78,8 +78,9 @@ public static class ManifestHelper
     /// <param name="url">Server URL (optional)</param>
     /// <param name="scope">Required Entra scope</param>
     /// <param name="audience">Token audience for this server</param>
+    /// <param name="publisher">Publisher of the server (e.g. "Microsoft")</param>
     /// <returns>Anonymous object representing the complete server configuration</returns>
-    public static object CreateCompleteServerObject(string serverName, string? uniqueName = null, string? url = null, string? scope = null, string? audience = null)
+    public static object CreateCompleteServerObject(string serverName, string? uniqueName = null, string? url = null, string? scope = null, string? audience = null, string? publisher = null)
     {
         var serverObj = new Dictionary<string, object>
         {
@@ -100,6 +101,11 @@ public static class ManifestHelper
         if (!string.IsNullOrWhiteSpace(audience))
         {
             serverObj[McpConstants.ManifestProperties.Audience] = audience;
+        }
+
+        if (!string.IsNullOrWhiteSpace(publisher))
+        {
+            serverObj[McpConstants.ManifestProperties.Publisher] = publisher;
         }
 
         return serverObj;
@@ -197,7 +203,13 @@ public static class ManifestHelper
                     audience = audienceElement.GetString();
                 }
 
-                servers.Add(CreateCompleteServerObject(serverName, uniqueName, url, scope, audience));
+                string? publisher = null;
+                if (element.TryGetProperty(McpConstants.ManifestProperties.Publisher, out var publisherElement))
+                {
+                    publisher = publisherElement.GetString();
+                }
+
+                servers.Add(CreateCompleteServerObject(serverName, uniqueName, url, scope, audience, publisher));
             }
         }
         
@@ -230,7 +242,8 @@ public static class ManifestHelper
                 scopeEl.ValueKind == JsonValueKind.String)
             {
                 var s = scopeEl.GetString();
-                if (!string.IsNullOrWhiteSpace(s))
+                if (!string.IsNullOrWhiteSpace(s) &&
+                    !string.Equals(s, "null", StringComparison.OrdinalIgnoreCase))
                 {
                     AddScopeString(scopes, s);
                     continue;
@@ -257,5 +270,147 @@ public static class ManifestHelper
             var parts = scopeValue.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             foreach (var p in parts) set.Add(p);
         }
+    }
+
+    /// <summary>
+    /// Reads ToolingManifest.json and returns scopes grouped by their audience (resourceAppId).
+    /// Supports V1 (shared ATG AppId), V2 (per-server AppId), and mixed manifests.
+    /// Fallback rules — the following audience values all resolve to <paramref name="resolvedAtgAppId"/>:
+    ///   • missing / null / whitespace
+    ///   • any value starting with <c>api://</c> (legacy V1 format)
+    ///   • the literal string <c>"default"</c>
+    /// </summary>
+    /// <param name="manifestPath">Path to ToolingManifest.json</param>
+    /// <param name="excludeLegacyAtg">
+    /// When true, omits all entries whose resolved audience is the shared ATG AppId.
+    /// Only pass true when V2 SDK is confirmed live (--remove-legacy-scopes flag).
+    /// </param>
+    /// <param name="resolvedAtgAppId">
+    /// Environment-resolved ATG resource app ID. Defaults to <see cref="McpConstants.WorkIQToolsProdAppId"/>
+    /// when null. Pass <c>ConfigConstants.GetAgent365ToolsResourceAppId(environment)</c> to respect
+    /// A365_MCP_APP_ID_* environment variable overrides.
+    /// </param>
+    /// <returns>Dictionary of resourceAppId → ordered scopes array</returns>
+    public static async Task<Dictionary<string, string[]>> GetScopesByAudienceAsync(
+        string manifestPath,
+        bool excludeLegacyAtg = false,
+        string? resolvedAtgAppId = null)
+    {
+        var atgAppId = resolvedAtgAppId ?? McpConstants.WorkIQToolsProdAppId;
+        var scopesByAudience = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        // McpServersMetadata.Read.All is always required and belongs to the ATG AppId
+        if (!excludeLegacyAtg)
+        {
+            scopesByAudience[atgAppId] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "McpServersMetadata.Read.All"
+            };
+        }
+
+        var parsed = await ReadManifestAsync(manifestPath);
+        if (parsed is null)
+            return ToDictionary(scopesByAudience);
+
+        var (servers, _) = parsed.Value;
+
+        foreach (var element in servers)
+        {
+            // Resolve scope — prefer manifest field, fall back to static mapping
+            string? scope = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Scope, out var scopeEl) &&
+                scopeEl.ValueKind == JsonValueKind.String)
+            {
+                var raw = scopeEl.GetString();
+                if (!string.Equals(raw, "null", StringComparison.OrdinalIgnoreCase))
+                    scope = raw;
+            }
+            if (string.IsNullOrWhiteSpace(scope))
+            {
+                var serverName = ExtractServerName(element);
+                if (!string.IsNullOrWhiteSpace(serverName))
+                {
+                    var (mappedScope, _) = McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName);
+                    scope = mappedScope;
+                }
+            }
+            if (string.IsNullOrWhiteSpace(scope)) continue;
+
+            // Resolve audience — fall back to ATG AppId when missing or old api:// format
+            string? audience = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
+                audience = audienceEl.GetString();
+
+            audience = McpConstants.ResolveAudienceOrAtgFallback(audience, atgAppId);
+
+            if (excludeLegacyAtg &&
+                string.Equals(audience, atgAppId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!scopesByAudience.TryGetValue(audience, out var scopeSet))
+            {
+                scopeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                scopesByAudience[audience] = scopeSet;
+            }
+
+            foreach (var s in scope.Split(' ',
+                StringSplitOptions.RemoveEmptyEntries |
+                StringSplitOptions.TrimEntries))
+            {
+                scopeSet.Add(s);
+            }
+        }
+
+        return ToDictionary(scopesByAudience);
+
+        static Dictionary<string, string[]> ToDictionary(Dictionary<string, HashSet<string>> src) =>
+            src.ToDictionary(
+                k => k.Key,
+                v => v.Value.OrderBy(s => s).ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Reads ToolingManifest.json and returns a mapping of audience → server unique names.
+    /// Used by get-token to associate each acquired token with the right per-server env var key.
+    /// </summary>
+    public static async Task<Dictionary<string, List<string>>> GetServerNamesByAudienceAsync(
+        string manifestPath,
+        string? resolvedAtgAppId = null)
+    {
+        var atgAppId = resolvedAtgAppId ?? McpConstants.WorkIQToolsProdAppId;
+        var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        var parsed = await ReadManifestAsync(manifestPath);
+        if (parsed is null) return result;
+
+        var (servers, _) = parsed.Value;
+
+        foreach (var element in servers)
+        {
+            string? audience = null;
+            if (element.TryGetProperty(McpConstants.ManifestProperties.Audience, out var audienceEl))
+                audience = audienceEl.GetString();
+
+            // Skip all forms that resolve to the shared ATG audience — these are handled via the
+            // shared BEARER_TOKEN env var, not per-server BEARER_TOKEN_{AUDIENCE} entries.
+            var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience, atgAppId);
+            if (string.Equals(resolvedAudience, atgAppId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var serverName = ExtractServerName(element);
+            if (string.IsNullOrWhiteSpace(serverName)) continue;
+
+            if (!result.TryGetValue(resolvedAudience, out var names))
+            {
+                names = new List<string>();
+                result[resolvedAudience] = names;
+            }
+            names.Add(serverName);
+        }
+
+        return result;
     }
 }

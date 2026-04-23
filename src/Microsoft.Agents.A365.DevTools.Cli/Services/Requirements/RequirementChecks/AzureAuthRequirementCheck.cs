@@ -42,7 +42,7 @@ public class AzureAuthRequirementCheck : RequirementCheck
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        var authenticated = await _authValidator.ValidateAuthenticationAsync(config.SubscriptionId, cancellationToken);
+        var authenticated = await _authValidator.ValidateAuthenticationAsync(null, cancellationToken);
 
         if (!authenticated)
         {

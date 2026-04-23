@@ -252,7 +252,6 @@ public class BlueprintSubcommandTests
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000", // Valid GUID format
-            SubscriptionId = "test-sub",
             AgentBlueprintDisplayName = "" // Missing display name
         };
 
@@ -446,9 +445,7 @@ public class BlueprintSubcommandTests
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
-            SubscriptionId = "test-sub",
             AgentBlueprintDisplayName = "Test Blueprint",
-            Location = "eastus" // Required for endpoint registration; location guard runs before the header is logged
         };
 
         var configFile = new FileInfo("test-config.json");
@@ -476,7 +473,7 @@ public class BlueprintSubcommandTests
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Creating Agent Blueprint")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Creating agent blueprint")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -600,7 +597,6 @@ public class BlueprintSubcommandTests
         {
             TenantId = "test-tenant",
             AgentBlueprintId = "", // Missing blueprint ID
-            WebAppName = "test-webapp"
         };
 
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
@@ -615,28 +611,6 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public async Task ValidationLogic_WithMissingWebAppName_ShouldLogError()
-    {
-        // Arrange
-        var config = new Agent365Config
-        {
-            TenantId = "test-tenant",
-            AgentBlueprintId = "blueprint-123",
-            WebAppName = "" // Missing web app name
-        };
-
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-            .Returns(Task.FromResult(config));
-
-        // Act
-        var loadedConfig = await _mockConfigService.LoadAsync("test-config.json");
-
-        // Assert
-        loadedConfig.WebAppName.Should().BeEmpty();
-        // In the actual command handler, Environment.Exit(1) would be called
-    }
-
-    [Fact]
     public async Task DryRunLogic_ShouldNotExecuteRegistration()
     {
         // Arrange
@@ -644,7 +618,6 @@ public class BlueprintSubcommandTests
         {
             TenantId = "test-tenant",
             AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp"
         };
 
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
@@ -656,7 +629,7 @@ public class BlueprintSubcommandTests
         // Assert - Verify config was loaded
         loadedConfig.Should().NotBeNull();
         loadedConfig.AgentBlueprintId.Should().Be("blueprint-123");
-        loadedConfig.WebAppName.Should().Be("test-webapp");
+        loadedConfig.TenantId.Should().Be("test-tenant");
 
         // Verify no bot configuration was attempted
         await _mockBackendConfigurator.DidNotReceiveWithAnyArgs()
@@ -671,16 +644,10 @@ public class BlueprintSubcommandTests
         {
             TenantId = "test-tenant",
             AgentBlueprintId = "blueprint-456",
-            WebAppName = "my-agent-webapp"
         };
 
-        // Act - Simulate what dry-run would display
-        var endpointName = $"{config.WebAppName}-endpoint";
-        var messagingUrl = $"https://{config.WebAppName}.azurewebsites.net/api/messages";
-
-        // Assert
-        endpointName.Should().Be("my-agent-webapp-endpoint");
-        messagingUrl.Should().Be("https://my-agent-webapp.azurewebsites.net/api/messages");
+        // Act & Assert - config should have the blueprint ID
+        config.AgentBlueprintId.Should().Be("blueprint-456");
     }
 
     [Fact]
@@ -691,14 +658,10 @@ public class BlueprintSubcommandTests
         {
             TenantId = "test-tenant",
             AgentBlueprintId = "blueprint-789",
-            WebAppName = "production-agent"
         };
 
-        // Act - Simulate messaging URL generation
-        var messagingUrl = $"https://{config.WebAppName}.azurewebsites.net/api/messages";
-
-        // Assert
-        messagingUrl.Should().Contain("production-agent.azurewebsites.net/api/messages");
+        // Act & Assert
+        config.AgentBlueprintId.Should().Be("blueprint-789");
     }
 
     #endregion
@@ -713,8 +676,7 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp",
-            Location = "eastus",
+            MessagingEndpoint = "https://agent.contoso.com/api/messages",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -744,10 +706,11 @@ public class BlueprintSubcommandTests
                 _mockBackendConfigurator,
                 _mockPlatformDetector);
 
-            // Assert
+            // Assert — Teams Graph backend configuration receives the literal MessagingEndpoint
+            // from config (no more derivation from webAppName, which was an ABS-era behavior).
             await _mockBackendConfigurator.Received(1).SetBackendConfigurationAsync(
                 config.AgentBlueprintId,
-                Arg.Is<string>(s => s.Contains("test-webapp.azurewebsites.net")));
+                config.MessagingEndpoint);
 
             await _mockConfigService.Received(1).SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>());
         }
@@ -773,8 +736,6 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-456",
-            WebAppName = "test-webapp",
-            Location = "westus",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -831,8 +792,7 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-789",
-            WebAppName = "test-webapp",
-            Location = "eastus",
+            MessagingEndpoint = "https://agent.contoso.com/api/messages",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -896,8 +856,6 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp",
-            Location = "eastus",
             DeploymentProjectPath = "non-existent-path" // This will cause sync to skip with a warning
         };
 
@@ -954,8 +912,7 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-existing",
-            WebAppName = "test-webapp",
-            Location = "eastus",
+            MessagingEndpoint = "https://agent.contoso.com/api/messages",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -1019,8 +976,7 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp",
-            Location = "eastus",
+            MessagingEndpoint = "https://agent.contoso.com/api/messages",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -1052,9 +1008,12 @@ public class BlueprintSubcommandTests
 
             // Assert - Verify bot configuration was updated in config
             savedConfig.Should().NotBeNull();
-            savedConfig!.BotId.Should().Be(config.AgentBlueprintId);
-            savedConfig.BotMsaAppId.Should().Be(config.AgentBlueprintId);
-            savedConfig.BotMessagingEndpoint.Should().Contain("test-webapp.azurewebsites.net");
+            savedConfig!.BotId.Should().Be(config.AgentBlueprintId,
+                because: "BotId should be set to AgentBlueprintId after successful endpoint registration");
+            savedConfig.BotMsaAppId.Should().Be(config.AgentBlueprintId,
+                because: "BotMsaAppId should be set to AgentBlueprintId after successful endpoint registration");
+            savedConfig.BotMessagingEndpoint.Should().Be(config.MessagingEndpoint,
+                because: "BotMessagingEndpoint should be set to the MessagingEndpoint configured in config");
         }
         finally
         {
@@ -1070,16 +1029,14 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public async Task RegisterEndpointAndSyncAsync_WithNeedDeploymentFalseAndMessagingEndpoint_ShouldSucceed()
+    public async Task RegisterEndpointAndSyncAsync_WithExternalMessagingEndpoint_ShouldSucceed()
     {
         // Arrange
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            NeedDeployment = false,
             MessagingEndpoint = "https://custom-host.example.com/api/messages",
-            Location = "eastus",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -1129,16 +1086,14 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public async Task RegisterEndpointAndSyncAsync_WithNeedDeploymentFalseAndNoMessagingEndpoint_ShouldSkipRegistration()
+    public async Task RegisterEndpointAndSyncAsync_WithNoMessagingEndpoint_ShouldSkipRegistration()
     {
         // Arrange
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            NeedDeployment = false,
             MessagingEndpoint = string.Empty,
-            Location = "eastus",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -1260,8 +1215,6 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp",
-            Location = "eastus",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -1317,8 +1270,6 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp",
-            Location = "eastus",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -1351,8 +1302,7 @@ public class BlueprintSubcommandTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            WebAppName = "test-webapp",
-            Location = "eastus",
+            MessagingEndpoint = "https://old-agent.contoso.com/api/messages",
             DeploymentProjectPath = Path.GetTempPath()
         };
 
@@ -1407,9 +1357,7 @@ public class BlueprintSubcommandTests
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
             // WebAppName not set, so BotName will be empty
-            Location = "eastus",
             DeploymentProjectPath = Path.GetTempPath(),
-            NeedDeployment = false // Non-Azure hosting
         };
 
         var newEndpointUrl = "https://newhost.example.com/api/messages";

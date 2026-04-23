@@ -112,19 +112,23 @@ internal static class AddPermissionsSubcommand
                 var manifestPath = manifest?.FullName 
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, McpConstants.ToolingManifestFileName);
 
-                // Determine which scopes to add
-                string[] requestedScopes;
-                
+                var environment = setupConfig?.Environment ?? "prod";
+                var atgResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+
+                // Determine which scopes to add.
+                // Explicit --scopes: single ATG call (no audience info available).
+                // Manifest: per-audience calls via GetScopesByAudienceAsync (V1 + V2 support).
+                string[]? requestedScopes = null;
+                Dictionary<string, string[]>? scopesByAudience = null;
+
                 if (scopes != null && scopes.Length > 0)
                 {
-                    // User provided explicit scopes
                     requestedScopes = scopes;
                     logger.LogInformation("Using user-specified scopes: {Scopes}", string.Join(", ", requestedScopes));
                     logger.LogInformation("");
                 }
                 else
                 {
-                    // Read scopes from ToolingManifest.json
                     if (!File.Exists(manifestPath))
                     {
                         logger.LogError("ToolingManifest.json not found at: {Path}", manifestPath);
@@ -139,10 +143,9 @@ internal static class AddPermissionsSubcommand
 
                     logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
 
-                    // Use ManifestHelper to extract scopes (includes fallback to mappings and McpServersMetadata.Read.All)
-                    requestedScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+                    scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, resolvedAtgAppId: atgResourceAppId);
 
-                    if (requestedScopes.Length == 0)
+                    if (scopesByAudience.Count == 0)
                     {
                         logger.LogError("No scopes found in ToolingManifest.json");
                         logger.LogInformation("You can specify scopes explicitly with --scopes option.");
@@ -150,14 +153,11 @@ internal static class AddPermissionsSubcommand
                         return;
                     }
 
-                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}", 
-                        requestedScopes.Length, string.Join(", ", requestedScopes));
+                    var totalScopes = scopesByAudience.Values.SelectMany(s => s).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                    logger.LogInformation("Found {AudienceCount} audience(s) with {ScopeCount} unique scope(s) from manifest",
+                        scopesByAudience.Count, totalScopes);
                 }
 
-                var environment = setupConfig?.Environment ?? "prod";
-                var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
-                
-                logger.LogInformation("Target resource: Agent 365 Tools ({ResourceAppId})", resourceAppId);
                 logger.LogInformation("");
 
                 // Dry run mode
@@ -166,8 +166,15 @@ internal static class AddPermissionsSubcommand
                     logger.LogInformation("DRY RUN: Add MCP Server Permissions");
                     logger.LogInformation("Would add the following permissions to application {AppId}:", targetAppId);
                     logger.LogInformation("");
-                    logger.LogInformation("Resource: {ResourceAppId}", resourceAppId);
-                    logger.LogInformation("  Scopes: {Scopes}", string.Join(", ", requestedScopes));
+                    if (scopesByAudience != null)
+                    {
+                        foreach (var kvp in scopesByAudience)
+                            logger.LogInformation("  {ResourceAppId} — {Scopes}", kvp.Key, string.Join(", ", kvp.Value));
+                    }
+                    else
+                    {
+                        logger.LogInformation("  {ResourceAppId} — {Scopes}", atgResourceAppId, string.Join(", ", requestedScopes!));
+                    }
                     logger.LogInformation("");
                     logger.LogInformation("No changes made (dry run mode)");
                     return;
@@ -177,35 +184,54 @@ internal static class AddPermissionsSubcommand
                 logger.LogInformation("Adding permissions to application...");
                 logger.LogInformation("");
 
-                // Determine tenant ID (from config or detect from Azure CLI)
                 string tenantId = await TenantDetectionHelper.DetectTenantIdAsync(setupConfig, logger) ?? string.Empty;
 
-                logger.LogInformation("Processing resource: {ResourceAppId}", resourceAppId);
-                
-                bool success;
-                try
+                bool success = true;
+                if (scopesByAudience != null)
                 {
-                    success = await blueprintService.AddRequiredResourceAccessAsync(
-                        tenantId,
-                        targetAppId,
-                        resourceAppId,
-                        requestedScopes,
-                        isDelegated: true);
-
-                    if (success)
+                    // Per-audience calls — one entry per resource app ID (V1 + V2)
+                    foreach (var kvp in scopesByAudience)
                     {
-                        logger.LogInformation("  [SUCCESS] Successfully added permissions for {ResourceAppId}", resourceAppId);
-                    }
-                    else
-                    {
-                        logger.LogError("  [FAILED] Failed to add permissions for {ResourceAppId}", resourceAppId);
+                        logger.LogInformation("Processing resource: {ResourceAppId}", kvp.Key);
+                        try
+                        {
+                            var ok = await blueprintService.AddRequiredResourceAccessAsync(
+                                tenantId, targetAppId, kvp.Key, kvp.Value, isDelegated: true);
+                            if (ok)
+                                logger.LogInformation("  Added permissions for {ResourceAppId}", kvp.Key);
+                            else
+                            {
+                                logger.LogError("  Failed to add permissions for {ResourceAppId}", kvp.Key);
+                                success = false;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError("  {ResourceAppId}: {Message}", kvp.Key, ex.Message);
+                            logger.LogDebug("    {StackTrace}", ex.StackTrace);
+                            success = false;
+                        }
                     }
                 }
-                catch (Exception ex)
+                else
                 {
-                    logger.LogError("  [ERROR] Exception adding permissions for {ResourceAppId}: {Message}", resourceAppId, ex.Message);
-                    logger.LogDebug("    {StackTrace}", ex.StackTrace);
-                    success = false;
+                    // Explicit --scopes: single ATG call
+                    logger.LogInformation("Processing resource: {ResourceAppId}", atgResourceAppId);
+                    try
+                    {
+                        success = await blueprintService.AddRequiredResourceAccessAsync(
+                            tenantId, targetAppId, atgResourceAppId, requestedScopes!, isDelegated: true);
+                        if (success)
+                            logger.LogInformation("  Added permissions for {ResourceAppId}", atgResourceAppId);
+                        else
+                            logger.LogError("  Failed to add permissions for {ResourceAppId}", atgResourceAppId);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError("  Exception adding permissions for {ResourceAppId}: {Message}", atgResourceAppId, ex.Message);
+                        logger.LogDebug("    {StackTrace}", ex.StackTrace);
+                        success = false;
+                    }
                 }
                 
                 logger.LogInformation("");
@@ -215,7 +241,7 @@ internal static class AddPermissionsSubcommand
 
                 if (success)
                 {
-                    logger.LogInformation("[SUCCESS] All permissions added successfully!");
+                    logger.LogInformation("All permissions added successfully");
                     logger.LogInformation("");
                     logger.LogInformation("  Review permissions in Azure Portal: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{AppId}", targetAppId);
                 }

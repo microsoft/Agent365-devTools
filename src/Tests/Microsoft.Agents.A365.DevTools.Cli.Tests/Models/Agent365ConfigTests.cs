@@ -26,12 +26,6 @@ public class Agent365ConfigTests
         {
             TenantId = "12345678-1234-1234-1234-123456789012",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "87654321-4321-4321-4321-210987654321",
-            ResourceGroup = "rg-test",
-            Location = "eastus",
-            AppServicePlanName = "asp-test",
-            AppServicePlanSku = "B1",
-            WebAppName = "webapp-test",
             AgentIdentityDisplayName = "Test Agent",
             // AgentIdentityScopes are now hardcoded defaults
             DeploymentProjectPath = "./test/path",
@@ -41,12 +35,6 @@ public class Agent365ConfigTests
         // Assert
         Assert.Equal("12345678-1234-1234-1234-123456789012", config.TenantId);
         Assert.Equal("a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", config.ClientAppId);
-        Assert.Equal("87654321-4321-4321-4321-210987654321", config.SubscriptionId);
-        Assert.Equal("rg-test", config.ResourceGroup);
-        Assert.Equal("eastus", config.Location);
-        Assert.Equal("asp-test", config.AppServicePlanName);
-        Assert.Equal("B1", config.AppServicePlanSku);
-        Assert.Equal("webapp-test", config.WebAppName);
         Assert.Equal("Test Agent", config.AgentIdentityDisplayName);
         Assert.NotNull(config.AgentIdentityScopes);
         Assert.NotEmpty(config.AgentIdentityScopes); // Should have hardcoded defaults
@@ -75,16 +63,13 @@ public class Agent365ConfigTests
         var config = new Agent365Config
         {
             TenantId = "original-tenant",
-            SubscriptionId = "original-subscription"
         };
 
         // Assert - cannot reassign (compile-time check)
         // The following would NOT compile:
         // config.TenantId = "new-tenant";  // CS8852: Init-only property can only be assigned in object initializer
-        // config.SubscriptionId = "new-subscription";
 
         Assert.Equal("original-tenant", config.TenantId);
-        Assert.Equal("original-subscription", config.SubscriptionId);
     }
 
     #endregion
@@ -115,10 +100,6 @@ public class Agent365ConfigTests
             ConsentGranted = true,
             ConsentTimestamp = DateTime.Parse("2025-10-14T12:00:00Z")
         });
-        config.DeploymentLastTimestamp = DateTime.Parse("2025-10-14T13:00:00Z");
-        config.DeploymentLastStatus = "success";
-        config.DeploymentLastCommitHash = "abc123";
-        config.DeploymentLastBuildId = "build-123";
         config.LastUpdated = DateTime.Parse("2025-10-14T14:00:00Z");
         config.CliVersion = "1.0.0";
 
@@ -133,10 +114,6 @@ public class Agent365ConfigTests
         Assert.NotEmpty(config.ResourceConsents);
         Assert.Equal("Microsoft Graph", config.ResourceConsents[0].ResourceName);
         Assert.True(config.ResourceConsents[0].ConsentGranted);
-        Assert.Equal(DateTime.Parse("2025-10-14T13:00:00Z"), config.DeploymentLastTimestamp);
-        Assert.Equal("success", config.DeploymentLastStatus);
-        Assert.Equal("abc123", config.DeploymentLastCommitHash);
-        Assert.Equal("build-123", config.DeploymentLastBuildId);
         Assert.Equal(DateTime.Parse("2025-10-14T14:00:00Z"), config.LastUpdated);
         Assert.Equal("1.0.0", config.CliVersion);
     }
@@ -178,10 +155,6 @@ public class Agent365ConfigTests
         Assert.Null(config.BotMsaAppId);
         Assert.Null(config.BotMessagingEndpoint);
         Assert.Empty(config.ResourceConsents);
-        Assert.Null(config.DeploymentLastTimestamp);
-        Assert.Null(config.DeploymentLastStatus);
-        Assert.Null(config.DeploymentLastCommitHash);
-        Assert.Null(config.DeploymentLastBuildId);
         Assert.Null(config.LastUpdated);
         Assert.Null(config.CliVersion);
     }
@@ -197,11 +170,6 @@ public class Agent365ConfigTests
         var config = new Agent365Config
         {
             TenantId = "tenant-123",
-            SubscriptionId = "sub-456",
-            ResourceGroup = "rg-test",
-            Location = "eastus",
-            AppServicePlanName = "asp-test",
-            WebAppName = "webapp-test",
             AgentIdentityDisplayName = "Test Agent",
             // AgentIdentityScopes are now hardcoded
             DeploymentProjectPath = "./test",
@@ -216,8 +184,6 @@ public class Agent365ConfigTests
         // Assert
         Assert.Contains("\"tenantId\"", json);
         Assert.Contains("tenant-123", json);
-        Assert.Contains("\"subscriptionId\"", json);
-        Assert.Contains("sub-456", json);
         Assert.Contains("\"agentBlueprintId\"", json);
         Assert.Contains("blueprint-789", json);
         Assert.Contains("\"botId\"", json);
@@ -230,11 +196,6 @@ public class Agent365ConfigTests
         // Arrange
         var json = @"{
             ""tenantId"": ""tenant-123"",
-            ""subscriptionId"": ""sub-456"",
-            ""resourceGroup"": ""rg-test"",
-            ""location"": ""eastus"",
-            ""appServicePlanName"": ""asp-test"",
-            ""webAppName"": ""webapp-test"",
             ""agentIdentityDisplayName"": ""Test Agent"",
             ""deploymentProjectPath"": ""./test"",
             ""agentDescription"": ""Test description"",
@@ -249,11 +210,6 @@ public class Agent365ConfigTests
         // Assert
         Assert.NotNull(config);
         Assert.Equal("tenant-123", config.TenantId);
-        Assert.Equal("sub-456", config.SubscriptionId);
-        Assert.Equal("rg-test", config.ResourceGroup);
-        Assert.Equal("eastus", config.Location);
-        Assert.Equal("asp-test", config.AppServicePlanName);
-        Assert.Equal("webapp-test", config.WebAppName);
         Assert.Equal("Test Agent", config.AgentIdentityDisplayName);
         Assert.NotNull(config.AgentIdentityScopes);
         Assert.NotEmpty(config.AgentIdentityScopes); // Should have hardcoded defaults
@@ -269,9 +225,6 @@ public class Agent365ConfigTests
         // Arrange
         var json = @"{
             ""tenantId"": ""tenant-123"",
-            ""subscriptionId"": ""sub-456"",
-            ""resourceGroup"": ""rg-test"",
-            ""location"": ""eastus"",
             ""agentBlueprintId"": null,
             ""botId"": null
         }";
@@ -292,7 +245,6 @@ public class Agent365ConfigTests
         // Arrange
         var json = @"{
             ""tenantId"": ""tenant-123"",
-            ""deploymentLastTimestamp"": ""2025-10-14T13:45:30Z"",
             ""lastUpdated"": ""2025-10-14T14:56:40Z"",
             ""resourceConsents"": [
                 {
@@ -379,13 +331,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Added required clientAppId
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             MessagingEndpoint = "https://external-agent.example.com/api/messages",
             AgentIdentityDisplayName = "Test Agent Identity",
             DeploymentProjectPath = ".",
-            NeedDeployment = false
             // AppServicePlanName and WebAppName not provided
         };
 
@@ -397,49 +345,24 @@ public class Agent365ConfigTests
     }
 
     [Fact]
-    public void Validate_WithoutMessagingEndpoint_RequiresAppServiceFields()
+    public void Validate_WithNoMessagingEndpoint_ReturnsNoError()
     {
-        // Arrange
+        // Arrange — bootstrap config: externally hosted agent with no endpoint yet
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
             AgentIdentityDisplayName = "Test Agent Identity",
-            DeploymentProjectPath = "."
-            // AppServicePlanName, WebAppName, and MessagingEndpoint not provided
+            DeploymentProjectPath = ".",
+            // MessagingEndpoint intentionally absent — filled in after the agent is hosted externally
         };
 
         // Act
         var errors = config.Validate();
 
         // Assert
-        errors.Should().Contain("appServicePlanName is required.");
-        errors.Should().Contain("webAppName is required.");
-    }
-
-    [Fact]
-    public void Validate_WithEmptyMessagingEndpoint_RequiresAppServiceFields()
-    {
-        // Arrange
-        var config = new Agent365Config
-        {
-            TenantId = "00000000-0000-0000-0000-000000000000",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            MessagingEndpoint = "", // Empty string should be treated as not provided
-            AgentIdentityDisplayName = "Test Agent Identity",
-            DeploymentProjectPath = "."
-        };
-
-        // Act
-        var errors = config.Validate();
-
-        // Assert
-        errors.Should().Contain("appServicePlanName is required.");
-        errors.Should().Contain("webAppName is required.");
+        errors.Should().NotContain(e => e.Contains("messagingEndpoint"),
+            because: "messagingEndpoint is optional at config-validation time; SetupHelpers enforces it at registration time");
     }
 
     [Fact]
@@ -455,13 +378,17 @@ public class Agent365ConfigTests
         // Act
         var errors = config.Validate();
 
-        // Assert
+        // Assert — only the remaining required fields: tenantId, clientAppId, agentIdentityDisplayName
         errors.Should().Contain("tenantId is required.");
-        errors.Should().Contain("subscriptionId is required.");
-        errors.Should().Contain("resourceGroup is required.");
-        errors.Should().Contain("location is required.");
+        errors.Should().Contain(e => e.Contains("clientAppId is required."),
+            because: "clientAppId is required for all agent configurations");
         errors.Should().Contain("agentIdentityDisplayName is required.");
-        errors.Should().Contain("deploymentProjectPath is required.");
+        errors.Should().NotContain("subscriptionId is required.",
+            because: "subscriptionId was removed when a365 deploy was removed");
+        errors.Should().NotContain("resourceGroup is required.",
+            because: "resourceGroup was removed when a365 deploy was removed");
+        errors.Should().NotContain("location is required.",
+            because: "location was removed when bot endpoint registration was disabled");
     }
 
     #endregion
@@ -476,9 +403,6 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             // ClientAppId is missing
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages"
@@ -500,9 +424,6 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "", // Empty string
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages"
@@ -523,9 +444,6 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "   ", // Whitespace only
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages"
@@ -546,9 +464,6 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "not-a-valid-guid", // Invalid GUID format
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages"
@@ -569,9 +484,6 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Valid GUID
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages"
@@ -595,9 +507,6 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = clientAppId,
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages"
@@ -615,10 +524,10 @@ public class Agent365ConfigTests
     #region BotName derived property tests
 
     [Fact]
-    public void BotName_WithWebAppName_ReturnsWebAppNameEndpoint()
+    public void BotName_WithNoEndpoint_ReturnsEmpty()
     {
-        var config = new Agent365Config { WebAppName = "my-webapp" };
-        config.BotName.Should().Be("my-webapp-endpoint");
+        var config = new Agent365Config();
+        config.BotName.Should().BeEmpty();
     }
 
     [Fact]
@@ -673,35 +582,18 @@ public class Agent365ConfigTests
     }
 
     [Fact]
-    public void BotName_WhenNeedDeploymentTrue_WebAppNameTakesPrecedenceOverMessagingEndpoint()
+    public void BotName_WithMessagingEndpoint_DerivedFromEndpointHost()
     {
-        // NeedDeployment defaults to true — Azure App Service path should be used
+        // BotName is derived from MessagingEndpoint host + blueprint ID suffix.
+        // This must agree with what SetupHelpers registers so cleanup targets the right endpoint.
         var config = new Agent365Config
         {
-            WebAppName = "my-webapp",
-            MessagingEndpoint = "https://other.example.com/webhook"
-        };
-        config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
-
-        config.BotName.Should().Be("my-webapp-endpoint",
-            "when NeedDeployment=true, Azure App Service path (WebAppName) is used regardless of MessagingEndpoint");
-    }
-
-    [Fact]
-    public void BotName_WhenNeedDeploymentFalse_MessagingEndpointTakesPrecedenceOverWebAppName()
-    {
-        // When NeedDeployment=false, setup registers from MessagingEndpoint host.
-        // BotName must agree so cleanup targets the same endpoint that setup registered.
-        var config = new Agent365Config
-        {
-            NeedDeployment = false,
-            WebAppName = "my-webapp",
             MessagingEndpoint = "https://microsoftcape.app.n8n.cloud/webhook/abc123/webhook"
         };
         config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
 
         config.BotName.Should().Be("microsoftcape-app-n8n-cloud-9ab0b58c",
-            "when NeedDeployment=false, MessagingEndpoint path is used to match what SetupHelpers registers");
+            "BotName is derived from MessagingEndpoint host so cleanup targets the same endpoint that setup registered");
     }
 
     [Theory]
@@ -713,7 +605,6 @@ public class Agent365ConfigTests
         // Uri.TryCreate fails for non-absolute URIs — BotName falls through to empty
         var config = new Agent365Config
         {
-            NeedDeployment = false,
             MessagingEndpoint = endpoint
         };
         config.AgentBlueprintId = "9ab0b58c-c49e-4adb-b164-1ed10cbe3956";
@@ -734,13 +625,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages",
-            NeedDeployment = false,
             CustomBlueprintPermissions = new List<CustomResourcePermission>
             {
                 new()
@@ -767,13 +654,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages",
-            NeedDeployment = false,
             CustomBlueprintPermissions = new List<CustomResourcePermission>
             {
                 new()
@@ -803,13 +686,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages",
-            NeedDeployment = false,
             CustomBlueprintPermissions = new List<CustomResourcePermission>
             {
                 new()
@@ -843,13 +722,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages",
-            NeedDeployment = false,
             CustomBlueprintPermissions = new List<CustomResourcePermission>
             {
                 new()
@@ -882,13 +757,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages",
-            NeedDeployment = false,
             CustomBlueprintPermissions = new List<CustomResourcePermission>
             {
                 new()
@@ -921,13 +792,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages",
-            NeedDeployment = false,
             CustomBlueprintPermissions = null
         };
 
@@ -946,13 +813,9 @@ public class Agent365ConfigTests
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
-            SubscriptionId = "11111111-1111-1111-1111-111111111111",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = ".",
             MessagingEndpoint = "https://test.com/api/messages",
-            NeedDeployment = false,
             CustomBlueprintPermissions = new List<CustomResourcePermission>()
         };
 
@@ -1020,6 +883,231 @@ public class Agent365ConfigTests
         config.CustomBlueprintPermissions![0].ResourceAppId.Should().Be("00000003-0000-0000-c000-000000000000");
         config.CustomBlueprintPermissions[0].ResourceName.Should().Be("Microsoft Graph");
         config.CustomBlueprintPermissions[0].Scopes.Should().BeEquivalentTo(new[] { "User.Read", "Mail.Send" });
+    }
+
+    #endregion
+
+    #region AiTeammate and IsNonAiTeammate Tests
+
+    [Theory]
+    [InlineData(false, true)]   // aiTeammate=false → non-AI Teammate agent
+    [InlineData(true, false)]   // aiTeammate=true  → AI Teammate (digital worker)
+    [InlineData(null, false)]   // not set → AI Teammate (default)
+    public void IsNonAiTeammate_ReturnsCorrectValue(bool? aiTeammate, bool expected)
+    {
+        var config = new Agent365Config { AiTeammate = aiTeammate };
+
+        config.IsNonAiTeammate.Should().Be(expected);
+    }
+
+    [Fact]
+    public void AiTeammate_IsSerializedToJson_WithCorrectPropertyName()
+    {
+        var config = new Agent365Config { AiTeammate = false };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"aiTeammate\"");
+        json.Should().Contain("false");
+    }
+
+    [Fact]
+    public void AiTeammate_IsDeserializedFromJson()
+    {
+        const string json = "{\"aiTeammate\": false}";
+
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        config.Should().NotBeNull();
+        config!.AiTeammate.Should().BeFalse();
+        config.IsNonAiTeammate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AiTeammate_IsNullByDefault_WhenNotSpecified()
+    {
+        var config = new Agent365Config();
+
+        config.AiTeammate.Should().BeNull();
+        config.IsNonAiTeammate.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AzureOpenAIProperties_AreSerializedCorrectly()
+    {
+        var config = new Agent365Config
+        {
+            AzureOpenAIName = "aoai-test",
+            AzureOpenAILocation = "swedencentral",
+            AzureOpenAIModelDeploymentName = "gpt-4.1",
+            NeedAzureOpenAI = true
+        };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"azureOpenAIName\"");
+        json.Should().Contain("aoai-test");
+        json.Should().Contain("\"azureOpenAILocation\"");
+        json.Should().Contain("swedencentral");
+        json.Should().Contain("\"azureOpenAIModelDeploymentName\"");
+        json.Should().Contain("gpt-4.1");
+        json.Should().Contain("\"needAzureOpenAI\"");
+    }
+
+    [Theory]
+    [InlineData(false, true, true)]    // aiTeammate=false + useBlueprint=true → blueprint non-DW
+    [InlineData(false, false, false)]  // aiTeammate=false + useBlueprint=false → app-based non-DW
+    [InlineData(false, null, false)]   // aiTeammate=false + useBlueprint not set → app-based non-DW
+    [InlineData(true, true, false)]    // aiTeammate=true (DW) → never blueprint non-DW
+    [InlineData(null, true, false)]    // not set (DW default) → never blueprint non-DW
+    public void IsNonDwBlueprint_ReturnsCorrectValue(bool? aiTeammate, bool? useBlueprint, bool expected)
+    {
+        var config = new Agent365Config { AiTeammate = aiTeammate, UseBlueprint = useBlueprint };
+
+        config.IsNonDwBlueprint.Should().Be(expected);
+    }
+
+    [Fact]
+    public void UseBlueprint_IsSerializedToJson_WithCorrectPropertyName()
+    {
+        var config = new Agent365Config { UseBlueprint = true };
+
+        var json = JsonSerializer.Serialize(config);
+
+        json.Should().Contain("\"useBlueprint\"");
+        json.Should().Contain("true");
+    }
+
+    [Fact]
+    public void UseBlueprint_IsDeserializedFromJson()
+    {
+        const string json = "{\"aiTeammate\": false, \"useBlueprint\": true}";
+
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        config.Should().NotBeNull();
+        config!.UseBlueprint.Should().BeTrue();
+        config.IsNonDwBlueprint.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WithCustomBlueprintPermissions_PreservesAiTeammate()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            UseBlueprint = true,
+            AzureOpenAIName = "aoai-test",
+            NeedAzureOpenAI = true
+        };
+
+        var cloned = config.WithCustomBlueprintPermissions(null);
+
+        cloned.AiTeammate.Should().BeFalse();
+        cloned.UseBlueprint.Should().BeTrue();
+        cloned.AzureOpenAIName.Should().Be("aoai-test");
+        cloned.NeedAzureOpenAI.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region ValidateNonDwMinimal Tests
+
+    [Fact]
+    public void ValidateNonDwMinimal_ValidMinimalConfig_ReturnsNoErrors()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().BeEmpty(
+            because: "a config with valid tenantId, clientAppId (GUID), and agentIdentityDisplayName meets the minimal bootstrap requirements");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingTenantId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*tenantId*",
+            because: "tenantId is required for the bootstrap path to acquire tokens");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingClientAppId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*clientAppId*",
+            because: "clientAppId is required to authenticate against Graph and ARM; an empty value means the well-known app lookup failed");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_NonGuidClientAppId_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "not-a-guid",
+            AgentIdentityDisplayName = "My Agent"
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().NotBeEmpty(
+            because: "clientAppId must be a valid GUID for MSAL to accept it as an application ID");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_MissingAgentIdentityDisplayName_ReturnsError()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = ""
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().ContainMatch("*agentIdentityDisplayName*",
+            because: "agentIdentityDisplayName is required to name the Entra app registration created for the agent identity");
+    }
+
+    [Fact]
+    public void ValidateNonDwMinimal_DoesNotRequireSubscriptionId()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "f2d098d5-09d2-40e1-a7b0-d9fff1ace230",
+            AgentIdentityDisplayName = "My Agent"
+            // SubscriptionId, ResourceGroup, DeploymentProjectPath intentionally omitted
+        };
+
+        var errors = config.ValidateNonDwMinimal();
+
+        errors.Should().BeEmpty(
+            because: "bootstrap (--agent-name) path uses external hosting — no Azure subscription or deployment path is required");
     }
 
     #endregion

@@ -11,6 +11,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using System.Linq;
 using System.Threading;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
@@ -45,14 +46,15 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IConfirmationProvider confirmationProvider)
     {
         var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
-        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider));
         permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
         permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
@@ -69,7 +71,8 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IConfirmationProvider confirmationProvider)
     {
         var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
@@ -88,11 +91,17 @@ internal static class PermissionsSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
+        var removeLegacyScopesOption = new Option<bool>(
+            "--remove-legacy-scopes",
+            description: "Remove shared ATG audience scopes from the blueprint.\n" +
+                         "Only use after V2 SDK is confirmed live — agents on V1 SDK will lose tool access.");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
+        command.AddOption(removeLegacyScopesOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (config, verbose, dryRun, removeLegacyScopes) =>
         {
             var setupConfig = await configService.LoadAsync(config.FullName);
 
@@ -117,17 +126,64 @@ internal static class PermissionsSubcommand
                 await RequirementsSubcommand.RunChecksOrExitAsync(mcpChecks, setupConfig, logger, CancellationToken.None);
             }
 
+            // Confirmation gate for --remove-legacy-scopes — requires explicit opt-in
+            if (removeLegacyScopes && !dryRun)
+            {
+                logger.LogWarning(
+                    "WARNING: --remove-legacy-scopes will permanently remove the shared ATG audience ({AtgAppId}) " +
+                    "from the agent blueprint. Any agent instances still using the old SDK will immediately lose " +
+                    "access to MCP tools. Ensure all agent instances have been upgraded to the new SDK before proceeding.",
+                    McpConstants.WorkIQToolsProdAppId);
+
+                var confirmed = await confirmationProvider.ConfirmAsync("Continue? [y/N]: ");
+                if (!confirmed)
+                {
+                    logger.LogInformation("Aborted.");
+                    return;
+                }
+            }
+
             if (dryRun)
             {
-                // Read scopes from ToolingManifest.json
                 var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
-                var toolingScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
 
                 logger.LogInformation("DRY RUN: Configure MCP Permissions");
-                logger.LogInformation("Would configure OAuth2 grants and inheritable permissions:");
-                logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Resource: Agent 365 Tools ({Environment})", setupConfig.Environment);
-                logger.LogInformation("  - Scopes: {Scopes}", string.Join(", ", toolingScopes));
+                logger.LogInformation("  Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
+
+                var dryRunAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                if (removeLegacyScopes)
+                {
+                    // Parse once, then split into removed (ATG) vs remaining (non-ATG) in memory.
+                    var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false, resolvedAtgAppId: dryRunAtgAppId);
+                    var remainingScopes = allScopes
+                        .Where(kvp => !string.Equals(kvp.Key, dryRunAtgAppId, StringComparison.OrdinalIgnoreCase))
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+                    var removedAudiences = allScopes.Keys
+                        .Where(k => !remainingScopes.ContainsKey(k))
+                        .ToList();
+
+                    if (removedAudiences.Count > 0)
+                    {
+                        logger.LogInformation("Would REMOVE (--remove-legacy-scopes):");
+                        foreach (var audience in removedAudiences)
+                            logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
+                                audience, string.Join(", ", allScopes[audience]));
+                    }
+
+                    logger.LogInformation("Would CONFIGURE:");
+                    foreach (var (audience, scopes) in remainingScopes)
+                        logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
+                            audience, string.Join(", ", scopes));
+                }
+                else
+                {
+                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false, resolvedAtgAppId: dryRunAtgAppId);
+                    logger.LogInformation("Would configure OAuth2 grants and inheritable permissions:");
+                    foreach (var (audience, scopes) in scopesByAudience)
+                        logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
+                            audience, string.Join(", ", scopes));
+                }
+
                 return;
             }
 
@@ -139,9 +195,10 @@ internal static class PermissionsSubcommand
                 graphApiService,
                 blueprintService,
                 setupConfig,
-                false);
+                false,
+                removeLegacyAtgScopes: removeLegacyScopes);
 
-        }, configOption, verboseOption, dryRunOption);
+        }, configOption, verboseOption, dryRunOption, removeLegacyScopesOption);
 
         return command;
     }
@@ -211,7 +268,7 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
                 logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
-                logger.LogInformation("  - Observability API: user_impersonation, {OtelScope}", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 return;
             }
@@ -354,7 +411,8 @@ internal static class PermissionsSubcommand
         Models.Agent365Config setupConfig,
         bool iSetupAll,
         SetupResults? setupResults = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool removeLegacyAtgScopes = false)
     {
         logger.LogInformation("");
         logger.LogInformation("Configuring MCP server permissions...");
@@ -363,14 +421,37 @@ internal static class PermissionsSubcommand
         try
         {
             var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
-            var toolingScopes = await ReadMcpScopesAsync(manifestPath, logger);
 
-            var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+            var atgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+            var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(
+                manifestPath, excludeLegacyAtg: removeLegacyAtgScopes, resolvedAtgAppId: atgAppId);
 
-            var specs = new List<ResourcePermissionSpec>
+            // Validate all scopes are known: V1 pattern, V2 value, or metadata scope
+            var unknownScopes = scopesByAudience.Values
+                .SelectMany(s => s)
+                .Where(s =>
+                    !McpConstants.IsV1Scope(s) &&
+                    !string.Equals(s, McpConstants.V2ScopeValue, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(s, "McpServersMetadata.Read.All", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (unknownScopes.Count > 0)
             {
-                new ResourcePermissionSpec(resourceAppId, "Agent 365 Tools", toolingScopes, SetInheritable: true),
-            };
+                foreach (var unknownScope in unknownScopes)
+                    logger.LogError("Unknown scope '{Scope}'. Re-run: a365 develop add-mcp-servers.", unknownScope);
+                return false;
+            }
+
+            var specs = scopesByAudience
+                .Select(kvp => new ResourcePermissionSpec(
+                    kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: true))
+                .ToList();
+
+            logger.LogInformation("Configuring permissions for {Count} resource(s):", specs.Count);
+            foreach (var spec in specs)
+                logger.LogInformation("  {AppId} — {Scopes}",
+                    spec.ResourceAppId, string.Join(", ", spec.Scopes));
 
             var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 graphApiService, blueprintService, setupConfig,
@@ -479,14 +560,23 @@ internal static class PermissionsSubcommand
         CancellationToken cancellationToken)
     {
         // Resource app IDs owned by standard setup subcommands — never remove these
+        var envAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
         var protectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment),
+            envAtgAppId,
             ConfigConstants.MessagingBotApiAppId,
             ConfigConstants.ObservabilityApiAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };
+
+        // Protect V2 MCP audience GUIDs — these are managed by 'setup permissions mcp',
+        // not by custom-permission reconciliation. Without this, re-running 'setup blueprint'
+        // would treat them as stale and remove them.
+        var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
+        var mcpAudiences = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, resolvedAtgAppId: envAtgAppId);
+        foreach (var audienceId in mcpAudiences.Keys)
+            protectedIds.Add(audienceId);
 
         // Must match RequiredPermissionGrantScopes exactly so the PowerShell token acquired
         // for inheritable permissions is reused (same cache key) rather than triggering

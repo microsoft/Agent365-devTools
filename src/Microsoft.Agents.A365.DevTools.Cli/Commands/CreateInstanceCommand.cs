@@ -107,9 +107,75 @@ public class CreateInstanceCommand
                 logger.LogInformation("     Agent User ID: {AgenticUserId}", instanceConfig.AgenticUserId ?? "(not set)");
                 logger.LogInformation("     Agent User Principal Name: {AgentUserPrincipalName}", instanceConfig.AgentUserPrincipalName ?? "(not set)");
 
-                // The runner grants required permissions (from constants) merged with
-                // resourceConsents from the generated config via consentType=AllPrincipals.
-                logger.LogInformation("Permission grants configured for agent identity");
+                // Admin consent for MCP scopes (oauth2PermissionGrants)
+                logger.LogInformation("Granting MCP scopes to Agent Identity via oauth2PermissionGrants");
+
+                var manifestPath = Path.Combine(instanceConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
+                var scopesForAgent = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+
+                // clientId must be the *service principal objectId* of the agentic app
+                var agenticAppSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(
+                    instanceConfig.TenantId,
+                    instanceConfig.AgenticAppId ?? string.Empty
+                ) ?? throw new InvalidOperationException($"Service Principal not found for agentic app Id {instanceConfig.AgenticAppId}");
+
+                var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(instanceConfig.Environment);
+                var agent365ToolsResourceSpObjectId = await graphApiService.LookupServicePrincipalByAppIdAsync(instanceConfig.TenantId, resourceAppId)
+                    ?? throw new InvalidOperationException("Agent 365 Tools Service Principal not found for appId " + resourceAppId);
+
+                var mcpGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+                    instanceConfig.TenantId,
+                    agenticAppSpObjectId,
+                    agent365ToolsResourceSpObjectId,
+                    scopesForAgent
+                );
+
+                if (!mcpGrantOk)
+                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity (MCP scopes).");
+
+                logger.LogInformation("");
+                logger.LogInformation("Granting Bot Framework API scopes to Agent Identity");
+
+                var botApiResourceSpObjectId = await graphApiService.EnsureServicePrincipalForAppIdAsync(
+                    instanceConfig.TenantId,
+                    ConfigConstants.MessagingBotApiAppId)
+                    ?? throw new InvalidOperationException(
+                        $"Failed to resolve service principal for Messaging Bot API (appId {ConfigConstants.MessagingBotApiAppId}).");
+
+                // Grant oauth2PermissionGrants: *agent identity SP* -> Messaging Bot API SP
+                var botApiGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+                    instanceConfig.TenantId,
+                    agenticAppSpObjectId,
+                    botApiResourceSpObjectId,
+                    new[] { "Authorization.ReadWrite", "user_impersonation" });
+
+                if (!botApiGrantOk)
+                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Messaging Bot API.");
+
+                var observabilityApiResourceSpObjectId = await graphApiService.EnsureServicePrincipalForAppIdAsync(
+                    instanceConfig.TenantId,
+                    ConfigConstants.ObservabilityApiAppId)
+                    ?? throw new InvalidOperationException(
+                        $"Failed to resolve service principal for Observability API (appId {ConfigConstants.ObservabilityApiAppId}).");
+
+                // Grant oauth2PermissionGrants: *agent identity SP* -> Observability API SP
+                var observabilityApiGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+                    instanceConfig.TenantId,
+                    agenticAppSpObjectId,
+                    observabilityApiResourceSpObjectId,
+                    new[] { "user_impersonation", ConfigConstants.ObservabilityApiOtelWriteScope });
+
+                if (!observabilityApiGrantOk)
+                    logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Observability API.");
+
+                var adminConsentGrantOk = mcpGrantOk && botApiGrantOk && observabilityApiGrantOk;
+                if (!adminConsentGrantOk)
+                {
+                    logger.LogError("Admin consent for Agent Identity completed with errors. One or more required API grants failed and follow-up action is required.");
+                    throw new InvalidOperationException("Admin consent for Agent Identity did not complete successfully for all required API grants.");
+                }
+
+                logger.LogInformation("Admin consent granted for Agent Identity completed successfully");
 
                 // Register agent with Microsoft Graph API
                 logger.LogInformation("     Registering agent with Microsoft Graph API");
@@ -123,9 +189,6 @@ public class CreateInstanceCommand
                 var agentUserConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
                 string? agenticAppId = instanceConfig.AgenticAppId;
                 string? agenticUserId = instanceConfig.AgenticUserId;
-                var baseEndpointName = $"{instanceConfig.WebAppName}-endpoint";
-                var endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
-
                 if (File.Exists(agentUserConfigPath))
                 {
                     logger.LogInformation("     - Reading agent identity from a365.generated.config.json");
