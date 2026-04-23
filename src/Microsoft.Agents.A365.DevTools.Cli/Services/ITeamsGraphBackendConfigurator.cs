@@ -18,13 +18,17 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
         /// <param name="messagingEndpoint">The HTTPS callback URL.</param>
         /// <param name="correlationId">Optional correlation ID for request tracing.</param>
         /// <returns>
+        /// A tuple of (Result, FailureReason).
+        /// Result is:
         /// <see cref="Models.EndpointRegistrationResult.Created"/> on success,
         /// <see cref="Models.EndpointRegistrationResult.AlreadyExists"/> if the server reports a duplicate,
         /// <see cref="Models.EndpointRegistrationResult.SkippedDueToRollout"/> if the server rejects the
         /// new Teams Graph contract (rollout still in progress — non-fatal),
         /// <see cref="Models.EndpointRegistrationResult.Failed"/> otherwise.
+        /// FailureReason is "NotOwner" when the server rejected with a "not the owner" 403-wrapped-as-400,
+        /// "Other" for other Failed outcomes, null otherwise.
         /// </returns>
-        Task<Models.EndpointRegistrationResult> SetBackendConfigurationAsync(
+        Task<(Models.EndpointRegistrationResult Result, string? FailureReason)> SetBackendConfigurationAsync(
             string agentBlueprintId,
             string messagingEndpoint,
             string? correlationId = null);

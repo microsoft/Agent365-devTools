@@ -2169,7 +2169,9 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Registering blueprint messaging endpoint...");
         logger.LogInformation("");
 
-        var result = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+        // Only the Status value is relevant here — inline CLI output for --endpoint-only doesn't
+        // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
+        var (result, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
             setupConfig, logger, backendConfigurator, correlationId: correlationId);
 
         setupConfig.Completed = true;
@@ -2187,8 +2189,7 @@ internal static class BlueprintSubcommand
                 logger.LogInformation("Blueprint messaging endpoint already registered");
                 break;
             case Models.EndpointRegistrationResult.SkippedDueToRollout:
-                logger.LogInformation("Teams registration not done (MCP Platform rollout in progress).");
-                logger.LogInformation("To configure the messaging endpoint manually, see:");
+                logger.LogInformation("Action required: register the messaging endpoint in the Teams Developer Portal:");
                 logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
                 break;
             default:
@@ -2276,7 +2277,9 @@ internal static class BlueprintSubcommand
         logger.LogInformation("");
         logger.LogInformation("Registering new messaging endpoint...");
 
-        var registerResult = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+        // Only the Status value is relevant here — inline CLI output for --update-endpoint doesn't
+        // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
+        var (registerResult, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
             setupConfig, logger, backendConfigurator, newEndpointUrl, correlationId: correlationId);
 
         if (registerResult == Models.EndpointRegistrationResult.Failed)
@@ -2286,8 +2289,7 @@ internal static class BlueprintSubcommand
 
         if (registerResult == Models.EndpointRegistrationResult.SkippedDueToRollout)
         {
-            logger.LogInformation("Teams registration not done (MCP Platform rollout in progress).");
-            logger.LogInformation("To configure the messaging endpoint manually, see:");
+            logger.LogInformation("Action required: register the messaging endpoint in the Teams Developer Portal:");
             logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
         }
 

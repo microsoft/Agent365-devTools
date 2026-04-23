@@ -3,7 +3,12 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
@@ -122,5 +127,175 @@ public class AllSubcommandTests : IDisposable
             because: "tenant ID comparison must be case-insensitive");
         Directory.GetFiles(_tempDir, "*.bak.*").Should().BeEmpty(
             because: "no backup should be created when tenants match case-insensitively");
+    }
+
+    // -----------------------------------------------------------------------
+    // ExecuteMessagingEndpointStepAsync
+    // -----------------------------------------------------------------------
+
+    private static SetupContext BuildMessagingEndpointContext(
+        ITeamsGraphBackendConfigurator backendConfigurator,
+        bool isM365,
+        string? blueprintId = "blueprint-id")
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = blueprintId,
+            AgentIdentityDisplayName = "Test Agent",
+            ClientAppId = "client-app-id",
+            MessagingEndpoint = "https://example.com/api/messages",
+        };
+
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        Func<Task<string?>> noOpLoginHint = () => Task.FromResult<string?>(null);
+
+        var graph = Substitute.ForPartsOf<GraphApiService>(
+            Substitute.For<ILogger<GraphApiService>>(),
+            executor,
+            Substitute.For<IAuthenticationService>(),
+            (System.Net.Http.HttpMessageHandler?)null,
+            (IMicrosoftGraphTokenProvider?)null,
+            noOpLoginHint,
+            (string?)null,
+            (RetryHelper?)null,
+            (TimeSpan?)TimeSpan.Zero);
+
+        return new SetupContext(
+            config: config,
+            results: new SetupResults(),
+            logger: NullLogger.Instance,
+            configFile: new FileInfo("a365.config.json"),
+            generatedConfigPath: "a365.generated.config.json",
+            correlationId: "test-correlation-id",
+            skipInfrastructure: true,
+            skipRequirements: true,
+            cancellationToken: CancellationToken.None,
+            configService: Substitute.For<IConfigService>(),
+            executor: executor,
+            backendConfigurator: backendConfigurator,
+            authValidator: Substitute.For<AzureAuthValidator>(
+                NullLogger<AzureAuthValidator>.Instance, executor),
+            platformDetector: Substitute.ForPartsOf<PlatformDetector>(
+                Substitute.For<ILogger<PlatformDetector>>()),
+            graphApiService: graph,
+            blueprintService: Substitute.ForPartsOf<AgentBlueprintService>(
+                Substitute.For<ILogger<AgentBlueprintService>>(), graph),
+            blueprintLookupService: Substitute.ForPartsOf<BlueprintLookupService>(
+                Substitute.For<ILogger<BlueprintLookupService>>(), graph),
+            federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
+                Substitute.For<ILogger<FederatedCredentialService>>(), graph),
+            clientAppValidator: Substitute.For<IClientAppValidator>(),
+            isM365: isM365,
+            loginHintResolver: noOpLoginHint);
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_WhenNotM365_DoesNotCallConfigurator()
+    {
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        var ctx = BuildMessagingEndpointContext(backend, isM365: false);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        await backend.DidNotReceiveWithAnyArgs().SetBackendConfigurationAsync(
+            default!, default!, default);
+        ctx.Results.MessagingEndpointResult.Should().BeNull(
+            because: "a non-M365 agent must leave the result unset to drive the 'skipped' summary row");
+        ctx.Results.MessagingEndpointRegistered.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_WhenM365ButBlueprintIdMissing_DoesNotCallConfigurator()
+    {
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        var ctx = BuildMessagingEndpointContext(backend, isM365: true, blueprintId: null);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        await backend.DidNotReceiveWithAnyArgs().SetBackendConfigurationAsync(
+            default!, default!, default);
+        ctx.Results.MessagingEndpointResult.Should().BeNull(
+            because: "without a blueprint ID there is nothing to register");
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_WhenConfiguratorReturnsCreated_SetsRegisteredTrue()
+    {
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        backend.SetBackendConfigurationAsync(
+            "blueprint-id",
+            "https://example.com/api/messages",
+            "test-correlation-id")
+            .Returns((EndpointRegistrationResult.Created, (string?)null));
+
+        var ctx = BuildMessagingEndpointContext(backend, isM365: true);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Created);
+        ctx.Results.MessagingEndpointRegistered.Should().BeTrue();
+        ctx.Results.EndpointAlreadyExisted.Should().BeFalse();
+        ctx.Results.MessagingEndpoint.Should().Be("https://example.com/api/messages");
+        ctx.Results.MessagingEndpointFailureReason.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_WhenConfiguratorReturnsSkippedDueToRollout_SetsResultButNotRegistered()
+    {
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        backend.SetBackendConfigurationAsync(
+            "blueprint-id",
+            "https://example.com/api/messages",
+            "test-correlation-id")
+            .Returns((EndpointRegistrationResult.SkippedDueToRollout, (string?)null));
+
+        var ctx = BuildMessagingEndpointContext(backend, isM365: true);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.SkippedDueToRollout);
+        ctx.Results.MessagingEndpointRegistered.Should().BeFalse(
+            because: "SkippedDueToRollout means the server still runs the pre-migration contract — the user must register manually");
+        ctx.Results.MessagingEndpointFailureReason.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_NotOwnerFailure_SetsFailureReasonNotOwner()
+    {
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        backend.SetBackendConfigurationAsync(
+            "blueprint-id",
+            "https://example.com/api/messages",
+            "test-correlation-id")
+            .Returns((EndpointRegistrationResult.Failed, (string?)"NotOwner"));
+
+        var ctx = BuildMessagingEndpointContext(backend, isM365: true);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Failed);
+        ctx.Results.MessagingEndpointFailureReason.Should().Be("NotOwner");
+        ctx.Results.MessagingEndpointRegistered.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_GenericFailure_SetsFailureReasonOther()
+    {
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        backend.SetBackendConfigurationAsync(
+            "blueprint-id",
+            "https://example.com/api/messages",
+            "test-correlation-id")
+            .Returns((EndpointRegistrationResult.Failed, (string?)"Other"));
+
+        var ctx = BuildMessagingEndpointContext(backend, isM365: true);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Failed);
+        ctx.Results.MessagingEndpointFailureReason.Should().Be("Other");
+        ctx.Results.MessagingEndpointRegistered.Should().BeFalse();
     }
 }

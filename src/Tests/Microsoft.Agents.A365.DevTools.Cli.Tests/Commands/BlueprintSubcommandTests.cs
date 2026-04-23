@@ -696,7 +696,7 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask);
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -755,7 +755,7 @@ public class BlueprintSubcommandTests
                 .AndDoes(callInfo => savedConfig = callInfo.Arg<Agent365Config>());
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -810,7 +810,7 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask);
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -873,7 +873,7 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask);
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act - should not throw
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -931,7 +931,7 @@ public class BlueprintSubcommandTests
 
             // Mock endpoint registration returning AlreadyExists status
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.AlreadyExists);
+                .Returns((EndpointRegistrationResult.AlreadyExists, (string?)null));
 
             // Act
             var result = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -996,7 +996,7 @@ public class BlueprintSubcommandTests
                 .AndDoes(callInfo => savedConfig = callInfo.Arg<Agent365Config>());
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -1055,7 +1055,7 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask);
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             var result = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
@@ -1239,7 +1239,7 @@ public class BlueprintSubcommandTests
                 .Returns(true);
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.UpdateEndpointAsync(
@@ -1324,7 +1324,7 @@ public class BlueprintSubcommandTests
                 .Returns(false);
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.UpdateEndpointAsync(
@@ -1379,7 +1379,7 @@ public class BlueprintSubcommandTests
                 .Returns(Task.FromResult(true)); // NotFound = success for pre-create cleanup
 
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.UpdateEndpointAsync(

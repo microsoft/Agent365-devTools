@@ -474,15 +474,61 @@ internal static class SetupHelpers
             }
         }
 
-        // Project settings: step 7 for non-DW, step 6 for DW
-        var settingsStep = isNonDw ? 7 : 6;
+        // Messaging endpoint: step 6 for DW (after Permission Grants at 5),
+        // step 7 for non-DW (after Agent Registration at 6).
+        var endpointStep = isNonDw ? 7 : 6;
+        if (results.BlueprintFailed)
+        {
+            logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + notRun);
+        }
+        else
+        {
+            switch (results.MessagingEndpointResult)
+            {
+                case null:
+                    logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "skipped (non-M365 agent; use --m365 to enable)");
+                    break;
+                case Models.EndpointRegistrationResult.Created:
+                    logger.LogInformation(
+                        DryRunRow(endpointStep, "Messaging endpoint") + "registered   '{Endpoint}'",
+                        results.MessagingEndpoint ?? "unknown");
+                    break;
+                case Models.EndpointRegistrationResult.AlreadyExists:
+                    logger.LogInformation(
+                        DryRunRow(endpointStep, "Messaging endpoint") + "reused       '{Endpoint}'",
+                        results.MessagingEndpoint ?? "unknown");
+                    break;
+                case Models.EndpointRegistrationResult.SkippedDueToRollout:
+                    logger.LogWarning(
+                        DryRunRow(endpointStep, "Messaging endpoint") + "manual config required — see Action Required");
+                    break;
+                case Models.EndpointRegistrationResult.Failed:
+                default:
+                    if (string.Equals(results.MessagingEndpointFailureReason, "NotOwner", StringComparison.Ordinal))
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed (not blueprint owner) — see Action Required");
+                    }
+                    else
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed — see Action Required");
+                    }
+                    break;
+            }
+        }
+
+        // Project settings: step 8 for non-DW, step 7 for DW (pushed down by the messaging endpoint row).
+        var settingsStep = isNonDw ? 8 : 7;
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
         else if (results.ProjectSettingsWritten)
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
 
         // ── Action Required ────────────────────────────────────────────────────
-        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction;
+        var messagingEndpointManualRequired =
+            results.MessagingEndpointResult == Models.EndpointRegistrationResult.SkippedDueToRollout;
+        var messagingEndpointFailureRequired =
+            results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed;
+        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction || messagingEndpointManualRequired || messagingEndpointFailureRequired;
         if (hasActionRequired)
         {
             var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
@@ -527,6 +573,39 @@ internal static class SetupHelpers
                 logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
                 logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $obs.Id -AppRoleId $rid");
+            }
+            if (messagingEndpointManualRequired)
+            {
+                actionCount++;
+                logger.LogInformation("  {N}. Messaging endpoint — automated registration is not available for this tenant yet.", actionCount);
+                logger.LogInformation("     Register it manually in the Teams Developer Portal:");
+                logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+            }
+            if (messagingEndpointFailureRequired)
+            {
+                actionCount++;
+                if (string.Equals(results.MessagingEndpointFailureReason, "NotOwner", StringComparison.Ordinal))
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — you are not an owner of the blueprint, so automated", actionCount);
+                    logger.LogInformation("     registration was refused by the server. To complete this step, either:");
+                    logger.LogInformation("");
+                    logger.LogInformation("     A. Ask the blueprint owner to register the endpoint manually in the Teams");
+                    logger.LogInformation("        Developer Portal:");
+                    logger.LogInformation("          {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+                    logger.LogInformation("");
+                    logger.LogInformation("     B. Ask the blueprint owner to add you as a co-owner, then re-run just");
+                    logger.LogInformation("        the endpoint step (no need to re-run the full setup):");
+                    logger.LogInformation("          a365 setup blueprint --endpoint-only --m365");
+                }
+                else
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — registration failed; see the error above for details.", actionCount);
+                    logger.LogInformation("     To retry after addressing the issue, re-run just the endpoint step:");
+                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                    logger.LogInformation("");
+                    logger.LogInformation("     Or configure the endpoint manually in the Teams Developer Portal:");
+                    logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+                }
             }
         }
 
@@ -1125,11 +1204,12 @@ internal static class SetupHelpers
     /// <param name="overrideEndpointUrl">Optional endpoint URL override (used by --update-endpoint).</param>
     /// <param name="correlationId">Optional correlation ID for tracing.</param>
     /// <returns>
-    /// The result from the Teams Graph call. Callers are expected to check for
-    /// <see cref="Models.EndpointRegistrationResult.SkippedDueToRollout"/> to surface the
-    /// rollout-in-progress fallback messaging in their summary.
+    /// A tuple of (Result, FailureReason) from the Teams Graph call. Callers are expected to
+    /// check for <see cref="Models.EndpointRegistrationResult.SkippedDueToRollout"/> to surface
+    /// the rollout-in-progress fallback messaging in their summary. FailureReason is "NotOwner"
+    /// or "Other" when Result is Failed, null otherwise.
     /// </returns>
-    public static async Task<Models.EndpointRegistrationResult> RegisterBlueprintMessagingEndpointAsync(
+    public static async Task<(Models.EndpointRegistrationResult Result, string? FailureReason)> RegisterBlueprintMessagingEndpointAsync(
         Agent365Config setupConfig,
         ILogger logger,
         ITeamsGraphBackendConfigurator backendConfigurator,
@@ -1176,7 +1256,7 @@ internal static class SetupHelpers
             {
                 logger.LogWarning("MessagingEndpoint not configured. Skipping endpoint registration.");
                 logger.LogWarning("Configure 'messagingEndpoint' in a365.config.json and re-run 'a365 setup blueprint' to register the endpoint.");
-                return Models.EndpointRegistrationResult.Failed;
+                return (Models.EndpointRegistrationResult.Failed, "Other");
             }
 
             if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out _) ||
@@ -1194,7 +1274,7 @@ internal static class SetupHelpers
         logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
         logger.LogInformation("     * Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
-        var result = await backendConfigurator.SetBackendConfigurationAsync(
+        var (result, failureReason) = await backendConfigurator.SetBackendConfigurationAsync(
             agentBlueprintId: setupConfig.AgentBlueprintId,
             messagingEndpoint: messagingEndpoint,
             correlationId: correlationId);
@@ -1207,7 +1287,7 @@ internal static class SetupHelpers
             setupConfig.BotMessagingEndpoint = messagingEndpoint;
         }
 
-        return result;
+        return (result, failureReason);
     }
 
 }

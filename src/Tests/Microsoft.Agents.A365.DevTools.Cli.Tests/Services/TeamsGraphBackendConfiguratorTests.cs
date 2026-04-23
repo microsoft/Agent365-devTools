@@ -38,12 +38,13 @@ public class TeamsGraphBackendConfiguratorTests
         _configService.LoadAsync().Returns(Task.FromResult(new Cli.Models.Agent365Config()));
 
         // Act
-        var result = await _configurator.SetBackendConfigurationAsync(
+        var (result, failureReason) = await _configurator.SetBackendConfigurationAsync(
             agentBlueprintId: "11111111-1111-1111-1111-111111111111",
             messagingEndpoint: "https://example.com/api/messages");
 
         // Assert
         Assert.Equal(EndpointRegistrationResult.Failed, result);
+        Assert.Equal("Other", failureReason);
     }
 
     [Fact]

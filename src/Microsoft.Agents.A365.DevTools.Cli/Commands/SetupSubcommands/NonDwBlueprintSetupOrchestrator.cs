@@ -449,6 +449,9 @@ internal static class NonDwBlueprintSetupOrchestrator
             ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
         }
 
+        // Step 6.5: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
         // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
         ctx.Logger.LogInformation("Updating project settings...");
         using (ctx.Logger.Indent())

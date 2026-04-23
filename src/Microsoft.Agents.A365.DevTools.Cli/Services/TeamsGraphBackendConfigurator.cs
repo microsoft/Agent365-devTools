@@ -34,7 +34,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     }
 
     /// <inheritdoc />
-    public async Task<EndpointRegistrationResult> SetBackendConfigurationAsync(
+    public async Task<(EndpointRegistrationResult Result, string? FailureReason)> SetBackendConfigurationAsync(
         string agentBlueprintId,
         string messagingEndpoint,
         string? correlationId = null)
@@ -51,7 +51,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             if (string.IsNullOrEmpty(tenantId))
             {
                 _logger.LogError("Could not determine tenant ID for backend configuration");
-                return EndpointRegistrationResult.Failed;
+                return (EndpointRegistrationResult.Failed, "Other");
             }
 
             var currentUser = await AzCliHelper.ResolveLoginHintAsync()
@@ -77,7 +77,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
-                    return EndpointRegistrationResult.Failed;
+                    return (EndpointRegistrationResult.Failed, "Other");
                 }
 
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
@@ -89,7 +89,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 if (response.IsSuccessStatusCode)
                 {
                     _logger.LogInformation("Backend configuration set successfully.");
-                    return EndpointRegistrationResult.Created;
+                    return (EndpointRegistrationResult.Created, null);
                 }
 
                 var errorContent = await response.Content.ReadAsStringAsync();
@@ -97,7 +97,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 if (response.StatusCode == HttpStatusCode.Conflict)
                 {
                     _logger.LogInformation("Backend configuration already exists.");
-                    return EndpointRegistrationResult.AlreadyExists;
+                    return (EndpointRegistrationResult.AlreadyExists, null);
                 }
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
@@ -119,30 +119,30 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 if (IsContractMismatchResponse(response, errorContent))
                 {
                     LogContractMismatch(errorContent);
-                    return EndpointRegistrationResult.SkippedDueToRollout;
+                    return (EndpointRegistrationResult.SkippedDueToRollout, null);
                 }
 
                 _logger.LogError("Failed to set backend configuration. Status: {Status}", response.StatusCode);
                 _logger.LogError("Response: {Error}", errorContent);
-                return EndpointRegistrationResult.Failed;
+                return (EndpointRegistrationResult.Failed, ClassifyFailureReason(errorContent));
             }
 
-            return EndpointRegistrationResult.Failed;
+            return (EndpointRegistrationResult.Failed, "Other");
         }
         catch (AzureAuthenticationException ex)
         {
             _logger.LogError("Authentication failed: {Message}", ex.IssueDescription);
-            return EndpointRegistrationResult.Failed;
+            return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
         catch (JsonException ex)
         {
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
-            return EndpointRegistrationResult.Failed;
+            return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error setting backend configuration: {Message}", ex.Message);
-            return EndpointRegistrationResult.Failed;
+            return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
     }
 
@@ -302,18 +302,18 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     /// </summary>
     private void LogContractMismatch(string errorContent)
     {
-        var message = "Server does not yet recognize the Teams Graph backend configuration contract — " +
-                      "MCP Platform rollout is still in progress on this environment. Skipping registration.";
-
         if (DateTime.UtcNow < ConfigConstants.TeamsGraphRolloutCompleteOnUtc)
         {
-            _logger.LogInformation("{Message}", message);
+            _logger.LogInformation(
+                "Automated messaging endpoint registration is not available for this tenant yet. " +
+                "You'll need to configure it manually.");
         }
         else
         {
             _logger.LogWarning(
-                "{Message} (Rollout was expected to complete by {CutoffUtc:O}.)",
-                message,
+                "Automated messaging endpoint registration is still returning a compatibility error. " +
+                "This was expected to be resolved by {CutoffUtc:O}. File an issue if this persists. " +
+                "For now, configure the endpoint manually in the Teams Developer Portal.",
                 ConfigConstants.TeamsGraphRolloutCompleteOnUtc);
         }
 
@@ -338,6 +338,23 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         }
         catch { /* ignore parse errors */ }
         return null;
+    }
+
+    /// <summary>
+    /// Classifies a failure response body into an actionable reason for the setup summary.
+    /// Returns "NotOwner" when the server response indicates the caller is not a blueprint
+    /// owner (Teams Graph's 403 is wrapped as a 400 by MCP Platform and contains the phrase
+    /// "not the owner"). Returns "Other" for any other failure content.
+    /// </summary>
+    private static string ClassifyFailureReason(string? errorContent)
+    {
+        if (!string.IsNullOrEmpty(errorContent) &&
+            errorContent.Contains("not the owner", StringComparison.OrdinalIgnoreCase))
+        {
+            return "NotOwner";
+        }
+
+        return "Other";
     }
 
     private static bool ResponseDetailsContains(string? content, string substring)

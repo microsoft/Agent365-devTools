@@ -67,20 +67,29 @@ a365 setup permissions     # Configure permissions only
 
 ### Messaging endpoint (M365 agents)
 
-The `--m365` flag opts into registering the messaging endpoint with Teams Graph via MCP Platform. It is **off by default** — without it, `--endpoint-only` and `--update-endpoint` skip the API call and point you at the Teams Developer Portal for manual configuration.
+The `--m365` flag opts into registering the messaging endpoint with Teams Graph via MCP Platform. It is **off by default** — without it, `--endpoint-only`, `--update-endpoint`, and the messaging-endpoint step in `setup all` skip the API call and point you at the Teams Developer Portal for manual configuration.
 
 ```bash
-# Register the messaging endpoint for an M365 agent (POST createAgentBlueprint)
+# Full setup including messaging endpoint registration
+a365 setup all --m365
+
+# Register the messaging endpoint only (existing blueprint)
 a365 setup blueprint --endpoint-only --m365
 
 # Update the endpoint URL (clears and re-registers)
 a365 setup blueprint --update-endpoint https://your-host.example.com/api/messages --m365
 
-# Non-M365 host: CLI prints the Teams Developer Portal link and exits without calling the API
+# Non-M365 agent: CLI prints the Teams Developer Portal link and skips the API call
 a365 setup blueprint --endpoint-only
 ```
 
-If the MCP Platform environment you're hitting is still on the pre-migration contract (during the 2026-05-01 rollout window), the CLI logs "Teams registration not done" at INFO level and still points at the Teams Developer Portal as a manual fallback — it does not fail the command.
+When the server on a given environment is still on the pre-migration contract (during the 2026-05-01 rollout window), the CLI logs:
+
+```
+Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually.
+```
+
+and the `a365 setup all` summary includes an "Action Required" entry with the Teams Developer Portal URL. The command does not fail — other setup steps still complete. After 2026-05-01 the log escalates to a warning with a diagnostic hint so operators notice if the condition persists.
 
 ---
 

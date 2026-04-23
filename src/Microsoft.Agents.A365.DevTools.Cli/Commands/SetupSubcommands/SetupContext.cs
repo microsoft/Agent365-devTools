@@ -52,6 +52,13 @@ internal sealed class SetupContext
     public bool IsBootstrap { get; }
 
     /// <summary>
+    /// When true, the agent is treated as an M365 agent and the messaging endpoint is registered
+    /// with Teams Graph via MCP Platform. When false (the default), endpoint registration is
+    /// skipped — non-M365 agents should configure their endpoint in the Teams Developer Portal.
+    /// </summary>
+    public bool IsM365 { get; }
+
+    /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
     /// Null in production — injected as a no-op in tests to avoid spawning 'az account show'.
     /// </summary>
@@ -99,6 +106,7 @@ internal sealed class SetupContext
         IClientAppValidator clientAppValidator,
         bool agentInstanceOnly = false,
         bool isBootstrap = false,
+        bool isM365 = false,
         Func<Task<string?>>? loginHintResolver = null,
         IConfirmationProvider? confirmationProvider = null)
     {
@@ -113,6 +121,7 @@ internal sealed class SetupContext
         CancellationToken = cancellationToken;
         AgentInstanceOnly = agentInstanceOnly;
         IsBootstrap = isBootstrap;
+        IsM365 = isM365;
         ConfigService = configService;
         Executor = executor;
         BackendConfigurator = backendConfigurator;

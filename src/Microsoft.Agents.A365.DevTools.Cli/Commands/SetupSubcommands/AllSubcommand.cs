@@ -131,6 +131,11 @@ internal static class AllSubcommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'.");
 
+        var m365Option = new Option<bool>(
+            "--m365",
+            description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint with Teams Graph via MCP Platform. " +
+                        "Default is false (opt-in); non-M365 agents should configure their endpoint in the Teams Developer Portal.");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
@@ -140,6 +145,7 @@ internal static class AllSubcommand
         command.AddOption(agentInstanceOnlyOption);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(m365Option);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -151,6 +157,7 @@ internal static class AllSubcommand
             var agentInstanceOnly = context.ParseResult.GetValueForOption(agentInstanceOnlyOption);
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var isM365 = context.ParseResult.GetValueForOption(m365Option);
             var ct = context.GetCancellationToken();
 
             // Generate correlation ID at workflow entry point
@@ -274,6 +281,7 @@ internal static class AllSubcommand
                     clientAppValidator: clientAppValidator,
                     agentInstanceOnly: agentInstanceOnly,
                     isBootstrap: isBootstrap,
+                    isM365: isM365,
                     confirmationProvider: confirmationProvider);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
@@ -364,7 +372,8 @@ internal static class AllSubcommand
                     blueprintService: blueprintService,
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
-                    clientAppValidator: clientAppValidator);
+                    clientAppValidator: clientAppValidator,
+                    isM365: isM365);
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -382,6 +391,9 @@ internal static class AllSubcommand
                 SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
+
+                // Step 4: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
+                await ExecuteMessagingEndpointStepAsync(ctx);
 
                 // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
                 await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -601,6 +613,59 @@ internal static class AllSubcommand
             ctx.Results.AdminConsentGranted = false;
             ctx.Results.Errors.Add($"Permissions: {permEx.Message}");
             ctx.Logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
+        }
+    }
+
+    /// <summary>
+    /// Step — Registers the messaging endpoint with Teams Graph via MCP Platform when
+    /// <see cref="SetupContext.IsM365"/> is true. No-op for non-M365 agents; those users
+    /// are expected to configure the endpoint manually in the Teams Developer Portal.
+    /// <para>
+    /// Non-fatal: <see cref="SetupValidationException"/> is caught, logged, and added to
+    /// <see cref="SetupResults.Warnings"/> so setup continues and the summary surfaces the failure.
+    /// </para>
+    /// </summary>
+    internal static async Task ExecuteMessagingEndpointStepAsync(SetupContext ctx)
+    {
+        // Not an M365 agent — leave MessagingEndpointResult null so the summary shows "skipped".
+        if (!ctx.IsM365)
+            return;
+
+        // Blueprint step failed; there is no blueprint to attach an endpoint to.
+        if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
+            return;
+
+        try
+        {
+            var (result, failureReason) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+                ctx.Config,
+                ctx.Logger,
+                ctx.BackendConfigurator,
+                correlationId: ctx.CorrelationId);
+
+            ctx.Results.MessagingEndpointResult = result;
+            ctx.Results.MessagingEndpoint = ctx.Config.BotMessagingEndpoint ?? ctx.Config.MessagingEndpoint;
+
+            if (result == Models.EndpointRegistrationResult.Created ||
+                result == Models.EndpointRegistrationResult.AlreadyExists)
+            {
+                ctx.Results.MessagingEndpointRegistered = true;
+                ctx.Results.EndpointAlreadyExisted = result == Models.EndpointRegistrationResult.AlreadyExists;
+            }
+            else if (result == Models.EndpointRegistrationResult.Failed)
+            {
+                ctx.Results.MessagingEndpointFailureReason = failureReason;
+            }
+        }
+        catch (SetupValidationException ex)
+        {
+            // Configuration problem (e.g. invalid HTTPS URL, missing endpoint). Don't rethrow —
+            // setup should continue; surface the failure in the summary as a warning.
+            ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
+            ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+            ctx.Results.MessagingEndpointFailureReason = "Other";
+            ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
+            ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
         }
     }
 
