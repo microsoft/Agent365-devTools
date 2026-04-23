@@ -141,8 +141,10 @@ public class CleanupCommand
 
         var m365Option = new Option<bool>(
             new[] { "--m365" },
-            description: "Treat this agent as an M365 agent. When set, clears the messaging endpoint " +
-                        "from Teams Graph via MCP Platform. Default is false (opt-in).");
+            description: "Only meaningful with --endpoint-only. When set, clears the messaging endpoint from " +
+                        "Teams Graph via MCP Platform. Default is false (opt-in). Ignored (with a warning) " +
+                        "for full blueprint cleanup, since deleting the blueprint application cascades to " +
+                        "the backend configuration on the server side.");
 
         command.AddOption(configOption);
         command.AddOption(verboseOption);
@@ -182,6 +184,17 @@ public class CleanupCommand
 
                     await ExecuteEndpointOnlyCleanupAsync(logger, config, backendConfigurator, correlationId: correlationId);
                     return;
+                }
+
+                // Full cleanup path — --m365 has no effect here because blueprint deletion cascades
+                // the backend configuration on the server side. Warn the user so they aren't misled.
+                if (isM365)
+                {
+                    logger.LogWarning(
+                        "--m365 has no effect on full blueprint cleanup. The Teams Graph backend " +
+                        "configuration is removed automatically when the blueprint is deleted. " +
+                        "Use 'a365 cleanup blueprint --endpoint-only --m365' to clear the endpoint " +
+                        "while preserving the blueprint.");
                 }
 
                 // Full blueprint cleanup with cascade instance deletion
@@ -410,25 +423,11 @@ public class CleanupCommand
 
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
-                // Clearing the Teams Graph backend configuration is only applicable to M365 agents.
-                bool endpointDeleted = true;
-                try
-                {
-                    if (isM365)
-                    {
-                        endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId);
-                    }
-                }
-                finally
-                {
-                    // Always emit orphan summary before returning, regardless of endpoint deletion outcome
-                    PrintOrphanSummary(logger, failedResources);
-                }
-
-                if (!endpointDeleted)
-                {
-                    return;
-                }
+                // Teams Graph backend configuration is a child resource of the blueprint and is
+                // removed on the server side when the blueprint is deleted. No separate clear
+                // call is needed here. Use `a365 cleanup blueprint --endpoint-only --m365` to
+                // clear just the backend configuration while preserving the blueprint.
+                PrintOrphanSummary(logger, failedResources);
 
                 // Clear configuration after successful blueprint deletion
                 logger.LogInformation("");

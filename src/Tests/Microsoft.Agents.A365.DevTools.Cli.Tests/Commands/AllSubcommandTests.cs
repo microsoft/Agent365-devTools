@@ -207,7 +207,7 @@ public class AllSubcommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteMessagingEndpointStepAsync_WhenM365ButBlueprintIdMissing_DoesNotCallConfigurator()
+    public async Task ExecuteMessagingEndpointStepAsync_WhenM365ButBlueprintIdMissing_RecordsBlueprintMissingFailure()
     {
         var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
         var ctx = BuildMessagingEndpointContext(backend, isM365: true, blueprintId: null);
@@ -216,8 +216,15 @@ public class AllSubcommandTests : IDisposable
 
         await backend.DidNotReceiveWithAnyArgs().SetBackendConfigurationAsync(
             default!, default!, default);
-        ctx.Results.MessagingEndpointResult.Should().BeNull(
-            because: "without a blueprint ID there is nothing to register");
+        ctx.Results.MessagingEndpointResult.Should().Be(
+            EndpointRegistrationResult.Failed,
+            because: "the step must record a distinct failure state so the summary doesn't misreport it as 'skipped (non-M365 agent)' — null is reserved for non-M365");
+        ctx.Results.MessagingEndpointFailureReason.Should().Be(
+            "BlueprintMissing",
+            because: "a dedicated reason code lets the summary point the user at the blueprint step rather than generic retry guidance");
+        ctx.Results.Warnings.Should().ContainSingle(
+            w => w.Contains("agent blueprint ID is missing", StringComparison.OrdinalIgnoreCase),
+            because: "the operator needs a warning surfaced in the summary explaining why the step was skipped");
     }
 
     [Fact]

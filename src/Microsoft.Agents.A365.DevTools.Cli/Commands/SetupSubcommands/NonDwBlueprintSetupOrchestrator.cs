@@ -30,7 +30,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
 
@@ -95,8 +95,22 @@ internal static class NonDwBlueprintSetupOrchestrator
         else
             logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
 
-        // 7. Project settings
-        logger.LogInformation(SetupHelpers.DryRunRow(7, "Project settings") + "write to appsettings.json");
+        // 7. Messaging endpoint (M365 opt-in)
+        if (isM365)
+        {
+            var endpointForDisplay = config.MessagingEndpoint;
+            var endpointDetail = string.IsNullOrWhiteSpace(endpointForDisplay)
+                ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
+                : $"register via Teams Graph: {endpointForDisplay}";
+            logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
+        }
+        else
+        {
+            logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + "skip (non-M365 agent; pass --m365 to enable)");
+        }
+
+        // 8. Project settings
+        logger.LogInformation(SetupHelpers.DryRunRow(8, "Project settings") + "write to appsettings.json");
 
         logger.LogInformation("");
         logger.LogInformation("No changes will be made. Run without --dry-run to apply.");

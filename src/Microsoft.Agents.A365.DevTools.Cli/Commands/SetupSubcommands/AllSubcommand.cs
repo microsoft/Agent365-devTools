@@ -247,7 +247,7 @@ internal static class AllSubcommand
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365);
                     return;
                 }
 
@@ -301,7 +301,7 @@ internal static class AllSubcommand
                         : await configService.LoadAsync(config.FullName);
                 }
                 catch { /* config is optional for dry-run display */ }
-                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig);
+                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365);
                 return;
             }
 
@@ -631,9 +631,18 @@ internal static class AllSubcommand
         if (!ctx.IsM365)
             return;
 
-        // Blueprint step failed; there is no blueprint to attach an endpoint to.
+        // Blueprint step failed; there is no blueprint to attach an endpoint to. Record this as
+        // a distinct Failed + "BlueprintMissing" so the summary doesn't mislead the user with the
+        // "non-M365 agent" wording reserved for null.
         if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
+        {
+            ctx.Logger.LogWarning("Messaging endpoint registration skipped: agent blueprint ID is missing (the blueprint step likely failed).");
+            ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+            ctx.Results.MessagingEndpointFailureReason = "BlueprintMissing";
+            ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
+            ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only --m365'.");
             return;
+        }
 
         try
         {

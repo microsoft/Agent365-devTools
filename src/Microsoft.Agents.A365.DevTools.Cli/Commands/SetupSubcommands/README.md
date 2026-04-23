@@ -83,13 +83,13 @@ a365 setup blueprint --update-endpoint https://your-host.example.com/api/message
 a365 setup blueprint --endpoint-only
 ```
 
-When the server on a given environment is still on the pre-migration contract (during the 2026-05-01 rollout window), the CLI logs:
+When the server rejects the request with a recognized contract-mismatch signature (today: the pre-migration Azure Bot Service validator), the CLI logs at INFO:
 
 ```
 Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually.
 ```
 
-and the `a365 setup all` summary includes an "Action Required" entry with the Teams Developer Portal URL. The command does not fail — other setup steps still complete. After 2026-05-01 the log escalates to a warning with a diagnostic hint so operators notice if the condition persists.
+and the `a365 setup all` summary includes an "Action Required" entry with the Teams Developer Portal URL. The command does not fail — other setup steps still complete.
 
 ---
 

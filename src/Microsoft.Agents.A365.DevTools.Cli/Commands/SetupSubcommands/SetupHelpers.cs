@@ -508,6 +508,10 @@ internal static class SetupHelpers
                     {
                         logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed (not blueprint owner) — see Action Required");
                     }
+                    else if (string.Equals(results.MessagingEndpointFailureReason, "BlueprintMissing", StringComparison.Ordinal))
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not attempted (blueprint creation failed) — see Action Required");
+                    }
                     else
                     {
                         logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed — see Action Required");
@@ -596,6 +600,13 @@ internal static class SetupHelpers
                     logger.LogInformation("     B. Ask the blueprint owner to add you as a co-owner, then re-run just");
                     logger.LogInformation("        the endpoint step (no need to re-run the full setup):");
                     logger.LogInformation("          a365 setup blueprint --endpoint-only --m365");
+                }
+                else if (string.Equals(results.MessagingEndpointFailureReason, "BlueprintMissing", StringComparison.Ordinal))
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — not attempted because agent blueprint creation did not", actionCount);
+                    logger.LogInformation("     complete. Resolve the blueprint step (see errors above), then re-run just");
+                    logger.LogInformation("     the endpoint step:");
+                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
                 }
                 else
                 {
@@ -896,7 +907,8 @@ internal static class SetupHelpers
         bool skipInfrastructure,
         bool skipRequirements,
         string[] rawArgs,
-        Agent365Config? config = null)
+        Agent365Config? config = null,
+        bool isM365 = false)
     {
         var sub = new string(' ', DryRunValCol);
 
@@ -935,8 +947,22 @@ internal static class SetupHelpers
         // 5. Permission Grants
         logger.LogInformation(DryRunRow(5, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id <blueprint-id>");
 
-        // 6. Project settings (DW has no Agent identity or Agent Registration steps)
-        logger.LogInformation(DryRunRow(6, "Project settings") + "write to appsettings.json");
+        // 6. Messaging endpoint (M365 opt-in)
+        if (isM365)
+        {
+            var endpointForDisplay = config?.MessagingEndpoint;
+            var endpointDetail = string.IsNullOrWhiteSpace(endpointForDisplay)
+                ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
+                : $"register via Teams Graph: {endpointForDisplay}";
+            logger.LogInformation(DryRunRow(6, "Messaging endpoint") + endpointDetail);
+        }
+        else
+        {
+            logger.LogInformation(DryRunRow(6, "Messaging endpoint") + "skip (non-M365 agent; pass --m365 to enable)");
+        }
+
+        // 7. Project settings (DW has no Agent identity or Agent Registration steps)
+        logger.LogInformation(DryRunRow(7, "Project settings") + "write to appsettings.json");
 
         logger.LogInformation("");
         logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
@@ -1259,8 +1285,8 @@ internal static class SetupHelpers
                 return (Models.EndpointRegistrationResult.Failed, "Other");
             }
 
-            if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out _) ||
-                !setupConfig.MessagingEndpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var messagingEndpointUri) ||
+                messagingEndpointUri.Scheme != Uri.UriSchemeHttps)
             {
                 logger.LogError("MessagingEndpoint must be a valid HTTPS URL. Current value: {Endpoint}",
                     setupConfig.MessagingEndpoint);
