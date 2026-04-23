@@ -109,7 +109,13 @@ The skill uses **Claude Code directly** for semantic code analysis (same as revi
 2. Claude Code reads `.github/copilot-instructions.md` for coding standards
 3. Claude Code gets staged files: `git diff --staged --name-only`
 4. Claude Code gets staged changes: `git diff --staged`
-5. **Claude Code reads the complete current content of every staged file** (not just diff lines) to enable full-file semantic analysis. This is critical for catching issues that exist in unchanged sections of modified files, such as:
+5. **Claude Code reads the complete current content of every staged file** (not just diff lines) to enable full-file semantic analysis.
+5a. **If any staged file is a test file** (path contains `.Tests.` or filename ends in `Tests.cs`), Claude Code MUST also invoke the `pr-test-analyzer` agent as a subagent to review test coverage quality. Pass the staged diff and list of staged test files as context. The `pr-test-analyzer` agent focuses on:
+   - NSubstitute predicate precision (predicates on mutable reference types evaluated at assertion time vs. call time)
+   - Missing test scenarios for new orchestration code paths (e.g., 409 idempotent path, tri-state verification results)
+   - Assertions that track implementation rather than requirements
+   - Test method names that accurately describe the contract being verified
+   Include the `pr-test-analyzer` findings in the review document under a dedicated **Test Coverage** section. This is critical for catching issues that exist in unchanged sections of modified files, such as:
    - Duplicate hardcoded constants or magic values that already exist elsewhere
    - Parallel code structures that should be consolidated (e.g., a method building the same spec list as a shared helper)
    - Unused or dead code that was already there but not touched by the diff

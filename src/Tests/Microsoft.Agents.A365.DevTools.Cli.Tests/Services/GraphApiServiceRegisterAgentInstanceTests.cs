@@ -285,8 +285,10 @@ public class GraphApiServiceRegisterAgentInstanceTests
             agentIdentityId: "agent-identity-id",
             clientAppId: null);
 
-        result.Should().Be("existing-reg-id-409",
+        result.Id.Should().Be("existing-reg-id-409",
             because: "409 Conflict means the agent is already registered; the existing ID in the body must be returned");
+        result.AlreadyExisted.Should().BeTrue(
+            because: "a 409 Conflict signals the registration pre-existed; the orchestrator uses this to show 'reused' in the summary");
     }
 
     /// <summary>
@@ -318,8 +320,10 @@ public class GraphApiServiceRegisterAgentInstanceTests
             agentIdentityId: "agent-identity-id",
             clientAppId: null);
 
-        result.Should().BeNull(
+        result.Id.Should().BeNull(
             because: "when 409 body contains no id, the existing registration ID cannot be determined");
+        result.AlreadyExisted.Should().BeFalse(
+            because: "without an ID in the 409 response body the registration cannot be confirmed as pre-existing");
     }
 
     [Fact]
@@ -355,7 +359,7 @@ public class GraphApiServiceRegisterAgentInstanceTests
     }
 
     [Fact]
-    public async Task AgentRegistrationExistsAsync_ReturnsFalse_WhenGetFails()
+    public async Task AgentRegistrationExistsAsync_ReturnsNull_WhenGetFailsWithNon404()
     {
         using var handler = new TestHttpMessageHandler();
 
@@ -367,7 +371,8 @@ public class GraphApiServiceRegisterAgentInstanceTests
         var service = BuildService(handler);
         var result = await service.AgentRegistrationExistsAsync("tenant-id", "reg-id-abc");
 
-        result.Should().BeFalse(because: "a failed GET should return false without throwing");
+        result.Should().BeNull(
+            because: "a non-404 HTTP failure (e.g. 403) means the check is inconclusive — the registration may still exist");
     }
 
     [Fact]

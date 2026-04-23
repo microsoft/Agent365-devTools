@@ -449,7 +449,18 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
+
+        // Capture field values at each SaveStateAsync call so we can assert the Step 5 save
+        // happened before Step 6 mutated AgentRegistrationId on the same config object.
+        var savedStates = new List<(string? AgenticAppId, string? AgentRegistrationId)>();
+        ctx.ConfigService
+            .When(s => s.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>()))
+            .Do(callInfo =>
+            {
+                var c = callInfo.Arg<Agent365Config>();
+                savedStates.Add((c.AgenticAppId, c.AgentRegistrationId));
+            });
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -457,9 +468,9 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             because: "the existing agent identity must be reused");
         await graph.DidNotReceive().CreateAgentIdentityDelegatedAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-        await ctx.ConfigService.Received().SaveStateAsync(
-            Arg.Is<Agent365Config>(c => c.AgenticAppId == "existing-sp-id"),
-            Arg.Any<string>());
+        savedStates.Should().Contain(
+            s => s.AgenticAppId == "existing-sp-id" && s.AgentRegistrationId == null,
+            because: "Step 5 must persist the reused identity ID before Step 6 sets AgentRegistrationId on the same config instance");
     }
 
     /// <summary>
@@ -481,7 +492,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -511,7 +522,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -540,7 +551,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -569,7 +580,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -595,7 +606,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -663,7 +674,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -697,7 +708,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns("new-reg-id");
+            .Returns(("new-reg-id", false));
 
         await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
@@ -705,5 +716,73 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             because: "the registration was freshly created, not reused");
         await graph.DidNotReceive().AgentRegistrationExistsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Step 6: When RegisterAgentInstanceAsyncV2 returns an existing ID via 409 Conflict,
+    /// AgentRegistrationAlreadyExisted must be true so the summary shows "reused" not "registered".
+    /// </summary>
+    [Fact]
+    public async Task Step6_SetsAlreadyExistedFlag_When409ConflictReturnedByRegisterApi()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+            // No AgentRegistrationId — simulates a first-time run that hits a 409
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(("conflict-reg-id", true));
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentRegistrationAlreadyExisted.Should().BeTrue(
+            because: "a 409 Conflict means the agent was already registered; the flag must be true so the summary shows 'reused' rather than 'registered'");
+        ctx.Results.AgentInstanceId.Should().Be("conflict-reg-id",
+            because: "the existing registration ID returned via 409 must be recorded");
+        ctx.Results.AgentInstanceRegistered.Should().BeTrue(
+            because: "registration is considered successful even when retrieved via 409");
+    }
+
+    /// <summary>
+    /// Step 6: When AgentRegistrationExistsAsync returns null (auth or transient error),
+    /// the stored registration ID must be preserved and re-registration must not be attempted.
+    /// </summary>
+    [Fact]
+    public async Task Step6_PreservesStoredRegistrationId_WhenVerificationIsInconclusive()
+    {
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+            AgentRegistrationId = "stored-reg-id",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+
+        graph.AgentRegistrationExistsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((bool?)null);
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.AgentInstanceId.Should().Be("stored-reg-id",
+            because: "when verification is inconclusive the stored ID must be preserved to avoid unintended re-registration");
+        ctx.Results.AgentRegistrationAlreadyExisted.Should().BeTrue(
+            because: "an inconclusive verification is treated as 'assume still exists' to prevent data loss");
+        await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 }

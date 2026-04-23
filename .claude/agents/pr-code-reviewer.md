@@ -654,6 +654,38 @@ When a catch block, comment, or doc string covers multiple distinct error condit
   // After:  "Device code flow may succeed depending on your tenant's CAP configuration."
   ```
 
+### 26. Bare `catch (Exception)` Not Excluding `OperationCanceledException`
+
+A catch block that uses `catch (Exception)` or `catch (Exception ex)` without a `when (ex is not OperationCanceledException)` filter, where the method has a `CancellationToken` in scope. This swallows cancellation silently — setup continues, config may be cleared or re-registration triggered, and Ctrl+C appears to hang.
+
+- **Pattern to catch**:
+  - `catch (Exception)` or `catch (Exception ex)` in a method whose signature includes `CancellationToken ct` or `CancellationToken cancellationToken`
+  - The catch body returns a default/null/false value rather than re-throwing
+  - No explicit `catch (OperationCanceledException)` block preceding the broad catch
+- **Severity**: `high` — cancellation is silently swallowed; operations that should terminate on Ctrl+C continue running and may corrupt or clear persisted state
+- **Check**: For every `catch (Exception)` or `catch (Exception ex)` in the diff, check if the enclosing method signature has a `CancellationToken` parameter. If yes and there is no `when (ex is not OperationCanceledException)` filter and no dedicated `catch (OperationCanceledException)` block above it, flag it.
+- **Fix**:
+  ```csharp
+  catch (Exception ex) when (ex is not OperationCanceledException)
+  {
+      _logger.LogDebug(ex, "...");
+      return false; // or null, or default
+  }
+  ```
+  Alternatively, place a dedicated re-throw block first:
+  ```csharp
+  catch (OperationCanceledException)
+  {
+      throw; // propagate immediately — do not swallow
+  }
+  catch (Exception ex)
+  {
+      _logger.LogDebug(ex, "...");
+      return false;
+  }
+  ```
+- **Real examples** (from PR #384): `AgentRegistrationExistsAsync` in `GraphApiService.cs` and `FindExistingAgentIdentityAsync` in `AgentBlueprintService.cs` both had bare `catch (Exception ex)` blocks that swallowed `OperationCanceledException`, causing setup to continue (and potentially clear valid stored state) after cancellation.
+
 **MANDATORY REPORTING RULE**: Whenever the diff contains any test file (`.Tests.cs`), you MUST emit a named finding for this check — even if no violation is found. The finding must appear in the review output with one of three statuses:
   - **`high` severity** if a violation is found (missing warmup, dead executor mock, etc.)
   - **`info` — FIXED** if the PR is fixing a prior violation (warmup added to previously-cold classes) — list each class fixed and its measured or estimated speedup

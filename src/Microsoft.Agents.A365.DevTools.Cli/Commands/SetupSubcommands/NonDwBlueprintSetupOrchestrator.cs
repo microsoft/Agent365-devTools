@@ -384,7 +384,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Config.AgentRegistrationId!,
                 ctx.CancellationToken);
 
-            if (exists)
+            if (exists == true)
             {
                 registrationId = ctx.Config.AgentRegistrationId;
                 registrationAlreadyExisted = true;
@@ -392,9 +392,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                     ctx.Logger.LogInformation("Agent already registered (ID: {RegistrationId}). Skipping.", registrationId);
                 ctx.Logger.LogInformation("");
             }
-            else
+            else if (exists == false)
             {
-                // Stored ID no longer exists in the registry — clear it and create a new registration.
+                // 404 confirmed — stored ID no longer exists in the registry.
                 using (ctx.Logger.Indent())
                     ctx.Logger.LogInformation("Stored registration ID {RegistrationId} no longer exists; creating a new registration.", ctx.Config.AgentRegistrationId);
                 ctx.Config.AgentRegistrationId = null;
@@ -402,11 +402,20 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // stale value on disk that would cause the same stale-ID check to repeat.
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
             }
+            else
+            {
+                // Verification inconclusive (auth or transient error) — preserve the stored ID
+                // to avoid unintended re-registration. The user can clear the config manually if needed.
+                using (ctx.Logger.Indent())
+                    ctx.Logger.LogWarning("Could not verify agent registration {RegistrationId} (auth or transient error); retaining stored value.", ctx.Config.AgentRegistrationId);
+                registrationId = ctx.Config.AgentRegistrationId;
+                registrationAlreadyExisted = true;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(registrationId))
         {
-            registrationId = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
+            var (newId, fromConflict) = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
                 ctx.Config.TenantId!,
                 agentDisplayName,
                 ctx.Config.AgentDescription,
@@ -414,6 +423,8 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Config.AgenticAppId,
                 ctx.Config.ClientAppId,
                 ctx.CancellationToken);
+            registrationId = newId;
+            if (fromConflict) registrationAlreadyExisted = true;
         }
 
         if (registrationId is not null)

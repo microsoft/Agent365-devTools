@@ -248,7 +248,7 @@ public class AgentBlueprintService
             // returns and stores in AgenticAppId (both are /beta/servicePrincipals/{id} object IDs).
             return match?.IdentitySpId;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Could not look up existing agent identities for blueprint {BlueprintId} (non-fatal): {Message}",
                 blueprintId, ex.Message);
