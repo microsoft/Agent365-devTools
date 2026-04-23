@@ -24,7 +24,7 @@ public class SetupCommandTests
     private readonly IConfigService _mockConfigService;
     private readonly CommandExecutor _mockExecutor;
     private readonly DeploymentService _mockDeploymentService;
-    private readonly IBotConfigurator _mockBotConfigurator;
+    private readonly ITeamsGraphBackendConfigurator _mockBackendConfigurator;
     private readonly AzureAuthValidator _mockAuthValidator;
     private readonly PlatformDetector _mockPlatformDetector;
     private readonly GraphApiService _mockGraphApiService;
@@ -56,7 +56,7 @@ public class SetupCommandTests
             mockDotNetLogger,
             mockNodeLogger,
             mockPythonLogger);
-        _mockBotConfigurator = Substitute.For<IBotConfigurator>();
+        _mockBackendConfigurator = Substitute.For<ITeamsGraphBackendConfigurator>();
         // Full mock — both virtual methods are always stubbed so the real az CLI is never spawned
         _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         _mockAuthValidator.ValidateAuthenticationAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(true));
@@ -93,7 +93,7 @@ public class SetupCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
@@ -109,7 +109,7 @@ public class SetupCommandTests
 
         // Dry-run mode does not load config or call Azure/Bot services - it just displays what would be done
         await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
-        await _mockBotConfigurator.DidNotReceiveWithAnyArgs().CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!);
+        await _mockBackendConfigurator.DidNotReceiveWithAnyArgs().SetBackendConfigurationAsync(default!, default!);
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
@@ -165,7 +165,7 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
@@ -189,7 +189,7 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
@@ -216,7 +216,7 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
@@ -261,7 +261,7 @@ public class SetupCommandTests
             _mockConfigService, 
             _mockExecutor, 
             _mockDeploymentService, 
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
@@ -303,7 +303,7 @@ public class SetupCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
@@ -344,7 +344,7 @@ public class SetupCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService,
@@ -387,7 +387,7 @@ public class SetupCommandTests
             _mockConfigService,
             _mockExecutor,
             _mockDeploymentService,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockAuthValidator,
             _mockPlatformDetector,
             _mockGraphApiService,

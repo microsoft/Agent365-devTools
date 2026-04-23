@@ -30,7 +30,7 @@ public class CleanupCommand
     public static Command CreateCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
@@ -61,11 +61,11 @@ public class CleanupCommand
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogInformation("Starting cleanup (CorrelationId: {CorrelationId})", correlationId);
             
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, correlationId: correlationId);
+            await ExecuteAllCleanupAsync(logger, configService, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, configFile, correlationId: correlationId);
         }, configOption, verboseOption);
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService));
         cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator));
         cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
 
@@ -75,7 +75,7 @@ public class CleanupCommand
     private static Command CreateBlueprintCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
@@ -99,31 +99,48 @@ public class CleanupCommand
             new[] { "--endpoint-only" },
             description: "Delete only the messaging endpoint, keep the blueprint application");
 
+        var m365Option = new Option<bool>(
+            new[] { "--m365" },
+            description: "Treat this agent as an M365 agent. When set, clears the messaging endpoint " +
+                        "from Teams Graph via MCP Platform. Default is false (opt-in).");
+
         command.AddOption(configOption);
         command.AddOption(verboseOption);
         command.AddOption(endpointOnlyOption);
+        command.AddOption(m365Option);
 
-        command.SetHandler(async (configFile, verbose, endpointOnly) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
+            var isM365 = context.ParseResult.GetValueForOption(m365Option);
+
             try
             {
                 // Generate correlation ID at workflow entry point
                 var correlationId = HttpClientFactory.GenerateCorrelationId();
                 logger.LogInformation("Starting blueprint cleanup (CorrelationId: {CorrelationId})", correlationId);
-                
+
                 var config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) return;
-                
+
                 // Configure AgentBlueprintService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(config.ClientAppId))
                 {
                     agentBlueprintService.CustomClientAppId = config.ClientAppId;
                 }
 
-                // If endpoint-only mode, only delete the messaging endpoint
+                // If endpoint-only mode, only delete the messaging endpoint — gated on --m365.
                 if (endpointOnly)
                 {
-                    await ExecuteEndpointOnlyCleanupAsync(logger, config, botConfigurator, correlationId: correlationId);
+                    if (!isM365)
+                    {
+                        SetupSubcommands.BlueprintSubcommand.LogNonM365EndpointGuidance(logger, "clear");
+                        return;
+                    }
+
+                    await ExecuteEndpointOnlyCleanupAsync(logger, config, backendConfigurator, correlationId: correlationId);
                     return;
                 }
 
@@ -270,10 +287,14 @@ public class CleanupCommand
 
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
-                bool endpointDeleted = false;
+                // Clearing the Teams Graph backend configuration is only applicable to M365 agents.
+                bool endpointDeleted = true;
                 try
                 {
-                    endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
+                    if (isM365)
+                    {
+                        endpointDeleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId);
+                    }
                 }
                 finally
                 {
@@ -307,7 +328,7 @@ public class CleanupCommand
             {
                 logger.LogError(ex, "Blueprint cleanup failed");
             }
-        }, configOption, verboseOption, endpointOnlyOption);
+        });
 
         return command;
     }
@@ -558,7 +579,6 @@ public class CleanupCommand
     private static async Task ExecuteAllCleanupAsync(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
@@ -833,76 +853,49 @@ public class CleanupCommand
     /// </summary>
     /// <param name="logger">Logger instance for diagnostic messages</param>
     /// <param name="config">Configuration containing endpoint and blueprint information</param>
-    /// <param name="botConfigurator">Bot configurator service for endpoint operations</param>
+    /// <param name="backendConfigurator">Bot configurator service for endpoint operations</param>
     /// <param name="correlationId">Optional correlation ID for request tracing</param>
     /// <returns>True if endpoint was deleted successfully; false otherwise</returns>
     private static async Task<bool> DeleteMessagingEndpointAsync(
         ILogger<CleanupCommand> logger,
         Agent365Config config,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         string? correlationId = null)
     {
-        // Check if there's actually an endpoint to clean up
-        if (string.IsNullOrWhiteSpace(config.BotName))
-        {
-            logger.LogInformation("No messaging endpoint found in configuration");
-            return true; // No endpoint to delete = success
-        }
-
-        // Check if blueprint ID exists (required for endpoint deletion)
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
-            logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for deleting endpoint registration.");
+            logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for clearing the backend configuration.");
             return false;
-        }
-
-        // Location is not required for needDeployment:false configs — skip endpoint cleanup
-        if (string.IsNullOrWhiteSpace(config.Location))
-        {
-            logger.LogWarning("Location not set — skipping endpoint deletion (not required for endpoint-only configs).");
-            return true;
         }
 
         logger.LogInformation("Clearing backend configuration...");
-        var endpointName = ResolveEndpointName(config);
 
-        var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-            endpointName,
-            config.Location,
+        var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
             config.AgentBlueprintId,
             correlationId: correlationId);
 
-        if (endpointDeleted)
+        if (cleared)
         {
-            logger.LogInformation("Messaging endpoint deleted successfully");
+            logger.LogInformation("Backend configuration cleared successfully");
             return true;
         }
-        else
-        {
-            logger.LogWarning("Failed to delete messaging endpoint");
-            return false;
-        }
+
+        logger.LogWarning("Failed to clear backend configuration");
+        return false;
     }
 
     /// <summary>
-    /// Executes endpoint-only cleanup - deletes the messaging endpoint while preserving the blueprint application
+    /// Executes endpoint-only cleanup — clears the Teams Graph backend configuration while
+    /// preserving the blueprint application.
     /// </summary>
     private static async Task ExecuteEndpointOnlyCleanupAsync(
         ILogger<CleanupCommand> logger,
         Agent365Config config,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         string? correlationId = null)
     {
         logger.LogInformation("Starting endpoint-only cleanup...");
-        
-        // Check if there's actually an endpoint to clean up
-        if (string.IsNullOrWhiteSpace(config.BotName))
-        {
-            logger.LogInformation("No messaging endpoint found to clean up");
-            return;
-        }
 
-        // Check if blueprint ID exists (required for endpoint deletion)
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
             logger.LogError("Agent Blueprint ID not found. Blueprint ID is required for endpoint deletion.");
@@ -910,15 +903,10 @@ public class CleanupCommand
             return;
         }
 
-        // Get the actual endpoint name that will be used for deletion (truncated to 42 chars).
-        var endpointName = ResolveEndpointName(config);
-
         logger.LogInformation("");
         logger.LogInformation("Endpoint Cleanup Preview:");
         logger.LogInformation("============================");
-        logger.LogInformation("Will delete messaging endpoint:");
-        logger.LogInformation("  Endpoint Name: {EndpointName}", endpointName);
-        logger.LogInformation("  Location: {Location}", config.Location);
+        logger.LogInformation("Will clear messaging endpoint for blueprint: {BlueprintId}", config.AgentBlueprintId);
         logger.LogInformation("");
 
         Console.Write("Continue with endpoint cleanup? (y/N): ");
@@ -929,9 +917,8 @@ public class CleanupCommand
             return;
         }
 
-        // Use shared helper to delete the endpoint
-        var deleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
-        
+        var deleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId);
+
         if (!deleted)
         {
             return;
@@ -997,22 +984,4 @@ public class CleanupCommand
         }
     }
 
-    /// <summary>
-    /// Resolves the Azure Bot Service endpoint name from config.
-    /// For needsDeployment=false, prefers BotMessagingEndpoint (updated after each registration)
-    /// over MessagingEndpoint (static) so that delete targets the currently registered endpoint.
-    /// </summary>
-    private static string ResolveEndpointName(Agent365Config config)
-    {
-        if (!config.NeedDeployment)
-        {
-            // Use BotMessagingEndpoint (updated by registration) over MessagingEndpoint (static).
-            var urlForName = !string.IsNullOrWhiteSpace(config.BotMessagingEndpoint)
-                ? config.BotMessagingEndpoint
-                : config.MessagingEndpoint;
-            if (!string.IsNullOrWhiteSpace(urlForName))
-                return EndpointHelper.GetEndpointNameFromUrl(urlForName, config.AgentBlueprintId);
-        }
-        return EndpointHelper.GetEndpointName(config.BotName);
-    }
 }

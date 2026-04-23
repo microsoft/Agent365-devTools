@@ -32,7 +32,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             IConfigService configService,
             CommandExecutor executor,
             DeploymentService deploymentService,
-            IBotConfigurator botConfigurator,
+            ITeamsGraphBackendConfigurator backendConfigurator,
             AzureAuthValidator authValidator,
             PlatformDetector platformDetector,
             GraphApiService graphApiService,
@@ -65,13 +65,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 logger, configService, authValidator, platformDetector, executor));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, authValidator, platformDetector, backendConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, authValidator, configService, executor, graphApiService, blueprintService));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService));
+                logger, configService, executor, backendConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService));
 
             command.AddCommand(AdminSubcommand.CreateCommand(
                 logger, configService, authValidator, graphApiService, confirmationProvider));

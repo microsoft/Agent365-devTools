@@ -649,22 +649,25 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Register blueprint messaging endpoint
-    /// Returns (success, alreadyExisted)
+    /// Registers the Teams Graph backend configuration (messaging endpoint) for the agent blueprint.
     /// </summary>
-    /// <param name="setupConfig">Agent365 configuration</param>
-    /// <param name="logger">Logger instance</param>
-    /// <param name="botConfigurator">Bot configurator service</param>
-    /// <param name="overrideEndpointUrl">Optional endpoint URL override (used by --update-endpoint to specify a new URL)</param>
-    /// <param name="correlationId">Optional correlation ID for tracing</param>
-    public static async Task<(bool success, bool alreadyExisted)> RegisterBlueprintMessagingEndpointAsync(
+    /// <param name="setupConfig">Agent365 configuration.</param>
+    /// <param name="logger">Logger instance.</param>
+    /// <param name="backendConfigurator">Blueprint backend configurator service.</param>
+    /// <param name="overrideEndpointUrl">Optional endpoint URL override (used by --update-endpoint).</param>
+    /// <param name="correlationId">Optional correlation ID for tracing.</param>
+    /// <returns>
+    /// The result from the Teams Graph call. Callers are expected to check for
+    /// <see cref="Models.EndpointRegistrationResult.SkippedDueToRollout"/> to surface the
+    /// rollout-in-progress fallback messaging in their summary.
+    /// </returns>
+    public static async Task<Models.EndpointRegistrationResult> RegisterBlueprintMessagingEndpointAsync(
         Agent365Config setupConfig,
         ILogger logger,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         string? overrideEndpointUrl = null,
         string? correlationId = null)
     {
-        // Validate required configuration
         if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
         {
             logger.LogError("Agent Blueprint ID not found. Blueprint creation may have failed.");
@@ -686,9 +689,7 @@ internal static class SetupHelpers
         }
 
         string messagingEndpoint;
-        string endpointName;
 
-        // If override endpoint URL is provided (from --update-endpoint), use it
         if (!string.IsNullOrWhiteSpace(overrideEndpointUrl))
         {
             if (!Uri.TryCreate(overrideEndpointUrl, UriKind.Absolute, out var overrideUri) ||
@@ -699,20 +700,6 @@ internal static class SetupHelpers
             }
 
             messagingEndpoint = overrideEndpointUrl;
-
-            // Derive endpoint name based on deployment mode
-            if (setupConfig.NeedDeployment && !string.IsNullOrWhiteSpace(setupConfig.WebAppName))
-            {
-                // Azure deployment: use WebAppName for endpoint name
-                var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
-                endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
-            }
-            else
-            {
-                // Non-Azure hosting: derive from override endpoint host + blueprint ID suffix for uniqueness
-                endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
-            }
-
             logger.LogInformation("   - Using override endpoint URL");
         }
         else if (setupConfig.NeedDeployment)
@@ -739,25 +726,19 @@ internal static class SetupHelpers
                     });
             }
 
-            // Generate endpoint name with Azure Bot Service constraints (4-42 chars)
-            var baseEndpointName = $"{setupConfig.WebAppName}-endpoint";
-            endpointName = EndpointHelper.GetEndpointName(baseEndpointName);
-
-            // Construct messaging endpoint URL from web app name
             messagingEndpoint = $"https://{setupConfig.WebAppName}.azurewebsites.net/api/messages";
         }
-        else // Non-Azure hosting
+        else
         {
-            // No deployment - use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogWarning("MessagingEndpoint not configured. Skipping endpoint registration.");
                 logger.LogWarning("Configure 'messagingEndpoint' in a365.config.json and re-run 'a365 setup blueprint' to register the endpoint.");
-                return (false, false);
+                return Models.EndpointRegistrationResult.Failed;
             }
 
-            if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var uri) ||
-                uri.Scheme != Uri.UriSchemeHttps)
+            if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out _) ||
+                !setupConfig.MessagingEndpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogError("MessagingEndpoint must be a valid HTTPS URL. Current value: {Endpoint}",
                     setupConfig.MessagingEndpoint);
@@ -765,45 +746,26 @@ internal static class SetupHelpers
             }
 
             messagingEndpoint = setupConfig.MessagingEndpoint;
-
-            // Derive endpoint name from host + blueprint ID suffix for uniqueness.
-            // Host alone is not sufficient — multiple users on the same webhook platform
-            // (e.g. n8n, Zapier) share the same hostname but have different webhook paths.
-            endpointName = EndpointHelper.GetEndpointNameFromHost(uri.Host, setupConfig.AgentBlueprintId);
-        }
-
-        if (endpointName.Length < 4)
-        {
-            logger.LogError("Bot endpoint name '{EndpointName}' is too short (must be at least 4 characters)", endpointName);
-            throw new SetupValidationException($"Bot endpoint name '{endpointName}' is too short (must be at least 4 characters)");
         }
 
         logger.LogInformation("   - Registering blueprint messaging endpoint");
-        logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
         logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
-        logger.LogInformation("     * Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
+        logger.LogInformation("     * Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
-        var endpointResult = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
-            endpointName: endpointName,
-            location: setupConfig.Location,
-            messagingEndpoint: messagingEndpoint,
-            agentDescription: "Agent 365 messaging endpoint for automated interactions",
+        var result = await backendConfigurator.SetBackendConfigurationAsync(
             agentBlueprintId: setupConfig.AgentBlueprintId,
+            messagingEndpoint: messagingEndpoint,
             correlationId: correlationId);
 
-        if (endpointResult == Models.EndpointRegistrationResult.Failed)
+        if (result == Models.EndpointRegistrationResult.Created ||
+            result == Models.EndpointRegistrationResult.AlreadyExists)
         {
-            logger.LogError("Failed to register blueprint messaging endpoint");
-            throw new SetupValidationException("Blueprint messaging endpoint registration failed");
+            setupConfig.BotId = setupConfig.AgentBlueprintId;
+            setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
+            setupConfig.BotMessagingEndpoint = messagingEndpoint;
         }
 
-        // Update Agent365Config state properties
-        setupConfig.BotId = setupConfig.AgentBlueprintId;
-        setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
-        setupConfig.BotMessagingEndpoint = messagingEndpoint;
-
-        bool alreadyExisted = endpointResult == Models.EndpointRegistrationResult.AlreadyExists;
-        return (true, alreadyExisted);
+        return result;
     }
 
 }

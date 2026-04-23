@@ -144,10 +144,43 @@ For each changed file, analyze:
    - Path separators
    - OS-specific code
 
-7. **CHANGELOG.md Check** (for user-facing changes)
-   - If the PR adds features, fixes bugs, or changes observable behavior, verify `CHANGELOG.md` has an entry in the `[Unreleased]` section
-   - Internal refactors, test-only changes, and tooling/CI-only changes do not require a CHANGELOG entry
-   - Flag as `low` severity if missing from a user-facing PR
+7. **Documentation Completeness Check** (for user-visible surface changes)
+
+   This is a first-class review axis. Do NOT rely on the diff showing you a CHANGELOG entry — you must actively *detect* the need for one and then *verify* it is present in the staged/PR diff.
+
+   **Step 7a — Detect user-visible surface changes.** Scan the diff for any of these signals:
+   - New `new Option<...>(` declaration in a command — indicates a new CLI flag
+   - Change to an existing `Option<...>` description, or to a command's help text / `.Description` string
+   - New `public` method, class, interface, enum value, or constant on a non-test type
+   - Rename of a `public` class or interface (old type removed + new type added in Services/, Models/, Commands/)
+   - Change to an observable log message the user has been observed to grep for (e.g., `"Messaging endpoint registered"` → different wording)
+   - New or changed HTTP request payload shape, endpoint URL, or wire contract
+   - Change to a command's validation rules (new required field, new error message)
+   - Deletion of a `public` API
+   - Bug fix that changes observable behavior
+
+   **Step 7b — Verify the corresponding docs are updated.** For every signal found in 7a, check that the PR staged file set includes:
+
+   - `CHANGELOG.md` — under `[Unreleased]`, in the appropriate subsection:
+     - `### Added` for new flags/methods/classes
+     - `### Changed` for renames, behavior changes, payload shape changes
+     - `### Removed` for deletions
+     - `### Fixed` for bug fixes with user-visible impact
+   - The nearest `README.md` — if the command surface changed, the README in the command's folder must reflect it:
+     - New flag on `a365 setup blueprint` → update `Commands/SetupSubcommands/README.md`
+     - Rename of a service → update `Services/README.md` table and `design.md` structure tree
+   - **For renames specifically**: run `grep -rn "<OldTypeName>" --include="*.md"` across the repo. Any surviving hits are stale and must be updated in the same PR.
+
+   **Step 7c — Severity calibration.**
+   - Missing CHANGELOG entry for a user-visible change → **HIGH** (not low). User-visible changes without a changelog entry silently accumulate and get lost when the release goes out.
+   - Stale type/method name in README or design.md after a rename → **HIGH**. These mislead future readers and the grep check is trivial.
+   - Missing README update for a new flag → **MEDIUM**. The flag is self-documenting via `--help`, but discoverability suffers.
+   - Internal refactors, test-only changes, dependency bumps, and CI/tooling-only changes do not require CHANGELOG or README updates.
+
+   **Step 7d — What does NOT count as an excuse.**
+   - "The flag is opt-in / preview / temporary" — still needs CHANGELOG and README. Opt-in/preview status goes *in* the CHANGELOG entry.
+   - "Microsoft Learn docs will cover it" — that's a separate pipeline; the repo's CHANGELOG and READMEs are the source of truth for what shipped in a given version.
+   - "The reviewer can see it in the diff" — yes, *you* can; future readers of CHANGELOG.md cannot.
 
 8. **Test Coverage Gaps**
    - Based on the conditional logic, what specific test scenarios are needed?
