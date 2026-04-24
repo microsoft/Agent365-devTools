@@ -27,7 +27,6 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 ```
 
 ### Added
-- `a365 status` — new command displaying agent configuration and live Entra registration state. Supports `--offline` to skip live Graph lookups, `--field <name>` for machine-readable single-value output, and `--agent-name` / `--tenant-id` for config-free use.
 - `--project-path <path>` option on `develop list-configured`, `develop add-mcp-servers`, and `develop remove-mcp-servers` — specify the manifest location without requiring `a365.config.json`.
 - `setup requirements` runs without `a365.config.json` — system checks (PowerShell modules, Frontier enrollment) always run; client app checks run when a config file or Azure CLI session is available.
 - `--agent-name` and `--tenant-id` options added to `setup blueprint`, `setup permissions` (all subcommands), `create-instance`, `publish`, and `query-entra` — all commands can now resolve configuration from Entra ID without requiring `a365.config.json`.
@@ -37,11 +36,11 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 - Defensive fallback when the server rejects the new request with a known contract-mismatch signature — the CLI logs `"Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually."` and directs the user to the Teams Developer Portal. Same user-facing path is reused when registration fails because the signed-in user is not a blueprint owner.
 
 ### Removed
-- `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name`, `a365 status`, and `a365 setup permissions custom`.
+- `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name` and `a365 setup permissions custom`.
 
 ### Breaking Changes
 - **`a365 config init` removed** — replace with `a365 setup all --agent-name <name>`. This creates the agent blueprint, configures permissions, and registers the messaging endpoint in one step without requiring a pre-existing config file.
-- **`a365 config display` removed** — replace with `a365 status`. Use `a365 status --field <FieldName>` for scripting (e.g., `a365 status --field AgentBlueprintId`).
+- **`a365 config display` removed** — use `a365 query-entra blueprint-scopes` to inspect live blueprint permissions and consent state.
 - **`a365 config permissions` removed** — replace with `a365 setup permissions custom --resource-app-id <guid> --scopes <scopes>`.
 - `a365 setup` now writes the `Agent365Observability` placeholder section (`AgentId`, `AgentBlueprintId`, `TenantId`, `AgentName`, `AgentDescription`) and `EnableAgent365Exporter: false` to `appsettings.json` (.NET) and `ENABLE_A365_OBSERVABILITY_EXPORTER=false` to `.env` (Python/Node.js), so observability configuration is pre-populated for all three platforms after running setup
 - Re-enabled `a365 create-instance` command (previously deprecated) — creates agent identity, agent user, and assigns licenses in a single command. The custom client app now requires the `User.ReadWrite.All` delegated permission for user creation and license assignment; existing users may need to update admin consent on their client app.
@@ -66,7 +65,7 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 - Blueprint messaging endpoint registration migrated from Azure Bot Service (ABS) to Teams Graph backend configuration. The CLI now sends `{ agentIdentityBlueprintId, callbackUri, tenantId }` to MCP Platform instead of the ABS-shaped payload. `BotConfigurator` / `IBotConfigurator` are replaced by `TeamsGraphBackendConfigurator` / `ITeamsGraphBackendConfigurator`. Callers must pass `--m365` to opt in; see Added notes above.
 - `setup all --dry-run` output is now column-aligned for readability
 - `setup infrastructure` now defaults `deploymentProjectPath` to the current directory when not specified in config
-- `setup all` now defaults to the blueprint agent flow. Use `--ownidentity true` to run the own-identity agent setup flow.
+- `setup all` now defaults to the blueprint agent flow. Use `--ownaccess true` to run the own-identity agent setup flow.
 - `a365 setup blueprint` now sets `managerApplications` on the blueprint application to enable platform manageability. After May 1, blueprints without `managerApplications` will no longer be accepted, and must be recreated (delete and re-run `a365 setup blueprint`) or manually patched via Graph API to include this value.
 - `New-Agent365ToolsServicePrincipalProdPublic.ps1` updated to support MCP V1 and V2 provisioning — adds `-Mode` (`V1`/`V2`/`All`, default `All`), `-ManifestPath` (auto-extracts V2 per-server AppIds from `ToolingManifest.json`), and `-V2AppIds` (explicit list) parameters; script is now idempotent across all AppIds (re-run safe) and covers the migration period where V1 and V2 servers coexist in the same tenant
 - `a365 publish` updates manifest IDs, creates `manifest.zip`, and prints concise upload instructions for Microsoft 365 Admin Center (Agents > All agents > Upload custom agent). Interactive prompts only occur in interactive terminals; redirect stdin to suppress them in scripts.

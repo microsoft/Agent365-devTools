@@ -102,8 +102,8 @@ a365 setup all --agent-name
 
 #### Test 2.2: Validate Generated Configuration
 ```bash
-# Display configuration
-a365 status
+# Display blueprint permissions
+a365 query-entra blueprint-scopes
 
 # Expected: Shows all configuration values in table format
 # Verify required fields are present:
@@ -856,7 +856,7 @@ a365 deploy --verbose
 ```bash
 # Test help for each command
 a365 --help
-a365 status --help
+a365 query-entra --help
 a365 setup --help
 a365 deploy --help
 a365 publish --help

@@ -135,7 +135,7 @@ a365 --version
 ### Configuration
 ```bash
 a365 setup all --agent-name <agent-base-name>  # Bootstrap setup
-a365 status                                    # Show current config
+a365 query-entra blueprint-scopes              # Show blueprint permissions
 ```
 
 ### Setup
@@ -302,8 +302,8 @@ Solution:
 
 ### Issue: Configuration Invalid
 ```bash
-# Validate configuration
-a365 status
+# Validate blueprint permissions
+a365 query-entra blueprint-scopes
 
 # Check for missing required fields
 # Reinitialize if needed
@@ -426,7 +426,7 @@ a365 cleanup --dry-run
 ### Configuration Only (5 min)
 ```bash
 a365 setup all --agent-name <agent-base-name>
-a365 status
+a365 query-entra blueprint-scopes
 ```
 
 ---

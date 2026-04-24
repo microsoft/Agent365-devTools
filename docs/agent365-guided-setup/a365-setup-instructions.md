@@ -242,7 +242,7 @@ pip --version
 > 
 > Common mistake: Jumping to this step before completing Steps 1 and 2. The CLI requires a working Azure CLI login and a validated custom client app before setup will succeed.
 
-Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --ownidentity true --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed before running — the CLI creates `a365.config.json` automatically and auto-detects your tenant ID and client app ID from your Azure CLI session.
+Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --ownaccess true --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed before running — the CLI creates `a365.config.json` automatically and auto-detects your tenant ID and client app ID from your Azure CLI session.
 
 ### Collect setup inputs
 
@@ -265,7 +265,7 @@ Ask the user for the agent base name only. No other values are needed for this p
 Run setup using the agent name. The CLI bootstraps configuration from Entra and provisions all resources:
 
 ```bash
-a365 setup all --ownidentity true --agent-name <agent-base-name>
+a365 setup all --ownaccess true --agent-name <agent-base-name>
 ```
 
 The CLI will:
@@ -281,7 +281,7 @@ The `setup all` process validates your inputs. Notably, it will check:
 - That the CLI client app exists in the tenant and has the required permissions. If this validation fails, refer back to the app registration guide and fix the configuration.
 - It also detects the project platform from the directory (looking for a `.csproj`, `package.json`, or `pyproject.toml`). If it warns it could not detect the project platform, run the command from the agent project directory.
 
-If any validation fails, correct the issues and re-run `a365 setup all --ownidentity true --agent-name <agent-base-name>`.
+If any validation fails, correct the issues and re-run `a365 setup all --ownaccess true --agent-name <agent-base-name>`.
 
 ### Proceed when setup is successful
 
@@ -541,10 +541,7 @@ For complete details, see [Create agent instances](https://learn.microsoft.com/e
 
 Provide the user with the following instructions:
 
-1. **Get your blueprint ID** by running:
-   ```bash
-   a365 status --field AgentBlueprintId
-   ```
+1. **Get your blueprint ID** from `a365.generated.config.json` (field: `agentBlueprintId`) or from the setup summary output.
 
 2. **Navigate to Developer Portal** by opening your browser and going to:
    ```
@@ -554,10 +551,7 @@ Provide the user with the following instructions:
 
 3. **Configure the agent** in the Developer Portal:
    - Set **Agent Type** to `API Based`
-   - Set **Notification URL** to your agent's messaging endpoint. Get the value by running:
-     ```bash
-     a365 status --field MessagingEndpoint
-     ```
+   - Set **Notification URL** to your agent's messaging endpoint (from `a365.config.json` field `messagingEndpoint`).
    - Select **Save**
 
 > **Note:** If the user doesn't have access to the Developer Portal, they should contact their tenant administrator to grant access or complete this configuration on their behalf.

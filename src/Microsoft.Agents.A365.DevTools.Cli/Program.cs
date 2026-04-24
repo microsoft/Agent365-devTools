@@ -144,7 +144,6 @@ class Program
             var bootstrapResolver = serviceProvider.GetRequiredService<IBootstrapConfigResolver>();
 
             // Add commands
-            rootCommand.AddCommand(StatusCommand.CreateCommand(developLogger, configService, graphApiService, resolver: bootstrapResolver));
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();

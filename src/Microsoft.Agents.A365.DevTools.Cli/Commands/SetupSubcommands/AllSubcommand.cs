@@ -45,7 +45,7 @@ internal static class AllSubcommand
     }
 
     /// <summary>
-    /// Returns the requirement checks for <c>setup all --ownidentity false</c> (non-DW blueprint).
+    /// Returns the requirement checks for <c>setup all --ownaccess false</c> (non-DW blueprint).
     /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
@@ -108,7 +108,7 @@ internal static class AllSubcommand
                         "Use with caution: setup may fail if prerequisites are not met");
 
         var ownIdentityOption = new Option<bool?>(
-            "--ownidentity",
+            "--ownaccess",
             description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
                         "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
@@ -162,7 +162,7 @@ internal static class AllSubcommand
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // Blueprint agent is the default. Own-identity agent requires --ownidentity true explicitly.
+            // Blueprint agent is the default. Own-identity agent requires --ownaccess true explicitly.
             Agent365Config? nonDwConfig = null;
             bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
@@ -242,7 +242,7 @@ internal static class AllSubcommand
                         ? await configService.LoadAsync(config.FullName, nonDwGenPath)
                         : await configService.LoadAsync(config.FullName);
                     // If ownidentity was not explicitly set, respect what the config says
-                    // (allows existing own-identity configs to keep working without --ownidentity true)
+                    // (allows existing own-identity configs to keep working without --ownaccess true)
                     if (!ownIdentityFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
