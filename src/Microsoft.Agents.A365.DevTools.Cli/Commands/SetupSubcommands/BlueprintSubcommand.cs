@@ -117,7 +117,7 @@ internal static class BlueprintSubcommand
         CommandExecutor executor,
         AzureAuthValidator authValidator,
         PlatformDetector platformDetector,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
         IClientAppValidator clientAppValidator,
@@ -163,6 +163,12 @@ internal static class BlueprintSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
+        var m365Option = new Option<bool>(
+            "--m365",
+            description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint " +
+                        "with Teams Graph via MCP Platform. Default is false (opt-in); non-M365 agents " +
+                        "should configure their endpoint in the Teams Developer Portal.");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -171,6 +177,7 @@ internal static class BlueprintSubcommand
         command.AddOption(endpointOnlyOption);
         command.AddOption(updateEndpointOption);
         command.AddOption(skipRequirementsOption);
+        command.AddOption(m365Option);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -183,6 +190,7 @@ internal static class BlueprintSubcommand
             var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
             var updateEndpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
+            var isM365 = context.ParseResult.GetValueForOption(m365Option);
             var ct = context.GetCancellationToken();
 
             // Generate correlation ID at workflow entry point
@@ -221,9 +229,20 @@ internal static class BlueprintSubcommand
             // Handle --update-endpoint flag
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
             {
-                logger.LogInformation("Endpoint registration via the CLI is not supported for blueprint-based agents.");
-                logger.LogInformation("Configure the messaging endpoint directly in the Teams Developer Portal:");
-                logger.LogInformation("  https://learn.microsoft.com/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal");
+                if (!isM365)
+                {
+                    LogNonM365EndpointGuidance(logger, "update");
+                    return;
+                }
+
+                await UpdateEndpointAsync(
+                    config.FullName,
+                    updateEndpoint,
+                    logger,
+                    configService,
+                    backendConfigurator,
+                    platformDetector,
+                    correlationId: correlationId);
                 return;
             }
 
@@ -265,12 +284,23 @@ internal static class BlueprintSubcommand
 
             logger.LogInformation("Starting blueprint setup... (TraceId: {TraceId})", correlationId);
 
-            // Handle --endpoint-only flag
+            // Handle --endpoint-only flag — only wired up for --m365 agents.
             if (endpointOnly)
             {
-                logger.LogInformation("Endpoint registration via the CLI is not supported for blueprint-based agents.");
-                logger.LogInformation("Configure the messaging endpoint directly in the Teams Developer Portal:");
-                logger.LogInformation("  https://learn.microsoft.com/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal");
+                if (!isM365)
+                {
+                    LogNonM365EndpointGuidance(logger, "register");
+                    return;
+                }
+
+                await RegisterEndpointAndSyncAsync(
+                    config.FullName,
+                    logger,
+                    configService,
+                    backendConfigurator,
+                    platformDetector,
+                    correlationId: correlationId,
+                    cancellationToken: ct);
                 return;
             }
 
@@ -284,7 +314,7 @@ internal static class BlueprintSubcommand
                 false,
                 false,
                 configService,
-                botConfigurator,
+                backendConfigurator,
                 platformDetector,
                 graphApiService,
                 blueprintService,
@@ -297,6 +327,22 @@ internal static class BlueprintSubcommand
         });
 
         return command;
+    }
+
+    /// <summary>
+    /// Logs the standard "non-M365 agent" message directing the user to configure the messaging
+    /// endpoint in the Teams Developer Portal. Used when the user did not pass --m365 on commands
+    /// that would otherwise call into the Teams Graph backend configurator.
+    /// </summary>
+    /// <param name="logger">Logger instance.</param>
+    /// <param name="action">Either "register" or "update" — included in the skip message.</param>
+    internal static void LogNonM365EndpointGuidance(ILogger logger, string action)
+    {
+        logger.LogInformation(
+            "Skipping messaging endpoint {Action} — this command only applies to M365 agents. " +
+            "Pass --m365 to opt in, or configure the endpoint manually in the Teams Developer Portal:",
+            action);
+        logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
     }
 
     /// <summary>
@@ -348,7 +394,7 @@ internal static class BlueprintSubcommand
         bool skipInfrastructure,
         bool isSetupAll,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
@@ -2113,13 +2159,14 @@ internal static class BlueprintSubcommand
     /// <summary>
     /// Registers blueprint messaging endpoint and syncs project settings.
     /// Public method that can be called by AllSubcommand.
-    /// Returns (success, alreadyExisted)
+    /// Returns the raw <see cref="Models.EndpointRegistrationResult"/> so callers can distinguish
+    /// Created / AlreadyExists / SkippedContractMismatch / Failed for summary output.
     /// </summary>
-    public static async Task<(bool success, bool alreadyExisted)> RegisterEndpointAndSyncAsync(
+    public static async Task<Models.EndpointRegistrationResult> RegisterEndpointAndSyncAsync(
         string configPath,
         ILogger logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         PlatformDetector platformDetector,
         string? correlationId = null,
         CancellationToken cancellationToken = default)
@@ -2136,9 +2183,10 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Registering blueprint messaging endpoint...");
         logger.LogInformation("");
 
-        var (endpointRegistered, endpointAlreadyExisted) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator, correlationId: correlationId);
-
+        // Only the Status value is relevant here — inline CLI output for --endpoint-only doesn't
+        // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
+        var (result, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+            setupConfig, logger, backendConfigurator, correlationId: correlationId);
 
         setupConfig.Completed = true;
         setupConfig.CompletedAt = DateTime.UtcNow;
@@ -2146,23 +2194,23 @@ internal static class BlueprintSubcommand
         await configService.SaveStateAsync(setupConfig);
 
         logger.LogInformation("");
-        if (endpointRegistered)
+        switch (result)
         {
-            if (endpointAlreadyExisted)
-            {
-                logger.LogInformation("Blueprint messaging endpoint already registered");
-            }
-            else
-            {
+            case Models.EndpointRegistrationResult.Created:
                 logger.LogInformation("Blueprint messaging endpoint registered successfully");
-            }
-        }
-        else
-        {
-            logger.LogInformation("Blueprint messaging endpoint registration skipped");
+                break;
+            case Models.EndpointRegistrationResult.AlreadyExists:
+                logger.LogInformation("Blueprint messaging endpoint already registered");
+                break;
+            case Models.EndpointRegistrationResult.SkippedContractMismatch:
+                logger.LogInformation("Action required: register the messaging endpoint in the Teams Developer Portal:");
+                logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+                break;
+            default:
+                logger.LogInformation("Blueprint messaging endpoint registration did not complete");
+                break;
         }
 
-        // Sync generated config to project settings (appsettings.json or .env)
         logger.LogInformation("");
         logger.LogInformation("Syncing configuration to project settings...");
 
@@ -2186,8 +2234,8 @@ internal static class BlueprintSubcommand
         {
             logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually if needed.");
         }
-        
-        return (endpointRegistered, endpointAlreadyExisted);
+
+        return result;
     }
 
     /// <summary>
@@ -2197,7 +2245,7 @@ internal static class BlueprintSubcommand
     /// <param name="newEndpointUrl">The new messaging endpoint URL</param>
     /// <param name="logger">Logger instance</param>
     /// <param name="configService">Configuration service</param>
-    /// <param name="botConfigurator">Bot configurator service</param>
+    /// <param name="backendConfigurator">Blueprint backend configurator service</param>
     /// <param name="platformDetector">Platform detector service</param>
     /// <param name="correlationId">Optional correlation ID for tracing</param>
     public static async Task UpdateEndpointAsync(
@@ -2205,7 +2253,7 @@ internal static class BlueprintSubcommand
         string newEndpointUrl,
         ILogger logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         PlatformDetector platformDetector,
         string? correlationId = null)
     {
@@ -2229,64 +2277,34 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Updating messaging endpoint...");
         logger.LogInformation("");
 
-        var normalizedLocation = string.Empty;
+        // Step 1: Clear the existing backend configuration (idempotent no-op if nothing is registered).
+        logger.LogInformation("Clearing existing backend configuration...");
+        var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
+            setupConfig.AgentBlueprintId, correlationId: correlationId);
 
-        // Step 1: Delete existing endpoint if it exists
-        if (!string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint) || !string.IsNullOrWhiteSpace(setupConfig.BotName))
+        if (!cleared)
         {
-            logger.LogInformation("Deleting existing messaging endpoint...");
-
-            // Derive the endpoint name from the currently registered URL.
-            var urlForName = !string.IsNullOrWhiteSpace(setupConfig.BotMessagingEndpoint)
-                ? setupConfig.BotMessagingEndpoint
-                : setupConfig.MessagingEndpoint;
-
-            string endpointName;
-            if (!string.IsNullOrWhiteSpace(urlForName))
-                endpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(urlForName, setupConfig.AgentBlueprintId);
-            else
-                endpointName = Services.Helpers.EndpointHelper.GetEndpointName(setupConfig.BotName);
-
-            var deleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-                endpointName,
-                normalizedLocation,
-                setupConfig.AgentBlueprintId,
-                correlationId: correlationId);
-
-            if (!deleted)
-            {
-                logger.LogError("Failed to delete existing messaging endpoint.");
-                throw new Exceptions.SetupValidationException("Failed to delete existing messaging endpoint. Cannot proceed with update.");
-            }
-
-            logger.LogInformation("Existing endpoint deleted successfully.");
-        }
-        else
-        {
-            logger.LogInformation("No existing endpoint found. Proceeding with registration.");
+            logger.LogWarning("Could not confirm clearing of existing backend configuration — proceeding with registration anyway.");
         }
 
-        // Step 1.5: Pre-create cleanup of the target endpoint name.
-        {
-            var targetEndpointName = Services.Helpers.EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, setupConfig.AgentBlueprintId);
-            logger.LogInformation("Removing target endpoint '{EndpointName}' (derived from {Url}) to ensure a clean state before registration.", targetEndpointName, newEndpointUrl);
-            var preCleanupDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(targetEndpointName, normalizedLocation, setupConfig.AgentBlueprintId, correlationId: correlationId);
-            if (!preCleanupDeleted)
-            {
-                logger.LogWarning("Pre-create cleanup for '{EndpointName}' did not confirm deletion. Proceeding anyway.", targetEndpointName);
-            }
-        }
-
-        // Step 2: Register new endpoint with the provided URL
+        // Step 2: Register the new endpoint.
         logger.LogInformation("");
         logger.LogInformation("Registering new messaging endpoint...");
 
-        var (endpointRegistered, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, botConfigurator, newEndpointUrl, correlationId: correlationId);
+        // Only the Status value is relevant here — inline CLI output for --update-endpoint doesn't
+        // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
+        var (registerResult, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+            setupConfig, logger, backendConfigurator, newEndpointUrl, correlationId: correlationId);
 
-        if (!endpointRegistered)
+        if (registerResult == Models.EndpointRegistrationResult.Failed)
         {
             throw new Exceptions.SetupValidationException("Failed to register new messaging endpoint.");
+        }
+
+        if (registerResult == Models.EndpointRegistrationResult.SkippedContractMismatch)
+        {
+            logger.LogInformation("Action required: register the messaging endpoint in the Teams Developer Portal:");
+            logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
         }
 
         // Step 3: Save updated configuration

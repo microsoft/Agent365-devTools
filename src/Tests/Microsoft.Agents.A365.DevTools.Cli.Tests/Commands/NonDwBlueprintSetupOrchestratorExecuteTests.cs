@@ -112,7 +112,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             cancellationToken: CancellationToken.None,
             configService: configService,
             executor: mockExecutor,
-            botConfigurator: Substitute.For<IBotConfigurator>(),
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
             authValidator: authValidator,
             platformDetector: Substitute.ForPartsOf<PlatformDetector>(
                 Substitute.For<ILogger<PlatformDetector>>()),
@@ -253,7 +253,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             cancellationToken: CancellationToken.None,
             configService: configService,
             executor: mockExecutor,
-            botConfigurator: Substitute.For<IBotConfigurator>(),
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
             authValidator: Substitute.For<AzureAuthValidator>(
                 NullLogger<AzureAuthValidator>.Instance, mockExecutor),
             platformDetector: Substitute.ForPartsOf<PlatformDetector>(
@@ -414,7 +414,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             cancellationToken: CancellationToken.None,
             configService: configService,
             executor: mockExecutor,
-            botConfigurator: Substitute.For<IBotConfigurator>(),
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
             authValidator: Substitute.For<AzureAuthValidator>(
                 NullLogger<AzureAuthValidator>.Instance, mockExecutor),
             platformDetector: Substitute.ForPartsOf<PlatformDetector>(

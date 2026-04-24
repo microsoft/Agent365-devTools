@@ -48,7 +48,7 @@ flowchart TD
 2. **Blueprint** - Create Entra ID application registration for the agent blueprint
 3. **Infrastructure** - Provision Azure App Service, configure app settings
 4. **Permissions** - Configure Microsoft Graph API permissions, grant admin consent
-5. **Messaging Endpoint** - Register bot messaging endpoint with Azure Bot Service
+5. **Messaging Endpoint (M365 only, opt-in)** - For M365 agents, register the blueprint's backend messaging endpoint via the Teams Graph API (routed through MCP Platform). Requires `--m365`; other hosts configure the endpoint directly in the Teams Developer Portal.
 
 ---
 
@@ -64,6 +64,32 @@ a365 setup blueprint       # Create blueprint only
 a365 setup infrastructure  # Provision Azure only
 a365 setup permissions     # Configure permissions only
 ```
+
+### Messaging endpoint (M365 agents)
+
+The `--m365` flag opts into registering the messaging endpoint with Teams Graph via MCP Platform. It is **off by default** — without it, `--endpoint-only`, `--update-endpoint`, and the messaging-endpoint step in `setup all` skip the API call and point you at the Teams Developer Portal for manual configuration.
+
+```bash
+# Full setup including messaging endpoint registration
+a365 setup all --m365
+
+# Register the messaging endpoint only (existing blueprint)
+a365 setup blueprint --endpoint-only --m365
+
+# Update the endpoint URL (clears and re-registers)
+a365 setup blueprint --update-endpoint https://your-host.example.com/api/messages --m365
+
+# Non-M365 agent: CLI prints the Teams Developer Portal link and skips the API call
+a365 setup blueprint --endpoint-only
+```
+
+When the server rejects the request with a recognized contract-mismatch signature (today: the pre-migration Azure Bot Service validator), the CLI logs at INFO:
+
+```
+Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually.
+```
+
+and the `a365 setup all` summary includes an "Action Required" entry with the Teams Developer Portal URL. The command does not fail — other setup steps still complete.
 
 ---
 

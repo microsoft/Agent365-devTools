@@ -27,9 +27,10 @@ Examples:
 4. **Analyzes changes** for security, testing, design patterns, and code quality issues
 5. **Differentiates contexts**: CLI code vs GitHub Actions code (different standards)
 6. **Creates actionable feedback**: Specific refactoring suggestions based on file names and patterns
-7. **Runs the test suite and measures per-test timing** — flags any test taking > 1 second as a performance regression
-8. **Generates structured review document** saved to a markdown file
-9. **Shows summary** of all issues found organized by severity
+7. **Verifies documentation completeness** — detects user-visible surface changes (new CLI flags, renamed public types, payload contract changes, etc.) and verifies `CHANGELOG.md` + relevant `README.md`/`design.md` are updated in the same diff. For renames, greps all `*.md` files for stale references. See the Documentation Completeness section in `.claude/agents/pr-code-reviewer.md` for detection rules and severity calibration.
+8. **Runs the test suite and measures per-test timing** — flags any test taking > 1 second as a performance regression
+9. **Generates structured review document** saved to a markdown file
+10. **Shows summary** of all issues found organized by severity
 
 ## Engineering Review Principles
 
@@ -80,6 +81,13 @@ This skill enforces the same principles as the PR review skill:
 ### Security
 - **No hardcoded secrets**: Use environment variables or Azure Key Vault
 - **Credential management**: Follow az cli patterns for CLI code; use GitHub Secrets for Actions
+
+### Documentation Completeness
+The review does not assume docs will be updated later — a user-visible surface change without matching doc updates is a finding in its own right. Full detection rules live in `.claude/agents/pr-code-reviewer.md` (Step 7). Short version:
+- **Detect**: new `Option<...>`, renamed public class/interface, new/deleted `public` API, changed payload shape or validation rules, changed observable log messages.
+- **Require**: matching entry in `CHANGELOG.md` under `[Unreleased]`, updated `README.md` in the relevant folder, and — for renames — zero stale hits from `grep -rn "<OldName>" --include="*.md"`.
+- **Severity**: missing CHANGELOG for user-visible change = **HIGH**; stale rename in markdown = **HIGH**; missing folder README update = **MEDIUM**.
+- **Not excuses**: "it's preview/opt-in/temporary", "Microsoft Learn will cover it", "you can see it in the diff". The CHANGELOG is the release's source of truth.
 
 ### Context Awareness
 The skill differentiates between:

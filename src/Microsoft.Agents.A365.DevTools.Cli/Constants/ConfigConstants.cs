@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System;
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 
 /// <summary>
@@ -32,6 +34,15 @@ public static class ConfigConstants
     /// Microsoft Learn documentation URL for custom client app registration
     /// </summary>
     public const string CustomClientAppRegistrationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration";
+
+    /// <summary>
+    /// Microsoft Learn documentation URL for configuring the messaging endpoint manually in
+    /// the Teams Developer Portal. Used as the fallback action item whenever automated Teams
+    /// Graph backend configuration cannot complete (non-M365 agents, contract-mismatch
+    /// responses, ownership/permission failures).
+    /// </summary>
+    public const string TeamsDeveloperPortalConfigureEndpointUrl =
+        "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal";
 
     /// <summary>
     /// Agent 365 Tools Discover endpoint URL (V2)

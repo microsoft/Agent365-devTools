@@ -30,7 +30,7 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   ├── DotNetBuilder.cs          # .NET project builder
 │   ├── NodeBuilder.cs            # Node.js project builder
 │   ├── PythonBuilder.cs          # Python project builder
-│   ├── BotConfigurator.cs        # Messaging endpoint registration
+│   ├── TeamsGraphBackendConfigurator.cs  # Messaging endpoint (Teams Graph backend config)
 │   ├── GraphApiService.cs        # Graph API interactions
 │   ├── AuthenticationService.cs  # MSAL.NET authentication
 │   ├── AzureAuthValidator.cs     # Azure CLI auth + App Service token validation
@@ -182,7 +182,7 @@ All token acquisition goes through **MSAL.NET via `AuthenticationService`**. No 
 ### Token Acquisition Flow
 
 ```
-All callers (GraphApiService, ArmApiService, BotConfigurator, ...)
+All callers (GraphApiService, ArmApiService, TeamsGraphBackendConfigurator, ...)
         |
         v
 AuthenticationService.GetAccessTokenAsync(resource, tenantId)
