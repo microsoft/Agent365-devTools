@@ -249,7 +249,19 @@ public class Agent365ToolingService : IAgent365ToolingService
     private string BuildAddMcpServerUrl(string environment)
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
-        return $"{baseUrl}/agents/mcpServers/add";
+        return $"{baseUrl}/agents/externalMcpServers/add";
+    }
+
+    /// <summary>
+    /// Builds URL for deleting a BYO MCP server
+    /// </summary>
+    /// <param name="environment">Environment name</param>
+    /// <param name="serverName">MCP server name</param>
+    /// <returns>Full URL for delete MCP server endpoint</returns>
+    private string BuildDeleteMcpServerUrl(string environment, string serverName)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/externalMcpServers/{Uri.EscapeDataString(serverName)}/delete";
     }
 
     /// <summary>
@@ -820,8 +832,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Environment: {Env}", _environment);
             _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
-            // TODO: Revert to ConfigConstants.GetAgent365ToolsResourceAppId(_environment) once backend is deployed
-            var audience = "05879165-0320-489e-b644-f72b33f3edf0";
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
@@ -901,8 +912,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Environment: {Env}", _environment);
             _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
 
-            // TODO: Revert to ConfigConstants.GetAgent365ToolsResourceAppId(_environment) once backend is deployed
-            var audience = "05879165-0320-489e-b644-f72b33f3edf0";
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
@@ -947,6 +957,65 @@ public class Agent365ToolingService : IAgent365ToolingService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to provision identity for MCP server {ServerName}", serverName);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<DeleteMcpServerResponse?> DeleteMcpServerAsync(
+        string serverName,
+        bool force = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(serverName))
+            throw new ArgumentException("Server name cannot be null or empty", nameof(serverName));
+
+        try
+        {
+            var endpointUrl = BuildDeleteMcpServerUrl(_environment, serverName);
+            if (force)
+            {
+                endpointUrl += "?force=true";
+            }
+
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogDebug("Deleting MCP server {ServerName} (CorrelationId: {CorrelationId}, Force: {Force})", serverName, correlationId, force);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
+
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
+
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogError("Failed to acquire authentication token");
+                return null;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+            LogRequest("DELETE", endpointUrl);
+
+            using var response = await httpClient.DeleteAsync(endpointUrl, cancellationToken);
+
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "delete MCP server", cancellationToken);
+            if (!isSuccess)
+            {
+                return null;
+            }
+
+            var deleteResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<DeleteMcpServerResponse>(
+                responseContent!, _logger);
+
+            _logger.LogDebug("Successfully deleted MCP server {ServerName}", serverName);
+            return deleteResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete MCP server {ServerName}", serverName);
             return null;
         }
     }

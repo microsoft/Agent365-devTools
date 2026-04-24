@@ -41,6 +41,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
+        developMcpCommand.AddCommand(CreateDeleteExternalMcpServerSubcommand(logger, toolingService, graphApiService));
 
         return developMcpCommand;
     }
@@ -848,6 +849,9 @@ public static class DevelopMcpCommand
         var toolsOption = new Option<string?>("--tools", description: "Comma-separated list of tool names exposed by this server (e.g., 'tool1,tool2,tool3')");
         command.AddOption(toolsOption);
 
+        var toolDescriptionsOption = new Option<string?>("--tool-descriptions", description: "Comma-separated list of tool descriptions matching --tools order (e.g., 'Desc for tool1,Desc for tool2')");
+        command.AddOption(toolDescriptionsOption);
+
         var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://myapp/.default')");
         command.AddOption(remoteScopesOption);
 
@@ -888,6 +892,7 @@ public static class DevelopMcpCommand
             var apiKeyLocation = context.ParseResult.GetValueForOption(apiKeyLocationOption);
             var apiKeyName = context.ParseResult.GetValueForOption(apiKeyNameOption);
             var toolsInput = context.ParseResult.GetValueForOption(toolsOption);
+            var toolDescriptionsInput = context.ParseResult.GetValueForOption(toolDescriptionsOption);
             var remoteScopes = context.ParseResult.GetValueForOption(remoteScopesOption);
             var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
             var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption);
@@ -1037,14 +1042,29 @@ public static class DevelopMcpCommand
 
                 logger.LogDebug("Tools to register: {Tools}", string.Join(", ", toolList));
 
-                // Collect optional descriptions for each tool (used in MOS package)
+                // Collect required descriptions for each tool (used in MOS package)
                 toolDescriptions = new Dictionary<string, string>();
-                foreach (var tool in toolList)
+                if (!string.IsNullOrWhiteSpace(toolDescriptionsInput))
                 {
-                    Console.Write($"Enter description for tool '{tool}' (press Enter to skip): ");
-                    var desc = Console.ReadLine()?.Trim();
-                    if (!string.IsNullOrWhiteSpace(desc))
+                    var descList = toolDescriptionsInput.Split(',', StringSplitOptions.TrimEntries).ToList();
+                    if (descList.Count != toolList.Count)
                     {
+                        logger.LogError("Number of tool descriptions ({DescCount}) must match number of tools ({ToolCount})", descList.Count, toolList.Count);
+                        return;
+                    }
+
+                    for (var i = 0; i < toolList.Count; i++)
+                    {
+                        if (string.IsNullOrWhiteSpace(descList[i])) { logger.LogError("Tool description is required for '{Tool}'", toolList[i]); return; }
+                        toolDescriptions[toolList[i]] = descList[i];
+                    }
+                }
+                else
+                {
+                    foreach (var tool in toolList)
+                    {
+                        var desc = InputValidator.PromptAndValidateRequiredInput($"Enter description for tool '{tool}': ", $"Description for tool '{tool}'", 200);
+                        if (string.IsNullOrWhiteSpace(desc)) { logger.LogError("Tool description is required for '{Tool}'", tool); return; }
                         toolDescriptions[tool] = desc;
                     }
                 }
@@ -1164,6 +1184,13 @@ public static class DevelopMcpCommand
                         logger.LogDebug("Deleting existing Remote Proxy app: {ObjectId}", existingRemoteObjectId);
                         await graphApiService.DeleteEntraAppAsync(tenantId, existingRemoteObjectId);
                     }
+                }
+
+                var existingPpmiObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName} - BYO");
+                if (!string.IsNullOrWhiteSpace(existingPpmiObjectId))
+                {
+                    logger.LogDebug("Deleting existing PPMI (MCPServer) app: {ObjectId}", existingPpmiObjectId);
+                    await graphApiService.DeleteEntraAppAsync(tenantId, existingPpmiObjectId);
                 }
             }
 
@@ -1667,5 +1694,138 @@ public static class DevelopMcpCommand
             // Can contain only letters, digits, hyphens, and underscores
             return input.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_');
         }
+    }
+
+    /// <summary>
+    /// Creates the delete-external-mcp-server subcommand
+    /// </summary>
+    private static Command CreateDeleteExternalMcpServerSubcommand(
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService)
+    {
+        var command = new Command("delete-external-mcp-server", "Delete a registered external MCP server");
+
+        var serverNameOption = new Option<string>("--server-name", description: "Name of the MCP server to delete") { IsRequired = true };
+        command.AddOption(serverNameOption);
+
+        var tenantIdOption = new Option<string?>("--tenant-id", description: "Azure AD tenant ID (auto-detected from az CLI if not specified)");
+        command.AddOption(tenantIdOption);
+
+        var forceOption = new Option<bool>("--force", description: "Force deletion even if the server is approved");
+        command.AddOption(forceOption);
+
+        var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
+        command.AddOption(configOption);
+
+        command.SetHandler(async (context) =>
+        {
+            var serverName = context.ParseResult.GetValueForOption(serverNameOption)!;
+            var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
+            var force = context.ParseResult.GetValueForOption(forceOption);
+
+            var tenantId = userTenantId ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                try
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo("az")
+                    {
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    };
+                    psi.ArgumentList.Add("account");
+                    psi.ArgumentList.Add("show");
+                    psi.ArgumentList.Add("--query");
+                    psi.ArgumentList.Add("tenantId");
+                    psi.ArgumentList.Add("-o");
+                    psi.ArgumentList.Add("tsv");
+
+                    using var proc = System.Diagnostics.Process.Start(psi);
+                    if (proc != null)
+                    {
+                        var output = await proc.StandardOutput.ReadToEndAsync();
+                        await proc.WaitForExitAsync();
+                        tenantId = output?.Trim() ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(tenantId))
+                        {
+                            logger.LogDebug("Auto-detected tenant ID from az account: {TenantId}", tenantId);
+                        }
+                    }
+                }
+                catch
+                {
+                    logger.LogDebug("Could not auto-detect tenant ID from az account");
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                logger.LogError("Tenant ID is required. Pass --tenant-id or sign in via az login.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            Console.WriteLine($"Deleting MCP server '{serverName}'...");
+
+            var deleteResponse = await toolingService.DeleteMcpServerAsync(serverName, force);
+            if (deleteResponse == null)
+            {
+                logger.LogError("Failed to delete MCP server {ServerName}", serverName);
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (!deleteResponse.IsSuccess)
+            {
+                logger.LogError("Failed to delete MCP server {ServerName}: {Message}", serverName, deleteResponse.Message);
+                context.ExitCode = 1;
+                return;
+            }
+
+            // Delete Entra apps returned by the backend
+            var appIds = deleteResponse.AppIds;
+            if (graphApiService != null && appIds != null && appIds.Count > 0)
+            {
+                Console.WriteLine($"Cleaning up {appIds.Count} Entra app(s)...");
+                foreach (var app in appIds)
+                {
+                    if (string.IsNullOrWhiteSpace(app.AppId))
+                        continue;
+
+                    try
+                    {
+                        var objectId = await graphApiService.GetAppObjectIdByClientIdAsync(tenantId, app.AppId);
+                        if (!string.IsNullOrWhiteSpace(objectId))
+                        {
+                            logger.LogDebug("Deleting Entra app '{AppName}' (clientId: {AppId}, objectId: {ObjectId})", app.AppName, app.AppId, objectId);
+                            await graphApiService.DeleteEntraAppAsync(tenantId, objectId);
+                            Console.WriteLine($"  Deleted: {app.AppName} ({app.AppId})");
+                        }
+                        else
+                        {
+                            logger.LogDebug("Entra app '{AppName}' (clientId: {AppId}) not found - may have been already deleted", app.AppName, app.AppId);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning("Failed to delete Entra app '{AppName}' ({AppId}): {Error}", app.AppName, app.AppId, ex.Message);
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(deleteResponse.MosTitleId))
+            {
+                Console.WriteLine(deleteResponse.MosTitleDeleted
+                    ? $"MOS title '{deleteResponse.MosTitleId}' deleted."
+                    : $"WARNING: MOS title '{deleteResponse.MosTitleId}' was NOT deleted. Manual cleanup may be required.");
+            }
+
+            Console.WriteLine($"MCP server '{serverName}' has been deleted successfully.");
+        });
+
+        return command;
     }
 }

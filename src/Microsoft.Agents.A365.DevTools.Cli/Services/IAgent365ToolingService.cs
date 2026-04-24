@@ -108,5 +108,16 @@ public interface IAgent365ToolingService
     Task<ProvisionIdentityResponse?> ProvisionIdentityAsync(
         string serverName,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a BYO (Bring Your Own) MCP server and returns the associated app IDs for cleanup
+    /// </summary>
+    /// <param name="serverName">MCP server name to delete</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing app IDs to clean up, or null on failure</returns>
+    Task<DeleteMcpServerResponse?> DeleteMcpServerAsync(
+        string serverName,
+        bool force = false,
+        CancellationToken cancellationToken = default);
 }
 

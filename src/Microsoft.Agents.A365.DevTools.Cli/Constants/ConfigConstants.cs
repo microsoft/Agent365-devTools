@@ -166,11 +166,10 @@ public static string GetAgent365ToolsResourceAppId(string environment)
     if (!string.IsNullOrEmpty(customAppId))
         return customAppId;
 
-    // Default to production app ID
     return environment?.ToLower() switch
     {
-        "prod" => McpConstants.Agent365ToolsProdAppId,
-        _ => McpConstants.Agent365ToolsProdAppId
+        "local" or "test" => "05879165-0320-489e-b644-f72b33f3edf0",
+        _ => McpConstants.Agent365ToolsProdAppId,
     };
 }
 }
