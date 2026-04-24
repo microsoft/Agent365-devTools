@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 /// <summary>
-/// Orchestrates setup for non-AI Teammate agent (non-digital-worker) deployments.
+/// Orchestrates setup for blueprint agent deployments.
 /// Uses standard App Registration + Azure Bot Service pattern — no Agent Identity Blueprint.
 ///
 /// Phase A (current): dry-run plan output only.
@@ -48,7 +48,7 @@ internal static class NonDwSetupOrchestrator
             : "<messaging-endpoint>";
 
         logger.LogWarning(
-            "Non-AI Teammate setup (classic App Registration path) is not yet fully implemented. " +
+            "Blueprint agent setup (classic App Registration path) is not yet fully implemented. " +
             "Use --use-blueprint for the blueprint-based non-DW setup path.");
         logger.LogInformation("");
         logger.LogInformation("Non-DW Setup Plan (dry run — no changes will be made)");

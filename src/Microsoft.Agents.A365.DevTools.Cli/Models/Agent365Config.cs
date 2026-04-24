@@ -155,7 +155,7 @@ public class Agent365Config
     #region Azure OpenAI Configuration
 
     /// <summary>
-    /// Name of the Azure OpenAI resource to create (non-AI Teammate agents only).
+    /// Name of the Azure OpenAI resource to create (blueprint agents only).
     /// If set and NeedAzureOpenAI is true, setup will provision this resource.
     /// </summary>
     [JsonPropertyName("azureOpenAIName")]
@@ -176,7 +176,7 @@ public class Agent365Config
 
     /// <summary>
     /// When true, setup will provision an Azure OpenAI resource.
-    /// Only relevant for non-AI Teammate agent deployments.
+    /// Only relevant for blueprint agent deployments.
     /// </summary>
     [JsonPropertyName("needAzureOpenAI")]
     public bool NeedAzureOpenAI { get; init; }
@@ -187,11 +187,12 @@ public class Agent365Config
 
     /// <summary>
     /// Controls which setup and publish flow is used.
-    /// true (default) = Digital Worker (Agent Identity Blueprint pattern).
-    /// false = non-AI Teammate agent. Two variants are available when false:
+    /// true (default) = own-identity agent: setup all provisions blueprint and permissions only;
+    ///   agent identity SP and Entra user are created separately via 'a365 create-instance'.
+    /// false = blueprint-only agent: setup all auto-creates agent identity SP; no Entra user. Two variants:
     ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
-    ///   - UseBlueprint = true:  Blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
-    /// Can be overridden per-command with the --aiteammate flag.
+    ///   - UseBlueprint = true:  Blueprint-only non-DW flow (Agent Identity Blueprint + Agent Instance).
+    /// Can be overridden per-command with the --ownidentity flag.
     /// </summary>
     [JsonPropertyName("aiTeammate")]
     public bool? AiTeammate { get; init; }
@@ -205,7 +206,7 @@ public class Agent365Config
     public bool? UseBlueprint { get; init; }
 
     /// <summary>
-    /// Returns true when this config represents a non-AI Teammate agent deployment.
+    /// Returns true when this config represents a blueprint agent deployment.
     /// </summary>
     [JsonIgnore]
     public bool IsNonAiTeammate => AiTeammate == false;

@@ -45,7 +45,7 @@ internal static class AllSubcommand
     }
 
     /// <summary>
-    /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
+    /// Returns the requirement checks for <c>setup all --ownidentity false</c> (non-DW blueprint).
     /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
@@ -107,14 +107,16 @@ internal static class AllSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
-        var aiTeammateOption = new Option<bool?>(
-            "--aiteammate",
-            description: "true = AI Teammate / Digital Worker, false = non-AI Teammate agent (blueprint, default)\n" +
+        var ownIdentityOption = new Option<bool?>(
+            "--ownidentity",
+            description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
+                        "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+                        "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
-        var agentInstanceOnlyOption = new Option<bool>(
-            "--agent-instance-only",
-            description: "Skip all setup steps and only run agent instance registration (--aiteammate false only)");
+        var agentRegistrationOnlyOption = new Option<bool>(
+            "--agent-registration-only",
+            description: "Skip all setup steps and only run agent registration (non-M365 agents only)");
 
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
@@ -129,18 +131,18 @@ internal static class AllSubcommand
 
         var m365Option = new Option<bool>(
             "--m365",
-            description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint with Teams Graph via MCP Platform. " +
-                        "Default is false (opt-in); non-M365 agents should configure their endpoint in the Teams Developer Portal.");
+            description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint via MCP Platform. " +
+                        "Default is false (opt-in); omit this flag for non-M365 agents.");
 
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
-        command.AddOption(aiTeammateOption);
-        command.AddOption(agentInstanceOnlyOption);
+        command.AddOption(ownIdentityOption);
+        command.AddOption(agentRegistrationOnlyOption);
+        command.AddOption(m365Option);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
-        command.AddOption(m365Option);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -148,8 +150,8 @@ internal static class AllSubcommand
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
-            var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
-            var agentInstanceOnly = context.ParseResult.GetValueForOption(agentInstanceOnlyOption);
+            var ownIdentityFlag = context.ParseResult.GetValueForOption(ownIdentityOption);
+            var agentRegistrationOnly = context.ParseResult.GetValueForOption(agentRegistrationOnlyOption);
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
@@ -160,11 +162,11 @@ internal static class AllSubcommand
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // Non-DW (blueprint) is the default. DW requires --aiteammate true explicitly.
+            // Blueprint agent is the default. Own-identity agent requires --ownidentity true explicitly.
             Agent365Config? nonDwConfig = null;
             bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
-            if (aiTeammateFlag != true)
+            if (ownIdentityFlag != true)
             {
                 if (isBootstrap)
                 {
@@ -239,9 +241,9 @@ internal static class AllSubcommand
                     nonDwConfig = File.Exists(nonDwGenPath)
                         ? await configService.LoadAsync(config.FullName, nonDwGenPath)
                         : await configService.LoadAsync(config.FullName);
-                    // If aiTeammate was not explicitly set, respect what the config says
-                    // (allows existing DW configs to keep working without --aiteammate true)
-                    if (!aiTeammateFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
+                    // If ownidentity was not explicitly set, respect what the config says
+                    // (allows existing own-identity configs to keep working without --ownidentity true)
+                    if (!ownIdentityFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
             }
@@ -251,7 +253,7 @@ internal static class AllSubcommand
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly);
                     return;
                 }
 
@@ -283,7 +285,7 @@ internal static class AllSubcommand
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
-                    agentInstanceOnly: agentInstanceOnly,
+                    agentInstanceOnly: agentRegistrationOnly,
                     isBootstrap: isBootstrap,
                     isM365: isM365,
                     confirmationProvider: confirmationProvider);
@@ -292,7 +294,7 @@ internal static class AllSubcommand
                 return;
             }
 
-            // --- Digital Worker (default) path ---
+            // --- Own-identity agent (default) path ---
             if (dryRun)
             {
                 var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();

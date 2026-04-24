@@ -26,32 +26,32 @@ Present only the options that apply to the user's `agentType`:
 - **If `agentType = 1`** (M365 — Discoverability is already included):
   1. Observability
   2. Work IQ
-  3. AI Teammate
+  3. own-identity agent
 - **If `agentType = 2`** (All other agents):
   1. Discoverability
   2. Observability
   3. Work IQ
-  4. AI Teammate
+  4. own-identity agent
 
 Wait for the answer. Store as `capabilities`.
 
 > **Note:** The setup automatically includes all prerequisite capabilities for your selection.
 
-After both questions are answered, set `isAITeammate = true` if `capabilities = AI Teammate`, else `isAITeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
+After both questions are answered, set `isOwnIdentity = true` if `capabilities = own-identity agent`, else `isOwnIdentity = false`. Then create all todos for the path and mark Todo 1 in-progress:
 
-**AI Teammate path** — `isAITeammate = true` (5 todos total):
+**Own-identity agent path** — `isOwnIdentity = true` (5 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
 - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
 - Todo 3: `Step 3: Configure the Agent 365 CLI (Initialize Configuration)`
 - Todo 4: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 - Todo 5: `Step 5: Publish and Deploy the Agent Application`
 
-**Standard path** — `isAITeammate = false` (3 todos total):
+**Standard path** — `isOwnIdentity = false` (3 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
 - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
 - Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 
-**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the AI Teammate path (`isAITeammate = true`) — it is skipped entirely on all other paths.
+**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the own-identity agent path (`isOwnIdentity = true`) — it is skipped entirely on all other paths.
 
 **RULE 3 — SUB-SECTIONS ARE NOT SEPARATE TODOS.** Each `## Step` has internal sub-sections — these are tasks WITHIN that step, NOT separate todos.
 
@@ -59,7 +59,7 @@ After both questions are answered, set `isAITeammate = true` if `capabilities = 
 
 **RULE 6 — SILENT EXECUTION.** Work silently. Do NOT narrate what you are about to do, announce step transitions ("Proceeding to Step 2", "CLI installed, moving on"), print todo state, emoji checklists, or step completion summaries. Only speak to the user when you need input, have an error to report, or need confirmation before a destructive action.
 
-**RULE 5 — INPUT FIELDS.** In Step 3 (AI Teammate path only), present exactly 5 fields (Azure-hosted) or 2 fields (self-hosted). Do NOT ask the user for a client app ID — the CLI resolves it automatically by the well-known app name "Agent 365 CLI".
+**RULE 5 — INPUT FIELDS.** In Step 3 (own-identity agent path only), present exactly 5 fields (Azure-hosted) or 2 fields (self-hosted). Do NOT ask the user for a client app ID — the CLI resolves it automatically by the well-known app name "Agent 365 CLI".
 
 ---
 
@@ -213,27 +213,27 @@ pip --version
 ### Step 2 completion
 
 > **BEFORE MOVING ON:** Mark Todo 2 (Step 2) as **completed** now. Summarize to the user what was validated. Then proceed based on your path:
-> - **AI Teammate path** (`isAITeammate = true`): Mark Todo 3 in-progress and proceed to Step 3.
-> - **All other paths** (`isAITeammate = false`): Skip Step 3 entirely. Mark Todo 3 in-progress and jump directly to Step 4.
+> - **Own-identity agent path** (`isOwnIdentity = true`): Mark Todo 3 in-progress and proceed to Step 3.
+> - **All other paths** (`isOwnIdentity = false`): Skip Step 3 entirely. Mark Todo 3 in-progress and jump directly to Step 4.
 >
 > **VERIFY YOUR TODO STATE:**
-> - AI Teammate path: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
+> - Own-identity agent path: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
 > - All other paths: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress**
 
 ---
 
 ## Step 3: Configure the Agent 365 CLI (Initialize Configuration)
 
-> **AI TEAMMATE PATH ONLY** (`capabilities = AI Teammate`, `isAITeammate = true`).
+> **OWN-IDENTITY AGENT PATH ONLY** (`capabilities = own-identity agent`, `isOwnIdentity = true`).
 >
-> If `isAITeammate = false` (Standard path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
+> If `isOwnIdentity = false` (Standard path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
 >
-> If `isAITeammate = true`, continue below.
+> If `isOwnIdentity = true`, continue below.
 
 > **MANDATORY GATE — DO NOT PROCEED WITHOUT VERIFICATION:**
 > 
 > Before executing ANY part of this step, verify ALL of the following:
-> - [ ] You created exactly 5 todos (AI Teammate path — RULE 1)
+> - [ ] You created exactly 5 todos (own-identity agent path — RULE 1)
 > - [ ] Todo 1 (Step 1) is marked **completed** — CLI was verified/installed
 > - [ ] Todo 2 (Step 2) is marked **completed** — Azure CLI login confirmed, custom client app validated, build tools verified
 > - [ ] Todo 3 (Step 3) is marked **in-progress**
@@ -242,13 +242,13 @@ pip --version
 > 
 > Common mistake: Jumping to this step before completing Steps 1 and 2. The CLI requires a working Azure CLI login and a validated custom client app before setup will succeed.
 
-Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --aiteammate true --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed before running — the CLI creates `a365.config.json` automatically and auto-detects your tenant ID and client app ID from your Azure CLI session.
+Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --ownidentity true --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed before running — the CLI creates `a365.config.json` automatically and auto-detects your tenant ID and client app ID from your Azure CLI session.
 
 ### Collect setup inputs
 
 Ask the user for the agent base name only. No other values are needed for this path — the CLI auto-detects everything else.
 
-**"Please provide the following value to set up your AI Teammate agent:"**
+**"Please provide the following value to set up your own-identity agent:"**
 
 | Field | Description | Example |
 |-------|-------------|---------|
@@ -265,7 +265,7 @@ Ask the user for the agent base name only. No other values are needed for this p
 Run setup using the agent name. The CLI bootstraps configuration from Entra and provisions all resources:
 
 ```bash
-a365 setup all --aiteammate true --agent-name <agent-base-name>
+a365 setup all --ownidentity true --agent-name <agent-base-name>
 ```
 
 The CLI will:
@@ -281,7 +281,7 @@ The `setup all` process validates your inputs. Notably, it will check:
 - That the CLI client app exists in the tenant and has the required permissions. If this validation fails, refer back to the app registration guide and fix the configuration.
 - It also detects the project platform from the directory (looking for a `.csproj`, `package.json`, or `pyproject.toml`). If it warns it could not detect the project platform, run the command from the agent project directory.
 
-If any validation fails, correct the issues and re-run `a365 setup all --aiteammate true --agent-name <agent-base-name>`.
+If any validation fails, correct the issues and re-run `a365 setup all --ownidentity true --agent-name <agent-base-name>`.
 
 ### Proceed when setup is successful
 
@@ -293,7 +293,7 @@ Once `a365 setup all` completes without errors, the CLI has provisioned your env
 
 ### 4.1 — Collect provisioning inputs
 
-**For the Standard path (`isAITeammate = false`):**
+**For the Standard path (`isOwnIdentity = false`):**
 
 Ask the user two questions (one at a time, wait for each response):
 
@@ -310,7 +310,7 @@ Ask the user two questions (one at a time, wait for each response):
 
    Store as `project_dir`. If the user replies `current`, use the current working directory.
 
-**For the AI Teammate path (`isAITeammate = true`):**
+**For the own-identity agent path (`isOwnIdentity = true`):**
 
 - `agent_name` is derived from `agentBaseName` collected in Step 3 — do NOT ask again.
 - `project_dir` is the directory where Step 3 was run (where `a365.config.json` now exists) — do NOT ask again.
@@ -328,7 +328,7 @@ Run the following command and display the full output to the user:
 cd "<project_dir>" && a365 setup all --agent-name <agent_name> --dry-run
 ```
 
-**AI Teammate path:**
+**Own-identity agent path:**
 ```bash
 cd "<project_dir>" && a365 setup all --dry-run
 ```
@@ -351,7 +351,7 @@ Run the following command from `project_dir` and stream all output:
 cd "<project_dir>" && a365 setup all --agent-name <agent_name>
 ```
 
-**AI Teammate path:**
+**Own-identity agent path:**
 ```bash
 cd "<project_dir>" && a365 setup all
 ```
@@ -370,7 +370,7 @@ This command may take several minutes. Monitor output carefully:
 
 **Important considerations:**
 
-- **Quota limits:** An error like "Operation cannot be completed without additional quota" means the Azure subscription has hit a capacity limit for that region/SKU. Report this to the user and halt. If possible, update `location` in the config (AI Teammate path) or ask the user for a new region (Standard path) and retry.
+- **Quota limits:** An error like "Operation cannot be completed without additional quota" means the Azure subscription has hit a capacity limit for that region/SKU. Report this to the user and halt. If possible, update `location` in the config (own-identity agent path) or ask the user for a new region (Standard path) and retry.
 - **Region support:** If an Azure resource is not available in the selected region, update the location and retry. Agent 365 preview supports only certain regions.
 - **Graph API permission errors:** A "Forbidden" or "Authorization_RequestDenied" error during blueprint creation indicates insufficient directory role or missing admin consent. Stop and resolve the permission issue (refer back to Step 2). After fixing, re-run `a365 setup all`.
 - **Interactive authentication — WAM on Windows / browser on Mac/Linux (expected on first run):**
@@ -424,7 +424,7 @@ Mark all todos as completed, then check `capabilities`:
 
 ## Step 5: Publish and Deploy the Agent Application
 
-> **AI TEAMMATE PATH ONLY.** This step does not exist on the Standard path. If `isAITeammate = false`, you should not be here.
+> **OWN-IDENTITY AGENT PATH ONLY.** This step does not exist on the Standard path. If `isOwnIdentity = false`, you should not be here.
 
 At this stage, your agent is set up. You should be able to see your agent in Microsoft Admin Center Agent Registry. Observability will be added after this step completes.
 
@@ -601,7 +601,7 @@ If your agent instance isn't working as expected, see the Troubleshooting sectio
 ### Step 5 completion
 
 > **REQUIRED — do not skip this step.**
-> AI Teammate includes observability. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed.
+> Own-identity agent includes observability. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed.
 
 ---
 

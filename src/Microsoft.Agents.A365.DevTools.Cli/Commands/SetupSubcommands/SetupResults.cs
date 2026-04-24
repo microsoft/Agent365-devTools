@@ -123,7 +123,7 @@ public class SetupResults
     public string? CombinedConsentUrl { get; set; }
 
     /// <summary>
-    /// Whether this is a non-DW blueprint setup flow (--aiteammate false).
+    /// Whether this is a blueprint agent setup flow (--ownidentity false).
     /// Used in the summary display to show the correct recovery actions.
     /// </summary>
     public bool IsNonDwBlueprintFlow { get; set; }

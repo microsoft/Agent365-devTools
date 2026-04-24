@@ -88,6 +88,17 @@ public class CleanupCommand
                     return;
                 }
             }
+            else
+            {
+                // No --agent-name and no static config file — fail fast with a clear exit code
+                // so cleanup does not silently report success to scripts or CI.
+                bootstrapConfig = await LoadConfigAsync(configFile, logger, configService);
+                if (bootstrapConfig is null)
+                {
+                    context.ExitCode = 1;
+                    return;
+                }
+            }
 
             IConfirmationProvider effectiveConfirmationProvider = yes
                 ? new NonInteractiveConfirmationProvider()

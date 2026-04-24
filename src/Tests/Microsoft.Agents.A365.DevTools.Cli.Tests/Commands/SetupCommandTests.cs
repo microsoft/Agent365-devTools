@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -255,7 +256,9 @@ public class SetupCommandTests
 
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 
-        // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests
+        // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests.
+        // The override path also skips config resolution entirely, so no static config file
+        // is required for the command to complete with exit 0.
         var command = SetupCommand.CreateCommand(
             _mockLogger,
             _mockConfigService,
@@ -274,11 +277,8 @@ public class SetupCommandTests
         // Act
         var result = await parser.InvokeAsync("requirements", testConsole);
 
-        // Assert
+        // Assert — requirements should complete successfully (no failing checks in the override).
         Assert.Equal(0, result);
-
-        // Verify config was loaded for requirements check
-        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]
@@ -294,7 +294,9 @@ public class SetupCommandTests
 
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 
-        // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests
+        // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests.
+        // The override path also skips config resolution entirely, so no static config file
+        // is required for the command to complete with exit 0.
         var command = SetupCommand.CreateCommand(
             _mockLogger,
             _mockConfigService,
@@ -313,10 +315,40 @@ public class SetupCommandTests
         // Act
         var result = await parser.InvokeAsync("requirements --category Powershell", testConsole);
 
-        // Assert
+        // Assert — requirements should complete successfully (no failing checks in the override).
         Assert.Equal(0, result);
+    }
 
-        // Verify config was loaded for requirements check
-        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
+    [Fact]
+    public async Task RequirementsSubcommand_WithFailingCheck_ReturnsExitCode1()
+    {
+        // Arrange — supply one failing check via override so no real az/pwsh processes run.
+        var failingCheck = Substitute.For<IRequirementCheck>();
+        failingCheck.Name.Returns("TestCheck");
+        failingCheck.Description.Returns("A failing test check");
+        failingCheck.Category.Returns("Test");
+        failingCheck.CheckAsync(Arg.Any<Agent365Config>(), Arg.Any<ILogger>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RequirementCheckResult.Failure("test failure", "fix it")));
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockBackendConfigurator,
+            _mockAuthValidator,
+            _mockPlatformDetector,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider,
+            requirementChecksOverride: [failingCheck]);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("requirements", testConsole);
+
+        // Assert — a failing check must propagate exit code 1.
+        Assert.Equal(1, result);
     }
 }

@@ -166,8 +166,7 @@ internal static class BlueprintSubcommand
         var m365Option = new Option<bool>(
             "--m365",
             description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint " +
-                        "with Teams Graph via MCP Platform. Default is false (opt-in); non-M365 agents " +
-                        "should configure their endpoint in the Teams Developer Portal.");
+                        "via MCP Platform. Default is false (opt-in); omit this flag for non-M365 agents.");
 
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);

@@ -890,9 +890,9 @@ public class Agent365ConfigTests
     #region AiTeammate and IsNonAiTeammate Tests
 
     [Theory]
-    [InlineData(false, true)]   // aiTeammate=false → non-AI Teammate agent
-    [InlineData(true, false)]   // aiTeammate=true  → AI Teammate (digital worker)
-    [InlineData(null, false)]   // not set → AI Teammate (default)
+    [InlineData(false, true)]   // aiTeammate=false → blueprint agent
+    [InlineData(true, false)]   // aiTeammate=true  → own-identity agent
+    [InlineData(null, false)]   // not set → own-identity agent (default)
     public void IsNonAiTeammate_ReturnsCorrectValue(bool? aiTeammate, bool expected)
     {
         var config = new Agent365Config { AiTeammate = aiTeammate };

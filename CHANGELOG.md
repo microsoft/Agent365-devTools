@@ -28,6 +28,8 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 
 ### Added
 - `a365 status` — new command displaying agent configuration and live Entra registration state. Supports `--offline` to skip live Graph lookups, `--field <name>` for machine-readable single-value output, and `--agent-name` / `--tenant-id` for config-free use.
+- `--project-path <path>` option on `develop list-configured`, `develop add-mcp-servers`, and `develop remove-mcp-servers` — specify the manifest location without requiring `a365.config.json`.
+- `setup requirements` runs without `a365.config.json` — system checks (PowerShell modules, Frontier enrollment) always run; client app checks run when a config file or Azure CLI session is available.
 - `--agent-name` and `--tenant-id` options added to `setup blueprint`, `setup permissions` (all subcommands), `create-instance`, `publish`, and `query-entra` — all commands can now resolve configuration from Entra ID without requiring `a365.config.json`.
 - `setup permissions custom --resource-app-id <guid> --scopes <scopes>` — apply inline custom API permissions to the agent blueprint without editing `a365.config.json`.
 - `--m365` opt-in flag on `a365 setup blueprint`, `a365 cleanup blueprint`, and `a365 setup all` — when set, the CLI registers or clears the agent blueprint's messaging endpoint via the Teams Graph backend configuration endpoint on MCP Platform. Default is **off**: without `--m365`, endpoint registration is skipped and the CLI points users at the Teams Developer Portal (https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) for manual configuration. Intended for M365 agents; opt-in because the Teams Graph rollout on MCP Platform is ongoing.
@@ -64,15 +66,17 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 - Blueprint messaging endpoint registration migrated from Azure Bot Service (ABS) to Teams Graph backend configuration. The CLI now sends `{ agentIdentityBlueprintId, callbackUri, tenantId }` to MCP Platform instead of the ABS-shaped payload. `BotConfigurator` / `IBotConfigurator` are replaced by `TeamsGraphBackendConfigurator` / `ITeamsGraphBackendConfigurator`. Callers must pass `--m365` to opt in; see Added notes above.
 - `setup all --dry-run` output is now column-aligned for readability
 - `setup infrastructure` now defaults `deploymentProjectPath` to the current directory when not specified in config
-- `setup all` now defaults to the non-AI Teammate (blueprint) flow. Use `--aiteammate true` to run the Digital Worker (AI Teammate) setup flow.
+- `setup all` now defaults to the blueprint agent flow. Use `--ownidentity true` to run the own-identity agent setup flow.
 - `a365 setup blueprint` now sets `managerApplications` on the blueprint application to enable platform manageability. After May 1, blueprints without `managerApplications` will no longer be accepted, and must be recreated (delete and re-run `a365 setup blueprint`) or manually patched via Graph API to include this value.
 - `New-Agent365ToolsServicePrincipalProdPublic.ps1` updated to support MCP V1 and V2 provisioning — adds `-Mode` (`V1`/`V2`/`All`, default `All`), `-ManifestPath` (auto-extracts V2 per-server AppIds from `ToolingManifest.json`), and `-V2AppIds` (explicit list) parameters; script is now idempotent across all AppIds (re-run safe) and covers the migration period where V1 and V2 servers coexist in the same tenant
 - `a365 publish` updates manifest IDs, creates `manifest.zip`, and prints concise upload instructions for Microsoft 365 Admin Center (Agents > All agents > Upload custom agent). Interactive prompts only occur in interactive terminals; redirect stdin to suppress them in scripts.
 - `a365 develop list-available` resolves MCP server catalog from the live V2 discover endpoint; `--version` column in `a365 develop list-configured` shows `V1` or `V2` based on scope pattern
+- `develop list-available` no longer requires `a365.config.json`; reads environment from the `A365_ENVIRONMENT` env var (defaults to `prod`).
 - `ToolingManifest.json` duplicate server detection now falls back to `mcpServerName` when `mcpServerUniqueName` is absent, preventing false duplicate errors for older manifest entries
 
 ### Fixed
 - `AgentBlueprintService.SetInheritablePermissionsAsync` no longer crashes when the Graph PATCH call throws a transient exception (#366) — the exception is caught, logged, and surfaced as a structured error result
+- `cleanup` now returns exit code 1 when no config file and no `--agent-name` are provided, instead of silently reporting success.
 - `AgentBlueprintService.SetInheritablePermissionsAsync` now correctly propagates `OperationCanceledException` when the user cancels (Ctrl+C), instead of masking cancellation as a generic error
 - `A365CreateInstanceRunner` sponsor handling: sponsor is now required (Graph API rejects requests without one) — removed fallback that silently stripped the sponsor on retry, which caused `BadRequest` errors
 - Intermittent `ConnectionResetError (10054)` failures on corporate networks with TLS inspection proxies (Zscaler, Netskope) — Graph and ARM API calls now use direct MSAL.NET token acquisition instead of `az account get-access-token` subprocesses, bypassing the Python HTTP stack that triggered proxy resets (#321)

@@ -70,20 +70,22 @@ public class PublishCommand
 
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
-        var aiTeammateOption = new Option<bool?>(
-            "--aiteammate",
-            description: "true = AI Teammate / Digital Worker (default), false = non-AI Teammate agent\n" +
+        var ownIdentityOption = new Option<bool?>(
+            "--ownidentity",
+            description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
+                        "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+                        "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
         var useBlueprintOption = new Option<bool>(
             "--use-blueprint",
             description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
-                        "Only meaningful with --aiteammate false");
+                        "Only meaningful with --ownidentity false");
 
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(dryRunOption);
-        command.AddOption(aiTeammateOption);
+        command.AddOption(ownIdentityOption);
         command.AddOption(useBlueprintOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
@@ -92,7 +94,7 @@ public class PublishCommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
-            var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
+            var ownIdentityFlag = context.ParseResult.GetValueForOption(ownIdentityOption);
             var useBlueprintFlag = context.ParseResult.GetValueForOption(useBlueprintOption);
             var ct = context.GetCancellationToken();
 
@@ -112,14 +114,14 @@ public class PublishCommand
                     config = await configService.LoadAsync(configFile.FullName);
                 }
 
-                // Effective agent type: CLI flag > config value > default (digital-worker)
-                var isNonAiTeammate =
-                    aiTeammateFlag == false ||
-                    (!aiTeammateFlag.HasValue && config.IsNonAiTeammate);
+                // Effective agent type: CLI flag > config value > default (own-identity agent)
+                var isBlueprintAgent =
+                    ownIdentityFlag == false ||
+                    (!ownIdentityFlag.HasValue && config.IsNonAiTeammate);
 
-                if (isNonAiTeammate)
+                if (isBlueprintAgent)
                 {
-                    var isBlueprint = useBlueprintFlag || (isNonAiTeammate && config.UseBlueprint == true);
+                    var isBlueprint = useBlueprintFlag || (isBlueprintAgent && config.UseBlueprint == true);
 
                     if (dryRun)
                     {
@@ -145,7 +147,7 @@ public class PublishCommand
                     return;
                 }
 
-                // --- Digital Worker (default) path ---
+                // --- Own-identity agent (default) path ---
                 var blueprintId = config.AgentBlueprintId;
                 var displayName = config.AgentBlueprintDisplayName;
 

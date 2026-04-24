@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 /// <summary>
-/// Orchestrates setup for blueprint-based non-AI Teammate agent deployments.
+/// Orchestrates setup for blueprint-based agent deployments.
 /// Runs the same steps as DW (infrastructure, blueprint, permissions) then appends
 /// two non-DW-only steps: Agent Identity creation and agent registration.
 ///
@@ -30,7 +30,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
 
@@ -41,6 +41,34 @@ internal static class NonDwBlueprintSetupOrchestrator
             : "setup all";
         logger.LogInformation("Dry run: a365 {Args} --dry-run", cmdArgs);
         logger.LogInformation("");
+
+        if (agentRegistrationOnly)
+        {
+            logger.LogInformation("The following steps would be performed (--agent-registration-only).");
+            logger.LogInformation("");
+            logger.LogInformation("  Steps 1-4 (Prerequisites, Blueprint, Permissions, Grants) are skipped.");
+            logger.LogInformation("");
+
+            var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
+            var registrationDisplayName = identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
+                ? identityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
+                : identityDisplayName;
+
+            if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
+                logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
+            else
+                logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "create: {DisplayName}", identityDisplayName);
+
+            if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+                logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", registrationDisplayName, config.AgentRegistrationId);
+            else
+                logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
+
+            logger.LogInformation("");
+            logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
+            return;
+        }
+
         logger.LogInformation("The following steps would be performed.");
         logger.LogInformation("");
 
@@ -80,20 +108,20 @@ internal static class NonDwBlueprintSetupOrchestrator
         logger.LogInformation(SetupHelpers.DryRunRow(4, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id {BlueprintId}", blueprintIdForCmd);
 
         // 5. Agent identity
-        var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
-        var registrationDisplayName = identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
-            ? identityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
-            : identityDisplayName;
+        var agentIdentityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
+        var agentRegistrationDisplayName = agentIdentityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
+            ? agentIdentityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
+            : agentIdentityDisplayName;
         if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", agentIdentityDisplayName, config.AgenticAppId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "create: {DisplayName}", identityDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "create: {DisplayName}", agentIdentityDisplayName);
 
         // 6. Agent Registration
         if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
-            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", registrationDisplayName, config.AgentRegistrationId);
+            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", agentRegistrationDisplayName, config.AgentRegistrationId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", agentRegistrationDisplayName);
 
         // 7. Messaging endpoint (M365 opt-in)
         if (isM365)
@@ -197,7 +225,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             if (ctx.AgentInstanceOnly)
             {
-                ctx.Logger.LogInformation("NOTE: --agent-instance-only flag set. Skipping requirements, blueprint, and permissions steps.");
+                ctx.Logger.LogInformation("NOTE: --agent-registration-only flag set. Skipping requirements, blueprint, and permissions steps.");
                 ctx.Logger.LogInformation("");
                 // Populate results so the summary shows previous steps as already completed
                 ctx.Results.BlueprintCreated = true;
@@ -296,7 +324,7 @@ internal static class NonDwBlueprintSetupOrchestrator
 
     /// <summary>
     /// Executes Steps 5-8: agent identity creation, permission grants, agent registration,
-    /// and project settings sync. Called from both the normal path and the --agent-instance-only
+    /// and project settings sync. Called from both the normal path and the --agent-registration-only
     /// shortcut path.
     /// </summary>
     private static async Task ExecuteAgentIdentityAndRegistrationAsync(

@@ -58,7 +58,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
-                logger, configService, authValidator, clientAppValidator, requirementChecksOverride));
+                logger, configService, authValidator, clientAppValidator, executor, graphApiService, requirementChecksOverride));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
                 logger, configService, executor, authValidator, platformDetector, backendConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, resolver: resolver));

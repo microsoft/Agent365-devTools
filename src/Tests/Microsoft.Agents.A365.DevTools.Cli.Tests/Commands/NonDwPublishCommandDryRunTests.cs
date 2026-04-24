@@ -68,7 +68,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
         var root = new RootCommand();
         root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService));
 
-        var exitCode = await root.InvokeAsync("publish --dry-run --aiteammate false");
+        var exitCode = await root.InvokeAsync("publish --dry-run --ownidentity false");
 
         exitCode.Should().Be(0, "non-DW dry-run via flag should succeed");
     }
@@ -191,7 +191,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
         var root = new RootCommand();
         root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService));
 
-        var exitCode = await root.InvokeAsync("publish --dry-run --aiteammate false --use-blueprint");
+        var exitCode = await root.InvokeAsync("publish --dry-run --ownidentity false --use-blueprint");
 
         exitCode.Should().Be(0, "blueprint non-DW dry-run via flags should succeed");
     }
