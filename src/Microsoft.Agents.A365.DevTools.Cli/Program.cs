@@ -276,9 +276,9 @@ class Program
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
 
-            // Default to "prod". The service will work with default environment
-            // even when the config file does not yet exist.
-            string environment = "prod";
+            // Default to "prod". Override with A365_ENVIRONMENT env var (e.g. preprod, test).
+            // Works on Windows, macOS, and Linux.
+            string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
 
             return new Agent365ToolingService(configService, authService, logger, environment);
         });

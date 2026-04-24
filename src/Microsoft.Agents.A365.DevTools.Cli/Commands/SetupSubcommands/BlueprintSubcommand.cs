@@ -2176,7 +2176,7 @@ internal static class BlueprintSubcommand
         if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
         {
             logger.LogError("Blueprint ID not found. Please confirm agent blueprint id is in config file.");
-            Environment.Exit(1);
+            throw new Exceptions.SetupValidationException("Agent Blueprint ID is required for endpoint registration.");
         }
 
 

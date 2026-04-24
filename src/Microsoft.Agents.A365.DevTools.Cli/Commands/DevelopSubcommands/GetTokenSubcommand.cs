@@ -102,7 +102,7 @@ internal static class GetTokenSubcommand
                 if (!string.IsNullOrWhiteSpace(resource) && !string.IsNullOrWhiteSpace(resourceId))
                 {
                     logger.LogError("Cannot specify both --resource and --resource-id. Use one or the other.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -129,7 +129,7 @@ internal static class GetTokenSubcommand
                     logger.LogInformation("  2. Specify the application ID using: a365 develop gettoken --app-id <your-app-id>");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop gettoken --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -148,7 +148,7 @@ internal static class GetTokenSubcommand
                         logger.LogError("Invalid resource application ID: {ResourceId}. Expected a valid GUID.", resourceId);
                         logger.LogInformation("");
                         logger.LogInformation("Example: a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -164,7 +164,7 @@ internal static class GetTokenSubcommand
                     if (resolved == null)
                     {
                         logger.LogError("Unknown resource keyword '{Resource}'. Valid options: mcp, powerplatform", resource);
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -196,7 +196,7 @@ internal static class GetTokenSubcommand
                     logger.LogInformation("Please omit the --resource and --resource-id options if you'd like to use manifest-based scopes.");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop get-token --resource powerplatform --scopes .default");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
                 else
@@ -213,7 +213,7 @@ internal static class GetTokenSubcommand
                         logger.LogInformation("or specify scopes explicitly with --scopes option.");
                         logger.LogInformation("");
                         logger.LogInformation("Example: a365 develop get-token --scopes McpServers.Mail.All McpServers.Calendar.All");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -224,10 +224,16 @@ internal static class GetTokenSubcommand
                         outputFormat, verbose, forceRefresh, authService, logger);
                 }
             }
+            catch (Exceptions.CleanExitException)
+            {
+                // Propagated from helper methods (e.g., AcquireAndDisplayTokenAsync) — already logged.
+                // Let the top-level exception handler set the exit code.
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to retrieve bearer token: {Message}", ex.Message);
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
         });
 
@@ -343,8 +349,7 @@ internal static class GetTokenSubcommand
 
         if (!result.Success)
         {
-            Environment.Exit(1);
-            return;
+            throw new Exceptions.CleanExitException(1);
         }
 
         DisplayResults(new List<McpServerTokenResult> { result }, outputFormat, verbose, logger);
@@ -423,7 +428,7 @@ internal static class GetTokenSubcommand
         if (anySaved)
             logger.LogInformation("Token acquisition complete!");
         else
-            Environment.Exit(1);
+            throw new Exceptions.CleanExitException(1);
     }
 
     private static string ResolveClientAppId(string? appId, Agent365Config? setupConfig)

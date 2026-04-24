@@ -174,7 +174,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             "is for tenant {NewTenant}. Backing up and removing stale config files to start clean.",
             existingTenantId, resolvedTenantId);
 
-        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
         var configDir = Path.GetDirectoryName(configPath) ?? Environment.CurrentDirectory;
 
         var configBackup = configPath + ".bak." + timestamp;

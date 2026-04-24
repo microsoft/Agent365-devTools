@@ -11,7 +11,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 /// <summary>
 /// Status command - displays local configuration and optionally live Entra state.
 /// Replaces the deleted 'config display' subcommand.
-/// Always exits 0 — status is read-only and works with or without a config file.
+/// Read-only command that works with or without a config file.
+/// Exits 0 in all normal cases; exits 1 only if an invalid --field name is supplied.
 /// </summary>
 public class StatusCommand
 {
