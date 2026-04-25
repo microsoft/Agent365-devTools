@@ -313,8 +313,15 @@ public static class DevelopMcpCommand
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (envId, serverName, alias, displayName, dryRun) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"
+        );
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (envId, serverName, alias, displayName, dryRun, verbose) =>
         {
+            _ = verbose;
             try
             {
                 // Validate and prompt for missing required arguments with security checks
@@ -442,7 +449,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully published MCP server {ServerName} to environment {EnvId}", serverName, envId);
 
-        }, envIdOption, serverNameOption, aliasOption, displayNameOption, dryRunOption);
+        }, envIdOption, serverNameOption, aliasOption, displayNameOption, dryRunOption, verboseOption);
 
         return command;
     }
@@ -476,8 +483,15 @@ public static class DevelopMcpCommand
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (envId, serverName, dryRun) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"
+        );
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (envId, serverName, dryRun, verbose) =>
         {
+            _ = verbose;
             try
             {
                 // Validate and prompt for missing required arguments with security checks
@@ -548,7 +562,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully unpublished MCP server {ServerName} from environment {EnvId}", serverName, envId);
 
-        }, envIdOption, serverNameOption, dryRunOption);
+        }, envIdOption, serverNameOption, dryRunOption, verboseOption);
 
         return command;
     }
@@ -573,8 +587,15 @@ public static class DevelopMcpCommand
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (serverName, dryRun) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"
+        );
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (serverName, dryRun, verbose) =>
         {
+            _ = verbose;
             try
             {
                 // Validate and prompt for missing required arguments with security checks
@@ -625,7 +646,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully approved MCP server {ServerName}", serverName);
 
-        }, serverNameOption, dryRunOption);
+        }, serverNameOption, dryRunOption, verboseOption);
 
         return command;
     }
@@ -650,8 +671,15 @@ public static class DevelopMcpCommand
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (serverName, dryRun) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"
+        );
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (serverName, dryRun, verbose) =>
         {
+            _ = verbose;
             try
             {
                 // Validate and prompt for missing required arguments with security checks
@@ -702,7 +730,7 @@ public static class DevelopMcpCommand
 
             logger.LogInformation("Successfully blocked MCP server {ServerName}", serverName);
 
-        }, serverNameOption, dryRunOption);
+        }, serverNameOption, dryRunOption, verboseOption);
 
         return command;
     }
@@ -719,15 +747,21 @@ public static class DevelopMcpCommand
         var iconUrlOption = new Option<string>("--icon-url", "Public URL to a PNG icon for the MCP server") { IsRequired = true };
         var outputPathOption = new Option<string>("--output-path", "Target directory for the generated ZIP package") { IsRequired = true };
         var dryRunOption = new Option<bool>(name: "--dry-run", description: "Show what would be done without executing");
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"
+        );
 
         command.AddOption(serverNameOption);
         command.AddOption(developerNameOption);
         command.AddOption(iconUrlOption);
         command.AddOption(outputPathOption);
         command.AddOption(dryRunOption);
+        command.AddOption(verboseOption);
 
-        command.SetHandler(async (serverName, developerName, iconUrl, outputPath, dryRun) =>
+        command.SetHandler(async (serverName, developerName, iconUrl, outputPath, dryRun, verbose) =>
         {
+            _ = verbose;
             if (dryRun)
             {
                 logger.LogInformation("[DRY RUN] Would query MCP servers management endpoint to fetch details of the MCP server");
@@ -751,7 +785,7 @@ public static class DevelopMcpCommand
                 logger.LogError(ex, "Package creation failed");
             }
 
-        }, serverNameOption, developerNameOption, iconUrlOption, outputPathOption, dryRunOption);
+        }, serverNameOption, developerNameOption, iconUrlOption, outputPathOption, dryRunOption, verboseOption);
 
         return command;
     }

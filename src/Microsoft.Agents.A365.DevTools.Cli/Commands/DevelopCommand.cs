@@ -73,10 +73,16 @@ public static class DevelopCommand
         );
         command.AddOption(skipAuthOption);
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
         command.SetHandler(async (InvocationContext context) =>
         {
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipAuth = context.ParseResult.GetValueForOption(skipAuthOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
 
             logger.LogInformation("Starting list-available MCP Servers operation...");
 
@@ -266,10 +272,16 @@ public static class DevelopCommand
         );
         command.AddOption(projectPathOption);
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
         command.SetHandler(async (InvocationContext context) =>
         {
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var projectPath = context.ParseResult.GetValueForOption(projectPathOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
 
             logger.LogInformation("Starting list-configured MCP Servers operation...");
 
@@ -439,11 +451,17 @@ public static class DevelopCommand
         );
         command.AddOption(projectPathOption);
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
         command.SetHandler(async (InvocationContext context) =>
         {
             var servers = context.ParseResult.GetValueForArgument(serversArgument);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var projectPath = context.ParseResult.GetValueForOption(projectPathOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
 
             logger.LogInformation("Starting add-mcp-servers operation...");
 
@@ -576,11 +594,17 @@ public static class DevelopCommand
         );
         command.AddOption(projectPathOption);
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
         command.SetHandler(async (InvocationContext context) =>
         {
             var servers = context.ParseResult.GetValueForArgument(serversArgument);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var projectPath = context.ParseResult.GetValueForOption(projectPathOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
 
             logger.LogInformation("Starting remove-mcp-servers operation...");
 

@@ -45,7 +45,7 @@ internal static class AllSubcommand
     }
 
     /// <summary>
-    /// Returns the requirement checks for <c>setup all --ownaccess false</c> (non-DW blueprint).
+    /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
     /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
@@ -108,7 +108,7 @@ internal static class AllSubcommand
                         "Use with caution: setup may fail if prerequisites are not met");
 
         var ownIdentityOption = new Option<bool?>(
-            "--ownaccess",
+            "--aiteammate",
             description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
                         "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
@@ -162,7 +162,7 @@ internal static class AllSubcommand
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // Blueprint agent is the default. Own-identity agent requires --ownaccess true explicitly.
+            // Blueprint agent is the default. Own-identity agent requires --aiteammate true explicitly.
             Agent365Config? nonDwConfig = null;
             bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
@@ -238,12 +238,17 @@ internal static class AllSubcommand
                 {
                     // Config file path: load from a365.config.json, merged with generated config when present.
                     var nonDwGenPath = Path.Combine(config.DirectoryName ?? Environment.CurrentDirectory, "a365.generated.config.json");
-                    nonDwConfig = File.Exists(nonDwGenPath)
-                        ? await configService.LoadAsync(config.FullName, nonDwGenPath)
-                        : await configService.LoadAsync(config.FullName);
+                    try
+                    {
+                        nonDwConfig = File.Exists(nonDwGenPath)
+                            ? await configService.LoadAsync(config.FullName, nonDwGenPath)
+                            : await configService.LoadAsync(config.FullName);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
                     // If ownidentity was not explicitly set, respect what the config says
-                    // (allows existing own-identity configs to keep working without --ownaccess true)
-                    if (!ownIdentityFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
+                    // (allows existing own-identity configs to keep working without --aiteammate true)
+                    if (nonDwConfig != null && !ownIdentityFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
             }
@@ -306,6 +311,7 @@ internal static class AllSubcommand
                         ? await configService.LoadAsync(config.FullName, dwGenPath)
                         : await configService.LoadAsync(config.FullName);
                 }
+                catch (OperationCanceledException) { throw; }
                 catch { /* config is optional for dry-run display */ }
                 SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365);
                 return;

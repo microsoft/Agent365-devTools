@@ -12,6 +12,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -152,9 +153,12 @@ public class CleanupCommand
                         "for full blueprint cleanup, since deleting the blueprint application cascades to " +
                         "the backend configuration on the server side.");
 
+        var dryRunOption = new Option<bool>("--dry-run", "Show what would be deleted without making any changes");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
+        command.AddOption(dryRunOption);
         command.AddOption(endpointOnlyOption);
         command.AddOption(m365Option);
 
@@ -164,9 +168,40 @@ public class CleanupCommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
             var ct = context.GetCancellationToken();
+
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+
+                logger.LogInformation("Dry run: a365 cleanup blueprint --dry-run");
+                logger.LogInformation("");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgentBlueprintId))
+                {
+                    logger.LogInformation("  Will delete blueprint application: {Name} ({Id})",
+                        dryRunConfig.AgentBlueprintDisplayName, dryRunConfig.AgentBlueprintId);
+                    if (!string.IsNullOrWhiteSpace(dryRunConfig.AgenticAppId))
+                        logger.LogInformation("  Will delete agent identity SP: {SpId}", dryRunConfig.AgenticAppId);
+                    if (!string.IsNullOrWhiteSpace(dryRunConfig.AgentInstanceId))
+                        logger.LogInformation("  Will deregister agent instance: {InstanceId}", dryRunConfig.AgentInstanceId);
+                }
+                else
+                {
+                    logger.LogInformation("  Would delete: blueprint Entra ID application");
+                    logger.LogInformation("  Would delete: agent identity service principal (if present)");
+                    logger.LogInformation("  Would delete: agent instances linked to this blueprint (if any)");
+                    logger.LogInformation("");
+                    logger.LogInformation("  Pass --agent-name <name> to preview specific resource IDs.");
+                }
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
 
             try
             {
@@ -513,6 +548,26 @@ public class CleanupCommand
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var ct = context.GetCancellationToken();
+
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+
+                logger.LogInformation("Dry run: a365 cleanup azure --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("Azure Cleanup Preview:");
+                logger.LogInformation("=========================");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.BotId))
+                    logger.LogInformation("    Azure Bot: {BotId}", dryRunConfig!.BotId);
+                else
+                    logger.LogInformation("    Azure Bot (if present — pass --agent-name to preview)");
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
+
             try
             {
                 Agent365Config? config;
@@ -522,14 +577,10 @@ public class CleanupCommand
                     config = await LoadConfigAsync(configFile, logger, configService);
                 if (config == null) { context.ExitCode = 1; return; }
 
-                if (!dryRun)
-                    logger.LogInformation("Starting Azure cleanup...");
+                logger.LogInformation("Starting Azure cleanup...");
 
-                if (!dryRun)
-                {
-                    var checks = GetAzureCleanupChecks(authValidator);
-                    await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
-                }
+                var checks = GetAzureCleanupChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
 
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
@@ -537,12 +588,6 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.BotId))
                     logger.LogInformation("    Azure Bot: {BotId}", config.BotId);
                 logger.LogInformation("");
-
-                if (dryRun)
-                {
-                    logger.LogInformation("DRY RUN: No changes made.");
-                    return;
-                }
 
                 Console.Write("Continue with Azure cleanup? (y/N): ");
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
@@ -585,9 +630,12 @@ public class CleanupCommand
             new[] { "--verbose", "-v" },
             description: "Enable verbose logging");
 
+        var dryRunOption = new Option<bool>("--dry-run", "Show what would be deleted without making any changes");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
+        command.AddOption(dryRunOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -595,7 +643,37 @@ public class CleanupCommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var ct = context.GetCancellationToken();
+
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+
+                logger.LogInformation("Dry run: a365 cleanup instance --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("  Would delete the following resources:");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgenticAppId))
+                    logger.LogInformation("    Agent Identity Service Principal: {SpId}", dryRunConfig.AgenticAppId);
+                else
+                    logger.LogInformation("    Agent Identity Service Principal (if present)");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgenticUserId))
+                    logger.LogInformation("    Agent User: {UserId}", dryRunConfig.AgenticUserId);
+                else
+                    logger.LogInformation("    Agent User (if present)");
+                logger.LogInformation("    Generated configuration file (instance fields)");
+                if (dryRunConfig == null)
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("  Pass --agent-name <name> to preview specific resource IDs.");
+                }
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
+
             try
             {
                 Agent365Config? config;
@@ -611,7 +689,7 @@ public class CleanupCommand
                 logger.LogInformation("Instance Cleanup Preview:");
                 logger.LogInformation("============================");
                 logger.LogInformation("Will delete the following resources:");
-                
+
                 if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                     logger.LogInformation("    Agent Identity Service Principal: {SpId}", config.AgenticAppId);
                 if (!string.IsNullOrWhiteSpace(config.AgenticUserId))

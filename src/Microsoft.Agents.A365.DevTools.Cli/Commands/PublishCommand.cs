@@ -71,7 +71,7 @@ public class PublishCommand
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
         var ownIdentityOption = new Option<bool?>(
-            "--ownaccess",
+            "--aiteammate",
             description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
                         "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
@@ -80,13 +80,18 @@ public class PublishCommand
         var useBlueprintOption = new Option<bool>(
             "--use-blueprint",
             description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
-                        "Only meaningful with --ownaccess false");
+                        "Only meaningful with --aiteammate false");
+
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
 
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(dryRunOption);
         command.AddOption(ownIdentityOption);
         command.AddOption(useBlueprintOption);
+        command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -96,9 +101,34 @@ public class PublishCommand
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var ownIdentityFlag = context.ParseResult.GetValueForOption(ownIdentityOption);
             var useBlueprintFlag = context.ParseResult.GetValueForOption(useBlueprintOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
             var ct = context.GetCancellationToken();
 
             var isNormalExit = false;
+
+            // Dry-run gate: when no config can be resolved (no --agent-name, no config file),
+            // show a generic preview instead of letting the resolver log a spurious ERROR.
+            // When config CAN be resolved (gracefully via DryRunHelper), fall through to the
+            // try block which has per-path inline dry-run logic with specific details.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: false, ct);
+
+                if (dryRunConfig is null)
+                {
+                    logger.LogInformation("Dry run: a365 publish --dry-run");
+                    logger.LogInformation("");
+                    logger.LogInformation("Would update manifest.json with blueprint and instance IDs");
+                    logger.LogInformation("Would create manifest package zip");
+                    logger.LogInformation("");
+                    logger.LogInformation("Pass --agent-name <name> or provide a365.config.json to preview specific IDs.");
+                    logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                    isNormalExit = true;
+                    return;
+                }
+                // Config resolved — fall through to the try block for per-path dry-run output.
+            }
 
             try
             {

@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.CommandLine.Builder;
+using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.Reflection;
 
@@ -157,10 +158,17 @@ class Program
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService, resolver: bootstrapResolver));
 
-            // Wrap all command handlers with exception handling
-            // Build with middleware for global exception handling
+            // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
+            // and UseParseErrorReporting() (full help dump on any parse error), replacing both
+            // with a single clean error line — matching az CLI behaviour.
             var builder = new CommandLineBuilder(rootCommand)
-                .UseDefaults()
+                .UseVersionOption()
+                .UseHelp()
+                .UseEnvironmentVariableDirective()
+                .UseParseDirective()
+                .UseSuggestDirective()
+                .RegisterWithDotnetSuggest()
+                .CancelOnProcessTermination()
                 .UseExceptionHandler((exception, context) =>
                 {
                     if (exception is CleanExitException cleanExit)
@@ -190,7 +198,22 @@ class Program
                         }
                         context.ExitCode = 1;
                     }
-                });
+                })
+                .AddMiddleware(async (context, next) =>
+                {
+                    if (context.ParseResult.Errors.Count > 0)
+                    {
+                        context.ExitCode = 1;
+                        var error = context.ParseResult.Errors
+                            .FirstOrDefault(e => e.Message.Contains("Unrecognized", StringComparison.Ordinal))
+                            ?? context.ParseResult.Errors[0];
+                        Console.Error.WriteLine(error.Message);
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine("Run 'a365 --help' to see available commands.");
+                        return;
+                    }
+                    await next(context);
+                }, MiddlewareOrder.ErrorReporting);
 
             // Validate the configured clientAppId still exists in the tenant before any command runs.
             // If not found, falls back to the well-known display name and patches a365.config.json.

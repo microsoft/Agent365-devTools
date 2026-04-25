@@ -207,6 +207,29 @@ internal static class BlueprintSubcommand
                 return;
             }
 
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, config, resolver, configService, isCleanupMode: false, ct);
+
+                logger.LogInformation("Dry run: a365 setup blueprint --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("Would create Entra ID application:");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgentBlueprintDisplayName))
+                    logger.LogInformation("  - Display Name: {DisplayName}", dryRunConfig!.AgentBlueprintDisplayName);
+                else
+                    logger.LogInformation("  - Display Name: (pass --agent-name to preview)");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.TenantId))
+                    logger.LogInformation("  - Tenant: {TenantId}", dryRunConfig!.TenantId);
+                logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
+                if (!skipEndpointRegistration)
+                    logger.LogInformation("  - Would register messaging endpoint");
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
+
             Agent365Config? setupConfig;
             if (resolver != null)
                 setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: false, ct);
@@ -248,9 +271,7 @@ internal static class BlueprintSubcommand
             // Run all requirements checks: system checks (PowerShell modules, Frontier Preview)
             // and config checks (Location, ClientApp — includes isFallbackPublicClient auto-fix
             // required for device code auth on macOS/Linux/WSL).
-            // Skip when dryRun is true: ClientAppRequirementCheck can mutate the app registration
-            // (e.g., set isFallbackPublicClient), which violates dry-run semantics.
-            if (!skipRequirements && !dryRun)
+            if (!skipRequirements)
             {
                 try
                 {
@@ -265,20 +286,6 @@ internal static class BlueprintSubcommand
                     logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
                     ExceptionHandler.ExitWithCleanup(1);
                 }
-            }
-
-            if (dryRun)
-            {
-                logger.LogInformation("DRY RUN: Create Agent Blueprint");
-                logger.LogInformation("Would create Entra ID application:");
-                logger.LogInformation("  - Display Name: {DisplayName}", setupConfig.AgentBlueprintDisplayName);
-                logger.LogInformation("  - Tenant: {TenantId}", setupConfig.TenantId);
-                logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
-                if (!skipEndpointRegistration)
-                {
-                    logger.LogInformation("  - Would register messaging endpoint");
-                }
-                return;
             }
 
             logger.LogInformation("Starting blueprint setup... (TraceId: {TraceId})", correlationId);

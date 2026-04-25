@@ -39,13 +39,19 @@ internal static class RequirementsSubcommand
 
         var categoryOption = new Option<string?>(
             ["--category"],
-            description: "Run checks for a specific category only (e.g., 'Azure', 'Authentication', 'Configuration')");
+            description: "Run checks for a specific category only (e.g., 'Azure', 'Authentication', 'PowerShell', 'Tenant Enrollment')");
+
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
 
         command.AddOption(categoryOption);
+        command.AddOption(verboseOption);
 
         command.SetHandler(async (InvocationContext context) =>
         {
             var category = context.ParseResult.GetValueForOption(categoryOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
             var ct = context.GetCancellationToken();
 
             logger.LogInformation("Agent 365 Requirements Check");

@@ -242,7 +242,7 @@ pip --version
 > 
 > Common mistake: Jumping to this step before completing Steps 1 and 2. The CLI requires a working Azure CLI login and a validated custom client app before setup will succeed.
 
-Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --ownaccess true --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed before running — the CLI creates `a365.config.json` automatically and auto-detects your tenant ID and client app ID from your Azure CLI session.
+Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --aiteammate true --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed — the CLI auto-detects your tenant ID and client app ID from your Azure CLI session.
 
 ### Collect setup inputs
 
@@ -265,14 +265,14 @@ Ask the user for the agent base name only. No other values are needed for this p
 Run setup using the agent name. The CLI bootstraps configuration from Entra and provisions all resources:
 
 ```bash
-a365 setup all --ownaccess true --agent-name <agent-base-name>
+a365 setup all --aiteammate true --agent-name <agent-base-name>
 ```
 
 The CLI will:
 - Auto-detect the tenant ID from `az account show`
 - Look up the Client App ID from Entra
 - Derive `<name> Identity` and `<name> Blueprint` display names
-- Create `a365.config.json` and `a365.generated.config.json` in the current directory
+- Record provisioned resource IDs for use by subsequent commands
 
 ### Validation
 
@@ -281,11 +281,11 @@ The `setup all` process validates your inputs. Notably, it will check:
 - That the CLI client app exists in the tenant and has the required permissions. If this validation fails, refer back to the app registration guide and fix the configuration.
 - It also detects the project platform from the directory (looking for a `.csproj`, `package.json`, or `pyproject.toml`). If it warns it could not detect the project platform, run the command from the agent project directory.
 
-If any validation fails, correct the issues and re-run `a365 setup all --ownaccess true --agent-name <agent-base-name>`.
+If any validation fails, correct the issues and re-run `a365 setup all --aiteammate true --agent-name <agent-base-name>`.
 
 ### Proceed when setup is successful
 
-Once `a365 setup all` completes without errors, the CLI has provisioned your environment. An `a365.config.json` and `a365.generated.config.json` will be written to the current directory. Subsequent commands will use these files automatically.
+Once `a365 setup all` completes without errors, the CLI has provisioned your environment. Use the same `--agent-name <name>` flag with any subsequent command — no config file is needed.
 
 ---
 
@@ -313,7 +313,7 @@ Ask the user two questions (one at a time, wait for each response):
 **For the own-identity agent path (`isOwnIdentity = true`):**
 
 - `agent_name` is derived from `agentBaseName` collected in Step 3 — do NOT ask again.
-- `project_dir` is the directory where Step 3 was run (where `a365.config.json` now exists) — do NOT ask again.
+- `project_dir` is the directory where Step 3 was run — do NOT ask again.
 
 ---
 

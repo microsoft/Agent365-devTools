@@ -53,14 +53,20 @@ public class QueryEntraCommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
             var ct = context.GetCancellationToken();
             try
             {
@@ -219,14 +225,20 @@ public class QueryEntraCommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
             var ct = context.GetCancellationToken();
             try
             {

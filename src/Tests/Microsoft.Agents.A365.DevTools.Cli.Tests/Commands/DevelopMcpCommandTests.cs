@@ -178,7 +178,7 @@ public class DevelopMcpCommandTests
         subcommand.Description.Should().Be("Generate MCP server package for submission on Microsoft admin center");
 
         var options = subcommand.Options.ToList();
-        options.Should().HaveCount(5); // serverName, developerName, iconUrl, outputPath, dry-run
+        options.Should().HaveCount(6); // serverName, developerName, iconUrl, outputPath, dry-run, verbose
 
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("server-name");
@@ -186,6 +186,7 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("icon-url");
         optionNames.Should().Contain("output-path");
         optionNames.Should().Contain("dry-run");
+        optionNames.Should().Contain("verbose");
 
         options.First(o => o.Name == "server-name").IsRequired.Should().BeTrue();
         options.First(o => o.Name == "developer-name").IsRequired.Should().BeTrue();

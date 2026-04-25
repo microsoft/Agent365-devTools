@@ -256,7 +256,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
                 tenantId, blueprintDisplayName, ct);
             if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
                 _logger.LogWarning(
-                    "Blueprint '{Name}' not found in Entra — resource IDs may be incomplete.",
+                    "Blueprint '{Name}' not found in Entra.",
                     blueprintDisplayName);
         }
 
@@ -312,7 +312,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         else
         {
             _logger.LogWarning(
-                "No generated config found at {Path}. Resource IDs may be missing — resources must be deleted manually.",
+                "No generated config found at {Path}. Resource IDs may be missing.",
                 generatedConfigPath);
         }
 
@@ -334,16 +334,13 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         config.AgentRegistrationId = agentRegistrationId;
         config.AgenticAppId = agenticAppId;
 
-        _logger.LogInformation("Bootstrap cleanup config:");
-        using (_logger.Indent())
-        {
-            _logger.LogInformation("TenantId:        {TenantId}", tenantId);
-            _logger.LogInformation("ClientAppId:     {ClientAppId}", clientAppId ?? "(not found)");
-            _logger.LogInformation("BlueprintId:     {BlueprintId}", blueprintId ?? "(not found)");
-            _logger.LogInformation("BlueprintSP:     {SpId}", agentBlueprintSpObjectId ?? "(not found)");
-            _logger.LogInformation("AgentIdentitySP: {SpId}", agenticAppId ?? "(not found)");
-            _logger.LogInformation("RegistrationId:  {RegId}", agentRegistrationId ?? "(not found)");
-        }
+        _logger.LogDebug("Bootstrap cleanup config:");
+        _logger.LogDebug("  TenantId:        {TenantId}", tenantId);
+        _logger.LogDebug("  ClientAppId:     {ClientAppId}", clientAppId ?? "(not found)");
+        _logger.LogDebug("  BlueprintId:     {BlueprintId}", blueprintId ?? "(not found)");
+        _logger.LogDebug("  BlueprintSP:     {SpId}", agentBlueprintSpObjectId ?? "(not found)");
+        _logger.LogDebug("  AgentIdentitySP: {SpId}", agenticAppId ?? "(not found)");
+        _logger.LogDebug("  RegistrationId:  {RegId}", agentRegistrationId ?? "(not found)");
 
         return config;
     }

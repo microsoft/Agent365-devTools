@@ -123,7 +123,7 @@ public class SetupResults
     public string? CombinedConsentUrl { get; set; }
 
     /// <summary>
-    /// Whether this is a blueprint agent setup flow (--ownaccess false).
+    /// Whether this is a blueprint agent setup flow (--aiteammate false).
     /// Used in the summary display to show the correct recovery actions.
     /// </summary>
     public bool IsNonDwBlueprintFlow { get; set; }

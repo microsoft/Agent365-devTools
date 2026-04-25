@@ -756,6 +756,7 @@ public sealed class A365CreateInstanceRunner
                     return (true, existingUserId);
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch
             {
                 // User does not exist, proceed with creation
