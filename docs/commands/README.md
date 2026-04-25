@@ -10,7 +10,6 @@ There is reference documentation for each command.
 | [cleanup blueprint](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/cleanup#cleanup-blueprint) | Remove Entra ID blueprint application and service principal. |
 | [cleanup azure](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/cleanup#cleanup-azure) | Remove Azure resources (App Service, App Service Plan). |
 | [cleanup instance](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/cleanup#cleanup-instance) | Remove agent instance identity and user from Entra ID. |
-| [status](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/status) | Display agent configuration and live Entra registration state. Replaces `config display`. |
 | [create-instance](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/create-instance) | Create an agent instance and its associated identity resources. |
 | [deploy](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy) | Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions |
 | [deploy app](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/deploy#deploy-app) | Deploys your agent code to the Azure Web App created during setup. |

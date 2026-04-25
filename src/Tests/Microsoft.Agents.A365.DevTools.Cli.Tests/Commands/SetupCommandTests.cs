@@ -254,11 +254,8 @@ public class SetupCommandTests
             DeploymentProjectPath = "."
         };
 
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
-
         // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests.
-        // The override path also skips config resolution entirely, so no static config file
-        // is required for the command to complete with exit 0.
+        // The override path skips config resolution entirely: no LoadAsync call is made.
         var command = SetupCommand.CreateCommand(
             _mockLogger,
             _mockConfigService,
@@ -279,24 +276,15 @@ public class SetupCommandTests
 
         // Assert — requirements should complete successfully (no failing checks in the override).
         Assert.Equal(0, result);
+        // Config must not be loaded — the override path bypasses it entirely.
+        await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]
     public async Task RequirementsSubcommand_WithCategoryFilter_RunsFilteredChecks()
     {
-        // Arrange
-        var config = new Agent365Config
-        {
-            TenantId = "tenant",
-            AgentIdentityDisplayName = "agent",
-            DeploymentProjectPath = "."
-        };
-
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
-
-        // requirementChecksOverride: [] — bypass real pwsh/az processes in unit tests.
-        // The override path also skips config resolution entirely, so no static config file
-        // is required for the command to complete with exit 0.
+        // Arrange — requirementChecksOverride: [] bypasses real pwsh/az processes.
+        // The override path skips config resolution entirely: no LoadAsync call is made.
         var command = SetupCommand.CreateCommand(
             _mockLogger,
             _mockConfigService,
@@ -317,6 +305,8 @@ public class SetupCommandTests
 
         // Assert — requirements should complete successfully (no failing checks in the override).
         Assert.Equal(0, result);
+        // Config must not be loaded — the override path bypasses it entirely.
+        await _mockConfigService.DidNotReceiveWithAnyArgs().LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]

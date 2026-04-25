@@ -770,8 +770,9 @@ public class CleanupCommandTests
             var result = await command.InvokeAsync(args);
 
             // Assert
-            // Command should complete even if API throws exception (exception should be caught)
-            Assert.Equal(0, result);
+            // Command completes (exception is caught) but must signal failure via non-zero exit code
+            // so scripts and CI can detect the error.
+            Assert.Equal(1, result);
 
             // Verify deletion was attempted
             await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId!, Arg.Any<string?>());

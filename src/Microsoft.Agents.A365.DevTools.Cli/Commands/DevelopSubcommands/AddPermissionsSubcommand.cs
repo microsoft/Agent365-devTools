@@ -56,8 +56,14 @@ internal static class AddPermissionsSubcommand
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (manifest, appId, scopes, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var manifest = context.ParseResult.GetValueForOption(manifestOption);
+            var appId = context.ParseResult.GetValueForOption(appIdOption);
+            var scopes = context.ParseResult.GetValueForOption(scopesOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+
             try
             {
                 var configFile = new FileInfo("a365.config.json");
@@ -78,7 +84,7 @@ internal static class AddPermissionsSubcommand
                     logger.LogInformation("  2. Specify the application ID using: a365 develop addpermissions --app-id <your-app-id>");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop addpermissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -99,12 +105,12 @@ internal static class AddPermissionsSubcommand
                     logger.LogError("No application ID specified. Use --app-id or ensure ClientAppId is set in config.");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop addpermissions --app-id <your-app-id>");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
                 // Determine manifest path
-                var manifestPath = manifest?.FullName 
+                var manifestPath = manifest?.FullName
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, McpConstants.ToolingManifestFileName);
 
                 var environment = setupConfig?.Environment ?? "prod";
@@ -132,7 +138,7 @@ internal static class AddPermissionsSubcommand
                         logger.LogInformation("or specify scopes explicitly with --scopes option.");
                         logger.LogInformation("");
                         logger.LogInformation("Example: a365 develop addpermissions --scopes McpServers.Mail.All McpServers.Calendar.All");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -144,7 +150,7 @@ internal static class AddPermissionsSubcommand
                     {
                         logger.LogError("No scopes found in ToolingManifest.json");
                         logger.LogInformation("You can specify scopes explicitly with --scopes option.");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -228,7 +234,7 @@ internal static class AddPermissionsSubcommand
                         success = false;
                     }
                 }
-                
+
                 logger.LogInformation("");
 
                 // Summary
@@ -243,15 +249,15 @@ internal static class AddPermissionsSubcommand
                 else
                 {
                     logger.LogWarning("Permission addition failed. Review the errors above.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                 }
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to add MCP server permissions: {Message}", ex.Message);
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
-        }, manifestOption, appIdOption, scopesOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }

@@ -500,6 +500,7 @@ public class CleanupCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Blueprint cleanup failed");
+                context.ExitCode = 1;
             }
         });
 
@@ -580,7 +581,7 @@ public class CleanupCommand
                 logger.LogInformation("Starting Azure cleanup...");
 
                 var checks = GetAzureCleanupChecks(authValidator);
-                await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
+                await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, ct);
 
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
@@ -604,6 +605,7 @@ public class CleanupCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Azure cleanup failed with exception");
+                context.ExitCode = 1;
             }
         });
 
@@ -767,6 +769,7 @@ public class CleanupCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Instance cleanup failed: {Message}", ex.Message);
+                context.ExitCode = 1;
             }
         });
 
