@@ -168,7 +168,7 @@ public static string GetAgent365ToolsResourceAppId(string environment)
 
     return environment?.ToLower() switch
     {
-        "local" or "test" => "05879165-0320-489e-b644-f72b33f3edf0",
+        "local" or "test" or "preprod" => "05879165-0320-489e-b644-f72b33f3edf0",
         _ => McpConstants.Agent365ToolsProdAppId,
     };
 }

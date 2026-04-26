@@ -6,6 +6,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using System.Text.Json;
 using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
@@ -849,8 +850,8 @@ public static class DevelopMcpCommand
         var toolsOption = new Option<string?>("--tools", description: "Comma-separated list of tool names exposed by this server (e.g., 'tool1,tool2,tool3')");
         command.AddOption(toolsOption);
 
-        var toolDescriptionsOption = new Option<string?>("--tool-descriptions", description: "Comma-separated list of tool descriptions matching --tools order (e.g., 'Desc for tool1,Desc for tool2')");
-        command.AddOption(toolDescriptionsOption);
+        var inputFileOption = new Option<string?>(["--input-file", "-f"], description: "Path to JSON file with register parameters (see sample: register-external-mcp-server-sample.json)");
+        command.AddOption(inputFileOption);
 
         var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://myapp/.default')");
         command.AddOption(remoteScopesOption);
@@ -892,7 +893,7 @@ public static class DevelopMcpCommand
             var apiKeyLocation = context.ParseResult.GetValueForOption(apiKeyLocationOption);
             var apiKeyName = context.ParseResult.GetValueForOption(apiKeyNameOption);
             var toolsInput = context.ParseResult.GetValueForOption(toolsOption);
-            var toolDescriptionsInput = context.ParseResult.GetValueForOption(toolDescriptionsOption);
+            var inputFile = context.ParseResult.GetValueForOption(inputFileOption);
             var remoteScopes = context.ParseResult.GetValueForOption(remoteScopesOption);
             var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
             var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption);
@@ -902,6 +903,61 @@ public static class DevelopMcpCommand
             var configPath = context.ParseResult.GetValueForOption(configOption)!;
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+
+            // Load input file if provided, and use file values as defaults for CLI options not explicitly set
+            RegisterExternalMcpServerInput? inputFileData = null;
+            if (!string.IsNullOrWhiteSpace(inputFile))
+            {
+                if (!File.Exists(inputFile))
+                {
+                    logger.LogError("Input file not found: {InputFile}", inputFile);
+                    return;
+                }
+
+                try
+                {
+                    var jsonContent = await File.ReadAllTextAsync(inputFile);
+                    inputFileData = JsonSerializer.Deserialize<RegisterExternalMcpServerInput>(jsonContent);
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogError("Failed to parse input file '{InputFile}': {Error}", inputFile, ex.Message);
+                    return;
+                }
+
+                if (inputFileData is not null)
+                {
+                    logger.LogDebug("Loaded input file: {InputFile}", inputFile);
+
+                    // Apply file values as defaults where CLI options were not provided
+                    serverName ??= inputFileData.ServerName;
+                    serverUrl ??= inputFileData.ServerUrl;
+                    authType ??= inputFileData.AuthType;
+                    remoteScopes ??= inputFileData.RemoteScopes;
+                    userTenantId ??= inputFileData.TenantId;
+                    serviceTreeId ??= inputFileData.ServiceTreeId;
+                    publisherName ??= inputFileData.PublisherName;
+                    serverDescription ??= inputFileData.Description;
+                    force = force || inputFileData.Force;
+
+                    // ExternalOAuth fields
+                    if (inputFileData.ExternalOAuth is not null)
+                    {
+                        idpAuthUrl ??= inputFileData.ExternalOAuth.AuthorizationUrl;
+                        idpTokenUrl ??= inputFileData.ExternalOAuth.TokenUrl;
+                        idpScopes ??= inputFileData.ExternalOAuth.Scopes;
+                        idpClientId ??= inputFileData.ExternalOAuth.ClientId;
+                        idpClientSecret ??= inputFileData.ExternalOAuth.ClientSecret;
+                    }
+
+                    // APIKey fields
+                    if (inputFileData.ApiKey is not null)
+                    {
+                        apiKeyLocation ??= inputFileData.ApiKey.Location;
+                        apiKeyName ??= inputFileData.ApiKey.Name;
+                    }
+                }
+            }
 
             var isEntra = false;
             var isExternalIdp = false;
@@ -1026,42 +1082,52 @@ public static class DevelopMcpCommand
                     }
                 }
 
-                // Tool names are required
-                if (string.IsNullOrWhiteSpace(toolsInput))
+                // Tool names: CLI --tools > input file tools > interactive prompt
+                if (string.IsNullOrWhiteSpace(toolsInput) && inputFileData?.Tools is not null && inputFileData.Tools.Count > 0)
                 {
-                    toolsInput = InputValidator.PromptAndValidateRequiredInput("Enter comma-separated list of tool names: ", "Tool names", 2000);
-                    if (string.IsNullOrWhiteSpace(toolsInput)) { logger.LogError("At least one tool name is required"); return; }
+                    // Use tools from input file (both names and descriptions)
+                    toolList = inputFileData.Tools.Select(t => t.Name).ToList();
+                    toolDescriptions = new Dictionary<string, string>();
+                    foreach (var tool in inputFileData.Tools)
+                    {
+                        if (!string.IsNullOrWhiteSpace(tool.Description))
+                        {
+                            toolDescriptions[tool.Name] = tool.Description;
+                        }
+                    }
+
+                    logger.LogDebug("Tools loaded from input file: {Tools}", string.Join(", ", toolList));
+                }
+                else
+                {
+                    // CLI --tools or interactive prompt
+                    if (string.IsNullOrWhiteSpace(toolsInput))
+                    {
+                        toolsInput = InputValidator.PromptAndValidateRequiredInput("Enter comma-separated list of tool names: ", "Tool names", 2000);
+                        if (string.IsNullOrWhiteSpace(toolsInput)) { logger.LogError("At least one tool name is required"); return; }
+                    }
+
+                    toolList = toolsInput!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                    if (toolList.Count == 0)
+                    {
+                        logger.LogError("At least one tool name is required");
+                        return;
+                    }
+
+                    logger.LogDebug("Tools to register: {Tools}", string.Join(", ", toolList));
                 }
 
-                toolList = toolsInput!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
                 if (toolList.Count == 0)
                 {
                     logger.LogError("At least one tool name is required");
                     return;
                 }
 
-                logger.LogDebug("Tools to register: {Tools}", string.Join(", ", toolList));
-
-                // Collect required descriptions for each tool (used in MOS package)
-                toolDescriptions = new Dictionary<string, string>();
-                if (!string.IsNullOrWhiteSpace(toolDescriptionsInput))
+                // Collect descriptions for tools that don't yet have one (interactive prompt fallback)
+                toolDescriptions ??= new Dictionary<string, string>();
+                foreach (var tool in toolList)
                 {
-                    var descList = toolDescriptionsInput.Split(',', StringSplitOptions.TrimEntries).ToList();
-                    if (descList.Count != toolList.Count)
-                    {
-                        logger.LogError("Number of tool descriptions ({DescCount}) must match number of tools ({ToolCount})", descList.Count, toolList.Count);
-                        return;
-                    }
-
-                    for (var i = 0; i < toolList.Count; i++)
-                    {
-                        if (string.IsNullOrWhiteSpace(descList[i])) { logger.LogError("Tool description is required for '{Tool}'", toolList[i]); return; }
-                        toolDescriptions[toolList[i]] = descList[i];
-                    }
-                }
-                else
-                {
-                    foreach (var tool in toolList)
+                    if (!toolDescriptions.ContainsKey(tool))
                     {
                         var desc = InputValidator.PromptAndValidateRequiredInput($"Enter description for tool '{tool}': ", $"Description for tool '{tool}'", 200);
                         if (string.IsNullOrWhiteSpace(desc)) { logger.LogError("Tool description is required for '{Tool}'", tool); return; }
@@ -1096,6 +1162,51 @@ public static class DevelopMcpCommand
                 logger.LogError("Input validation failed: {Message}", ex.Message);
                 return;
             }
+
+            // Display registration summary
+            Console.WriteLine();
+            Console.WriteLine("Registration Summary");
+            Console.WriteLine("====================");
+            Console.WriteLine($"  Server Name:    {serverName}");
+            Console.WriteLine($"  Server URL:     {serverUrl}");
+            Console.WriteLine($"  Auth Type:      {authType}");
+            Console.WriteLine($"  Publisher:      {publisherName}");
+            Console.WriteLine($"  Description:    {serverDescription}");
+            if (toolList is not null)
+            {
+                Console.WriteLine($"  Tools:");
+                foreach (var tool in toolList)
+                {
+                    var desc = toolDescriptions?.GetValueOrDefault(tool);
+                    Console.WriteLine(desc is not null ? $"    - {tool}: {desc}" : $"    - {tool}");
+                }
+            }
+
+            if (!isNoAuth && !isApiKey && !string.IsNullOrWhiteSpace(remoteScopes))
+            {
+                Console.WriteLine($"  Remote Scopes:  {remoteScopes}");
+            }
+
+            if (isExternalIdp)
+            {
+                Console.WriteLine($"  IDP Auth URL:   {idpAuthUrl}");
+                Console.WriteLine($"  IDP Token URL:  {idpTokenUrl}");
+                Console.WriteLine($"  IDP Scopes:     {idpScopes}");
+                Console.WriteLine($"  IDP Client ID:  {idpClientId}");
+            }
+
+            if (isApiKey)
+            {
+                Console.WriteLine($"  API Key Location: {apiKeyLocation}");
+                Console.WriteLine($"  API Key Name:     {apiKeyName}");
+            }
+
+            if (force)
+            {
+                Console.WriteLine($"  Force:          true");
+            }
+
+            Console.WriteLine();
 
             if (dryRun)
             {
@@ -1406,6 +1517,59 @@ public static class DevelopMcpCommand
                 var msg = "Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
                 logger.LogWarning(msg);
                 warnings.Add(msg);
+            }
+
+            // Add API permissions on RemoteProxy app for the remote server scopes
+            if (isEntra && remoteProxyAppObjectId != null && !string.IsNullOrWhiteSpace(remoteScopes))
+            {
+                try
+                {
+                    // Parse resource app ID and scope name from "api://{appId}/{scopeName}"
+                    var scopeUri = remoteScopes.Trim();
+                    string? resourceAppId = null;
+                    string? scopeName = null;
+
+                    if (scopeUri.StartsWith("api://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var path = scopeUri.Substring("api://".Length);
+                        var slashIndex = path.IndexOf('/');
+                        if (slashIndex > 0)
+                        {
+                            resourceAppId = path.Substring(0, slashIndex);
+                            scopeName = path.Substring(slashIndex + 1);
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(scopeName))
+                    {
+                        logger.LogDebug("Looking up scope '{ScopeName}' on resource app {ResourceAppId}...", scopeName, resourceAppId);
+                        var remoteScopeId = await graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName);
+                        if (remoteScopeId.HasValue)
+                        {
+                            logger.LogDebug("Adding API permission for remote scope on RemoteProxy app...");
+                            await graphApiService.AddRequiredResourceAccessAsync(
+                                tenantId, remoteProxyAppObjectId, resourceAppId, remoteScopeId.Value);
+                        }
+                        else
+                        {
+                            var msg = $"Could not find scope '{scopeName}' on resource app {resourceAppId}. API permission not added to RemoteProxy app.";
+                            logger.LogWarning(msg);
+                            warnings.Add(msg);
+                        }
+                    }
+                    else
+                    {
+                        var msg = $"Could not parse resource app ID and scope from '{remoteScopes}'. Expected format: api://{{appId}}/{{scopeName}}";
+                        logger.LogWarning(msg);
+                        warnings.Add(msg);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    var msg = $"Failed to add API permissions on RemoteProxy app: {ex.Message}";
+                    logger.LogWarning(msg);
+                    warnings.Add(msg);
+                }
             }
 
             // Step 4: Configure PPMI app scopes and A365 Proxy API permissions

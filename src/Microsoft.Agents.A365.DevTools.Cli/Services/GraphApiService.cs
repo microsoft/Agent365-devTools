@@ -556,6 +556,44 @@ public class GraphApiService
         return idProp.GetString()!;
     }
 
+    /// <summary>
+    /// Looks up the GUID of an OAuth2 permission scope on a service principal by scope name.
+    /// </summary>
+    public virtual async Task<Guid?> GetOAuth2PermissionScopeIdAsync(
+        string tenantId, string resourceAppId, string scopeName, CancellationToken ct = default)
+    {
+        if (!Guid.TryParse(resourceAppId, out var validGuid))
+        {
+            _logger.LogWarning("Invalid resourceAppId format: {AppId}", resourceAppId);
+            return null;
+        }
+
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/servicePrincipals?$filter=appId eq '{validGuid:D}'&$select=oauth2PermissionScopes",
+            ct);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+
+        var sp = value[0];
+        if (!sp.TryGetProperty("oauth2PermissionScopes", out var scopes)) return null;
+
+        foreach (var scope in scopes.EnumerateArray())
+        {
+            if (scope.TryGetProperty("value", out var v) &&
+                string.Equals(v.GetString(), scopeName, StringComparison.OrdinalIgnoreCase) &&
+                scope.TryGetProperty("id", out var id))
+            {
+                var scopeId = Guid.Parse(id.GetString()!);
+                _logger.LogDebug("Found scope '{ScopeName}' with ID {ScopeId} on resource {ResourceAppId}", scopeName, scopeId, resourceAppId);
+                return scopeId;
+            }
+        }
+
+        _logger.LogWarning("Scope '{ScopeName}' not found on resource {ResourceAppId}", scopeName, resourceAppId);
+        return null;
+    }
+
     public async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
         string tenantId,
         string clientSpObjectId,

@@ -1,0 +1,32 @@
+{
+  "serverName": "ext_MyServer",
+  "serverUrl": "https://example.com/api/mcp",
+  "authType": "NoAuth",
+  "description": "My MCP server description",
+  "publisherName": "Contoso",
+  "tools": [
+    {
+      "name": "tool1",
+      "description": "Tool 1 description"
+    },
+    {
+      "name": "tool2",
+      "description": "Tool 2 description"
+    }
+  ],
+  "remoteScopes": null,
+  "tenantId": null,
+  "serviceTreeId": null,
+  "force": false,
+  "externalOAuth": {
+    "authorizationUrl": null,
+    "tokenUrl": null,
+    "scopes": null,
+    "clientId": null,
+    "clientSecret": null
+  },
+  "apiKey": {
+    "location": null,
+    "name": null
+  }
+}
