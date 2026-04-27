@@ -135,7 +135,7 @@ public class PublishCommand
                 Agent365Config config;
                 if (resolver != null)
                 {
-                    var resolved = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: false, ct);
+                    var resolved = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
                     if (resolved is null) { context.ExitCode = 1; return; }
                     config = resolved;
                 }

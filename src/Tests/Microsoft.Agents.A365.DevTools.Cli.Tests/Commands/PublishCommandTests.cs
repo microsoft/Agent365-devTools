@@ -200,4 +200,51 @@ public class PublishCommandTests : IDisposable
             Arg.Is<Exception>(ex => ex.Message == "Test exception"),
             Arg.Any<Func<object, Exception?, string>>());
     }
+
+    // Regression: resolver must be called with isCleanupMode=true so AgentBlueprintId is loaded from the generated config.
+    [Fact]
+    public async Task PublishCommand_WithAgentName_CallsResolverWithCleanupModeTrue()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var manifestDir = Path.Combine(tempDir, "manifest");
+        Directory.CreateDirectory(manifestDir);
+
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(manifestDir, "manifest.json"), "{\"id\":\"old-id\"}");
+            await File.WriteAllTextAsync(Path.Combine(manifestDir, "agenticUserTemplateManifest.json"), "{\"id\":\"old-id\"}");
+
+            var resolver = Substitute.For<IBootstrapConfigResolver>();
+            resolver
+                .ResolveAsync(
+                    Arg.Any<string?>(),
+                    Arg.Any<string?>(),
+                    Arg.Any<FileInfo>(),
+                    isCleanupMode: true,
+                    Arg.Any<CancellationToken>())
+                .Returns(new Agent365Config
+                {
+                    AgentBlueprintId = "blueprint-from-generated-config",
+                    AgentBlueprintDisplayName = "Test Agent",
+                    TenantId = "test-tenant",
+                    DeploymentProjectPath = tempDir
+                });
+
+            var root = new RootCommand();
+            root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService, resolver: resolver));
+
+            await root.InvokeAsync("publish --agent-name TestAgent");
+
+            await resolver.Received(1).ResolveAsync(
+                Arg.Any<string?>(),
+                Arg.Any<string?>(),
+                Arg.Any<FileInfo>(),
+                isCleanupMode: true,
+                Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
 }
