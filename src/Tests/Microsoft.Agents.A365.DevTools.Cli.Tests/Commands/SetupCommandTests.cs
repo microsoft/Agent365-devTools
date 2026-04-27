@@ -341,4 +341,146 @@ public class SetupCommandTests
         // Assert — a failing check must propagate exit code 1.
         Assert.Equal(1, result);
     }
+
+    /// <summary>
+    /// Verifies that bare <c>--ownaccess</c> (no value) routes to the own-identity (DW) plan
+    /// even when <c>a365.config.json</c> has <c>AiTeammate = false</c>.
+    /// Catches regressions where <c>FindResultFor</c> always returns null, which would cause
+    /// the flag to be treated as "not set" and the config value to take precedence.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_WithBareAiteammate_RoutesToOwnIdentityDryRunPlan()
+    {
+        // Arrange — config says blueprint agent; bare --ownaccess must override to own-identity.
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            AgentIdentityDisplayName = "agent",
+            AgentBlueprintDisplayName = "TestBlueprint",
+            DeploymentProjectPath = ".",
+            AiTeammate = false
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockBackendConfigurator,
+            _mockAuthValidator, _mockPlatformDetector,
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService,
+            _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("all --ownaccess --dry-run", testConsole);
+
+        // Assert
+        result.Should().Be(0, because: "bare --ownaccess is a valid flag and dry-run exits 0");
+        // Own-identity (DW) plan logs "Azure hosting" at step 2.
+        // Blueprint plan uses "Blueprint" at step 2 and never logs "Azure hosting".
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Azure hosting")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>
+    /// Verifies that omitting <c>--ownaccess</c> respects <c>AiTeammate = false</c> from config
+    /// and shows the blueprint plan (not the own-identity plan).
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_WithAiteammateOmitted_RespectsConfigBlueprintFlag()
+    {
+        // Arrange — blueprint agent config; no flag means "respect config" → blueprint plan.
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            AgentIdentityDisplayName = "agent",
+            AgentBlueprintDisplayName = "TestBlueprint",
+            DeploymentProjectPath = ".",
+            AiTeammate = false
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockBackendConfigurator,
+            _mockAuthValidator, _mockPlatformDetector,
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService,
+            _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var result = await parser.InvokeAsync("all --dry-run", testConsole);
+
+        // Assert
+        result.Should().Be(0);
+        // Blueprint plan logs "Inheritable Permissions" at step 3; own-identity plan does not.
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        // Own-identity plan's distinctive "Azure hosting" step must be absent.
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Azure hosting")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>
+    /// Verifies that explicit <c>--ownaccess false</c> forces the blueprint plan even when
+    /// <c>a365.config.json</c> has <c>AiTeammate = true</c>.
+    /// Catches regressions where <c>FindResultFor</c> always returns null, which would cause
+    /// <c>--ownaccess false</c> to be treated as "not set" and let <c>AiTeammate = true</c>
+    /// route to the own-identity plan instead.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_WithAiteammateFalse_ForcesBlueprintPlanRegardlessOfConfig()
+    {
+        // Arrange — config says own-identity; explicit --ownaccess false must override to blueprint.
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            AgentIdentityDisplayName = "agent",
+            AgentBlueprintDisplayName = "TestBlueprint",
+            DeploymentProjectPath = ".",
+            AiTeammate = true  // config says own-identity
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockBackendConfigurator,
+            _mockAuthValidator, _mockPlatformDetector,
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService,
+            _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        // Act — explicit false overrides config's AiTeammate = true
+        var result = await parser.InvokeAsync("all --ownaccess false --dry-run", testConsole);
+
+        // Assert
+        result.Should().Be(0, because: "--ownaccess false is a valid parse and dry-run exits 0");
+        // Blueprint plan must be shown despite config AiTeammate = true.
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Azure hosting")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
 }

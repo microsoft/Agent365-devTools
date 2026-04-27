@@ -203,13 +203,16 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
 
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
             tenantId, _graphApiService, _logger, ct);
-        if (!string.IsNullOrWhiteSpace(clientAppId) && _graphApiService != null)
+        if (string.IsNullOrWhiteSpace(clientAppId))
+            return null;
+
+        if (_graphApiService != null)
             _graphApiService.CustomClientAppId = clientAppId;
 
         var config = new Agent365Config
         {
             TenantId = tenantId,
-            ClientAppId = clientAppId ?? string.Empty,
+            ClientAppId = clientAppId,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
@@ -242,10 +245,13 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         }
 
         // Step 2: Resolve client app ID — prefer local a365.config.json when tenant matches.
-        var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+        var resolvedClientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
             tenantId, _graphApiService, _logger, ct, preferLocalConfig: true);
-        if (!string.IsNullOrWhiteSpace(clientAppId) && _graphApiService != null)
-            _graphApiService.CustomClientAppId = clientAppId;
+        if (string.IsNullOrWhiteSpace(resolvedClientAppId))
+            return null;
+
+        if (_graphApiService != null)
+            _graphApiService.CustomClientAppId = resolvedClientAppId;
 
         // Step 3: Resolve blueprint ID from Entra (authoritative source).
         var blueprintDisplayName = $"{agentName} Blueprint";
@@ -321,7 +327,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         var config = new Agent365Config
         {
             TenantId = tenantId,
-            ClientAppId = clientAppId ?? string.Empty,
+            ClientAppId = resolvedClientAppId,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = blueprintDisplayName,
             AgentDescription = agentName,
@@ -336,7 +342,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
 
         _logger.LogDebug("Bootstrap cleanup config:");
         _logger.LogDebug("  TenantId:        {TenantId}", tenantId);
-        _logger.LogDebug("  ClientAppId:     {ClientAppId}", clientAppId ?? "(not found)");
+        _logger.LogDebug("  ClientAppId:     {ClientAppId}", resolvedClientAppId);
         _logger.LogDebug("  BlueprintId:     {BlueprintId}", blueprintId ?? "(not found)");
         _logger.LogDebug("  BlueprintSP:     {SpId}", agentBlueprintSpObjectId ?? "(not found)");
         _logger.LogDebug("  AgentIdentitySP: {SpId}", agenticAppId ?? "(not found)");

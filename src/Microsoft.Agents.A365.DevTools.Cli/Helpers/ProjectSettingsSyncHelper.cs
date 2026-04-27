@@ -29,7 +29,7 @@ public static class ProjectSettingsSyncHelper
     /// so that in-memory values such as AgentDescription and AgentIdentityDisplayName derived
     /// from --agent-name are not lost when the config is reloaded from disk.
     /// </summary>
-    public static Task ExecuteAsync(
+    public static Task<bool> ExecuteAsync(
         string a365ConfigPath,
         Agent365Config config,
         PlatformDetector platformDetector,
@@ -37,7 +37,7 @@ public static class ProjectSettingsSyncHelper
         => ExecuteAsyncCore(a365ConfigPath, config, platformDetector, logger);
 
 
-    public static async Task ExecuteAsync(
+    public static async Task<bool> ExecuteAsync(
         string a365ConfigPath,
         string a365GeneratedPath,
         IConfigService configService,
@@ -49,10 +49,10 @@ public static class ProjectSettingsSyncHelper
             throw new FileNotFoundException("a365.generated.config.json not found", a365GeneratedPath);
 
         var pkgConfig = await configService.LoadAsync(a365ConfigPath, a365GeneratedPath);
-        await ExecuteAsync(a365ConfigPath, pkgConfig, platformDetector, logger);
+        return await ExecuteAsync(a365ConfigPath, pkgConfig, platformDetector, logger);
     }
 
-    private static async Task ExecuteAsyncCore(
+    private static async Task<bool> ExecuteAsyncCore(
         string a365ConfigPath,
         Agent365Config pkgConfig,
         PlatformDetector platformDetector,
@@ -72,7 +72,7 @@ public static class ProjectSettingsSyncHelper
             else
             {
                 logger.LogWarning("deploymentProjectPath is not set or does not exist in a365.config.json; skipping project settings sync.");
-                return;
+                return false;
             }
         }
 
@@ -124,13 +124,12 @@ public static class ProjectSettingsSyncHelper
             }
 
             default:
-            {
                 logger.LogWarning("Could not detect project platform in {ProjectPath}; no files updated.", project);
-                return;
-            }
+                return false;
         }
 
         logger.LogInformation("Stamped TenantId, ServiceConnection, AgentBlueprint, and Agent365Observability settings into {ProjectPath}", project);
+        return true;
     }
 
     /// <summary>

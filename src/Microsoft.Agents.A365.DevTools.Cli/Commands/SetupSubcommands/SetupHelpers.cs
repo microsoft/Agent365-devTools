@@ -188,6 +188,32 @@ internal static class SetupHelpers
                 ct);
         }
 
+        if (string.IsNullOrWhiteSpace(clientAppId))
+        {
+            if (graphApiService == null)
+                return null;
+
+            logger.LogError("Entra app \"{AppName}\" was not found in tenant {TenantId}.",
+                AuthenticationConstants.WellKnownClientAppDisplayName, tenantId);
+            Console.Write("Enter your client app ID (or press Enter to cancel): ");
+            var entered = Console.ReadLine()?.Trim();
+            if (string.IsNullOrWhiteSpace(entered))
+            {
+                logger.LogInformation("Client app ID entry cancelled.");
+                return null;
+            }
+
+            logger.LogInformation("Verifying client app ID...");
+            if (!await graphApiService.ApplicationExistsByAppIdAsync(tenantId, entered, ct))
+            {
+                logger.LogError("App ID '{AppId}' was not found in tenant '{TenantId}'. Check the ID and try again.",
+                    entered, tenantId);
+                return null;
+            }
+
+            clientAppId = entered;
+        }
+
         return clientAppId;
     }
 
@@ -652,7 +678,8 @@ internal static class SetupHelpers
         // Next steps
         var hasNextSteps = results.HasErrors
             || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
-            || !string.IsNullOrEmpty(results.FederatedCredentialError);
+            || !string.IsNullOrEmpty(results.FederatedCredentialError)
+            || results.AgentRegistrationFailed;
 
         if (hasNextSteps)
         {
@@ -672,6 +699,9 @@ internal static class SetupHelpers
                     logger.LogInformation("    a365 setup blueprint");
                 });
             }
+
+            if (results.AgentRegistrationFailed)
+                nextStepLines.Add(() => logger.LogInformation("  To retry agent registration: a365 setup all --agent-registration-only"));
 
             if (nextStepLines.Count > 0)
             {
@@ -900,7 +930,7 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Prints the dry-run plan for the own-identity agent (--aiteammate true) path of setup all.
+    /// Prints the dry-run plan for the own-identity agent (--ownaccess true) path of setup all.
     /// </summary>
     internal static void PrintDwSetupAllDryRunPlan(
         ILogger logger,

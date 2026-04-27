@@ -183,15 +183,30 @@ public sealed class MsalBrowserCredential : TokenCredential
     {
         try
         {
-            // Linux: no secure file storage available, but share tokens across all instances
-            // within this CLI process using a static in-memory serialized cache.
-            // This eliminates repeated device code prompts during multi-step operations
-            // (e.g., blueprint creation followed by client secret creation in 'setup blueprint').
-            // Tokens are never written to disk on Linux.
+            // Linux: no DPAPI/Keychain equivalent, but persist tokens to disk using an unprotected
+            // plaintext file (0600 permissions — owner-only). This is the same approach used by
+            // Azure CLI (~/.azure/msal_token_cache.json) and eliminates repeated login prompts
+            // across CLI invocations. Tokens remain protected by filesystem permissions.
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
                 !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                RegisterSharedInMemoryCache(app, logger);
+                if (_cacheHelper == null)
+                {
+                    lock (_cacheHelperLock)
+                    {
+                        if (_cacheHelper == null)
+                        {
+                            Directory.CreateDirectory(CacheDirectory);
+                            var storageProperties = new StorageCreationPropertiesBuilder(CacheFileName, CacheDirectory)
+                                .WithLinuxUnprotectedFile()
+                                .Build();
+                            _cacheHelper = MsalCacheHelper.CreateAsync(storageProperties).GetAwaiter().GetResult();
+                            _cacheHelper.VerifyPersistence();
+                            logger?.LogDebug("Persistent MSAL token cache initialized at: {Path} (unprotected file)", CacheDirectory);
+                        }
+                    }
+                }
+                _cacheHelper.RegisterCache(app.UserTokenCache);
                 return;
             }
 

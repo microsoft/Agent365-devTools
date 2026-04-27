@@ -192,7 +192,7 @@ public class Agent365Config
     /// false = blueprint-only agent: setup all auto-creates agent identity SP; no Entra user. Two variants:
     ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
     ///   - UseBlueprint = true:  Blueprint-only non-DW flow (Agent Identity Blueprint + Agent Instance).
-    /// Can be overridden per-command with the --aiteammate flag.
+    /// Can be overridden per-command with the --ownaccess flag.
     /// </summary>
     [JsonPropertyName("aiTeammate")]
     public bool? AiTeammate { get; init; }

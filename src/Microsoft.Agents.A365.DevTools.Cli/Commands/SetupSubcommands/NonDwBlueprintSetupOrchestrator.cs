@@ -500,10 +500,9 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             // Pass ctx.Config directly so AgentDescription and AgentIdentityDisplayName
             // derived from --agent-name are written rather than stale values from disk.
-            await ProjectSettingsSyncHelper.ExecuteAsync(
+            ctx.Results.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
                 ctx.ConfigFile.FullName, ctx.Config,
                 ctx.PlatformDetector, ctx.Logger);
-            ctx.Results.ProjectSettingsWritten = true;
         }
     }
 

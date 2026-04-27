@@ -180,7 +180,8 @@ internal static class PermissionsSubcommand
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                ExceptionHandler.ExitWithCleanup(1);
+                context.ExitCode = 1;
+                return;
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -193,7 +194,7 @@ internal static class PermissionsSubcommand
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
             // which would be a side effect in a mode that is supposed to be non-mutating.
             var mcpChecks = GetMcpChecks(authValidator);
-            await RequirementsSubcommand.RunChecksOrExitAsync(mcpChecks, setupConfig, logger, CancellationToken.None);
+            await RequirementsSubcommand.RunChecksOrExitAsync(mcpChecks, setupConfig, logger, ct);
 
             // Confirmation gate for --remove-legacy-scopes — requires explicit opt-in
             if (removeLegacyScopes)
@@ -307,7 +308,8 @@ internal static class PermissionsSubcommand
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                ExceptionHandler.ExitWithCleanup(1);
+                context.ExitCode = 1;
+                return;
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -320,7 +322,7 @@ internal static class PermissionsSubcommand
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
             // which would be a side effect in a mode that is supposed to be non-mutating.
             var botChecks = GetBotChecks(authValidator);
-            await RequirementsSubcommand.RunChecksOrExitAsync(botChecks, setupConfig, logger, CancellationToken.None);
+            await RequirementsSubcommand.RunChecksOrExitAsync(botChecks, setupConfig, logger, ct);
 
             await ConfigureBotPermissionsAsync(
                 configFile.FullName,
@@ -461,7 +463,8 @@ internal static class PermissionsSubcommand
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                ExceptionHandler.ExitWithCleanup(1);
+                context.ExitCode = 1;
+                return;
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -474,7 +477,7 @@ internal static class PermissionsSubcommand
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
             // which would be a side effect in a mode that is supposed to be non-mutating.
             var customChecks = GetCustomChecks(authValidator);
-            await RequirementsSubcommand.RunChecksOrExitAsync(customChecks, setupConfig, logger, CancellationToken.None);
+            await RequirementsSubcommand.RunChecksOrExitAsync(customChecks, setupConfig, logger, ct);
 
             if (isInlineMode)
             {
@@ -495,9 +498,25 @@ internal static class PermissionsSubcommand
                     return;
                 }
 
+                string resourceName;
+                try
+                {
+                    resourceName = await graphApiService.GetServicePrincipalDisplayNameAsync(
+                        setupConfig.TenantId, resourceAppId!, ct)
+                        ?? CreateFallbackResourceName(resourceAppId);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    resourceName = CreateFallbackResourceName(resourceAppId);
+                }
+
                 await SetupHelpers.EnsureResourcePermissionsAsync(
                     graphApiService, blueprintService, setupConfig,
-                    resourceAppId!, resourceAppId!,
+                    resourceAppId!, resourceName,
                     scopes, logger, ct: ct);
             }
             else

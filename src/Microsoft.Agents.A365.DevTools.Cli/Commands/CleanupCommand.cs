@@ -711,7 +711,7 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                 {
                     logger.LogInformation("Deleting agent identity service principal...");
-                    await executor.ExecuteAsync("az", $"ad app delete --id {config.AgenticAppId}", null, true, false, CancellationToken.None);
+                    await executor.ExecuteAsync("az", $"ad app delete --id {config.AgenticAppId}", null, true, false, ct);
                     logger.LogInformation("Agent identity service principal deleted");
                 }
 
@@ -719,7 +719,7 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
                 {
                     logger.LogInformation("Deleting agent user...");
-                    await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, CancellationToken.None);
+                    await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, ct);
                     logger.LogInformation("Agent user deleted");
                 }
 
@@ -1018,7 +1018,7 @@ public class CleanupCommand
             if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
             {
                 logger.LogInformation("Deleting agent user...");
-                await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, CancellationToken.None);
+                await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, ct);
                 logger.LogInformation("Agent user deleted");
             }
 
@@ -1070,19 +1070,33 @@ public class CleanupCommand
                     var globalGeneratedPath = Path.Combine(
                         ConfigService.GetGlobalConfigDirectory(),
                         "a365.generated.config.json");
-                    
+
                     if (File.Exists(globalGeneratedPath))
                     {
                         var globalBackupPath = Path.Combine(
                             ConfigService.GetGlobalConfigDirectory(),
                             $"a365.generated.config.backup-{timestamp}.json");
-                        
+
                         logger.LogInformation("Backing up global generated configuration to: {BackupPath}", globalBackupPath);
                         File.Copy(globalGeneratedPath, globalBackupPath);
-                        
+
                         logger.LogInformation("Deleting global generated configuration file...");
                         File.Delete(globalGeneratedPath);
                         logger.LogInformation("Global generated configuration deleted (backup saved)");
+                    }
+
+                    // Delete static config file
+                    var staticConfigPath = configFile?.FullName ?? "a365.config.json";
+                    if (File.Exists(staticConfigPath))
+                    {
+                        var staticBackupPath = Path.ChangeExtension(staticConfigPath, null) + $".backup-{timestamp}.json";
+
+                        logger.LogInformation("Backing up configuration to: {BackupPath}", staticBackupPath);
+                        File.Copy(staticConfigPath, staticBackupPath);
+
+                        logger.LogInformation("Deleting configuration file...");
+                        File.Delete(staticConfigPath);
+                        logger.LogInformation("Configuration file deleted (backup saved)");
                     }
                 }
                 catch (Exception ex)

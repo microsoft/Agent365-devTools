@@ -49,7 +49,7 @@ public class ArmApiService : IDisposable
 
     private async Task<bool> EnsureArmHeadersAsync(string tenantId, CancellationToken ct)
     {
-        var token = await _authService.GetAccessTokenAsync(ArmResource, tenantId);
+        var token = await _authService.GetAccessTokenAsync(ArmResource, tenantId, ct: ct);
         if (string.IsNullOrWhiteSpace(token))
         {
             _logger.LogWarning("Unable to acquire ARM access token for tenant {TenantId}", tenantId);

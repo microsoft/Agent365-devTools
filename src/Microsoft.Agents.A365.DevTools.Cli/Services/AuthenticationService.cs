@@ -26,7 +26,8 @@ public interface IAuthenticationService
         string? clientId = null,
         IEnumerable<string>? scopes = null,
         bool useInteractiveBrowser = true,
-        string? userId = null);
+        string? userId = null,
+        CancellationToken ct = default);
 
     Task<string?> ResolveLoginHintFromCacheAsync();
 }
@@ -85,7 +86,8 @@ public class AuthenticationService : IAuthenticationService
         string? clientId = null,
         IEnumerable<string>? scopes = null,
         bool useInteractiveBrowser = true,
-        string? userId = null)
+        string? userId = null,
+        CancellationToken ct = default)
     {
         // Build cache key based on resource, tenant, and user identity.
         // Including userId ensures that cached tokens are not shared across different users
@@ -167,7 +169,7 @@ public class AuthenticationService : IAuthenticationService
 
         // Authenticate interactively with specific tenant and scopes
         _logger.LogDebug("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, ct: ct);
 
         // Validate the token identity before caching: if a userId was requested,
         // ensure the returned token is actually for that user. WAM may return a
@@ -209,7 +211,8 @@ public class AuthenticationService : IAuthenticationService
         string? clientId = null,
         IEnumerable<string>? explicitScopes = null,
         bool useInteractiveBrowser = false,
-        string? loginHint = null)
+        string? loginHint = null,
+        CancellationToken ct = default)
     {
         // Declare variables outside try block so they're available in catch for logging
         string effectiveTenantId = tenantId ?? "unknown";
@@ -302,7 +305,7 @@ public class AuthenticationService : IAuthenticationService
             AccessToken tokenResult;
             try
             {
-                tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
+                tokenResult = await credential.GetTokenAsync(tokenRequestContext, ct);
             }
             catch (MsalAuthenticationFailedException ex) when (useInteractiveBrowser && ex.InnerException is PlatformNotSupportedException)
             {
@@ -310,7 +313,7 @@ public class AuthenticationService : IAuthenticationService
                 _logger.LogInformation("Using device code authentication...");
                 _logger.LogInformation("Please sign in with your Microsoft account");
                 var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
-                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
+                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, ct);
             }
             _logger.LogInformation("Authentication successful!");
 

@@ -45,7 +45,7 @@ internal static class AllSubcommand
     }
 
     /// <summary>
-    /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
+    /// Returns the requirement checks for <c>setup all --ownaccess false</c> (non-DW blueprint).
     /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
@@ -107,11 +107,11 @@ internal static class AllSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
-        var ownIdentityOption = new Option<bool?>(
-            "--aiteammate",
-            description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
-                        "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
-                        "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
+        var ownIdentityOption = new Option<bool>(
+            "--ownaccess",
+            description: "Own-identity agent: setup provisions blueprint and permissions only;\n" +
+                        "run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+                        "Omit for blueprint-only agent (default): setup auto-creates agent identity SP; no Entra user.\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
         var agentRegistrationOnlyOption = new Option<bool>(
@@ -150,11 +150,15 @@ internal static class AllSubcommand
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
-            var ownIdentityFlag = context.ParseResult.GetValueForOption(ownIdentityOption);
+            // Tri-state: null = not specified (respect config), true/false = explicit override.
+            // Option<bool> means bare --ownaccess sets it to true without requiring "true" as a value.
+            bool? ownIdentityFlag = context.ParseResult.CommandResult.FindResultFor(ownIdentityOption) != null
+                ? context.ParseResult.GetValueForOption(ownIdentityOption)
+                : null;
             var agentRegistrationOnly = context.ParseResult.GetValueForOption(agentRegistrationOnlyOption);
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
-            var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            bool isM365 = context.ParseResult.GetValueForOption(m365Option);
             var ct = context.GetCancellationToken();
 
             // Generate correlation ID at workflow entry point
@@ -162,7 +166,7 @@ internal static class AllSubcommand
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // Blueprint agent is the default. Own-identity agent requires --aiteammate true explicitly.
+            // Blueprint agent is the default. Own-identity agent requires --ownaccess true explicitly.
             Agent365Config? nonDwConfig = null;
             bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
@@ -247,11 +251,16 @@ internal static class AllSubcommand
                     catch (OperationCanceledException) { throw; }
                     catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
                     // If ownidentity was not explicitly set, respect what the config says
-                    // (allows existing own-identity configs to keep working without --aiteammate true)
+                    // (allows existing own-identity configs to keep working without --ownaccess true)
                     if (nonDwConfig != null && !ownIdentityFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
             }
+
+            // Own-identity (DW) agents are M365 agents by design — auto-enable messaging endpoint.
+            // --m365 remains opt-in for blueprint agents (non-DW path).
+            if (nonDwConfig is null)
+                isM365 = true;
 
             if (nonDwConfig is not null)
             {
@@ -441,10 +450,9 @@ internal static class AllSubcommand
                 await ExecuteMessagingEndpointStepAsync(ctx);
 
                 // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
-                await ProjectSettingsSyncHelper.ExecuteAsync(
+                setupResults.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
                     ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
                     ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
-                setupResults.ProjectSettingsWritten = true;
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
@@ -805,18 +813,17 @@ internal static class AllSubcommand
             return null;
 
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
-            tenantId,
-            graphApiService,
-            logger,
-            ct);
-        if (!string.IsNullOrWhiteSpace(clientAppId))
-            graphApiService.CustomClientAppId = clientAppId;
+            tenantId, graphApiService, logger, ct);
+        if (string.IsNullOrWhiteSpace(clientAppId))
+            return null;
+
+        graphApiService.CustomClientAppId = clientAppId;
 
         // Build minimal config and validate
         var config = new Agent365Config
         {
             TenantId = tenantId,
-            ClientAppId = clientAppId ?? string.Empty,
+            ClientAppId = clientAppId,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,

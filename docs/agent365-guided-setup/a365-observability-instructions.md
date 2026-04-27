@@ -89,15 +89,15 @@ using Microsoft.Identity.Client;
 
 namespace <ProjectNamespace>;
 
-// Acquires an Observability API token for A365 observability via a 3-hop FMI chain.
+// Acquires a Power Platform token for A365 observability via a 3-hop FMI chain.
 //   Hop 1+2: Blueprint authenticates (MSI in prod, client secret locally) →
 //            gets T1 via .WithFmiPath(agentId) to Agent Identity.
-//   Hop 3:   Agent Identity uses T1 as assertion → Observability API token.
+//   Hop 3:   Agent Identity uses T1 as assertion → Power Platform token.
 //            (ServiceIdentity type — AADSTS82001 does not apply.)
 internal sealed class ObservabilityTokenService : BackgroundService
 {
     private static readonly string[] FmiScopes = ["api://AzureADTokenExchange/.default"];
-    private static readonly string[] ObservabilityScopes = ["api://9b975845-388f-4429-889e-eab1ef63949c/.default"];
+    private static readonly string[] PowerPlatformScopes = ["https://api.powerplatform.com/.default"];
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(50);
 
     private readonly IExporterTokenCache<string> _tokenCache;
@@ -166,15 +166,15 @@ internal sealed class ObservabilityTokenService : BackgroundService
                 .ExecuteAsync(ct)).AccessToken;
         }
 
-        // Hop 3: Agent Identity uses T1 → Observability API token
-        var obsResult = await ConfidentialClientApplicationBuilder
+        // Hop 3: Agent Identity uses T1 → Power Platform token
+        var ppResult = await ConfidentialClientApplicationBuilder
             .Create(_agentId)
             .WithClientAssertion((AssertionRequestOptions _) => Task.FromResult(t1Token))
             .WithAuthority(new Uri(authority)).Build()
-            .AcquireTokenForClient(ObservabilityScopes)
+            .AcquireTokenForClient(PowerPlatformScopes)
             .ExecuteAsync(ct);
 
-        _tokenCache.RegisterObservability(_agentId, _tenantId, obsResult.AccessToken, ObservabilityScopes);
+        _tokenCache.RegisterObservability(_agentId, _tenantId, ppResult.AccessToken, PowerPlatformScopes);
         _logger.LogInformation("Observability token registered for agent {AgentId}.", _agentId);
     }
 }
