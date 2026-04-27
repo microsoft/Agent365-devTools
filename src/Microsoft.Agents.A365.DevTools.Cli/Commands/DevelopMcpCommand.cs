@@ -1870,10 +1870,10 @@ public static class DevelopMcpCommand
     {
         var command = new Command("delete-external-mcp-server", "Delete a registered external MCP server");
 
-        var serverNameOption = new Option<string>("--server-name", description: "Name of the MCP server to delete") { IsRequired = true };
+        var serverNameOption = new Option<string>(["-s", "--server-name"], description: "Name of the MCP server to delete") { IsRequired = true };
         command.AddOption(serverNameOption);
 
-        var tenantIdOption = new Option<string?>("--tenant-id", description: "Azure AD tenant ID (auto-detected from az CLI if not specified)");
+        var tenantIdOption = new Option<string?>(["-t", "--tenant-id"], description: "Azure AD tenant ID (auto-detected from az CLI if not specified)");
         command.AddOption(tenantIdOption);
 
         var forceOption = new Option<bool>("--force", description: "Force deletion even if the server is approved");
@@ -1881,6 +1881,9 @@ public static class DevelopMcpCommand
 
         var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
         command.AddOption(configOption);
+
+        var verboseOption = new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging");
+        command.AddOption(verboseOption);
 
         command.SetHandler(async (context) =>
         {
