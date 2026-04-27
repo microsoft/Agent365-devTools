@@ -9,89 +9,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 /// </summary>
 public static class ErrorMessages
 {
-    #region App Service Plan Messages
-
-    /// <summary>
-    /// Gets mitigation steps for App Service Plan quota exceeded errors.
-    /// </summary>
-    public static List<string> GetQuotaExceededMitigation(string location)
-    {
-        var locationDisplay = string.IsNullOrWhiteSpace(location) ? "(not specified)" : location;
-        
-        return new List<string>
-        {
-            "Your Azure subscription has reached its quota limit for App Service Plans in this SKU tier.",
-            "For development/testing, update 'planSku' to 'F1' in a365.config.json to use Free tier.",
-            "For production, request quota increase at: Azure Portal > Subscriptions > Usage + quotas",
-            $"Current location: {locationDisplay}. Consider trying a different region if quota is unavailable."
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for App Service Plan SKU not available errors.
-    /// </summary>
-    public static List<string> GetSkuNotAvailableMitigation(string location, string sku)
-    {
-        var locationDisplay = string.IsNullOrWhiteSpace(location) ? "(not specified)" : location;
-        var skuDisplay = string.IsNullOrWhiteSpace(sku) ? "(not specified)" : sku;
-        
-        return new List<string>
-        {
-            $"SKU '{skuDisplay}' is not available in region '{locationDisplay}'.",
-            "Update 'planSku' in a365.config.json to a supported SKU: F1, B1, B2, S1, S2, P1V2, P2V2",
-            $"Or change 'location' in a365.config.json to a region that supports '{skuDisplay}'."
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for App Service Plan authorization failed errors.
-    /// </summary>
-    public static List<string> GetAuthorizationFailedMitigation()
-    {
-        return new List<string>
-        {
-            "Insufficient permissions to create App Service Plans in this subscription or resource group.",
-            "Required role: Contributor or Owner on the subscription or resource group.",
-            "Contact your Azure administrator to grant the required permissions."
-        };
-    }
-
-    /// <summary>
-    /// Gets mitigation steps for App Service Plan verification timeout errors.
-    /// </summary>
-    public static List<string> GetVerificationTimeoutMitigation()
-    {
-        return new List<string>
-        {
-            "App Service Plan creation is taking longer than expected.",
-            "Wait a few minutes and check Azure Portal to confirm the plan exists.",
-            "If the plan exists, run the command again (it will skip creation).",
-            "If issues persist, check Azure service status at https://status.azure.com"
-        };
-    }
-
-    /// <summary>
-    /// Gets generic mitigation steps for App Service Plan creation failures.
-    /// </summary>
-    public static List<string> GetGenericAppServicePlanMitigation()
-    {
-        return new List<string>
-        {
-            "App Service Plan creation failed.",
-            "Verify your Azure subscription is active and has no billing issues.",
-            "Try a different region by updating 'location' in a365.config.json.",
-            "Check Azure service status at https://status.azure.com"
-        };
-    }
-
-    #endregion
-
     #region Azure Authentication Messages
 
-    public const string AzureCliNotAuthenticated = 
+    public const string AzureCliNotAuthenticated =
         "You are not logged in to Azure CLI. Please run 'az login' and select your subscription, then try again";
 
-    public const string AzureCliInstallRequired = 
+    public const string AzureCliInstallRequired =
         "Azure CLI is not installed. Install from: https://aka.ms/azure-cli";
 
     #endregion
@@ -106,51 +29,12 @@ public static class ErrorMessages
 
     #endregion
 
-    #region Endpoint Registration Messages
-
-    public const string EndpointLocationRequiredForCreate =
-        "Location is required to register the messaging endpoint.";
-
-    public const string EndpointLocationRequiredForDelete =
-        "Location is required to delete the messaging endpoint.";
-
-    public const string EndpointLocationAddToConfig =
-        "Run 'a365 config init' to configure your location.";
-
-    public const string EndpointLocationExample =
-        "Example: \"location\": \"eastus\"";
-
-    #endregion
-
-    #region Configuration Wizard Messages
-
-    /// <summary>
-    /// Prompt header for region selection when creating a new App Service Plan.
-    /// </summary>
-    public const string WizardLocationPromptForAppServicePlan =
-        "Select Azure region for the new App Service Plan:";
-
-    /// <summary>
-    /// Prompt header for region selection when registering a Bot Framework endpoint without deployment.
-    /// </summary>
-    public const string WizardLocationPromptForEndpointRegistration =
-        "Select Azure region for Bot Framework endpoint registration:";
-
-    /// <summary>
-    /// Note explaining why location is required even for external hosting scenarios.
-    /// </summary>
-    public const string WizardLocationRequiredForExternalHostingNote =
-        "NOTE: An Azure region is required to register the messaging endpoint with the Bot Framework,\n" +
-        "      even when the agent is hosted externally (needDeployment: false).";
-
-    #endregion
-
     #region Client App Validation Messages
 
-    public const string ClientAppValidationFailed = 
+    public const string ClientAppValidationFailed =
         "Client app validation FAILED:";
 
-    public const string ClientAppValidationFixHeader = 
+    public const string ClientAppValidationFixHeader =
         "To fix this:";
 
     #endregion

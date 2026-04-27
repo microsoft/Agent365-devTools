@@ -121,7 +121,6 @@ class Program
             // Get loggers and services
             var setupLogger = serviceProvider.GetRequiredService<ILogger<SetupCommand>>();
             var createInstanceLogger = serviceProvider.GetRequiredService<ILogger<CreateInstanceCommand>>();
-            var deployLogger = serviceProvider.GetRequiredService<ILogger<DeployCommand>>();
             var queryEntraLogger = serviceProvider.GetRequiredService<ILogger<QueryEntraCommand>>();
             var cleanupLogger = serviceProvider.GetRequiredService<ILogger<CleanupCommand>>();
             var publishLogger = serviceProvider.GetRequiredService<ILogger<PublishCommand>>();
@@ -134,8 +133,7 @@ class Program
 
             // Get services needed by commands
             services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();
-            var deploymentService = serviceProvider.GetRequiredService<DeploymentService>();
-            var botConfigurator = serviceProvider.GetRequiredService<IBotConfigurator>();
+            var backendConfigurator = serviceProvider.GetRequiredService<ITeamsGraphBackendConfigurator>();
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var armApiService = serviceProvider.GetRequiredService<ArmApiService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
@@ -152,11 +150,9 @@ class Program
             rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                deploymentService, botConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
+                backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
                 graphApiService));
-            rootCommand.AddCommand(DeployCommand.CreateCommand(deployLogger, configService, executor,
-                deploymentService, azureAuthValidator, graphApiService, agentBlueprintService));
 
             // Register ConfigCommand
             var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
@@ -165,8 +161,8 @@ class Program
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService));
 
             // Wrap all command handlers with exception handling
             // Build with middleware for global exception handling
@@ -202,6 +198,23 @@ class Program
                         context.ExitCode = 1;
                     }
                 });
+
+            // Validate the configured clientAppId still exists in the tenant before any command runs.
+            // If not found, falls back to the well-known display name and patches a365.config.json.
+            // Skip for help/version requests — these never make Graph calls and must work offline.
+            var isHelpOrVersion = args.Length == 0
+                || args.Any(a => a is "--help" or "-h" or "--version");
+            if (!isHelpOrVersion)
+            {
+                try
+                {
+                    await configService.TryResolveClientAppIdAsync(graphApiService);
+                }
+                catch (Exception ex)
+                {
+                    startupLogger.LogDebug(ex, "Client app ID pre-resolution skipped: {Message}", ex.Message);
+                }
+            }
 
             var parser = builder.Build();
             return await parser.InvokeAsync(args);
@@ -300,10 +313,9 @@ class Program
 
         // Add multi-platform deployment services
         services.AddSingleton<PlatformDetector>();
-        services.AddSingleton<DeploymentService>();
 
         // Add other services
-        services.AddSingleton<IBotConfigurator, BotConfigurator>();
+        services.AddSingleton<ITeamsGraphBackendConfigurator, TeamsGraphBackendConfigurator>();
 
         // Register process executor adapter and Microsoft Graph token provider before GraphApiService
         services.AddSingleton<IMicrosoftGraphTokenProvider, MicrosoftGraphTokenProvider>();

@@ -150,12 +150,13 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("DRY RUN: Configure MCP Permissions");
                 logger.LogInformation("  Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
 
+                var dryRunAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
                 if (removeLegacyScopes)
                 {
                     // Parse once, then split into removed (ATG) vs remaining (non-ATG) in memory.
-                    var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false);
+                    var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false, resolvedAtgAppId: dryRunAtgAppId);
                     var remainingScopes = allScopes
-                        .Where(kvp => !string.Equals(kvp.Key, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+                        .Where(kvp => !string.Equals(kvp.Key, dryRunAtgAppId, StringComparison.OrdinalIgnoreCase))
                         .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
                     var removedAudiences = allScopes.Keys
                         .Where(k => !remainingScopes.ContainsKey(k))
@@ -176,7 +177,7 @@ internal static class PermissionsSubcommand
                 }
                 else
                 {
-                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false);
+                    var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false, resolvedAtgAppId: dryRunAtgAppId);
                     logger.LogInformation("Would configure OAuth2 grants and inheritable permissions:");
                     foreach (var (audience, scopes) in scopesByAudience)
                         logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
@@ -421,14 +422,9 @@ internal static class PermissionsSubcommand
         {
             var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
 
+            var atgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
             var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(
-                manifestPath, excludeLegacyAtg: removeLegacyAtgScopes);
-
-            if (scopesByAudience.Count == 0)
-            {
-                logger.LogInformation("No MCP permissions to configure — manifest is empty or not found.");
-                return true;
-            }
+                manifestPath, excludeLegacyAtg: removeLegacyAtgScopes, resolvedAtgAppId: atgAppId);
 
             // Validate all scopes are known: V1 pattern, V2 value, or metadata scope
             var unknownScopes = scopesByAudience.Values
@@ -564,14 +560,23 @@ internal static class PermissionsSubcommand
         CancellationToken cancellationToken)
     {
         // Resource app IDs owned by standard setup subcommands — never remove these
+        var envAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
         var protectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment),
+            envAtgAppId,
             ConfigConstants.MessagingBotApiAppId,
             ConfigConstants.ObservabilityApiAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };
+
+        // Protect V2 MCP audience GUIDs — these are managed by 'setup permissions mcp',
+        // not by custom-permission reconciliation. Without this, re-running 'setup blueprint'
+        // would treat them as stale and remove them.
+        var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
+        var mcpAudiences = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, resolvedAtgAppId: envAtgAppId);
+        foreach (var audienceId in mcpAudiences.Keys)
+            protectedIds.Add(audienceId);
 
         // Must match RequiredPermissionGrantScopes exactly so the PowerShell token acquired
         // for inheritable permissions is reused (same cache key) rather than triggering

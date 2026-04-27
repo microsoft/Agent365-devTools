@@ -52,23 +52,10 @@ public class ConfigurationValidationException : Agent365Exception
         {
             var fieldLower = error.FieldName.ToLowerInvariant();
 
-            if (fieldLower.Contains("webappname") && !contextualHelp.Any(h => h.Contains("WebAppName")))
-            {
-                contextualHelp.Add("WebAppName: Use only letters, numbers, and hyphens (no underscores)");
-                contextualHelp.Add("WebAppName: Must be 2-60 characters");
-                contextualHelp.Add("WebAppName: Cannot start or end with hyphen");
-            }
-
-            if (fieldLower.Contains("resourcegroup") && !contextualHelp.Any(h => h.Contains("ResourceGroup")))
-            {
-                contextualHelp.Add("ResourceGroup: Letters, numbers, hyphens, underscores, periods, parentheses");
-                contextualHelp.Add("ResourceGroup: Maximum 90 characters");
-            }
-
-            if ((fieldLower.Contains("tenantid") || fieldLower.Contains("subscriptionid") || error.Message.ToLowerInvariant().Contains("guid"))
+            if ((fieldLower.Contains("tenantid") || error.Message.ToLowerInvariant().Contains("guid"))
                 && !contextualHelp.Any(h => h.Contains("GUID")))
             {
-                contextualHelp.Add("TenantId/SubscriptionId: Must be valid GUIDs (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)");
+                contextualHelp.Add("TenantId: Must be a valid GUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)");
             }
         }
 

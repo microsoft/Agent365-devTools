@@ -272,7 +272,7 @@ public class AgentBlueprintServiceTests
             // Override with specific scope assertion
             _mockTokenProvider.GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentity.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>(),
@@ -289,7 +289,7 @@ public class AgentBlueprintServiceTests
 
             await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentity.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>(),
@@ -542,7 +542,9 @@ public class AgentBlueprintServiceTests
             CommandExecutor executor,
             IAuthenticationService authService,
             HttpMessageHandler handler)
-            : base(logger, executor, authService, handler) { }
+            // loginHintResolver: no-op — prevents AzCliHelper.ResolveLoginHintAsync() from
+            // spawning a real 'az account get-access-token' subprocess in tests.
+            : base(logger, executor, authService, handler, loginHintResolver: () => Task.FromResult<string?>(null)) { }
 
         public override Task<bool> GraphPatchAsync(
             string tenantId,
@@ -765,6 +767,91 @@ public class AgentBlueprintServiceTests
             // Assert
             result.Should().BeTrue();
         }
+    }
+
+    // ── FindExistingAgentIdentityAsync tests ──────────────────────────────────
+
+    /// <summary>
+    /// Returns a partial mock of AgentBlueprintService with GetAgentInstancesForBlueprintAsync
+    /// available for stubbing. The GraphApiService dependency is inert (no HTTP calls expected).
+    /// </summary>
+    private AgentBlueprintService BuildPartialBlueprintService() =>
+        Substitute.ForPartsOf<AgentBlueprintService>(
+            _mockLogger,
+            new GraphApiService(_mockGraphLogger, _mockExecutor,
+                Substitute.For<IAuthenticationService>(),
+                new FakeHttpMessageHandler(),
+                tokenProvider: null));
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsSpId_WhenDisplayNameMatches()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>
+            {
+                new() { IdentitySpId = "sp-id-123", DisplayName = "sellakapri211 Identity" }
+            });
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().Be("sp-id-123",
+            because: "the service must return the SP ID of the matching agent identity");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_IsCaseInsensitive()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>
+            {
+                new() { IdentitySpId = "sp-id-456", DisplayName = "MY AGENT IDENTITY" }
+            });
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "my agent identity");
+
+        result.Should().Be("sp-id-456",
+            because: "display name matching must be case-insensitive");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsNull_WhenNoMatch()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>
+            {
+                new() { IdentitySpId = "sp-id-999", DisplayName = "Some Other Agent Identity" }
+            });
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().BeNull(because: "no entry matches the requested display name");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsNull_WhenListIsEmpty()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>());
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().BeNull(because: "an empty list means no agent identities exist for the blueprint");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsNull_WhenLookupThrows()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<AgentInstanceInfo>>(_ => throw new InvalidOperationException("Network error"));
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().BeNull(because: "exceptions from the underlying query must be swallowed non-fatally");
     }
 }
 

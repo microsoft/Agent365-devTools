@@ -12,7 +12,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
 {
     /// <summary>
     /// Setup command - Agent 365 environment setup with granular subcommands
-    /// Supports permission-based workflow: infrastructure -> blueprint -> permissions -> endpoint
+    /// Supports permission-based workflow: blueprint -> permissions -> endpoint
     /// </summary>
     public class SetupCommand
     {
@@ -31,8 +31,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             ILogger<SetupCommand> logger,
             IConfigService configService,
             CommandExecutor executor,
-            DeploymentService deploymentService,
-            IBotConfigurator botConfigurator,
+            ITeamsGraphBackendConfigurator backendConfigurator,
             AzureAuthValidator authValidator,
             PlatformDetector platformDetector,
             GraphApiService graphApiService,
@@ -41,37 +40,33 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             FederatedCredentialService federatedCredentialService,
             IClientAppValidator clientAppValidator,
             IConfirmationProvider confirmationProvider,
-            ArmApiService? armApiService = null)
+            ArmApiService? armApiService = null,
+            IEnumerable<IRequirementCheck>? requirementChecksOverride = null)
         {
             var command = new Command("setup",
                 "Set up your Agent 365 environment with granular control over each step\n\n" +
                 "Recommended execution order:\n" +
                 "  0. a365 setup requirements           # Check prerequisites (optional)\n" +
-                "  1. a365 setup infrastructure        (or skip if infrastructure exists)\n" +
-                "  2. a365 setup blueprint\n" +
-                "  3. a365 setup permissions mcp\n" +
-                "  4. a365 setup permissions bot\n" +
+                "  1. a365 setup blueprint\n" +
+                "  2. a365 setup permissions mcp\n" +
+                "  3. a365 setup permissions bot\n" +
                 "Or run all steps at once:\n" +
-                "  a365 setup all                      # Full setup (includes infrastructure)\n" +
-                "  a365 setup all --skip-infrastructure # Skip infrastructure if it already exists\n\n" +
+                "  a365 setup all                      # Full setup\n\n" +
                 "For non-admin users — complete GA-only grants after setup all:\n" +
                 "  a365 setup admin --config-dir \"<path>\"  # Run as Global Administrator");
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
-                logger, configService, authValidator, clientAppValidator));
-
-            command.AddCommand(InfrastructureSubcommand.CreateCommand(
-                logger, configService, authValidator, platformDetector, executor));
+                logger, configService, authValidator, clientAppValidator, requirementChecksOverride));
 
             command.AddCommand(BlueprintSubcommand.CreateCommand(
-                logger, configService, executor, authValidator, platformDetector, botConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
+                logger, configService, executor, authValidator, platformDetector, backendConfigurator, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService));
 
             command.AddCommand(PermissionsSubcommand.CreateCommand(
                 logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider));
 
             command.AddCommand(AllSubcommand.CreateCommand(
-                logger, configService, executor, botConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService));
+                logger, configService, executor, backendConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService, confirmationProvider));
 
             command.AddCommand(AdminSubcommand.CreateCommand(
                 logger, configService, authValidator, graphApiService, confirmationProvider, blueprintService));

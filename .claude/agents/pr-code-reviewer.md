@@ -144,10 +144,43 @@ For each changed file, analyze:
    - Path separators
    - OS-specific code
 
-7. **CHANGELOG.md Check** (for user-facing changes)
-   - If the PR adds features, fixes bugs, or changes observable behavior, verify `CHANGELOG.md` has an entry in the `[Unreleased]` section
-   - Internal refactors, test-only changes, and tooling/CI-only changes do not require a CHANGELOG entry
-   - Flag as `low` severity if missing from a user-facing PR
+7. **Documentation Completeness Check** (for user-visible surface changes)
+
+   This is a first-class review axis. Do NOT rely on the diff showing you a CHANGELOG entry — you must actively *detect* the need for one and then *verify* it is present in the staged/PR diff.
+
+   **Step 7a — Detect user-visible surface changes.** Scan the diff for any of these signals:
+   - New `new Option<...>(` declaration in a command — indicates a new CLI flag
+   - Change to an existing `Option<...>` description, or to a command's help text / `.Description` string
+   - New `public` method, class, interface, enum value, or constant on a non-test type
+   - Rename of a `public` class or interface (old type removed + new type added in Services/, Models/, Commands/)
+   - Change to an observable log message the user has been observed to grep for (e.g., `"Messaging endpoint registered"` → different wording)
+   - New or changed HTTP request payload shape, endpoint URL, or wire contract
+   - Change to a command's validation rules (new required field, new error message)
+   - Deletion of a `public` API
+   - Bug fix that changes observable behavior
+
+   **Step 7b — Verify the corresponding docs are updated.** For every signal found in 7a, check that the PR staged file set includes:
+
+   - `CHANGELOG.md` — under `[Unreleased]`, in the appropriate subsection:
+     - `### Added` for new flags/methods/classes
+     - `### Changed` for renames, behavior changes, payload shape changes
+     - `### Removed` for deletions
+     - `### Fixed` for bug fixes with user-visible impact
+   - The nearest `README.md` — if the command surface changed, the README in the command's folder must reflect it:
+     - New flag on `a365 setup blueprint` → update `Commands/SetupSubcommands/README.md`
+     - Rename of a service → update `Services/README.md` table and `design.md` structure tree
+   - **For renames specifically**: run `grep -rn "<OldTypeName>" --include="*.md"` across the repo. Any surviving hits are stale and must be updated in the same PR.
+
+   **Step 7c — Severity calibration.**
+   - Missing CHANGELOG entry for a user-visible change → **HIGH** (not low). User-visible changes without a changelog entry silently accumulate and get lost when the release goes out.
+   - Stale type/method name in README or design.md after a rename → **HIGH**. These mislead future readers and the grep check is trivial.
+   - Missing README update for a new flag → **MEDIUM**. The flag is self-documenting via `--help`, but discoverability suffers.
+   - Internal refactors, test-only changes, dependency bumps, and CI/tooling-only changes do not require CHANGELOG or README updates.
+
+   **Step 7d — What does NOT count as an excuse.**
+   - "The flag is opt-in / preview / temporary" — still needs CHANGELOG and README. Opt-in/preview status goes *in* the CHANGELOG entry.
+   - "Microsoft Learn docs will cover it" — that's a separate pipeline; the repo's CHANGELOG and READMEs are the source of truth for what shipped in a given version.
+   - "The reviewer can see it in the diff" — yes, *you* can; future readers of CHANGELOG.md cannot.
 
 8. **Test Coverage Gaps**
    - Based on the conditional logic, what specific test scenarios are needed?
@@ -654,6 +687,38 @@ When a catch block, comment, or doc string covers multiple distinct error condit
   // After:  "Device code flow may succeed depending on your tenant's CAP configuration."
   ```
 
+### 26. Bare `catch (Exception)` Not Excluding `OperationCanceledException`
+
+A catch block that uses `catch (Exception)` or `catch (Exception ex)` without a `when (ex is not OperationCanceledException)` filter, where the method has a `CancellationToken` in scope. This swallows cancellation silently — setup continues, config may be cleared or re-registration triggered, and Ctrl+C appears to hang.
+
+- **Pattern to catch**:
+  - `catch (Exception)` or `catch (Exception ex)` in a method whose signature includes `CancellationToken ct` or `CancellationToken cancellationToken`
+  - The catch body returns a default/null/false value rather than re-throwing
+  - No explicit `catch (OperationCanceledException)` block preceding the broad catch
+- **Severity**: `high` — cancellation is silently swallowed; operations that should terminate on Ctrl+C continue running and may corrupt or clear persisted state
+- **Check**: For every `catch (Exception)` or `catch (Exception ex)` in the diff, check if the enclosing method signature has a `CancellationToken` parameter. If yes and there is no `when (ex is not OperationCanceledException)` filter and no dedicated `catch (OperationCanceledException)` block above it, flag it.
+- **Fix**:
+  ```csharp
+  catch (Exception ex) when (ex is not OperationCanceledException)
+  {
+      _logger.LogDebug(ex, "...");
+      return false; // or null, or default
+  }
+  ```
+  Alternatively, place a dedicated re-throw block first:
+  ```csharp
+  catch (OperationCanceledException)
+  {
+      throw; // propagate immediately — do not swallow
+  }
+  catch (Exception ex)
+  {
+      _logger.LogDebug(ex, "...");
+      return false;
+  }
+  ```
+- **Real examples** (from PR #384): `AgentRegistrationExistsAsync` in `GraphApiService.cs` and `FindExistingAgentIdentityAsync` in `AgentBlueprintService.cs` both had bare `catch (Exception ex)` blocks that swallowed `OperationCanceledException`, causing setup to continue (and potentially clear valid stored state) after cancellation.
+
 **MANDATORY REPORTING RULE**: Whenever the diff contains any test file (`.Tests.cs`), you MUST emit a named finding for this check — even if no violation is found. The finding must appear in the review output with one of three statuses:
   - **`high` severity** if a violation is found (missing warmup, dead executor mock, etc.)
   - **`info` — FIXED** if the PR is fixing a prior violation (warmup added to previously-cold classes) — list each class fixed and its measured or estimated speedup
@@ -687,6 +752,73 @@ When a block of code — a method body, a collection initializer, a sequence of 
   ```
 
 **Real example (from `users/sellak/blueprintScopes`):** `AllSubcommand.cs`, `AdminSubcommand.cs`, and `PermissionsSubcommand.cs` each contained an identical three-entry block for Bot API, Observability API, and Power Platform API. When `Agent365.Observability.OtelWrite` was added, the new scope had to be written in three places — and would have been missed without manual cross-file inspection. Extracted to `SetupHelpers.GetFixedApiPermissionSpecs(bool setInheritable)`.
+
+### 23. Unconditional Success Log After Multiple Fallible Operations
+
+A success or completion log message is emitted unconditionally after a sequence of independent operations that each have their own `if (!ok)` warning branches. The final message claims the whole step succeeded regardless of which individual operations failed.
+
+- **Pattern to catch**:
+  - A sequence of: `var aOk = await DoA(...); if (!aOk) LogWarning(...); var bOk = await DoB(...); if (!bOk) LogWarning(...); LogInformation("completed successfully");`
+  - The success log appears at the end without checking `aOk && bOk` — it fires even if every preceding operation returned false
+  - Common in multi-grant admin consent flows, multi-step provisioning, and batch operations
+- **Severity**: `high` — users see "completed successfully" in the terminal while one or more required operations silently failed; they have no indication follow-up action is needed
+- **Check**: For every `LogInformation("...success..." or "...completed...")` in the diff, scan backwards to find all `bool`-returning async calls in the same block. Verify each outcome variable is included in a combined guard before the success log.
+- **Fix**: Accumulate outcomes and gate the success log:
+  ```csharp
+  var aOk = await DoA(...);
+  if (!aOk) logger.LogWarning("A failed.");
+  var bOk = await DoB(...);
+  if (!bOk) logger.LogWarning("B failed.");
+
+  if (!aOk || !bOk)
+  {
+      logger.LogError("Step completed with errors. One or more operations failed and follow-up action is required.");
+      throw new InvalidOperationException("Step did not complete successfully for all operations.");
+  }
+  logger.LogInformation("Step completed successfully.");
+  ```
+- **Real example** (`CreateInstanceCommand.cs`): Three separate `CreateOrUpdateOauth2PermissionGrantAsync` calls (MCP scopes, Bot API, Observability API) each had their own `LogWarning` on failure, but a single `LogInformation("Admin consent granted ... completed successfully")` was always emitted at the end. Fixed by computing `adminConsentGrantOk = mcpGrantOk && botApiGrantOk && observabilityApiGrantOk` and throwing if false.
+
+### 24. Expensive Unconditional Startup Code Before Command Dispatch
+
+An HTTP call, token acquisition, subprocess spawn, or other expensive/network-dependent operation runs unconditionally in startup — before `parser.InvokeAsync(args)` and before the user's chosen command is even parsed. This adds latency to every invocation (including `--help`, `--version`, and offline/CI scenarios) and can fail in environments without network access even when the command doesn't require it.
+
+- **Pattern to catch**:
+  - Any `await SomeService.NetworkCallAsync(...)` in `Program.cs` (or equivalent startup file) between `services.BuildServiceProvider()` and `parser.InvokeAsync(args)`
+  - Calls to `configService.TryResolveXxx(graphApiService)`, `graphApiService.AnyMethodAsync(...)`, or `AzCliHelper.*` that are NOT inside a command handler lambda
+  - The call is not guarded by a check of whether the command actually needs the result
+- **Severity**: `medium` — noticeable latency on every invocation; breaks offline/CI scenarios; especially bad for interactive developer workflows where `a365 --help` should be instant
+- **Fix**: Guard with a check of the args array to skip for informational invocations, or move the call inside the command handlers that actually need it:
+  ```csharp
+  // Skip for help, version, and empty invocations — must work offline
+  var isHelpOrVersion = args.Length == 0 || args.Any(a => a is "--help" or "-h" or "--version");
+  if (!isHelpOrVersion)
+  {
+      try { await configService.TryResolveClientAppIdAsync(graphApiService); }
+      catch (Exception ex) { logger.LogDebug(ex, "Pre-resolution skipped: {Message}", ex.Message); }
+  }
+  ```
+  Alternatively, move the call into a `System.CommandLine` middleware so it runs lazily only when a command handler needs it.
+- **Real example** (`Program.cs`): `TryResolveClientAppIdAsync` was called unconditionally before `parser.InvokeAsync(args)`, causing a Graph API call + az token acquisition on every invocation including `a365 --help`. Fixed by guarding with `isHelpOrVersion`.
+
+### 25. Validation Rule Change in Model Not Mirrored in Service-Layer Validator
+
+When a required-field check is added, removed, or relaxed in a model's `Validate()` method, the same change is almost always needed in the service-level `ValidateAsync()` method — and vice versa. Failing to update both is the root cause of "fixed in one place but still broken in the other" bugs.
+
+- **Pattern to catch**:
+  - A diff removes (or adds) a `ValidateRequired(...)` call, or an `if (string.IsNullOrWhiteSpace(...))` guard, inside any `Validate()` method on a model class
+  - The diff does NOT also touch the service-level validator (`ConfigService.ValidateAsync`, or any method named `ValidateAsync` that takes the same model type)
+- **Severity**: `high` — the fix is incomplete; the rule will still fire (or fail to fire) via the other path
+- **Check**: For every model-level validation change in the diff, run `Grep` for the same field name + `"is required"` or `ValidateRequired` in `ConfigService.cs`. If the service-level validator has the same rule and the diff doesn't touch it, flag it.
+- **Fix**: Apply the same change in both validators, or — better — consolidate so `ConfigService.ValidateAsync` calls `config.Validate()` for required-field rules and only adds format checks on top:
+  ```csharp
+  // ConfigService.ValidateAsync — required-field rules delegated to the model
+  var errors = new List<string>(config.Validate());
+  // Format-only checks follow...
+  if (!string.IsNullOrWhiteSpace(config.TenantId))
+      ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
+  ```
+- **Real example**: Removing `"messagingEndpoint is required when needDeployment is 'no'."` from `Agent365Config.Validate()` without removing the parallel `ValidateRequired(config.MessagingEndpoint, ...)` call in `ConfigService.ValidateAsync`. The fix appeared in `Agent365ConfigTests.cs` and `Agent365Config.cs` but not in `ConfigService.cs`, so `a365 cleanup` still failed with `MessagingEndpoint is required` on bootstrap-path projects.
 
 ## Example Invocation
 

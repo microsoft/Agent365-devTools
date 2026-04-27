@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # These constants are defined here so all callers use the same limits.
 MAX_ISSUE_TITLE_LENGTH: int = 200
 MAX_ISSUE_BODY_LENGTH: int = 2000
+MAX_SUGGESTION_LENGTH: int = 500
 
 
 def sanitise_exception(e: Exception) -> str:

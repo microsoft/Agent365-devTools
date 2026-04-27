@@ -50,18 +50,15 @@ public class SetupHelpersVerificationTests : IDisposable
     /// <summary>
     /// Verifies that camelCase JSON property names are read correctly.
     /// This is a regression test: the original code used PascalCase lookups
-    /// (e.g. "AppServiceName") which silently produced no output against the
-    /// actual camelCase JSON written by the CLI (e.g. "appServiceName").
+    /// (e.g. "AgentBlueprintId") which silently produced no output against the
+    /// actual camelCase JSON written by the CLI (e.g. "agentBlueprintId").
     /// </summary>
     [Fact]
-    public async Task DisplayVerificationInfoAsync_WithCamelCaseJson_EmitsAllThreeUrls()
+    public async Task DisplayVerificationInfoAsync_WithCamelCaseJson_EmitsEntraUrl()
     {
         // Arrange
         var generatedConfig = new
         {
-            appServiceName = "my-web-app",
-            resourceGroup = "my-rg",
-            subscriptionId = "sub-123",
             agentBlueprintId = "blueprint-abc"
         };
 
@@ -71,13 +68,7 @@ public class SetupHelpersVerificationTests : IDisposable
         // Act
         await SetupHelpers.DisplayVerificationInfoAsync(configFile, _mockLogger);
 
-        // Assert — all three URL strings must appear in logged output
-        _logMessages.Should().Contain(m => m.Contains("my-web-app.azurewebsites.net"),
-            because: "appServiceName should produce an azurewebsites.net URL");
-        _logMessages.Should().Contain(m => m.Contains("my-rg"),
-            because: "resourceGroup should appear in the Azure portal resource group URL");
-        _logMessages.Should().Contain(m => m.Contains("sub-123"),
-            because: "subscriptionId should appear in the Azure portal resource group URL");
+        // Assert — Entra app registration URL must appear in logged output
         _logMessages.Should().Contain(m => m.Contains("blueprint-abc"),
             because: "agentBlueprintId should appear in the Entra app registration URL");
         _logMessages.Should().Contain(m => m.Contains("Verification URLs:"),

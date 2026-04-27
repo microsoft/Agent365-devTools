@@ -7,7 +7,6 @@ on:
 permissions:
   issues: write
   contents: read
-  pull-requests: write
   actions: read
 
 jobs:
@@ -95,26 +94,38 @@ jobs:
               return;
             }
 
-            // Format rationale
+            // Escape markdown special characters so LLM-derived content cannot
+            // inject markdown links, HTML, or other formatting into the comment.
+            // All fields from triageResult are LLM-generated from untrusted issue
+            // content and must be treated as plain text data, not trusted markdown.
+            function escapeMd(text) {
+              return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/[\\`*_{}[\]()#+\-!|]/g, '\\$&');
+            }
+
+            // Format rationale — values are LLM output, escape before rendering
             let rationaleText = 'No rationale provided';
             if (triageResult.rationale) {
               if (typeof triageResult.rationale === 'object') {
                 rationaleText = Object.entries(triageResult.rationale)
-                  .map(([key, value]) => `**${key.replace(/_/g, ' ')}:** ${value}`)
+                  .map(([key, value]) => `**${escapeMd(key.replace(/_/g, ' '))}:** ${escapeMd(value)}`)
                   .join('\n\n');
               } else {
-                rationaleText = triageResult.rationale;
+                rationaleText = escapeMd(triageResult.rationale);
               }
             }
 
             // Build comment body
             let comment = '## [AUTO-TRIAGE] Results\n\n';
-            comment += `**Classification:** ${triageResult.issue_type || 'Unknown'}\n`;
-            comment += `**Priority:** ${triageResult.priority || 'P3'}\n`;
+            comment += `**Classification:** ${escapeMd(triageResult.issue_type || 'Unknown')}\n`;
+            comment += `**Priority:** ${escapeMd(triageResult.priority || 'P3')}\n`;
             comment += `**Confidence:** ${triageResult.confidence ? (triageResult.confidence * 100).toFixed(1) + '%' : 'N/A'}\n\n`;
 
             if (triageResult.recommended_assignee) {
-              comment += `**Recommended Assignee:** @${triageResult.recommended_assignee}\n\n`;
+              comment += `**Recommended Assignee:** @${escapeMd(triageResult.recommended_assignee)}\n\n`;
             }
 
             comment += '**Analysis:**\n';
@@ -128,7 +139,7 @@ jobs:
             if (triageResult.fix_suggestions && triageResult.fix_suggestions.length > 0) {
               comment += '### [SUGGESTION] Suggested Approach\n\n';
               triageResult.fix_suggestions.forEach((suggestion, index) => {
-                comment += `${index + 1}. ${suggestion}\n`;
+                comment += `${index + 1}. ${escapeMd(suggestion)}\n`;
               });
               comment += '\n';
             }

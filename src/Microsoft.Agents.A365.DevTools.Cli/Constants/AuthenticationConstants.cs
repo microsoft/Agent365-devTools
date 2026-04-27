@@ -72,6 +72,13 @@ public static class AuthenticationConstants
     }
 
     /// <summary>
+    /// Well-known display name for the Agent 365 CLI client app registration in the tenant.
+    /// Used to resolve the clientAppId automatically when --agent-name is provided without a config file.
+    /// Tenants must register an Entra app with this exact display name and grant it the required permissions.
+    /// </summary>
+    public const string WellKnownClientAppDisplayName = "Agent 365 CLI";
+
+    /// <summary>
     /// Application name for cache directory
     /// </summary>
     public const string ApplicationName = "Microsoft.Agents.A365.DevTools.Cli";
@@ -95,9 +102,23 @@ public static class AuthenticationConstants
     public const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
 
     /// <summary>
+    /// Agent 365 manager application ID.
+    /// Set as the managerApplications value on blueprint creation to enable manageability for A365.
+    /// </summary>
+    public const string A365ManagerAppId = "e8be65d6-d430-4289-a665-51bf2a194bda";
+
+    /// <summary>
     /// Microsoft Graph identifier URI (used for admin consent URL construction).
     /// </summary>
     public const string MicrosoftGraphResourceUri = "https://graph.microsoft.com";
+
+    /// <summary>
+    /// OAuth2 v2 scope used to acquire a fresh Graph token via az CLI's scope-based
+    /// acquisition path. Requesting .default forces az CLI to bypass its resource-keyed
+    /// token cache and obtain a new access token from AAD that reflects the user's
+    /// current role assignments and consented permissions.
+    /// </summary>
+    public const string MicrosoftGraphDefaultScope = "https://graph.microsoft.com/.default";
 
     /// <summary>
     /// Redirect URI registered on the blueprint application to support the /v2.0/adminconsent flow.
@@ -138,17 +159,25 @@ public static class AuthenticationConstants
     public const string DirectoryReadAllScope = "Directory.Read.All";
 
     /// <summary>
-    /// Delegated scope for read/write access to Entra ID applications.
-    /// Used for FIC retrieval and deletion operations that are not yet covered by
-    /// more granular AgentIdentityBlueprint.* scopes.
+    /// Delegated scope required to create the Agent Blueprint service principal
+    /// (Agent Blueprint Principal) via POST /v1.0/servicePrincipals.
+    /// Per the Agent ID team (Kyle Marsh), AgentIdentityBlueprintPrincipal.Create is the correct
+    /// scope — AgentIdentityBlueprintPrincipal.ReadWrite.All alone returns 403.
     /// </summary>
-    public const string ApplicationReadWriteAllScope = "Application.ReadWrite.All";
+    public const string AgentIdentityBlueprintPrincipalCreateScope = "AgentIdentityBlueprintPrincipal.Create";
 
     /// <summary>
     /// Delegated scope required to delete an Agent Blueprint.
     /// Per the Agent ID permissions reference, this is the correct scope for Delete operations.
     /// </summary>
     public const string AgentIdentityBlueprintDeleteRestoreAllScope = "AgentIdentityBlueprint.DeleteRestore.All";
+
+    /// <summary>
+    /// Delegated scope required to delete an Agent Identity (service principal).
+    /// Per the Agent ID permissions reference, DELETE /beta/servicePrincipals/{id} for agent identities
+    /// requires this scope — NOT AgentIdentityBlueprint.DeleteRestore.All, which is blueprint-only.
+    /// </summary>
+    public const string AgentIdentityDeleteRestoreAllScope = "AgentIdentity.DeleteRestore.All";
 
     /// <summary>
     /// Delegated scope required to add or remove federated identity credentials and password credentials
@@ -168,6 +197,14 @@ public static class AuthenticationConstants
     public const string AgentIdentityBlueprintReadWriteAllScope = "AgentIdentityBlueprint.ReadWrite.All";
 
     /// <summary>
+    /// Delegated scope for full read/write access to Entra ID applications.
+    /// No longer in RequiredClientAppPermissions — replaced by AgentIdentityBlueprintPrincipal.Create
+    /// for blueprint SP creation per Agent ID team guidance.
+    /// Retained as a named constant for reference and potential future use.
+    /// </summary>
+    public const string ApplicationReadWriteAllScope = "Application.ReadWrite.All";
+
+    /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
     /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
     /// All permissions require admin consent.
@@ -177,17 +214,28 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] RequiredClientAppPermissions = new[]
     {
-        "Application.ReadWrite.All",
+        "AgentIdentityBlueprintPrincipal.Create",  // Required for POST /v1.0/servicePrincipals (blueprint SP creation) — per Agent ID team (Kyle Marsh)
         "AgentIdentityBlueprint.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
-        "User.ReadWrite.All"  // Required for agent user creation, usage location update, and license assignment
-        // Note: RoleManagementReadDirectoryScope and AgentIdentityBlueprint.DeleteRestore.All are
-        // intentionally excluded. DeleteRestore.All is a cleanup-only scope acquired on-demand via
-        // interactive consent during 'a365 cleanup'. RoleManagementReadDirectoryScope is excluded
-        // because Directory.Read.All already covers the needed read operations.
+        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (AdminSubcommand, PublishCommand)
+        // AgentRegistration.ReadWrite.All (resource: 00000003-0000-0000-c000-000000000000, ID: 20f263bf-7d50-4e66-912c-16b4b4194fd4)
+        // is required for POST/DELETE /stagingbeta/copilot/agentRegistrations. It is acquired via .default
+        // on the custom app token provider (not enumerated explicitly) to avoid AADSTS650053.
+        // This permission must be configured on the custom app via the portal but is not validated here
+        // because ClientAppValidator queries /v1.0/oauth2PermissionGrants which only returns consented
+        // delegated scopes in the same resource app bundle as the existing permissions.
+        // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
+        // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
+        // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
+        // (POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity). Requires Agent ID Developer role.
+        "AgentIdentityBlueprint.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Blueprint application
+        "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
+        "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment
+        "User.ReadWrite.All",  // Required for agent user creation, usage location update, and license assignment
+        // Note: RoleManagementReadDirectoryScope is excluded because Directory.Read.All covers the needed read operations.
     };
 
     /// <summary>
@@ -199,7 +247,6 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] RequiredPermissionGrantScopes = new[]
     {
-        "Application.ReadWrite.All",
         "DelegatedPermissionGrant.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
     };
@@ -216,6 +263,36 @@ public static class AuthenticationConstants
     };
 
     /// <summary>
+    /// Scopes requested when acquiring an interactive Graph token for blueprint creation
+    /// and inheritable permissions configuration (used by InteractiveGraphAuthService).
+    /// Expressed as fully-qualified URIs as required by the Graph SDK credential constructor.
+    /// </summary>
+    public static readonly string[] BlueprintInteractiveAuthScopes = new[]
+    {
+        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprintPrincipal.Create",
+        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprint.ReadWrite.All",
+        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprint.UpdateAuthProperties.All",
+        $"{MicrosoftGraphResourceUri}/User.Read"
+    };
+
+    /// <summary>
+    /// Delegated scope for creating an Agent Identity (service principal) from a blueprint.
+    /// Used by POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity with agentIdentityBlueprintId.
+    /// Requires Agent ID Administrator, Agent ID Developer, or Global Administrator role.
+    /// This path does NOT require a blueprint client secret.
+    /// AgentIdentity.Create.All is required — AgentIdentity.ReadWrite.All alone is NOT sufficient
+    /// (confirmed via Graph Explorer: the endpoint returns 403 without Create.All in the scp claim).
+    /// </summary>
+    public const string AgentIdentityCreateAllScope = "AgentIdentity.Create.All";
+
+    /// <summary>
+    /// Delegated scope for creating and managing agent instances in the Microsoft Agent Registry.
+    /// Required for POST /beta/agentRegistry/agentInstances.
+    /// Requires the "Agent Registry Administrator" Entra role.
+    /// </summary>
+    public const string AgentInstanceReadWriteAllScope = "AgentInstance.ReadWrite.All";
+
+    /// <summary>
     /// Environment variable name for bearer token used in local development.
     /// This token is stored in .env files (Python/Node.js) or launchSettings.json (.NET)
     /// for testing purposes only. It should NOT be deployed to production Azure environments.
@@ -223,8 +300,30 @@ public static class AuthenticationConstants
     public const string BearerTokenEnvironmentVariable = "BEARER_TOKEN";
 
     /// <summary>
+    /// Application ID of the AgentX service (private preview Agent Registration API V2).
+    /// </summary>
+    public const string AgentXAppId = "59eca866-2f46-40b8-96ff-63f663121ef9";
+
+    /// <summary>
+    /// Resource URI for the AgentX service (private preview Agent Registration API V2).
+    /// Used with 'az account get-access-token --resource' to acquire a bearer token.
+    /// </summary>
+    public const string AgentXResource = $"api://{AgentXAppId}";
+
+    /// <summary>
+    /// Base URL for the AgentX service (private preview Agent Registration API V2 endpoint).
+    /// </summary>
+    public const string AgentXBaseUrl = "https://agentxppe.microsoft.com";
+
+    /// <summary>
+    /// Delegated scope for the AgentX Agent Registration API V2.
+    /// This scope must be consented on the custom client app to use the V2 registration endpoint.
+    /// </summary>
+    public const string AgentXAccessScope = $"api://{AgentXAppId}/AgentX.Access";
+
+    /// <summary>
     /// Returns the per-server bearer token env var name for a given MCP server unique name.
-    /// e.g. "mcp_WordServer" → "BEARER_TOKEN_MCP_WORDSERVER"
+    /// e.g. "mcp_WordServer" -> "BEARER_TOKEN_MCP_WORDSERVER"
     /// Takes precedence over <see cref="BearerTokenEnvironmentVariable"/> for V2 per-audience tokens.
     /// </summary>
     public static string GetPerServerBearerTokenEnvVar(string serverUniqueName) =>
@@ -244,4 +343,20 @@ public static class AuthenticationConstants
     /// Device code flow may succeed depending on your tenant's Conditional Access Policy configuration.
     /// </summary>
     public const string DeviceCompliancePolicyBlockedError = "AADSTS53000";
+
+    /// <summary>
+    /// Windows Account Manager (WAM) error prefix for authentication failures.
+    /// WAM errors (e.g. 0xcaa90019) surface when Conditional Access Policy or device compliance
+    /// policies block the WAM broker flow. Device code flow bypasses the WAM broker and may succeed.
+    /// </summary>
+    public const string WamErrorPrefix = "0xcaa";
+
+    /// <summary>
+    /// WAM error code for "Need admin approval" (admin consent not granted).
+    /// This error means the client app's oauth2PermissionGrant is per-user (Principal) only,
+    /// not tenant-wide (AllPrincipals). Do NOT fall back to device code for this error —
+    /// device code will show the same browser page and hang if the user returns without consenting.
+    /// Instead, print the admin consent URL and exit cleanly.
+    /// </summary>
+    public const string WamConsentRequiredError = "0xcaa90019";
 }

@@ -51,8 +51,8 @@ public static class McpConstants
         scope.EndsWith(".All", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Resolves an audience string to a concrete App ID, mapping legacy and unset values to the
-    /// shared ATG AppId (<see cref="WorkIQToolsProdAppId"/>). The following inputs all fall back to ATG:
+    /// Resolves an audience string to a concrete App ID, mapping legacy and unset values to
+    /// <paramref name="atgAppId"/>. The following inputs all fall back to ATG:
     /// <list type="bullet">
     ///   <item>null, empty, or whitespace</item>
     ///   <item>values starting with <c>api://</c> (V1 legacy format)</item>
@@ -60,12 +60,20 @@ public static class McpConstants
     /// </list>
     /// All other values are returned unchanged.
     /// </summary>
-    public static string ResolveAudienceOrAtgFallback(string? audience) =>
+    public static string ResolveAudienceOrAtgFallback(string? audience, string atgAppId) =>
         string.IsNullOrWhiteSpace(audience) ||
         audience.StartsWith("api://", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(audience, "default", StringComparison.OrdinalIgnoreCase)
-            ? WorkIQToolsProdAppId
+            ? atgAppId
             : audience;
+
+    /// <summary>
+    /// Resolves an audience string to a concrete App ID using <see cref="WorkIQToolsProdAppId"/>
+    /// as the ATG fallback. Prefer the overload that accepts an explicit <c>atgAppId</c> when the
+    /// environment-resolved resource app ID is available.
+    /// </summary>
+    public static string ResolveAudienceOrAtgFallback(string? audience) =>
+        ResolveAudienceOrAtgFallback(audience, WorkIQToolsProdAppId);
 
     // HTTP Headers
     public static class MediaTypes

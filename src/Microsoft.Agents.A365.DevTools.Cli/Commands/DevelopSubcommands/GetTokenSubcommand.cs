@@ -380,8 +380,9 @@ internal static class GetTokenSubcommand
 
         logger.LogInformation("");
 
-        var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath);
-        var serverNamesByAudience = await ManifestHelper.GetServerNamesByAudienceAsync(manifestPath);
+        var tokenAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig?.Environment ?? "prod");
+        var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, resolvedAtgAppId: tokenAtgAppId);
+        var serverNamesByAudience = await ManifestHelper.GetServerNamesByAudienceAsync(manifestPath, resolvedAtgAppId: tokenAtgAppId);
 
         var tokenResults = new List<McpServerTokenResult>();
         foreach (var kvp in scopesByAudience)

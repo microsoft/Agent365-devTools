@@ -54,12 +54,6 @@ public class ConfigCommandStaticDynamicSeparationTests
         {
             // Static properties (should be saved)
             TenantId = "12345678-1234-1234-1234-123456789012",
-            SubscriptionId = "87654321-4321-4321-4321-210987654321",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
-            AppServicePlanName = "test-plan",
-            AppServicePlanSku = "B1",
-            WebAppName = "test-webapp",
             AgentIdentityDisplayName = "Test Agent",
             AgentBlueprintDisplayName = "Test Blueprint",
             AgentUserPrincipalName = "agent.test@contoso.com",
@@ -108,11 +102,6 @@ public class ConfigCommandStaticDynamicSeparationTests
 
             // Verify STATIC properties ARE present
             rootElement.TryGetProperty("tenantId", out _).Should().BeTrue("static property tenantId should be saved");
-            rootElement.TryGetProperty("subscriptionId", out _).Should().BeTrue("static property subscriptionId should be saved");
-            rootElement.TryGetProperty("resourceGroup", out _).Should().BeTrue("static property resourceGroup should be saved");
-            rootElement.TryGetProperty("location", out _).Should().BeTrue("static property location should be saved");
-            rootElement.TryGetProperty("appServicePlanName", out _).Should().BeTrue("static property appServicePlanName should be saved");
-            rootElement.TryGetProperty("webAppName", out _).Should().BeTrue("static property webAppName should be saved");
             rootElement.TryGetProperty("agentIdentityDisplayName", out _).Should().BeTrue("static property agentIdentityDisplayName should be saved");
             rootElement.TryGetProperty("deploymentProjectPath", out _).Should().BeTrue("static property deploymentProjectPath should be saved");
 
@@ -191,12 +180,6 @@ public class ConfigCommandStaticDynamicSeparationTests
             // Static properties (ALL required fields for validation to pass)
             TenantId = "import-tenant-123",
             ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", // Required clientAppId
-            SubscriptionId = "import-sub-456",
-            ResourceGroup = "import-rg",
-            Location = "westus",
-            AppServicePlanName = "import-plan",
-            AppServicePlanSku = "B1",
-            WebAppName = "import-webapp",
             AgentIdentityDisplayName = "Import Agent",
             AgentBlueprintDisplayName = "Import Blueprint",
             AgentUserPrincipalName = "import@test.com",
@@ -243,7 +226,6 @@ public class ConfigCommandStaticDynamicSeparationTests
 
             // Verify static properties ARE present
             rootElement.GetProperty("tenantId").GetString().Should().Be("import-tenant-123");
-            rootElement.GetProperty("subscriptionId").GetString().Should().Be("import-sub-456");
 
             // Verify dynamic properties are NOT present
             rootElement.TryGetProperty("agentBlueprintId", out _).Should().BeFalse(
@@ -277,11 +259,6 @@ public class ConfigCommandStaticDynamicSeparationTests
         {
             // Static properties (init-only)
             TenantId = "tenant-123",
-            SubscriptionId = "sub-456",
-            ResourceGroup = "rg-test",
-            Location = "eastus",
-            AppServicePlanName = "plan-test",
-            WebAppName = "webapp-test",
             AgentIdentityDisplayName = "Test Agent",
             DeploymentProjectPath = "/test"
         };
@@ -305,8 +282,7 @@ public class ConfigCommandStaticDynamicSeparationTests
 
         // Assert - Static properties present
         root.TryGetProperty("tenantId", out _).Should().BeTrue("static property should be included");
-        root.TryGetProperty("subscriptionId", out _).Should().BeTrue("static property should be included");
-        root.TryGetProperty("resourceGroup", out _).Should().BeTrue("static property should be included");
+        root.TryGetProperty("agentIdentityDisplayName", out _).Should().BeTrue("static property should be included");
 
         // Assert - Dynamic properties NOT present
         root.TryGetProperty("agentBlueprintId", out _).Should().BeFalse(
@@ -331,9 +307,6 @@ public class ConfigCommandStaticDynamicSeparationTests
         {
             // Static properties (init-only)
             TenantId = "tenant-123",
-            SubscriptionId = "sub-456",
-            ResourceGroup = "rg-test",
-            Location = "eastus"
         };
 
         // Set dynamic properties (get/set)
@@ -362,11 +335,7 @@ public class ConfigCommandStaticDynamicSeparationTests
         // Assert - Static properties NOT present
         root.TryGetProperty("tenantId", out _).Should().BeFalse(
             "static property should NOT be included in GetGeneratedConfig()");
-        root.TryGetProperty("subscriptionId", out _).Should().BeFalse(
-            "static property should NOT be included in GetGeneratedConfig()");
-        root.TryGetProperty("resourceGroup", out _).Should().BeFalse(
-            "static property should NOT be included in GetGeneratedConfig()");
-        root.TryGetProperty("location", out _).Should().BeFalse(
+        root.TryGetProperty("agentIdentityDisplayName", out _).Should().BeFalse(
             "static property should NOT be included in GetGeneratedConfig()");
     }
 
@@ -384,9 +353,6 @@ public class ConfigCommandStaticDynamicSeparationTests
         {
             // Static properties (should be saved)
             TenantId = "12345678-1234-1234-1234-123456789012",
-            SubscriptionId = "87654321-4321-4321-4321-210987654321",
-            ResourceGroup = "test-rg",
-            Location = "eastus",
             MessagingEndpoint = "https://custom-endpoint.contoso.com/api/messages",
             AgentIdentityDisplayName = "Test Agent",
             AgentBlueprintDisplayName = "Test Blueprint",
@@ -421,14 +387,15 @@ public class ConfigCommandStaticDynamicSeparationTests
 
             // Verify STATIC properties ARE present
             rootElement.TryGetProperty("tenantId", out _).Should().BeTrue("static property tenantId should be saved");
-            rootElement.TryGetProperty("subscriptionId", out _).Should().BeTrue("static property subscriptionId should be saved");
-            rootElement.TryGetProperty("resourceGroup", out _).Should().BeTrue("static property resourceGroup should be saved");
-            rootElement.TryGetProperty("location", out _).Should().BeTrue("static property location should be saved");
-            rootElement.TryGetProperty("appServicePlanName", out _).Should().BeFalse("static property appServicePlanName should not be saved");
-            rootElement.TryGetProperty("webAppName", out _).Should().BeFalse("static property webAppName should not be saved");
             rootElement.TryGetProperty("messagingEndpoint", out _).Should().BeTrue("static property messagingEndpoint should be saved");
             rootElement.TryGetProperty("agentIdentityDisplayName", out _).Should().BeTrue("static property agentIdentityDisplayName should be saved");
             rootElement.TryGetProperty("deploymentProjectPath", out _).Should().BeTrue("static property deploymentProjectPath should be saved");
+            // Verify deploy-era properties are no longer present
+            rootElement.TryGetProperty("subscriptionId", out _).Should().BeFalse("subscriptionId was removed when a365 deploy was removed");
+            rootElement.TryGetProperty("resourceGroup", out _).Should().BeFalse("resourceGroup was removed when a365 deploy was removed");
+            rootElement.TryGetProperty("location", out _).Should().BeFalse("location was removed when bot endpoint registration was disabled");
+            rootElement.TryGetProperty("appServicePlanName", out _).Should().BeFalse("appServicePlanName was removed when a365 deploy was removed");
+            rootElement.TryGetProperty("webAppName", out _).Should().BeFalse("webAppName was removed when a365 deploy was removed");
         }
         finally
         {
@@ -450,7 +417,6 @@ public class ConfigCommandStaticDynamicSeparationTests
         var config = new Agent365Config
         {
             TenantId = "tenant-123",
-            SubscriptionId = "sub-456"
         };
         config.BotMessagingEndpoint = "https://myapp.azurewebsites.net/api/messages";
 
@@ -470,7 +436,6 @@ public class ConfigCommandStaticDynamicSeparationTests
         var config = new Agent365Config
         {
             TenantId = "tenant-abc",
-            SubscriptionId = "sub-def"
         };
 
         var result = ConfigCommand.TryGetConfigField(config, "tenantId", checkGenerated: false, checkStatic: true, logger);

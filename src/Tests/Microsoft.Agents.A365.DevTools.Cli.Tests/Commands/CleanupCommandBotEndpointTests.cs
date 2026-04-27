@@ -16,7 +16,7 @@ public class CleanupCommandBotEndpointTests
 {
     private readonly ILogger<CleanupCommand> _mockLogger;
     private readonly IConfigService _mockConfigService;
-    private readonly IBotConfigurator _mockBotConfigurator;
+    private readonly ITeamsGraphBackendConfigurator _mockBackendConfigurator;
     private readonly CommandExecutor _mockExecutor;
     private readonly GraphApiService _graphApiService;
     private readonly AgentBlueprintService _agentBlueprintService;
@@ -48,13 +48,9 @@ public class CleanupCommandBotEndpointTests
                 StandardError = string.Empty 
             }));
 
-        _mockBotConfigurator = Substitute.For<IBotConfigurator>();
+        _mockBackendConfigurator = Substitute.For<ITeamsGraphBackendConfigurator>();
         
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(Task.FromResult(true));
         
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
@@ -93,32 +89,17 @@ public class CleanupCommandBotEndpointTests
     }
 
     [Fact]
-    public void CleanupPreview_WithBotNameButNoWebApp_ShouldShowBotEndpoint()
-    {
-        var config = new Agent365Config
-        {
-            WebAppName = "test-webapp",
-            AgentBlueprintId = "test-blueprint"
-        };
-
-        Assert.NotEmpty(config.BotName);
-        Assert.Equal("test-webapp-endpoint", config.BotName);
-    }
-
-    [Fact]
     public void BotConfigurator_DeleteEndpoint_ShouldBeCalledIndependentlyOfWebApp()
     {
         var config = new Agent365Config
         {
             TenantId = "tenant-id",
-            WebAppName = "test-bot",
-            Location = "westus",
             AgentBlueprintId = "blueprint-id"
         };
         var command = CleanupCommand.CreateCommand(
             _mockLogger,
             _mockConfigService,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockExecutor,
             _agentBlueprintService,
             _mockConfirmationProvider,

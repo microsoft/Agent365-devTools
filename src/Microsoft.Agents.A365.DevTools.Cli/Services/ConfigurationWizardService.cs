@@ -122,63 +122,13 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 return null;
             }
 
-            // Step 5: Select Resource Group
-            var (resourceGroup, resourceGroupLocation) = await PromptForResourceGroupAsync(existingConfig);
-            if (string.IsNullOrWhiteSpace(resourceGroup))
-            {
-                Console.WriteLine("ERROR: Configuration wizard cancelled: Resource group not selected");
-                _logger.LogDebug("Resource group not selected, configuration cancelled");
-                return null;
-            }
-
-        // Step 6: Select Web App Service Plan or Messaging endpoint
-        string appServicePlan = string.Empty;
-        string appServicePlanSku = string.Empty;
-        string resourceLocation = string.Empty;
-        string messagingEndpoint = string.Empty;
-
-        bool needDeployment = PromptForWebAppCreate(existingConfig, derivedNames);
-        if (needDeployment)
-        {
-            var (planName, isNewPlan) = await PromptForAppServicePlanAsync(existingConfig, resourceGroup);
-            appServicePlan = planName;
-            
-            if (string.IsNullOrWhiteSpace(appServicePlan))
-            {
-                Console.WriteLine("ERROR: Configuration wizard cancelled: App Service Plan not selected");
-                _logger.LogDebug("App service plan not selected, configuration cancelled");
-                return null;
-            }
-
-            // Only ask for location and SKU if creating a new plan
-            if (isNewPlan)
-            {
-                resourceLocation = PromptForLocation(existingConfig, resourceGroupLocation);
-                appServicePlanSku = PromptForAppServicePlanSku(existingConfig);
-            }
-            else
-            {
-                // Get location from existing plan
-                var allPlans = await _azureCliService.ListAppServicePlansAsync();
-                var selectedPlan = allPlans.FirstOrDefault(p => p.Name.Equals(appServicePlan, StringComparison.OrdinalIgnoreCase));
-                resourceLocation = selectedPlan?.Location ?? resourceGroupLocation ?? ConfigConstants.DefaultAzureLocation;
-            }
-        }
-        else
-        {
-            messagingEndpoint = PromptForMessagingEndpoint(existingConfig);
+            // Step 5: Messaging endpoint (optional — warn if empty)
+            string messagingEndpoint = PromptForMessagingEndpoint(existingConfig);
             if (string.IsNullOrWhiteSpace(messagingEndpoint))
             {
-                Console.WriteLine("ERROR: Configuration wizard cancelled: Messaging Endpoint not provided");
-                _logger.LogDebug("Messaging endpoint not provided, configuration cancelled");
-                return null;
+                Console.WriteLine("WARNING: No messaging endpoint provided. You can configure it later in a365.config.json.");
+                messagingEndpoint = string.Empty;
             }
-
-            // Location is required for Bot Framework endpoint registration even when hosting externally
-            Console.WriteLine();
-            Console.WriteLine(ErrorMessages.WizardLocationRequiredForExternalHostingNote);
-            resourceLocation = PromptForLocation(existingConfig, resourceGroupLocation, ErrorMessages.WizardLocationPromptForEndpointRegistration);
-        }
 
             // Step 7: Get manager email (required for agent creation)
             var managerEmail = PromptForManagerEmail(existingConfig, accountInfo);
@@ -200,26 +150,14 @@ public class ConfigurationWizardService : IConfigurationWizardService
             Console.WriteLine("=================================================================");
             Console.WriteLine($"Client App ID          : {clientAppId}");
             Console.WriteLine($"Agent Name             : {agentName}");
-
-            if (string.IsNullOrWhiteSpace(messagingEndpoint))
-            {
-                Console.WriteLine($"Web App Name           : {derivedNames.WebAppName}");
-                Console.WriteLine($"App Service Plan       : {appServicePlan}");
-            }
-            else
-            {
+            if (!string.IsNullOrWhiteSpace(messagingEndpoint))
                 Console.WriteLine($"Messaging Endpoint     : {messagingEndpoint}");
-            }
-
             Console.WriteLine($"Agent Identity Name    : {derivedNames.AgentIdentityDisplayName}");
             Console.WriteLine($"Agent Blueprint Name   : {derivedNames.AgentBlueprintDisplayName}");
             Console.WriteLine($"Agent UPN              : {derivedNames.AgentUserPrincipalName}");
             Console.WriteLine($"Agent Display Name     : {derivedNames.AgentUserDisplayName}");
             Console.WriteLine($"Manager Email          : {managerEmail}");
             Console.WriteLine($"Deployment Path        : {deploymentPath}");
-            Console.WriteLine($"Resource Group         : {resourceGroup}");
-            Console.WriteLine($"Location               : {resourceLocation}");
-            Console.WriteLine($"Subscription           : {accountInfo.Name} ({accountInfo.Id})");
             Console.WriteLine($"Tenant                 : {accountInfo.TenantId}");
             Console.WriteLine($"Custom Permissions     : {(customPermissions.Count > 0 ? $"{customPermissions.Count} configured" : "None")}");
             Console.WriteLine();
@@ -230,8 +168,8 @@ public class ConfigurationWizardService : IConfigurationWizardService
             // Step 11: Final confirmation to save configuration
             Console.Write("Save this configuration? (Y/n): ");
             var saveResponse = Console.ReadLine()?.Trim().ToLowerInvariant();
-            
-            if (saveResponse == "n" || saveResponse == "no")
+
+            if (saveResponse is null || saveResponse == "n" || saveResponse == "no")
             {
                 Console.WriteLine("Configuration cancelled.");
                 _logger.LogInformation("Configuration wizard cancelled by user");
@@ -243,16 +181,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
             {
                 TenantId = accountInfo.TenantId,
                 ClientAppId = clientAppId,
-                SubscriptionId = accountInfo.Id,
-                ResourceGroup = resourceGroup,
-                Location = resourceLocation,
                 Environment = existingConfig?.Environment ?? "prod", // Default to prod, not asking for this
-                AppServicePlanName = appServicePlan,
-                // AppServicePlanSku is only set when creating a NEW plan. For existing plans, it's left empty
-                // since the SKU cannot be changed and doesn't need to be specified during infrastructure setup
-                AppServicePlanSku = appServicePlanSku ?? string.Empty,
-                WebAppName = string.IsNullOrWhiteSpace(appServicePlan) ? string.Empty : customizedNames.WebAppName,
-                NeedDeployment = needDeployment,
                 MessagingEndpoint = messagingEndpoint,
                 AgentIdentityDisplayName = customizedNames.AgentIdentityDisplayName,
                 AgentBlueprintDisplayName = customizedNames.AgentBlueprintDisplayName,
@@ -307,22 +236,10 @@ public class ConfigurationWizardService : IConfigurationWizardService
         );
     }
 
-    private string ExtractAgentNameFromConfig(Agent365Config config)
+    private static string ExtractAgentNameFromConfig(Agent365Config config)
     {
-        // Try to extract a reasonable agent name from existing config
-        if (!string.IsNullOrEmpty(config.WebAppName))
-        {
-            // Remove common suffixes and clean up
-            var name = config.WebAppName;
-            name = System.Text.RegularExpressions.Regex.Replace(name, @"(webapp|app|web|agent|bot)$", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            name = System.Text.RegularExpressions.Regex.Replace(name, @"[-_]", ""); // Remove all hyphens and underscores
-            name = System.Text.RegularExpressions.Regex.Replace(name, @"[^a-zA-Z0-9]", ""); // Remove any remaining non-alphanumeric
-            if (!string.IsNullOrWhiteSpace(name) && name.Length > 2 && char.IsLetter(name[0]))
-            {
-                return name;
-            }
-        }
-
+        // Fall back to date-based default
+        _ = config; // suppress unused parameter warning
         return $"agent{DateTime.Now:MMdd}";
     }
 
@@ -374,270 +291,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
         return Path.GetFullPath(path);
     }
 
-    private async Task<(string name, string? location)> PromptForResourceGroupAsync(Agent365Config? existingConfig)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Loading resource groups from Azure...");
-        
-        var resourceGroups = await _azureCliService.ListResourceGroupsAsync();
-        if (!resourceGroups.Any())
-        {
-            Console.WriteLine("WARNING: No resource groups found. You may need to create one first.");
-            var rgName = PromptWithDefault(
-                "Resource group name",
-                existingConfig?.ResourceGroup ?? $"{Environment.UserName}-agent365-rg",
-                input => !string.IsNullOrWhiteSpace(input) ? (true, "") : (false, "Resource group name cannot be empty")
-            );
-            // New RG - will ask for location later
-            return (rgName, null);
-        }
-
-        Console.WriteLine();
-        Console.WriteLine("Available Resource Groups:");
-        for (int i = 0; i < resourceGroups.Count; i++)
-        {
-            Console.WriteLine($"{i + 1:D2}. {resourceGroups[i].Name} ({resourceGroups[i].Location})");
-        }
-        Console.WriteLine();
-
-        var defaultIndex = existingConfig?.ResourceGroup != null ? 
-            resourceGroups.FindIndex(rg => rg.Name.Equals(existingConfig.ResourceGroup, StringComparison.OrdinalIgnoreCase)) + 1 : 
-            1;
-
-        while (true)
-        {
-            Console.Write($"Select resource group [1-{resourceGroups.Count}] (default: {Math.Max(1, defaultIndex)}), or type a new resource group name: ");
-            var input = Console.ReadLine()?.Trim();
-            
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                input = Math.Max(1, defaultIndex).ToString();
-            }
-
-            if (int.TryParse(input, out int index))
-            {
-                if (index >= 1 && index <= resourceGroups.Count)
-                {
-                    var selectedRg = resourceGroups[index - 1];
-                    return (selectedRg.Name, selectedRg.Location);
-                }
-
-                Console.WriteLine($"Please enter a number between 1 and {resourceGroups.Count}");
-            }
-            else
-            {
-                // Create new resource group - will ask for location later
-                return (input, null);
-            }
-        }
-    }
-
-    private async Task<(string planName, bool isNewPlan)> PromptForAppServicePlanAsync(Agent365Config? existingConfig, string resourceGroup)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Loading app service plans from Azure...");
-        
-        var allPlans = await _azureCliService.ListAppServicePlansAsync();
-        var plansInRg = allPlans.Where(p => p.ResourceGroup.Equals(resourceGroup, StringComparison.OrdinalIgnoreCase)).ToList();
-        
-        Console.WriteLine();
-        if (plansInRg.Any())
-        {
-            Console.WriteLine($"App Service Plans in {resourceGroup}:");
-            for (int i = 0; i < plansInRg.Count; i++)
-            {
-                Console.WriteLine($"{i + 1:D2}. {plansInRg[i].Name} ({plansInRg[i].Sku}, {plansInRg[i].Location})");
-            }
-            Console.WriteLine($"{plansInRg.Count + 1:D2}. Create new app service plan");
-            Console.WriteLine();
-
-            var defaultIndex = existingConfig?.AppServicePlanName != null ? 
-                plansInRg.FindIndex(p => p.Name.Equals(existingConfig.AppServicePlanName, StringComparison.OrdinalIgnoreCase)) + 1 : 
-                plansInRg.Count + 1; // Default to creating new
-
-            while (true)
-            {
-                Console.Write($"Select option [1-{plansInRg.Count + 1}] (default: {Math.Max(1, defaultIndex)}): ");
-                var input = Console.ReadLine()?.Trim();
-                
-                if (string.IsNullOrWhiteSpace(input))
-                {
-                    input = Math.Max(1, defaultIndex).ToString();
-                }
-
-                if (int.TryParse(input, out int index))
-                {
-                    if (index >= 1 && index <= plansInRg.Count)
-                    {
-                        // Existing plan - don't need SKU
-                        return (plansInRg[index - 1].Name, false);
-                    }
-                    else if (index == plansInRg.Count + 1)
-                    {
-                        // Create new plan - will need SKU
-                        return ($"{Environment.UserName}-agent365-plan", true);
-                    }
-                }
-
-                Console.WriteLine($"Please enter a number between 1 and {plansInRg.Count + 1}");
-            }
-        }
-        else
-        {
-            Console.WriteLine($"No existing app service plans found in {resourceGroup}.");
-            while (true)
-            {
-                string? defaultPlanName = existingConfig?.AppServicePlanName;
-                if (string.IsNullOrWhiteSpace(defaultPlanName))
-                {
-                    defaultPlanName = !string.IsNullOrWhiteSpace(resourceGroup)
-                        ? $"{resourceGroup}-plan"
-                        : "agent365-plan";
-                }
-                // Sanitize: only alphanumeric and hyphens, collapse hyphens, trim
-                defaultPlanName = System.Text.RegularExpressions.Regex.Replace(defaultPlanName, "[^a-zA-Z0-9-]", "-");
-                defaultPlanName = System.Text.RegularExpressions.Regex.Replace(defaultPlanName, "-+", "-");
-                defaultPlanName = defaultPlanName.Trim('-');
-                if (string.IsNullOrWhiteSpace(defaultPlanName)) defaultPlanName = "agent365-plan";
-                Console.Write($"Enter a name for the new App Service Plan (default: {defaultPlanName}, or type 'cancel' to abort): ");
-                var input = Console.ReadLine()?.Trim();
-                if (string.IsNullOrWhiteSpace(input))
-                {
-                    input = defaultPlanName;
-                }
-                if (input != null && input.Equals("cancel", StringComparison.OrdinalIgnoreCase))
-                {
-                    return (string.Empty, false);
-                }
-                // Validate using ConfigService logic
-                var errors = new System.Collections.Generic.List<string>();
-                ConfigService.ValidateAppServicePlanName(input, errors);
-                if (!string.IsNullOrWhiteSpace(input) && errors.Count == 0)
-                {
-                    return (input, true);
-                }
-                Console.WriteLine("Please enter a valid plan name (alphanumeric and hyphens only, max 40 chars) or type 'cancel' to abort.");
-                if (errors.Count > 0)
-                {
-                    foreach (var err in errors) Console.WriteLine($"  - {err}");
-                }
-            }
-        }
-    }
-
-    private string PromptForLocation(Agent365Config? existingConfig, string? resourceGroupLocation, string header = ErrorMessages.WizardLocationPromptForAppServicePlan)
-    {
-        Console.WriteLine();
-        Console.WriteLine(header);
-        Console.WriteLine();
-        
-        // Use RG location as default if available, otherwise use existing config or default location
-        var defaultLocation = resourceGroupLocation ?? existingConfig?.Location ?? ConfigConstants.DefaultAzureLocation;
-        
-        Console.WriteLine("Common regions:");
-        Console.WriteLine("  1. eastus         - East US");
-        Console.WriteLine("  2. westus         - West US");
-        Console.WriteLine("  3. canadacentral  - Canada Central");
-        Console.WriteLine("  4. westeurope     - West Europe");
-        Console.WriteLine("  5. uksouth        - UK South");
-        Console.WriteLine("  6. australiaeast  - Australia East");
-        Console.WriteLine();
-        if (!string.IsNullOrWhiteSpace(resourceGroupLocation))
-        {
-            Console.WriteLine($"NOTE: Your resource group is in '{resourceGroupLocation}'. Using the same region is recommended.");
-        }
-        else
-        {
-            Console.WriteLine($"NOTE: Default region is '{defaultLocation}'.");
-        }
-        Console.WriteLine("      Quota limits are per-region, so choosing a different region may help if you have quota issues.");
-        Console.WriteLine();
-
-        while (true)
-        {
-            Console.Write($"Enter region [1-6] or type a region name (default: {defaultLocation}): ");
-            var input = Console.ReadLine()?.Trim();
-            
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                return defaultLocation;
-            }
-
-            var location = input switch
-            {
-                "1" => "eastus",
-                "2" => "westus",
-                "3" => "canadacentral",
-                "4" => "westeurope",
-                "5" => "uksouth",
-                "6" => "australiaeast",
-                _ => input.ToLowerInvariant()
-            };
-
-            // Basic validation - must be lowercase and no spaces
-            if (location.Contains(' '))
-            {
-                Console.WriteLine("Region names cannot contain spaces. Use lowercase, no spaces (e.g., 'eastus', 'canadacentral')");
-                continue;
-            }
-
-            return location;
-        }
-    }
-
-    private string PromptForAppServicePlanSku(Agent365Config? existingConfig)
-    {
-        Console.WriteLine();
-        Console.WriteLine("Select App Service Plan SKU (pricing tier):");
-        Console.WriteLine("  1. F1  - Free (for dev/test, limited resources)");
-        Console.WriteLine("  2. B1  - Basic (requires quota, production workloads)");
-        Console.WriteLine("  3. B2  - Basic (more CPU/RAM)");
-        Console.WriteLine("  4. S1  - Standard (auto-scale, staging slots)");
-        Console.WriteLine("  5. P1V3 - Premium V3 (high performance)");
-        Console.WriteLine();
-        Console.WriteLine("NOTE: Free tier (F1) is recommended for development and testing.");
-        Console.WriteLine("      Basic tier (B1) often has zero quota by default - may require quota increase.");
-        Console.WriteLine();
-
-        var defaultSku = existingConfig?.AppServicePlanSku ?? ConfigConstants.DefaultAppServicePlanSku;
-        var defaultOption = defaultSku.ToUpperInvariant() switch
-        {
-            "F1" => "1",
-            "B1" => "2",
-            "B2" => "3",
-            "S1" => "4",
-            "P1V3" => "5",
-            _ => "1"
-        };
-
-        while (true)
-        {
-            Console.Write($"Select option [1-5] (default: {defaultOption} - {defaultSku}): ");
-            var input = Console.ReadLine()?.Trim();
-            
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                return defaultSku;
-            }
-
-            var sku = input switch
-            {
-                "1" => "F1",
-                "2" => "B1",
-                "3" => "B2",
-                "4" => "S1",
-                "5" => "P1V3",
-                _ => null
-            };
-
-            if (sku != null)
-            {
-                return sku;
-            }
-
-            Console.WriteLine("Please enter a number between 1 and 5");
-        }
-    }
 
     private string PromptForManagerEmail(Agent365Config? existingConfig, AzureAccountInfo accountInfo)
     {
@@ -646,16 +299,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
             accountInfo?.User?.Name ?? "",
             ValidateEmail
         );
-    }
-
-    private bool PromptForWebAppCreate(Agent365Config? existingConfig, ConfigDerivedNames? configDerivedNames)
-    {
-        Console.WriteLine();
-        Console.Write($"Would you like to create a Web App [https://{configDerivedNames?.WebAppName}.azurewebsites.net] in Azure for this Agent? (Y/n): ");
-        var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-
-        // Default to Yes - only return false if explicitly "n" or "no"
-        return response != "n" && response != "no";
     }
 
     private string PromptForMessagingEndpoint(Agent365Config? existingConfig)
@@ -670,26 +313,11 @@ public class ConfigurationWizardService : IConfigurationWizardService
         );
     }
 
-    private static string GenerateValidWebAppName(string cleanName, string timestamp)
-    {
-        // Reserve 9 chars for "-webapp-" and 9 for "-endpoint" (total 18), so max cleanName+timestamp is 33
-        // "-webapp-" is 8 chars, so cleanName+timestamp max is 33
-        var baseName = $"{cleanName}-webapp";
-        if (baseName.Length > 33)
-            baseName = baseName.Substring(0, 33);
-        if (baseName.Length < 2)
-            baseName = baseName.PadRight(2, 'a'); // pad to min length
-        return baseName;
-    }
-
     private ConfigDerivedNames GenerateDerivedNames(string agentName, string domain)
     {
         var cleanName = System.Text.RegularExpressions.Regex.Replace(agentName, @"[^a-zA-Z0-9]", "").ToLowerInvariant();
-        var timestamp = DateTime.Now.ToString("MMddHHmm");
-        var webAppName = GenerateValidWebAppName(cleanName, timestamp);
         return new ConfigDerivedNames
         {
-            WebAppName = webAppName,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentUserPrincipalName = $"{cleanName}@{domain}",
@@ -712,7 +340,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
         
         return new ConfigDerivedNames
         {
-            WebAppName = PromptWithDefault("Web app name", defaultNames.WebAppName, ValidateWebAppName),
             AgentIdentityDisplayName = PromptWithDefault("Agent identity name", defaultNames.AgentIdentityDisplayName),
             AgentBlueprintDisplayName = PromptWithDefault("Agent blueprint name", defaultNames.AgentBlueprintDisplayName),
             AgentUserPrincipalName = PromptWithDefault("Agent UPN", defaultNames.AgentUserPrincipalName, ValidateEmail),
@@ -878,20 +505,6 @@ public class ConfigurationWizardService : IConfigurationWizardService
         }
     }
 
-    private static (bool isValid, string error) ValidateWebAppName(string input)
-    {
-        if (input.Length < 2 || input.Length > 60)
-            return (false, "Must be between 2-60 characters");
-
-        if (!System.Text.RegularExpressions.Regex.IsMatch(input, @"^[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]$"))
-            return (false, "Only alphanumeric characters and hyphens allowed. Cannot start or end with a hyphen.");
-
-        if (input.Contains("_"))
-            return (false, "Underscores are not allowed in Azure Web App names. Use hyphens (-) instead.");
-
-        return (true, "");
-    }
-
     private static (bool isValid, string error) ValidateEmail(string input)
     {
         if (!input.Contains("@") || !input.Contains("."))
@@ -1018,7 +631,7 @@ public class ConfigurationWizardService : IConfigurationWizardService
                 Console.WriteLine($"Please fix the issues and try again. (Attempt {attemptCount}/{maxAttempts})");
                 Console.WriteLine("Press Enter to retry, or type 'cancel' to abort setup.");
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-                if (response == "cancel")
+                if (response is null || response == "cancel")
                 {
                     return null;
                 }

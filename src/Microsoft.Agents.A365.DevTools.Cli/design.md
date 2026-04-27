@@ -30,7 +30,7 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   ├── DotNetBuilder.cs          # .NET project builder
 │   ├── NodeBuilder.cs            # Node.js project builder
 │   ├── PythonBuilder.cs          # Python project builder
-│   ├── BotConfigurator.cs        # Messaging endpoint registration
+│   ├── TeamsGraphBackendConfigurator.cs  # Messaging endpoint (Teams Graph backend config)
 │   ├── GraphApiService.cs        # Graph API interactions
 │   ├── AuthenticationService.cs  # MSAL.NET authentication
 │   ├── AzureAuthValidator.cs     # Azure CLI auth + App Service token validation
@@ -182,7 +182,7 @@ All token acquisition goes through **MSAL.NET via `AuthenticationService`**. No 
 ### Token Acquisition Flow
 
 ```
-All callers (GraphApiService, ArmApiService, BotConfigurator, ...)
+All callers (GraphApiService, ArmApiService, TeamsGraphBackendConfigurator, ...)
         |
         v
 AuthenticationService.GetAccessTokenAsync(resource, tenantId)
@@ -232,45 +232,39 @@ Only `GetAccessTokenAsync` and `ResolveLoginHintFromCacheAsync` are on the inter
 
 ## Command Pattern Implementation
 
-Commands follow the Spectre.Console `AsyncCommand<T>` pattern:
+Commands use `System.CommandLine` with a static factory method pattern. Each command exposes a `CreateCommand(...)` method that receives its dependencies as explicit parameters and returns a `Command` object wired with a `SetHandler` lambda.
 
 ```csharp
-public class SetupCommand : AsyncCommand<SetupCommand.Settings>
+// Factory method receives dependencies explicitly — no reflection-based DI
+internal static Command CreateCommand(
+    ILogger logger,
+    IConfigService configService,
+    GraphApiService graphApiService,
+    ...)
 {
-    private readonly ILogger<SetupCommand> _logger;
-    private readonly IConfigService _configService;
+    var command = new Command("setup", "...");
+    var configOption = new Option<FileInfo>(["--config", "-c"], ...);
+    command.AddOption(configOption);
 
-    public SetupCommand(ILogger<SetupCommand> logger, IConfigService configService)
+    command.SetHandler(async (InvocationContext context) =>
     {
-        _logger = logger;
-        _configService = configService;
-    }
+        var config = context.ParseResult.GetValueForOption(configOption)!;
+        var ct = context.GetCancellationToken();
 
-    public class Settings : CommandSettings
-    {
-        [CommandOption("--config")]
-        [Description("Path to configuration file")]
-        public string? ConfigFile { get; init; }
-
-        [CommandOption("--non-interactive")]
-        [Description("Run without interactive prompts")]
-        public bool NonInteractive { get; init; }
-    }
-
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
-    {
-        _logger.LogInformation("Starting setup...");
         // Implementation
-        return 0; // Success
-    }
+        context.ExitCode = 0;
+    });
+
+    return command;
 }
 ```
 
 **Guidelines:**
-- Keep commands thin - delegate business logic to services
-- Use dependency injection for services
-- Return 0 for success, non-zero for errors (use `ErrorCodes`)
-- Log progress with `ILogger<T>` and structured placeholders
+- Keep command handlers thin — delegate business logic to services or orchestrators
+- Dependencies are passed as constructor-style parameters to `CreateCommand`
+- Exit code: 0 = success, 1 = failure (set via `context.ExitCode` or `Environment.Exit`)
+- Log progress with `ILogger<T>` and structured placeholders (`{Name}` syntax)
+- Dry-run guard: check `dryRun` flag before any mutating work
 
 ---
 
@@ -457,29 +451,79 @@ Because the two permission layers require different roles, the CLI supports a tw
 
 The entry point handles:
 
-1. **Logging Configuration** - Serilog with console and file sinks
-2. **Dependency Injection** - Service registration via `IServiceCollection`
-3. **Command Registration** - Commands registered with Spectre.Console.Cli
-4. **Exception Handling** - Global exception handler with user-friendly messages
+1. **Logging Configuration** - `Microsoft.Extensions.Logging` with clean console and file sinks (per-command log file under `%LocalAppData%`)
+2. **Service Resolution** - Services are registered in a DI container (ServiceCollection/ServiceProvider) and passed to `CreateCommand` factory methods
+3. **Command Registration** - `System.CommandLine` `RootCommand` with subcommands added via `AddCommand`
+4. **Exception Handling** - `CommandLineBuilder` middleware + `ExceptionHandler` for user-friendly messages
 
 ```csharp
 // Simplified structure
-var services = new ServiceCollection();
-services.AddSingleton<IConfigService, ConfigService>();
-services.AddSingleton<IDeploymentService, DeploymentService>();
+var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
+var configService = new ConfigService(loggerFactory.CreateLogger<ConfigService>());
+var graphApiService = new GraphApiService(...);
 // ... more services
 
-var app = new CommandApp(new TypeRegistrar(services));
-app.Configure(config =>
-{
-    config.AddCommand<ConfigCommand>("config");
-    config.AddCommand<SetupCommand>("setup");
-    config.AddCommand<DeployCommand>("deploy");
-    // ... more commands
-});
+var rootCommand = new RootCommand("a365 — Microsoft Agent 365 CLI");
+rootCommand.AddCommand(SetupCommand.CreateCommand(logger, configService, ...));
+rootCommand.AddCommand(DeployCommand.CreateCommand(logger, configService, ...));
+// ... more commands
 
-return await app.RunAsync(args);
+return await new CommandLineBuilder(rootCommand)
+    .UseDefaults()
+    .Build()
+    .InvokeAsync(args);
 ```
+
+---
+
+## Setup Workflow Architecture
+
+### Two Agent Flows
+
+`a365 setup all` supports two distinct agent types, controlled by `--aiteammate` (CLI) or `aiTeammate` (config):
+
+| Agent Type | Flag | What it creates |
+|---|---|---|
+| **Digital Worker** (default) | `--aiteammate true` or omit | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
+| **Custom Engine Agent / Blueprint** | `--aiteammate false` | Agent Blueprint + batch permissions (Graph + A365 Tools only) + Agent Instance (Graph API) |
+
+Non-DW blueprint agents do not use Azure Bot Service, so there is no infrastructure step, no manifest zip, and no messaging endpoint registration. The final step is `POST /beta/agentRegistry/agentInstances` instead.
+
+### SetupContext — Shared Step State
+
+`SetupContext` is a bundle of mutable state and services passed to each extracted step method. It enables the non-DW orchestrator to reuse the same step implementations as the DW flow without duplicating code.
+
+```
+AllSubcommand.ExecuteAsync
+  │
+  ├── builds SetupContext (config, results, logger, services)
+  │
+  ├── DW path:
+  │     ExecuteInfrastructureStepAsync(ctx)     ← DW only
+  │     ExecuteBlueprintStepAsync(ctx)           ← shared
+  │     ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (5 resources)
+  │     ExecuteMessagingEndpointStepAsync(ctx)   ← DW only
+  │
+  └── Non-DW path:
+        NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx)
+          ExecuteBlueprintStepAsync(ctx)         ← reuses DW step
+          ExecuteBatchPermissionsStepAsync(ctx, nonDwSpecs)  ← reuses, 2 resources only
+          RegisterAgentInstanceAsync(...)        ← non-DW final step
+```
+
+`SetupContext.Config` is intentionally mutable — the blueprint step reloads configuration from disk after writing `AgentBlueprintId`, and the updated instance must be visible to all subsequent steps.
+
+### Batch Permissions — Resource Specs
+
+The non-DW spec list is a strict subset of the DW list:
+
+| Resource | DW | Non-DW Blueprint |
+|---|---|---|
+| Microsoft Graph (delegated) | ✓ | — |
+| Agent 365 Tools (delegated) | ✓ | — |
+| Messaging Bot API | ✓ | — |
+| Observability API | ✓ | ✓ |
+| Power Platform API | ✓ | ✓ |
 
 ---
 

@@ -79,7 +79,7 @@ public sealed class A365CreateInstanceRunner
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[WARN] Could not parse existing generated config; starting fresh");
+                _logger.LogWarning(ex, "Could not parse existing generated config; starting fresh");
             }
         }
 
@@ -175,21 +175,19 @@ public sealed class A365CreateInstanceRunner
 
             if (string.IsNullOrWhiteSpace(agenticAppId))
             {
-                // Create new agent identity
-                var identityResult = await CreateAgentIdentityAsync(
+                // Create new agent identity via GraphApiService (shared with non-DW setup flow)
+                agenticAppId = await _graphService.CreateAgentIdentityAsync(
                     tenantId,
                     agentBlueprintId!,
                     agentBlueprintClientSecret!,
                     agentIdentityDisplayName,
                     cancellationToken);
 
-                if (!identityResult.success)
+                if (string.IsNullOrWhiteSpace(agenticAppId))
                 {
                     _logger.LogError("Failed to create agent identity");
                     return false;
                 }
-
-                agenticAppId = identityResult.identityId;
                 SetInstanceField(instance, "AgenticAppId", agenticAppId);
                 await SaveInstanceAsync(generatedConfigPath, instance, cancellationToken);
                 

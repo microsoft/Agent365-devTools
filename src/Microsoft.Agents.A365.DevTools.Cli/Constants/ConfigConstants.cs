@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System;
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 
 /// <summary>
@@ -32,6 +34,15 @@ public static class ConfigConstants
     /// Microsoft Learn documentation URL for custom client app registration
     /// </summary>
     public const string CustomClientAppRegistrationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration";
+
+    /// <summary>
+    /// Microsoft Learn documentation URL for configuring the messaging endpoint manually in
+    /// the Teams Developer Portal. Used as the fallback action item whenever automated Teams
+    /// Graph backend configuration cannot complete (non-M365 agents, contract-mismatch
+    /// responses, ownership/permission failures).
+    /// </summary>
+    public const string TeamsDeveloperPortalConfigureEndpointUrl =
+        "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal";
 
     /// <summary>
     /// Agent 365 Tools Discover endpoint URL (V2)
@@ -78,10 +89,25 @@ public static class ConfigConstants
     public const string MessagingBotApiAdminConsentScope = "AgentData.ReadWrite";
 
     /// <summary>
+    /// Observability API scope used in admin consent URLs.
+    /// This is the only scope published by the Observability API resource app manifest
+    /// that is valid for the /v2.0/adminconsent endpoint.
+    /// Note: OtelWrite causes AADSTS650053 in the consent URL flow; OtelWrite is granted
+    /// separately via OAuth2PermissionGrants.
+    /// </summary>
+    public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
+
+    /// <summary>
     /// Observability API scope for writing OpenTelemetry data.
-    /// Granted alongside "user_impersonation" to all provisioned agent identities.
+    /// Granted to all provisioned agent identities via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
+
+    /// <summary>
+    /// Delegated scope value exposed on the blueprint app registration to enable
+    /// OBO (On-Behalf-Of) callers to acquire tokens scoped to the agent.
+    /// </summary>
+    public const string BlueprintOboScope = "access_agent_as_user";
 
     /// <summary>
     /// Production deployment environment
@@ -110,19 +136,6 @@ public static class ConfigConstants
         "ChannelMessage.Read.All",
         "ChannelMessage.Send",
     };
-
-    /// <summary>
-    /// Default App Service Plan SKU - B1 (Basic tier) for production workloads.
-    /// Note: B1 often has zero quota by default in Azure subscriptions.
-    /// For development/testing without quota issues, consider F1 (Free tier).
-    /// </summary>
-    public const string DefaultAppServicePlanSku = "B1";
-
-    /// <summary>
-    /// Default Azure location for resource deployment when not specified.
-    /// East US is chosen as a widely available region with good quota availability.
-    /// </summary>
-    public const string DefaultAzureLocation = "eastus";
 
     /// <summary>
     /// Default Microsoft Graph API scopes for agent application

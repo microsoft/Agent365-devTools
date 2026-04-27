@@ -137,16 +137,16 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent identity application: {ApplicationId}", applicationId);
 
-            // Agent Identity deletion requires the same DeleteRestore scope as blueprint deletion.
-            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
+            // Agent Identity deletion requires AgentIdentity.DeleteRestore.All — NOT the blueprint scope.
+            // DELETE /beta/servicePrincipals/{id} for agent identities uses the AgentIdentity permission family.
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityDeleteRestoreAllScope };
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
+            _logger.LogInformation("Acquiring access token with AgentIdentity.DeleteRestore.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
-            // Use the special servicePrincipals endpoint for deletion
             var deletePath = $"/beta/servicePrincipals/{applicationId}";
 
-            // Use GraphDeleteAsync with the special scopes required for identity operations
+            // Use GraphDeleteAsync with the correct scope for agent identity deletion
             return await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 deletePath,
@@ -225,6 +225,35 @@ public class AgentBlueprintService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Returns the service principal ID of an existing agent identity for the given blueprint
+    /// whose display name matches <paramref name="displayName"/>, or null if none is found.
+    /// Wraps <see cref="GetAgentInstancesForBlueprintAsync"/>; exceptions are caught and logged
+    /// non-fatally so callers can fall through to creation.
+    /// </summary>
+    public virtual async Task<string?> FindExistingAgentIdentityAsync(
+        string tenantId,
+        string blueprintId,
+        string displayName,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var instances = await GetAgentInstancesForBlueprintAsync(tenantId, blueprintId, cancellationToken);
+            var match = instances.FirstOrDefault(i =>
+                string.Equals(i.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+            // IdentitySpId is the Graph SP object ID — the same value CreateAgentIdentityDelegatedAsync
+            // returns and stores in AgenticAppId (both are /beta/servicePrincipals/{id} object IDs).
+            return match?.IdentitySpId;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not look up existing agent identities for blueprint {BlueprintId} (non-fatal): {Message}",
+                blueprintId, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>

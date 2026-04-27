@@ -168,11 +168,10 @@ public class RequirementsSubcommandTests
 
         var checks = RequirementsSubcommand.GetRequirementChecks(mockAuthValidator, mockValidator);
 
-        checks.Should().HaveCount(5, "system (2) + config (3) checks");
+        checks.Should().HaveCount(4, "system (2) + config (2) checks; LocationRequirementCheck removed because the Location config property was deleted when Azure App Service deploy/infra provisioning was removed");
         checks.Should().ContainSingle(c => c is FrontierPreviewRequirementCheck);
         checks.Should().ContainSingle(c => c is PowerShellModulesRequirementCheck);
         checks.Should().ContainSingle(c => c is AzureAuthRequirementCheck);
-        checks.Should().ContainSingle(c => c is LocationRequirementCheck);
         checks.Should().ContainSingle(c => c is ClientAppRequirementCheck);
     }
 
@@ -193,7 +192,7 @@ public class RequirementsSubcommandTests
             .Should().BeLessThan(types.IndexOf(typeof(AzureAuthRequirementCheck)),
                 "system checks should run before config checks");
         types.IndexOf(typeof(PowerShellModulesRequirementCheck))
-            .Should().BeLessThan(types.IndexOf(typeof(LocationRequirementCheck)),
+            .Should().BeLessThan(types.IndexOf(typeof(AzureAuthRequirementCheck)),
                 "system checks should run before config checks");
     }
 

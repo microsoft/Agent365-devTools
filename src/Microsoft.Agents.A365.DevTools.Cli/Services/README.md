@@ -52,8 +52,8 @@ This folder contains business logic services used by CLI commands. Services are 
 | **AzureValidator** | `AzureValidator.cs` | Validate Azure configuration |
 | **AzureAuthValidator** | `AzureAuthValidator.cs` | Validate Azure authentication |
 | **AzureEnvironmentValidator** | `AzureEnvironmentValidator.cs` | Validate Azure environment settings |
-| **IBotConfigurator** | `IBotConfigurator.cs` | Bot configuration interface |
-| **BotConfigurator** | `BotConfigurator.cs` | Register messaging endpoints |
+| **ITeamsGraphBackendConfigurator** | `ITeamsGraphBackendConfigurator.cs` | Teams Graph backend configuration interface |
+| **TeamsGraphBackendConfigurator** | `TeamsGraphBackendConfigurator.cs` | Set/clear messaging endpoint via Teams Graph (MCP Platform) |
 
 ### Authentication Services
 
