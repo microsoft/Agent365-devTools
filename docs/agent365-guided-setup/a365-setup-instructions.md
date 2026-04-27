@@ -19,7 +19,23 @@ Wait for the answer. Store as `agentType`:
 - If **Yes**: `agentType = 1` (M365 custom engine agent)
 - If **No**: `agentType = 2` (All other agents)
 
-**Question 2: What Agent 365 capabilities do you want to enable?**
+**Question 2: How will your agent authenticate when calling downstream APIs?**
+
+1. On-behalf-of (OBO) — the agent acts as the signed-in user (delegated permissions)
+2. Service-to-service (S2S) — the agent acts as its own identity (application permissions)
+3. Both (OBO and S2S)
+
+Provide this context to help the developer choose:
+- **OBO**: Choose this when your agent needs to access resources on behalf of a specific user — for example, reading the user's calendar or sending mail as them.
+- **S2S**: Choose this when your agent runs unattended or needs to access tenant-wide resources independently of any signed-in user — for example, reading all mailboxes or managing SharePoint sites.
+- **Both**: Choose this when your agent needs to support both modes.
+
+Wait for the answer. Store as `authMode`:
+- If **1 (OBO)**: `authMode = "obo"`
+- If **2 (S2S)**: `authMode = "s2s"`
+- If **3 (Both)**: `authMode = "both"`
+
+**Question 3: What Agent 365 capabilities do you want to enable?**
 
 Present only the options that apply to the user's `agentType`:
 
@@ -36,19 +52,6 @@ Present only the options that apply to the user's `agentType`:
 Wait for the answer. Store as `capabilities`.
 
 > **Note:** The setup automatically includes all prerequisite capabilities for your selection.
-
-**Question 3: How will your agent authenticate when calling downstream APIs?**
-
-1. On-behalf-of (OBO) — the agent acts as the signed-in user (delegated permissions)
-2. Service-to-service (S2S) — the agent acts as its own identity (application permissions)
-
-Provide this context to help the developer choose:
-- **OBO**: Choose this when your agent needs to access resources on behalf of a specific user — for example, reading the user's calendar or sending mail as them.
-- **S2S**: Choose this when your agent runs unattended or needs to access tenant-wide resources independently of any signed-in user — for example, reading all mailboxes or managing SharePoint sites.
-
-Wait for the answer. Store as `authMode`:
-- If **1 (OBO)**: `authMode = "obo"`
-- If **2 (S2S)**: `authMode = "s2s"`
 
 After all three questions are answered, set `isAITeammate = true` if `capabilities = Agent with own access`, else `isAITeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
 
