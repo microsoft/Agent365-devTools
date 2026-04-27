@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Agents.A365.DevTools.Cli.Models.Evaluate;
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
     private readonly CodingAgentRunner _agentRunner;
     private readonly ILogger<ChecklistEvaluator> _logger;
+    private int _planDriftCount;
 
     public ChecklistEvaluator(CodingAgentRunner agentRunner, ILogger<ChecklistEvaluator> logger)
     {
@@ -55,6 +57,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     {
         ArgumentNullException.ThrowIfNull(checklist);
         ArgumentException.ThrowIfNullOrWhiteSpace(checklistPath);
+        _planDriftCount = 0;
 
         var dir = Path.GetDirectoryName(checklistPath) ?? ".";
         Directory.CreateDirectory(dir);
@@ -176,13 +179,21 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             LogManualEvaluationInstructions(checklistPath, remainingUnevaluated, engineNotFound: false, agentAttempted: true);
         }
 
+        if (_planDriftCount > 0)
+        {
+            _logger.LogError(
+                "SECURITY: XPIA canary triggered {Count} time(s) — report may contain adversarially steered scores",
+                _planDriftCount);
+        }
+
         // Only treat evaluation as completed when nothing is left unscored.
         // Partial evaluations would skew scoring (Scorer treats unscored categories as 100).
         return new ChecklistEvaluationResult
         {
             Checklist = checklist,
             SemanticEvaluationCompleted = remainingUnevaluated == 0,
-            EngineUsed = engineUsed
+            EngineUsed = engineUsed,
+            PlanDriftDetected = _planDriftCount > 0,
         };
     }
 
@@ -202,6 +213,23 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     {
         var sandbox = CreateSandboxDir();
         var tempFile = Path.Combine(sandbox, $".eval_tool_{Guid.NewGuid():N}.json");
+
+        // Inject a canary check to detect XPIA-induced plan drift (F-001 Layer 4).
+        // The correct answer is always false — no real tool name equals a random UUID.
+        // A true score from the agent indicates it may have been steered by adversarial
+        // MCP content rather than performing honest schema evaluation.
+        var canaryId = $"_canary_{Guid.NewGuid():N}";
+        var canarySentinel = Guid.NewGuid().ToString("N");
+        var canary = new ChecklistItem
+        {
+            Id = canaryId,
+            Type = CheckType.Semantic,
+            Prompt = $"Is this tool's name exactly '{canarySentinel}'?",
+            Severity = Priority.P3,
+            Category = CheckCategory.ToolName,
+        };
+        tool.Checks.ToolName.Add(canary);
+
         try
         {
             var fullPath = Path.GetFullPath(tempFile);
@@ -212,8 +240,14 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             // sees the items that are still null. Stops early once everything is scored.
             for (int attempt = 1; attempt <= MaxAttempts; attempt++)
             {
+                // Sanitize untrusted tool.Name and tool.Description before writing to
+                // disk — the agent reads this file, so any injected content in those
+                // fields is a Layer 1 defence-in-depth bypass if not stripped here.
                 var toolJson = JsonSerializer.Serialize(tool, WriteOptions);
-                await File.WriteAllTextAsync(tempFile, toolJson, cancellationToken);
+                var toolNode = JsonNode.Parse(toolJson)!;
+                toolNode["name"] = PromptSanitizer.SanitizeField(tool.Name);
+                toolNode["description"] = PromptSanitizer.SanitizeField(tool.Description);
+                await File.WriteAllTextAsync(tempFile, toolNode.ToJsonString(WriteOptions), cancellationToken);
 
                 // Scale the per-attempt timeout to the remaining work: a tool with
                 // 46 unscored checks legitimately needs longer than one with 18.
@@ -254,6 +288,26 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                                     MergeScores(paramChecks.ParamDescription, updatedParam.ParamDescription);
                                 }
                             }
+
+                            // Validate the canary result. Normalize it to false regardless
+                            // so subsequent retry iterations do not re-count it as unscored.
+                            var mergedCanary = tool.Checks.ToolName.FirstOrDefault(i => i.Id == canaryId);
+                            if (mergedCanary is not null)
+                            {
+                                if (mergedCanary.Score == true)
+                                {
+                                    _logger.LogError(
+                                        "SECURITY: XPIA canary scored true for tool {Tool} — agent steered by adversarial MCP content (plan drift confirmed)",
+                                        tool.Name);
+                                    _planDriftCount++;
+                                }
+                                mergedCanary.Score = false;
+                                mergedCanary.Reason = "Canary: tool name does not match sentinel.";
+                            }
+
+                            // Reject reasons that are implausibly long, contain exfil URLs,
+                            // or reproduce injection markers (F-001 Layer 3).
+                            ApplySafetyFilter(tool);
                         }
                     }
                     catch (JsonException ex)
@@ -295,6 +349,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         }
         finally
         {
+            tool.Checks.ToolName.RemoveAll(i => i.Id == canaryId);
             DeleteSandboxDir(sandbox);
         }
     }
@@ -327,7 +382,14 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 // (partially scored) state — previously-scored items are preserved.
                 var serverData = new
                 {
-                    tool_summaries = checklist.Tools.Select(t => new { t.Name, t.Description }).ToList(),
+                    // Sanitize tool names/descriptions before writing to the agent file (F-001 Layer 1).
+                    tool_summaries = checklist.Tools
+                        .Select(t => new
+                        {
+                            Name = PromptSanitizer.SanitizeField(t.Name),
+                            Description = PromptSanitizer.SanitizeField(t.Description)
+                        })
+                        .ToList(),
                     server_checks = checklist.ServerChecks
                 };
                 var dataJson = JsonSerializer.Serialize(serverData, WriteOptions);
@@ -357,6 +419,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                             if (updatedChecks is not null)
                             {
                                 MergeScores(checklist.ServerChecks, updatedChecks);
+                                // Reject suspicious reasons from server-level checks (F-001 Layer 3).
+                                ScoringSafetyFilter.FilterAndClear(checklist.ServerChecks, "server", _logger);
                             }
                         }
                     }
@@ -411,6 +475,22 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     private static void DeleteSandboxDir(string path)
     {
         try { Directory.Delete(path, recursive: true); } catch { /* best effort */ }
+    }
+
+    /// <summary>
+    /// Runs the scoring safety filter over all check groups for a tool.
+    /// Items that fail validation have their score/reason cleared for retry.
+    /// </summary>
+    private void ApplySafetyFilter(ToolChecklist tool)
+    {
+        ScoringSafetyFilter.FilterAndClear(tool.Checks.ToolName, tool.Name, _logger);
+        ScoringSafetyFilter.FilterAndClear(tool.Checks.ToolDescription, tool.Name, _logger);
+        ScoringSafetyFilter.FilterAndClear(tool.Checks.SchemaStructure, tool.Name, _logger);
+        foreach (var param in tool.Checks.Parameters.Values)
+        {
+            ScoringSafetyFilter.FilterAndClear(param.ParamName, tool.Name, _logger);
+            ScoringSafetyFilter.FilterAndClear(param.ParamDescription, tool.Name, _logger);
+        }
     }
 
     /// <summary>

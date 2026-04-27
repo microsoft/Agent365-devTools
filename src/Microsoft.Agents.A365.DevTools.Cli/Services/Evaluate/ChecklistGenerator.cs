@@ -59,7 +59,9 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
         // Extract properties and required arrays from inputSchema
         var properties = ExtractProperties(inputSchema);
         var requiredParams = ExtractRequiredParams(inputSchema);
-        var allParamNames = properties.Keys.ToList();
+        // Sanitize parameter names at ingestion — they flow into ChecklistItem.Prompt
+        // strings and the agent reads them from the serialized checklist file.
+        var allParamNames = properties.Keys.Select(PromptSanitizer.SanitizeField).ToList();
 
         // --- Tool Name checks ---
         var toolNameChecks = new List<ChecklistItem>();
@@ -82,18 +84,20 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
         var parameterGroups = new Dictionary<string, ParamCheckGroups>();
         foreach (var (paramName, paramSchema) in properties)
         {
+            var safeParamName = PromptSanitizer.SanitizeField(paramName);
+
             var paramNameChecks = new List<ChecklistItem>();
-            paramNameChecks.AddRange(RunParamNameDeterministicChecks(paramName, allParamNames));
+            paramNameChecks.AddRange(RunParamNameDeterministicChecks(safeParamName, allParamNames));
 
             var paramDescChecks = new List<ChecklistItem>();
-            paramDescChecks.AddRange(RunParamDescriptionDeterministicChecks(paramName, paramSchema));
+            paramDescChecks.AddRange(RunParamDescriptionDeterministicChecks(safeParamName, paramSchema));
 
             // Add semantic param checks, split by category
-            var semanticParamChecks = SemanticCheckDefinitions.GetParamLevelChecks(paramName);
+            var semanticParamChecks = SemanticCheckDefinitions.GetParamLevelChecks(safeParamName);
             paramNameChecks.AddRange(semanticParamChecks.Where(c => c.Category == CheckCategory.ParamName));
             paramDescChecks.AddRange(semanticParamChecks.Where(c => c.Category == CheckCategory.ParamDescription));
 
-            parameterGroups[paramName] = new ParamCheckGroups
+            parameterGroups[safeParamName] = new ParamCheckGroups
             {
                 ParamName = paramNameChecks,
                 ParamDescription = paramDescChecks,

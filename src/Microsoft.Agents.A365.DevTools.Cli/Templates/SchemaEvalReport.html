@@ -279,7 +279,7 @@ function renderNarrative() {
   var story = 'This server exposes <strong>'+D.tool_count+' tool'+(D.tool_count!==1?'s':'')+'</strong>'
     + ' and received an overall quality score of <span class="'+hlClass(D.overall_score)+'">'
     + D.overall_score.toFixed(1)+' out of 100</span>, placing it at <strong>Level '
-    + D.maturity.level+' ('+D.maturity.label+')</strong> on the maturity scale.';
+    + D.maturity.level+' ('+esc(D.maturity.label)+')</strong> on the maturity scale.';
 
   if (best.length)
     story += ' <strong>Strengths:</strong> '+best.map(function(c) {
@@ -505,7 +505,7 @@ function renderActions() {
 
   function renderAct(a) {
     var tags = (a.impact_areas||[]).map(function(ia) {
-      return '<span class="tag tag-area">'+(AREA_LABELS[ia]||ia)+'</span>';
+      return '<span class="tag tag-area">'+(AREA_LABELS[ia]||esc(ia))+'</span>';
     }).join('');
     var risks = (a.issue_leads_to||[]);
     var riskHtml = risks.length
