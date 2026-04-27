@@ -399,15 +399,15 @@ public class SetupCommandTests
     }
 
     /// <summary>
-    /// Verifies that bare <c>--aiteammate</c> (no value) routes to the own-identity (DW) plan
+    /// Verifies that bare <c>--aiteammate</c> (no value) routes to the AI Teammate (DW) plan
     /// even when <c>a365.config.json</c> has <c>AiTeammate = false</c>.
     /// Catches regressions where <c>FindResultFor</c> always returns null, which would cause
     /// the flag to be treated as "not set" and the config value to take precedence.
     /// </summary>
     [Fact]
-    public async Task SetupAll_WithBareAiteammate_RoutesToOwnIdentityDryRunPlan()
+    public async Task SetupAll_WithBareAiteammate_RoutesToAiTeammateDryRunPlan()
     {
-        // Arrange — config says blueprint agent; bare --aiteammate must override to own-identity.
+        // Arrange — config says blueprint agent; bare --aiteammate must override to AI Teammate.
         var config = new Agent365Config
         {
             TenantId = "tenant",
@@ -432,7 +432,7 @@ public class SetupCommandTests
 
         // Assert
         result.Should().Be(0, because: "bare --aiteammate is a valid flag and dry-run exits 0");
-        // Own-identity (DW) plan logs "Azure hosting" at step 2.
+        // AI Teammate (DW) plan logs "Azure hosting" at step 2.
         // Blueprint plan uses "Blueprint" at step 2 and never logs "Azure hosting".
         _mockLogger.Received().Log(
             LogLevel.Information,
@@ -444,7 +444,7 @@ public class SetupCommandTests
 
     /// <summary>
     /// Verifies that omitting <c>--aiteammate</c> respects <c>AiTeammate = false</c> from config
-    /// and shows the blueprint plan (not the own-identity plan).
+    /// and shows the blueprint plan (not the AI Teammate plan).
     /// </summary>
     [Fact]
     public async Task SetupAll_WithAiteammateOmitted_RespectsConfigBlueprintFlag()
@@ -474,14 +474,14 @@ public class SetupCommandTests
 
         // Assert
         result.Should().Be(0);
-        // Blueprint plan logs "Inheritable Permissions" at step 3; own-identity plan does not.
+        // Blueprint plan logs "Inheritable Permissions" at step 3; AI Teammate plan does not.
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
-        // Own-identity plan's distinctive "Azure hosting" step must be absent.
+        // AI Teammate plan's distinctive "Azure hosting" step must be absent.
         _mockLogger.DidNotReceive().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
@@ -495,19 +495,19 @@ public class SetupCommandTests
     /// <c>a365.config.json</c> has <c>AiTeammate = true</c>.
     /// Catches regressions where <c>FindResultFor</c> always returns null, which would cause
     /// <c>--aiteammate false</c> to be treated as "not set" and let <c>AiTeammate = true</c>
-    /// route to the own-identity plan instead.
+    /// route to the AI Teammate plan instead.
     /// </summary>
     [Fact]
     public async Task SetupAll_WithAiteammateFalse_ForcesBlueprintPlanRegardlessOfConfig()
     {
-        // Arrange — config says own-identity; explicit --aiteammate false must override to blueprint.
+        // Arrange — config says AI Teammate; explicit --aiteammate false must override to blueprint.
         var config = new Agent365Config
         {
             TenantId = "tenant",
             AgentIdentityDisplayName = "agent",
             AgentBlueprintDisplayName = "TestBlueprint",
             DeploymentProjectPath = ".",
-            AiTeammate = true  // config says own-identity
+            AiTeammate = true  // config says AI Teammate
         };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 

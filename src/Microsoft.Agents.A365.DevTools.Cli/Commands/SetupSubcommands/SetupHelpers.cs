@@ -43,7 +43,7 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
-    /// own-identity agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
+    /// AI Teammate agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
     /// Callers control whether the specs set inheritable permissions on the blueprint.
     /// </summary>
     internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) =>
@@ -930,7 +930,7 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Prints the dry-run plan for the own-identity agent (--aiteammate true) path of setup all.
+    /// Prints the dry-run plan for the AI Teammate agent (--aiteammate true) path of setup all.
     /// </summary>
     internal static void PrintDwSetupAllDryRunPlan(
         ILogger logger,

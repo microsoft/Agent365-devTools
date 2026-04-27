@@ -891,8 +891,8 @@ public class Agent365ConfigTests
 
     [Theory]
     [InlineData(false, true)]   // aiTeammate=false → blueprint agent
-    [InlineData(true, false)]   // aiTeammate=true  → own-identity agent
-    [InlineData(null, false)]   // not set → own-identity agent (default)
+    [InlineData(true, false)]   // aiTeammate=true  → AI Teammate agent
+    [InlineData(null, false)]   // not set → AI Teammate agent (default)
     public void IsBlueprintAgent_ReturnsCorrectValue(bool? aiTeammate, bool expected)
     {
         var config = new Agent365Config { AiTeammate = aiTeammate };

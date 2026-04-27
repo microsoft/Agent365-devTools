@@ -70,9 +70,9 @@ public class PublishCommand
 
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
-        var ownIdentityOption = new Option<bool?>(
+        var aiTeammateOption = new Option<bool?>(
             "--aiteammate",
-            description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
+            description: "true = AI Teammate agent: setup provisions blueprint and permissions only;\n" +
                         "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
                         "Overrides the aiTeammate field in a365.config.json");
@@ -89,7 +89,7 @@ public class PublishCommand
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(dryRunOption);
-        command.AddOption(ownIdentityOption);
+        command.AddOption(aiTeammateOption);
         command.AddOption(useBlueprintOption);
         command.AddOption(verboseOption);
 
@@ -99,7 +99,7 @@ public class PublishCommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
-            var ownIdentityFlag = context.ParseResult.GetValueForOption(ownIdentityOption);
+            var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
             var useBlueprintFlag = context.ParseResult.GetValueForOption(useBlueprintOption);
             _ = context.ParseResult.GetValueForOption(verboseOption);
             var ct = context.GetCancellationToken();
@@ -144,10 +144,10 @@ public class PublishCommand
                     config = await configService.LoadAsync(configFile.FullName);
                 }
 
-                // Effective agent type: CLI flag > config value > default (own-identity agent)
+                // Effective agent type: CLI flag > config value > default (AI Teammate agent)
                 var isBlueprintAgent =
-                    ownIdentityFlag == false ||
-                    (!ownIdentityFlag.HasValue && config.IsBlueprintAgent);
+                    aiTeammateFlag == false ||
+                    (!aiTeammateFlag.HasValue && config.IsBlueprintAgent);
 
                 if (isBlueprintAgent)
                 {
@@ -177,7 +177,7 @@ public class PublishCommand
                     return;
                 }
 
-                // --- Own-identity agent (default) path ---
+                // --- AI Teammate agent (default) path ---
                 var blueprintId = config.AgentBlueprintId;
                 var displayName = config.AgentBlueprintDisplayName;
 

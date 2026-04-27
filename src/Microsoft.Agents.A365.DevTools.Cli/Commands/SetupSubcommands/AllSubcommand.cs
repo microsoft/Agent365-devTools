@@ -107,9 +107,9 @@ internal static class AllSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
-        var ownIdentityOption = new Option<bool>(
+        var aiTeammateOption = new Option<bool>(
             "--aiteammate",
-            description: "Own-identity agent: setup provisions blueprint and permissions only;\n" +
+            description: "AI Teammate agent: setup provisions blueprint and permissions only;\n" +
                         "run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "Omit for blueprint-only agent (default): setup auto-creates agent identity SP; no Entra user.\n" +
                         "Overrides the aiTeammate field in a365.config.json");
@@ -138,7 +138,7 @@ internal static class AllSubcommand
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
-        command.AddOption(ownIdentityOption);
+        command.AddOption(aiTeammateOption);
         command.AddOption(agentRegistrationOnlyOption);
         command.AddOption(m365Option);
         command.AddOption(agentNameOption);
@@ -152,8 +152,8 @@ internal static class AllSubcommand
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             // Tri-state: null = not specified (respect config), true/false = explicit override.
             // Option<bool> means bare --aiteammate sets it to true without requiring "true" as a value.
-            bool? ownIdentityFlag = context.ParseResult.CommandResult.FindResultFor(ownIdentityOption) != null
-                ? context.ParseResult.GetValueForOption(ownIdentityOption)
+            bool? aiTeammateFlag = context.ParseResult.CommandResult.FindResultFor(aiTeammateOption) != null
+                ? context.ParseResult.GetValueForOption(aiTeammateOption)
                 : null;
             var agentRegistrationOnly = context.ParseResult.GetValueForOption(agentRegistrationOnlyOption);
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
@@ -166,11 +166,11 @@ internal static class AllSubcommand
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // Blueprint agent is the default. Own-identity agent requires --aiteammate true explicitly.
+            // Blueprint agent is the default. AI Teammate agent requires --aiteammate true explicitly.
             Agent365Config? nonDwConfig = null;
             bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
-            if (ownIdentityFlag != true)
+            if (aiTeammateFlag != true)
             {
                 if (isBootstrap)
                 {
@@ -250,14 +250,14 @@ internal static class AllSubcommand
                     }
                     catch (OperationCanceledException) { throw; }
                     catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
-                    // If ownidentity was not explicitly set, respect what the config says
-                    // (allows existing own-identity configs to keep working without --aiteammate true)
-                    if (nonDwConfig != null && !ownIdentityFlag.HasValue && !nonDwConfig.IsBlueprintAgent && !dryRun)
+                    // If aiteammate was not explicitly set, respect what the config says
+                    // (allows existing AI Teammate configs to keep working without --aiteammate true)
+                    if (nonDwConfig != null && !aiTeammateFlag.HasValue && !nonDwConfig.IsBlueprintAgent && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
             }
 
-            // Own-identity (DW) agents are M365 agents by design — auto-enable messaging endpoint.
+            // AI Teammate (DW) agents are M365 agents by design — auto-enable messaging endpoint.
             // --m365 remains opt-in for blueprint agents (non-DW path).
             if (nonDwConfig is null)
                 isM365 = true;
@@ -308,7 +308,7 @@ internal static class AllSubcommand
                 return;
             }
 
-            // --- Own-identity agent (default) path ---
+            // --- AI Teammate agent (default) path ---
             if (dryRun)
             {
                 var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();

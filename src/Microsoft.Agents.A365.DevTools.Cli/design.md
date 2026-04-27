@@ -484,7 +484,7 @@ return await new CommandLineBuilder(rootCommand)
 
 | Agent Type | Flag | What it creates |
 |---|---|---|
-| **Own-identity agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
+| **AI Teammate agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
 | **Custom Engine Agent / Blueprint** (default) | omit `--aiteammate` | Agent Blueprint + batch permissions (Graph + A365 Tools only) + Agent Instance (Graph API) |
 
 Non-DW blueprint agents do not use Azure Bot Service, so there is no infrastructure step, no manifest zip, and no messaging endpoint registration. The final step is `POST /beta/agentRegistry/agentInstances` instead.
