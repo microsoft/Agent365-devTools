@@ -304,7 +304,7 @@ internal static class AdminSubcommand
                             logger.LogWarning(
                                 "Agent instance registration failed - 'Agent Registry Administrator' role is not assigned " +
                                 "for this account. The developer must get that role assigned by a tenant admin and run: " +
-                                "a365 setup all --ownaccess false --agent-registration-only");
+                                "a365 setup all --aiteammate false --agent-registration-only");
                         }
                     }
                 }

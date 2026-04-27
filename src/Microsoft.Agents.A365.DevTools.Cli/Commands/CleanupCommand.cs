@@ -1327,7 +1327,7 @@ public class CleanupCommand
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = blueprintDisplayName,
             AgentDescription = agentName,
-            OwnAccess = false,
+            AiTeammate = false,
             UseBlueprint = true,
         };
 

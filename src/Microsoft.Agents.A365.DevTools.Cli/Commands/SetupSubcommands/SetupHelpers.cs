@@ -930,7 +930,7 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Prints the dry-run plan for the own-identity agent (--ownaccess true) path of setup all.
+    /// Prints the dry-run plan for the own-identity agent (--aiteammate true) path of setup all.
     /// </summary>
     internal static void PrintDwSetupAllDryRunPlan(
         ILogger logger,

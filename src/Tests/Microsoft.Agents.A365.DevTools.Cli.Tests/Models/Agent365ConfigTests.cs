@@ -887,48 +887,48 @@ public class Agent365ConfigTests
 
     #endregion
 
-    #region OwnAccess and IsBlueprintAgent Tests
+    #region AiTeammate and IsBlueprintAgent Tests
 
     [Theory]
-    [InlineData(false, true)]   // ownAccess=false → blueprint agent
-    [InlineData(true, false)]   // ownAccess=true  → own-identity agent
+    [InlineData(false, true)]   // aiTeammate=false → blueprint agent
+    [InlineData(true, false)]   // aiTeammate=true  → own-identity agent
     [InlineData(null, false)]   // not set → own-identity agent (default)
-    public void IsBlueprintAgent_ReturnsCorrectValue(bool? ownAccess, bool expected)
+    public void IsBlueprintAgent_ReturnsCorrectValue(bool? aiTeammate, bool expected)
     {
-        var config = new Agent365Config { OwnAccess = ownAccess };
+        var config = new Agent365Config { AiTeammate = aiTeammate };
 
         config.IsBlueprintAgent.Should().Be(expected);
     }
 
     [Fact]
-    public void OwnAccess_IsSerializedToJson_WithCorrectPropertyName()
+    public void AiTeammate_IsSerializedToJson_WithCorrectPropertyName()
     {
-        var config = new Agent365Config { OwnAccess = false };
+        var config = new Agent365Config { AiTeammate = false };
 
         var json = JsonSerializer.Serialize(config);
 
-        json.Should().Contain("\"ownAccess\"");
+        json.Should().Contain("\"aiTeammate\"");
         json.Should().Contain("false");
     }
 
     [Fact]
-    public void OwnAccess_IsDeserializedFromJson()
+    public void AiTeammate_IsDeserializedFromJson()
     {
-        const string json = "{\"ownAccess\": false}";
+        const string json = "{\"aiTeammate\": false}";
 
         var config = JsonSerializer.Deserialize<Agent365Config>(json);
 
         config.Should().NotBeNull();
-        config!.OwnAccess.Should().BeFalse();
+        config!.AiTeammate.Should().BeFalse();
         config.IsBlueprintAgent.Should().BeTrue();
     }
 
     [Fact]
-    public void OwnAccess_IsNullByDefault_WhenNotSpecified()
+    public void AiTeammate_IsNullByDefault_WhenNotSpecified()
     {
         var config = new Agent365Config();
 
-        config.OwnAccess.Should().BeNull();
+        config.AiTeammate.Should().BeNull();
         config.IsBlueprintAgent.Should().BeFalse();
     }
 
@@ -955,14 +955,14 @@ public class Agent365ConfigTests
     }
 
     [Theory]
-    [InlineData(false, true, true)]    // ownAccess=false + useBlueprint=true → blueprint non-DW
-    [InlineData(false, false, false)]  // ownAccess=false + useBlueprint=false → app-based non-DW
-    [InlineData(false, null, false)]   // ownAccess=false + useBlueprint not set → app-based non-DW
-    [InlineData(true, true, false)]    // ownAccess=true (DW) → never blueprint non-DW
+    [InlineData(false, true, true)]    // aiTeammate=false + useBlueprint=true → blueprint non-DW
+    [InlineData(false, false, false)]  // aiTeammate=false + useBlueprint=false → app-based non-DW
+    [InlineData(false, null, false)]   // aiTeammate=false + useBlueprint not set → app-based non-DW
+    [InlineData(true, true, false)]    // aiTeammate=true (DW) → never blueprint non-DW
     [InlineData(null, true, false)]    // not set (DW default) → never blueprint non-DW
-    public void IsNonDwBlueprint_ReturnsCorrectValue(bool? ownAccess, bool? useBlueprint, bool expected)
+    public void IsNonDwBlueprint_ReturnsCorrectValue(bool? aiTeammate, bool? useBlueprint, bool expected)
     {
-        var config = new Agent365Config { OwnAccess = ownAccess, UseBlueprint = useBlueprint };
+        var config = new Agent365Config { AiTeammate = aiTeammate, UseBlueprint = useBlueprint };
 
         config.IsNonDwBlueprint.Should().Be(expected);
     }
@@ -981,7 +981,7 @@ public class Agent365ConfigTests
     [Fact]
     public void UseBlueprint_IsDeserializedFromJson()
     {
-        const string json = "{\"ownAccess\": false, \"useBlueprint\": true}";
+        const string json = "{\"aiTeammate\": false, \"useBlueprint\": true}";
 
         var config = JsonSerializer.Deserialize<Agent365Config>(json);
 
@@ -991,11 +991,11 @@ public class Agent365ConfigTests
     }
 
     [Fact]
-    public void WithCustomBlueprintPermissions_PreservesOwnAccess()
+    public void WithCustomBlueprintPermissions_PreservesAiTeammate()
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             UseBlueprint = true,
             AzureOpenAIName = "aoai-test",
             NeedAzureOpenAI = true
@@ -1003,7 +1003,7 @@ public class Agent365ConfigTests
 
         var cloned = config.WithCustomBlueprintPermissions(null);
 
-        cloned.OwnAccess.Should().BeFalse();
+        cloned.AiTeammate.Should().BeFalse();
         cloned.UseBlueprint.Should().BeTrue();
         cloned.AzureOpenAIName.Should().Be("aoai-test");
         cloned.NeedAzureOpenAI.Should().BeTrue();

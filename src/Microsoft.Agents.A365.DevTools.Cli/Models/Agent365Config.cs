@@ -192,14 +192,14 @@ public class Agent365Config
     /// false = blueprint-only agent: setup all auto-creates agent identity SP; no Entra user. Two variants:
     ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
     ///   - UseBlueprint = true:  Blueprint-only non-DW flow (Agent Identity Blueprint + Agent Instance).
-    /// Can be overridden per-command with the --ownaccess flag.
+    /// Can be overridden per-command with the --aiteammate flag.
     /// </summary>
-    [JsonPropertyName("ownAccess")]
-    public bool? OwnAccess { get; init; }
+    [JsonPropertyName("aiTeammate")]
+    public bool? AiTeammate { get; init; }
 
     /// <summary>
     /// When true, use the blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
-    /// Only meaningful when OwnAccess is false.
+    /// Only meaningful when AiTeammate is false.
     /// Can be overridden per-command with the --use-blueprint flag.
     /// </summary>
     [JsonPropertyName("useBlueprint")]
@@ -209,13 +209,13 @@ public class Agent365Config
     /// Returns true when this config represents a blueprint agent deployment.
     /// </summary>
     [JsonIgnore]
-    public bool IsBlueprintAgent => OwnAccess == false;
+    public bool IsBlueprintAgent => AiTeammate == false;
 
     /// <summary>
     /// Returns true when this config uses the blueprint-based non-DW flow.
     /// </summary>
     [JsonIgnore]
-    public bool IsNonDwBlueprint => OwnAccess == false && UseBlueprint == true;
+    public bool IsNonDwBlueprint => AiTeammate == false && UseBlueprint == true;
 
     /// <summary>
     /// Display name for the agent identity in Azure AD.
@@ -662,7 +662,7 @@ public class Agent365Config
             Environment = this.Environment,
             MessagingEndpoint = this.MessagingEndpoint,
             ClientAppId = this.ClientAppId,
-            OwnAccess = this.OwnAccess,
+            AiTeammate = this.AiTeammate,
             UseBlueprint = this.UseBlueprint,
             AzureOpenAIName = this.AzureOpenAIName,
             AzureOpenAILocation = this.AzureOpenAILocation,

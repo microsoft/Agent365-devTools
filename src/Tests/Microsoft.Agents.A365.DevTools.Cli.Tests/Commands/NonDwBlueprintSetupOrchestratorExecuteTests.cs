@@ -49,7 +49,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var cfg = config ?? new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentIdentityDisplayName = "Test Agent",
             ClientAppId = "client-app-id",
@@ -91,7 +91,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(new Agent365Config
             {
-                OwnAccess = false,
+                AiTeammate = false,
                 TenantId = cfg.TenantId,
                 AgentIdentityDisplayName = cfg.AgentIdentityDisplayName,
                 AgentBlueprintId = "test-blueprint-id",
@@ -229,7 +229,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentIdentityDisplayName = "Test Agent",
             ClientAppId = "client-app-id",
@@ -387,7 +387,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         var cfg = config ?? new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",
@@ -510,7 +510,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",
@@ -568,7 +568,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",
@@ -623,7 +623,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",
@@ -656,7 +656,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",
@@ -696,7 +696,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",
@@ -727,7 +727,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",
@@ -761,7 +761,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     {
         var config = new Agent365Config
         {
-            OwnAccess = false,
+            AiTeammate = false,
             TenantId = "tenant-id",
             AgentBlueprintId = "blueprint-id",
             AgentIdentityDisplayName = "sellakapri211 Identity",

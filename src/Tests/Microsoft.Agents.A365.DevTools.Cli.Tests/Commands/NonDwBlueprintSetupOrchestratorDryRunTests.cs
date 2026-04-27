@@ -27,7 +27,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         {
             AgentIdentityDisplayName = displayName,
             TenantId = tenantId,
-            OwnAccess = false,
+            AiTeammate = false,
             UseBlueprint = true,
             ClientAppId = "client-app-id",
             DeploymentProjectPath = "./app",

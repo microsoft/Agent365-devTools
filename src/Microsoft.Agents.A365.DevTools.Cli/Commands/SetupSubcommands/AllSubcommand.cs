@@ -45,7 +45,7 @@ internal static class AllSubcommand
     }
 
     /// <summary>
-    /// Returns the requirement checks for <c>setup all --ownaccess false</c> (non-DW blueprint).
+    /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
     /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
@@ -108,11 +108,11 @@ internal static class AllSubcommand
                         "Use with caution: setup may fail if prerequisites are not met");
 
         var ownIdentityOption = new Option<bool>(
-            "--ownaccess",
+            "--aiteammate",
             description: "Own-identity agent: setup provisions blueprint and permissions only;\n" +
                         "run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "Omit for blueprint-only agent (default): setup auto-creates agent identity SP; no Entra user.\n" +
-                        "Overrides the ownAccess field in a365.config.json");
+                        "Overrides the aiTeammate field in a365.config.json");
 
         var agentRegistrationOnlyOption = new Option<bool>(
             "--agent-registration-only",
@@ -151,7 +151,7 @@ internal static class AllSubcommand
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             // Tri-state: null = not specified (respect config), true/false = explicit override.
-            // Option<bool> means bare --ownaccess sets it to true without requiring "true" as a value.
+            // Option<bool> means bare --aiteammate sets it to true without requiring "true" as a value.
             bool? ownIdentityFlag = context.ParseResult.CommandResult.FindResultFor(ownIdentityOption) != null
                 ? context.ParseResult.GetValueForOption(ownIdentityOption)
                 : null;
@@ -166,7 +166,7 @@ internal static class AllSubcommand
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // Blueprint agent is the default. Own-identity agent requires --ownaccess true explicitly.
+            // Blueprint agent is the default. Own-identity agent requires --aiteammate true explicitly.
             Agent365Config? nonDwConfig = null;
             bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
@@ -187,7 +187,7 @@ internal static class AllSubcommand
                             AgentIdentityDisplayName = $"{agentName} Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",
                             AgentDescription = agentName,
-                            OwnAccess = false,
+                            AiTeammate = false,
                             UseBlueprint = true,
                         };
                     }
@@ -251,7 +251,7 @@ internal static class AllSubcommand
                     catch (OperationCanceledException) { throw; }
                     catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
                     // If ownidentity was not explicitly set, respect what the config says
-                    // (allows existing own-identity configs to keep working without --ownaccess true)
+                    // (allows existing own-identity configs to keep working without --aiteammate true)
                     if (nonDwConfig != null && !ownIdentityFlag.HasValue && !nonDwConfig.IsBlueprintAgent && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
@@ -351,7 +351,7 @@ internal static class AllSubcommand
                         AgentIdentityDisplayName = $"{agentName} Identity",
                         AgentBlueprintDisplayName = $"{agentName} Blueprint",
                         AgentDescription = agentName!,
-                        OwnAccess = true,
+                        AiTeammate = true,
                     };
                     if (resolver != null)
                     {
@@ -827,7 +827,7 @@ internal static class AllSubcommand
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
-            OwnAccess = false,
+            AiTeammate = false,
             UseBlueprint = true,
         };
 
@@ -861,7 +861,7 @@ internal static class AllSubcommand
             ["agentIdentityDisplayName"] = config.AgentIdentityDisplayName,
             ["agentBlueprintDisplayName"] = config.AgentBlueprintDisplayName,
             ["agentDescription"] = config.AgentDescription,
-            ["ownAccess"] = config.OwnAccess,
+            ["aiTeammate"] = config.AiTeammate,
             ["useBlueprint"] = config.UseBlueprint,
         };
 

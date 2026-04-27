@@ -71,16 +71,16 @@ public class PublishCommand
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
         var ownIdentityOption = new Option<bool?>(
-            "--ownaccess",
+            "--aiteammate",
             description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
                         "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
-                        "Overrides the ownAccess field in a365.config.json");
+                        "Overrides the aiTeammate field in a365.config.json");
 
         var useBlueprintOption = new Option<bool>(
             "--use-blueprint",
             description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
-                        "Only meaningful with --ownaccess false");
+                        "Only meaningful with --aiteammate false");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
