@@ -45,7 +45,7 @@
     <!-- Source Link Support -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
-    <DebugType>embedded</DebugType>
+    <DebugType>portable</DebugType>
     
     <!-- Suppress common NuGet warnings -->
     <NoWarn>$(NoWarn);NU1608;NU5128</NoWarn>
