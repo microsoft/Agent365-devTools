@@ -51,7 +51,6 @@ internal static class RequirementsSubcommand
         command.SetHandler(async (InvocationContext context) =>
         {
             var category = context.ParseResult.GetValueForOption(categoryOption);
-            _ = context.ParseResult.GetValueForOption(verboseOption);
             var ct = context.GetCancellationToken();
 
             logger.LogInformation("Agent 365 Requirements Check");

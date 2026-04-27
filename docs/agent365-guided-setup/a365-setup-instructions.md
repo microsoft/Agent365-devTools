@@ -26,18 +26,18 @@ Present only the options that apply to the user's `agentType`:
 - **If `agentType = 1`** (M365 — Discoverability is already included):
   1. Observability
   2. Work IQ
-  3. AI Teammate agent
+  3. AI Teammate
 - **If `agentType = 2`** (All other agents):
   1. Discoverability
   2. Observability
   3. Work IQ
-  4. AI Teammate agent
+  4. AI Teammate
 
 Wait for the answer. Store as `capabilities`.
 
 > **Note:** The setup automatically includes all prerequisite capabilities for your selection.
 
-After both questions are answered, set `isAiTeammate = true` if `capabilities = AI Teammate agent`, else `isAiTeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
+After both questions are answered, set `isAiTeammate = true` if `capabilities = AI Teammate`, else `isAiTeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
 
 **AI Teammate agent path** — `isAiTeammate = true` (5 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
@@ -51,7 +51,7 @@ After both questions are answered, set `isAiTeammate = true` if `capabilities = 
 - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
 - Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 
-**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the AI Teammate agent path (`isAiTeammate = true`) — it is skipped entirely on all other paths.
+**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the AI Teammate path (`isAiTeammate = true`) — it is skipped entirely on all other paths.
 
 **RULE 3 — SUB-SECTIONS ARE NOT SEPARATE TODOS.** Each `## Step` has internal sub-sections — these are tasks WITHIN that step, NOT separate todos.
 
@@ -217,14 +217,14 @@ pip --version
 > - **All other paths** (`isAiTeammate = false`): Skip Step 3 entirely. Mark Todo 3 in-progress and jump directly to Step 4.
 >
 > **VERIFY YOUR TODO STATE:**
-> - AI Teammate agent path: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
+> - AI Teammate path: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
 > - All other paths: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress**
 
 ---
 
 ## Step 3: Configure the Agent 365 CLI (Initialize Configuration)
 
-> **AI TEAMMATE AGENT PATH ONLY** (`capabilities = AI Teammate agent`, `isAiTeammate = true`).
+> **AI TEAMMATE AGENT PATH ONLY** (`capabilities = AI Teammate`, `isAiTeammate = true`).
 >
 > If `isAiTeammate = false` (Standard path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
 >
@@ -248,7 +248,7 @@ Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custo
 
 Ask the user for the agent base name only. No other values are needed for this path — the CLI auto-detects everything else.
 
-**"Please provide the following value to set up your AI Teammate agent:"**
+**"Please provide the following value to set up your AI Teammate:"**
 
 | Field | Description | Example |
 |-------|-------------|---------|
@@ -310,7 +310,7 @@ Ask the user two questions (one at a time, wait for each response):
 
    Store as `project_dir`. If the user replies `current`, use the current working directory.
 
-**For the AI Teammate agent path (`isAiTeammate = true`):**
+**For the AI Teammate path (`isAiTeammate = true`):**
 
 - `agent_name` is derived from `agentBaseName` collected in Step 3 — do NOT ask again.
 - `project_dir` is the directory where Step 3 was run — do NOT ask again.
@@ -595,7 +595,7 @@ If your agent instance isn't working as expected, see the Troubleshooting sectio
 ### Step 5 completion
 
 > **REQUIRED — do not skip this step.**
-> AI Teammate agent includes observability. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed.
+> AI Teammate includes observability. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed.
 
 ---
 
