@@ -685,7 +685,7 @@ internal static class SetupHelpers
         {
             var nextStepLines = new List<Action>();
 
-            if ((!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
+            if (results.BatchPermissionsPhase1Completed && (!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
                 nextStepLines.Add(() => logger.LogInformation("  To retry permissions: a365 setup all"));
 
             if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))

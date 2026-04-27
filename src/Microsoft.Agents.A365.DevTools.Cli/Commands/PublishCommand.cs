@@ -75,7 +75,7 @@ public class PublishCommand
             description: "true = own-identity agent: setup provisions blueprint and permissions only;\n" +
                         "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
-                        "Overrides the aiTeammate field in a365.config.json");
+                        "Overrides the ownAccess field in a365.config.json");
 
         var useBlueprintOption = new Option<bool>(
             "--use-blueprint",
@@ -147,7 +147,7 @@ public class PublishCommand
                 // Effective agent type: CLI flag > config value > default (own-identity agent)
                 var isBlueprintAgent =
                     ownIdentityFlag == false ||
-                    (!ownIdentityFlag.HasValue && config.IsNonAiTeammate);
+                    (!ownIdentityFlag.HasValue && config.IsBlueprintAgent);
 
                 if (isBlueprintAgent)
                 {

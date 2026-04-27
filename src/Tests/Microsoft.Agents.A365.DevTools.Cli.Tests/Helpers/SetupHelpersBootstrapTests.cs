@@ -18,6 +18,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Helpers;
 /// BuildConfiguredPermissionSpecsAsync, ResolveBootstrapTenantIdAsync,
 /// ResolveBootstrapClientAppIdAsync, and GetJsonString.
 /// </summary>
+[Collection("ConfigTests")]
 public class SetupHelpersBootstrapTests : IDisposable
 {
     private readonly string _tempDir;

@@ -14,15 +14,12 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
-[CollectionDefinition("CleanupFileSystem", DisableParallelization = true)]
-public class CleanupFileSystemTestCollection { }
-
 /// <summary>
 /// Filesystem-level tests for <c>a365 cleanup</c> — verifies that <c>a365.config.json</c> is
 /// deleted with a backup after a fully-successful cleanup, and is preserved when cleanup fails.
 /// These tests manipulate <see cref="Environment.CurrentDirectory"/> and must run serially.
 /// </summary>
-[Collection("CleanupFileSystem")]
+[Collection("ConfigTests")]
 public class CleanupCommandFileSystemTests
 {
     private readonly ILogger<CleanupCommand> _mockLogger;

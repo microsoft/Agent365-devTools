@@ -194,12 +194,12 @@ public class Agent365Config
     ///   - UseBlueprint = true:  Blueprint-only non-DW flow (Agent Identity Blueprint + Agent Instance).
     /// Can be overridden per-command with the --ownaccess flag.
     /// </summary>
-    [JsonPropertyName("aiTeammate")]
-    public bool? AiTeammate { get; init; }
+    [JsonPropertyName("ownAccess")]
+    public bool? OwnAccess { get; init; }
 
     /// <summary>
     /// When true, use the blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
-    /// Only meaningful when AiTeammate is false.
+    /// Only meaningful when OwnAccess is false.
     /// Can be overridden per-command with the --use-blueprint flag.
     /// </summary>
     [JsonPropertyName("useBlueprint")]
@@ -209,13 +209,13 @@ public class Agent365Config
     /// Returns true when this config represents a blueprint agent deployment.
     /// </summary>
     [JsonIgnore]
-    public bool IsNonAiTeammate => AiTeammate == false;
+    public bool IsBlueprintAgent => OwnAccess == false;
 
     /// <summary>
     /// Returns true when this config uses the blueprint-based non-DW flow.
     /// </summary>
     [JsonIgnore]
-    public bool IsNonDwBlueprint => AiTeammate == false && UseBlueprint == true;
+    public bool IsNonDwBlueprint => OwnAccess == false && UseBlueprint == true;
 
     /// <summary>
     /// Display name for the agent identity in Azure AD.
@@ -662,7 +662,7 @@ public class Agent365Config
             Environment = this.Environment,
             MessagingEndpoint = this.MessagingEndpoint,
             ClientAppId = this.ClientAppId,
-            AiTeammate = this.AiTeammate,
+            OwnAccess = this.OwnAccess,
             UseBlueprint = this.UseBlueprint,
             AzureOpenAIName = this.AzureOpenAIName,
             AzureOpenAILocation = this.AzureOpenAILocation,

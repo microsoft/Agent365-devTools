@@ -343,13 +343,64 @@ public class SetupCommandTests
     }
 
     /// <summary>
+    /// Verifies that <c>setup all --agent-name</c> in DW bootstrap mode exits with code 1
+    /// when the client app ID cannot be resolved (Entra lookup returns null, user cancels prompt).
+    /// Guards against the regression where setup would continue with an empty <c>ClientAppId</c>.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_DwBootstrap_WithNullClientAppId_ReturnsExitCode1()
+    {
+        // Arrange — bootstrap mode (--agent-name without --ownaccess false), no dry-run.
+        _mockExecutor.ExecuteAsync(
+                Arg.Is<string>(s => s == "az"),
+                Arg.Is<string>(s => s.StartsWith("account show", StringComparison.OrdinalIgnoreCase)),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = "{\"tenantId\":\"bootstrap-tenant-id\"}",
+                StandardError = string.Empty
+            }));
+
+        // NSubstitute returns null by default for Task<string?> — FindApplicationByDisplayNameAsync
+        // returns null, simulating the app not existing in Entra.
+
+        var command = SetupCommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockBackendConfigurator,
+            _mockAuthValidator, _mockPlatformDetector,
+            _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService,
+            _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider,
+            requirementChecksOverride: []);
+
+        var parser = new CommandLineBuilder(command).Build();
+        var testConsole = new TestConsole();
+
+        var originalIn = Console.In;
+        Console.SetIn(new StringReader("\n")); // user presses Enter to cancel the client app ID prompt
+        try
+        {
+            // Act
+            var result = await parser.InvokeAsync("all --agent-name TestAgent", testConsole);
+
+            // Assert
+            result.Should().Be(1,
+                because: "DW bootstrap must abort with exit code 1 when the client app ID " +
+                         "cannot be resolved, rather than continuing setup with an empty ClientAppId");
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    /// <summary>
     /// Verifies that bare <c>--ownaccess</c> (no value) routes to the own-identity (DW) plan
-    /// even when <c>a365.config.json</c> has <c>AiTeammate = false</c>.
+    /// even when <c>a365.config.json</c> has <c>OwnAccess = false</c>.
     /// Catches regressions where <c>FindResultFor</c> always returns null, which would cause
     /// the flag to be treated as "not set" and the config value to take precedence.
     /// </summary>
     [Fact]
-    public async Task SetupAll_WithBareAiteammate_RoutesToOwnIdentityDryRunPlan()
+    public async Task SetupAll_WithBareOwnaccess_RoutesToOwnIdentityDryRunPlan()
     {
         // Arrange — config says blueprint agent; bare --ownaccess must override to own-identity.
         var config = new Agent365Config
@@ -358,7 +409,7 @@ public class SetupCommandTests
             AgentIdentityDisplayName = "agent",
             AgentBlueprintDisplayName = "TestBlueprint",
             DeploymentProjectPath = ".",
-            AiTeammate = false
+            OwnAccess = false
         };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 
@@ -387,11 +438,11 @@ public class SetupCommandTests
     }
 
     /// <summary>
-    /// Verifies that omitting <c>--ownaccess</c> respects <c>AiTeammate = false</c> from config
+    /// Verifies that omitting <c>--ownaccess</c> respects <c>OwnAccess = false</c> from config
     /// and shows the blueprint plan (not the own-identity plan).
     /// </summary>
     [Fact]
-    public async Task SetupAll_WithAiteammateOmitted_RespectsConfigBlueprintFlag()
+    public async Task SetupAll_WithOwnaccessOmitted_RespectsConfigBlueprintFlag()
     {
         // Arrange — blueprint agent config; no flag means "respect config" → blueprint plan.
         var config = new Agent365Config
@@ -400,7 +451,7 @@ public class SetupCommandTests
             AgentIdentityDisplayName = "agent",
             AgentBlueprintDisplayName = "TestBlueprint",
             DeploymentProjectPath = ".",
-            AiTeammate = false
+            OwnAccess = false
         };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 
@@ -436,13 +487,13 @@ public class SetupCommandTests
 
     /// <summary>
     /// Verifies that explicit <c>--ownaccess false</c> forces the blueprint plan even when
-    /// <c>a365.config.json</c> has <c>AiTeammate = true</c>.
+    /// <c>a365.config.json</c> has <c>OwnAccess = true</c>.
     /// Catches regressions where <c>FindResultFor</c> always returns null, which would cause
-    /// <c>--ownaccess false</c> to be treated as "not set" and let <c>AiTeammate = true</c>
+    /// <c>--ownaccess false</c> to be treated as "not set" and let <c>OwnAccess = true</c>
     /// route to the own-identity plan instead.
     /// </summary>
     [Fact]
-    public async Task SetupAll_WithAiteammateFalse_ForcesBlueprintPlanRegardlessOfConfig()
+    public async Task SetupAll_WithOwnaccessFalse_ForcesBlueprintPlanRegardlessOfConfig()
     {
         // Arrange — config says own-identity; explicit --ownaccess false must override to blueprint.
         var config = new Agent365Config
@@ -451,7 +502,7 @@ public class SetupCommandTests
             AgentIdentityDisplayName = "agent",
             AgentBlueprintDisplayName = "TestBlueprint",
             DeploymentProjectPath = ".",
-            AiTeammate = true  // config says own-identity
+            OwnAccess = true  // config says own-identity
         };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
 
@@ -464,12 +515,12 @@ public class SetupCommandTests
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
-        // Act — explicit false overrides config's AiTeammate = true
+        // Act — explicit false overrides config's OwnAccess = true
         var result = await parser.InvokeAsync("all --ownaccess false --dry-run", testConsole);
 
         // Assert
         result.Should().Be(0, because: "--ownaccess false is a valid parse and dry-run exits 0");
-        // Blueprint plan must be shown despite config AiTeammate = true.
+        // Blueprint plan must be shown despite config OwnAccess = true.
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),

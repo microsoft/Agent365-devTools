@@ -130,7 +130,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             ["agentIdentityDisplayName"] = config.AgentIdentityDisplayName,
             ["agentBlueprintDisplayName"] = config.AgentBlueprintDisplayName,
             ["agentDescription"] = config.AgentDescription,
-            ["aiTeammate"] = config.AiTeammate,
+            ["ownAccess"] = config.OwnAccess,
             ["useBlueprint"] = config.UseBlueprint,
         };
 
@@ -216,7 +216,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
-            AiTeammate = false,
+            OwnAccess = false,
             UseBlueprint = true,
         };
 
@@ -331,7 +331,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = blueprintDisplayName,
             AgentDescription = agentName,
-            AiTeammate = false,
+            OwnAccess = false,
             UseBlueprint = true,
         };
 

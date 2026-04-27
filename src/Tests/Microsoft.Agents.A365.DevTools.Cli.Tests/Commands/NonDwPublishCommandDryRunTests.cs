@@ -44,7 +44,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
         new()
         {
             ClientAppId = clientAppId,
-            AiTeammate = false,
+            OwnAccess = false,
             TenantId = "tenant-id",
             AgentIdentityDisplayName = "My Agent",
             DeploymentProjectPath = "./app"
@@ -53,11 +53,11 @@ public class NonDwPublishCommandDryRunTests : IDisposable
     [Fact]
     public async Task Publish_NonDwDryRun_ViaFlag_ReturnsExitCode0()
     {
-        // AiTeammate not set in config — driven by flag only
+        // OwnAccess not set in config — driven by flag only
         var config = new Agent365Config
         {
             ClientAppId = "11111111-1111-1111-1111-111111111111",
-            AiTeammate = null,
+            OwnAccess = null,
             TenantId = "tenant-id",
             AgentIdentityDisplayName = "My Agent",
             DeploymentProjectPath = "./app"
@@ -74,7 +74,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
     }
 
     [Fact]
-    public async Task Publish_NonDwDryRun_ViaConfigAiTeammate_ReturnsExitCode0()
+    public async Task Publish_NonDwDryRun_ViaConfigOwnAccess_ReturnsExitCode0()
     {
         var config = BuildNonDwConfig();
         _configService.LoadAsync().Returns(config);
@@ -85,7 +85,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
 
         var exitCode = await root.InvokeAsync("publish --dry-run");
 
-        exitCode.Should().Be(0, "non-DW dry-run via config aiTeammate should succeed");
+        exitCode.Should().Be(0, "non-DW dry-run via config ownAccess should succeed");
     }
 
 [Fact]
@@ -160,7 +160,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
         var config = new Agent365Config
         {
             AgentBlueprintId = null,
-            AiTeammate = true,
+            OwnAccess = true,
             TenantId = "tenant-id",
             ClientAppId = "client-app-id"
         };
@@ -180,7 +180,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
     {
         var config = new Agent365Config
         {
-            AiTeammate = null,
+            OwnAccess = null,
             TenantId = "tenant-id",
             ClientAppId = "client-app-id",
             AgentIdentityDisplayName = "My Agent"
@@ -201,7 +201,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
     {
         var config = new Agent365Config
         {
-            AiTeammate = false,
+            OwnAccess = false,
             UseBlueprint = true,
             TenantId = "tenant-id",
             ClientAppId = "client-app-id",
@@ -224,7 +224,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
         const string blueprintId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
         var config = new Agent365Config
         {
-            AiTeammate = false,
+            OwnAccess = false,
             UseBlueprint = true,
             TenantId = "tenant-id",
             ClientAppId = "client-app-id",
@@ -252,7 +252,7 @@ public class NonDwPublishCommandDryRunTests : IDisposable
     {
         var config = new Agent365Config
         {
-            AiTeammate = false,
+            OwnAccess = false,
             UseBlueprint = true,
             TenantId = "tenant-id",
             ClientAppId = "client-app-id",

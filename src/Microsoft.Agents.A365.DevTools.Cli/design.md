@@ -480,7 +480,7 @@ return await new CommandLineBuilder(rootCommand)
 
 ### Two Agent Flows
 
-`a365 setup all` supports two distinct agent types, controlled by `--ownaccess` (CLI) or `aiTeammate` (config):
+`a365 setup all` supports two distinct agent types, controlled by `--ownaccess` (CLI) or `ownAccess` (config):
 
 | Agent Type | Flag | What it creates |
 |---|---|---|

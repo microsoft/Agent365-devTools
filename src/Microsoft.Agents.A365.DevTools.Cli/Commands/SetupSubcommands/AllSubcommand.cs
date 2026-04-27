@@ -112,7 +112,7 @@ internal static class AllSubcommand
             description: "Own-identity agent: setup provisions blueprint and permissions only;\n" +
                         "run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
                         "Omit for blueprint-only agent (default): setup auto-creates agent identity SP; no Entra user.\n" +
-                        "Overrides the aiTeammate field in a365.config.json");
+                        "Overrides the ownAccess field in a365.config.json");
 
         var agentRegistrationOnlyOption = new Option<bool>(
             "--agent-registration-only",
@@ -187,7 +187,7 @@ internal static class AllSubcommand
                             AgentIdentityDisplayName = $"{agentName} Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",
                             AgentDescription = agentName,
-                            AiTeammate = false,
+                            OwnAccess = false,
                             UseBlueprint = true,
                         };
                     }
@@ -252,7 +252,7 @@ internal static class AllSubcommand
                     catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
                     // If ownidentity was not explicitly set, respect what the config says
                     // (allows existing own-identity configs to keep working without --ownaccess true)
-                    if (nonDwConfig != null && !ownIdentityFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
+                    if (nonDwConfig != null && !ownIdentityFlag.HasValue && !nonDwConfig.IsBlueprintAgent && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
             }
@@ -342,16 +342,16 @@ internal static class AllSubcommand
                         btTenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(null, executor, logger);
                     if (string.IsNullOrWhiteSpace(btTenantId)) { context.ExitCode = 1; return; }
                     var btClientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(btTenantId, graphApiService, logger, ct);
-                    if (!string.IsNullOrWhiteSpace(btClientAppId))
-                        graphApiService.CustomClientAppId = btClientAppId;
+                    if (string.IsNullOrWhiteSpace(btClientAppId)) { context.ExitCode = 1; return; }
+                    graphApiService.CustomClientAppId = btClientAppId;
                     var dwBootstrap = new Agent365Config
                     {
                         TenantId = btTenantId,
-                        ClientAppId = btClientAppId ?? string.Empty,
+                        ClientAppId = btClientAppId,
                         AgentIdentityDisplayName = $"{agentName} Identity",
                         AgentBlueprintDisplayName = $"{agentName} Blueprint",
                         AgentDescription = agentName!,
-                        AiTeammate = true,
+                        OwnAccess = true,
                     };
                     if (resolver != null)
                     {
@@ -827,7 +827,7 @@ internal static class AllSubcommand
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,
-            AiTeammate = false,
+            OwnAccess = false,
             UseBlueprint = true,
         };
 
@@ -861,7 +861,7 @@ internal static class AllSubcommand
             ["agentIdentityDisplayName"] = config.AgentIdentityDisplayName,
             ["agentBlueprintDisplayName"] = config.AgentBlueprintDisplayName,
             ["agentDescription"] = config.AgentDescription,
-            ["aiTeammate"] = config.AiTeammate,
+            ["ownAccess"] = config.OwnAccess,
             ["useBlueprint"] = config.UseBlueprint,
         };
 

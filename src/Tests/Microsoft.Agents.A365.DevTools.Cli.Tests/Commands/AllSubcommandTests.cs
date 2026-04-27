@@ -140,7 +140,7 @@ public class AllSubcommandTests : IDisposable
     {
         var config = new Agent365Config
         {
-            AiTeammate = false,
+            OwnAccess = false,
             TenantId = "tenant-id",
             AgentBlueprintId = blueprintId,
             AgentIdentityDisplayName = "Test Agent",
