@@ -88,6 +88,15 @@ public interface IAgent365ToolingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Logs telemetry for register-external-mcp-server usage before processing begins.
+    /// </summary>
+    Task LogRegisterUsageAsync(
+        string serverName,
+        string authType,
+        int toolCount,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Adds a BYO (Bring Your Own) MCP server
     /// </summary>
     /// <param name="request">Add MCP server request</param>

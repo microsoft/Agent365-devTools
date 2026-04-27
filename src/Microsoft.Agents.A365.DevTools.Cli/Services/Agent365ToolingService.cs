@@ -252,6 +252,12 @@ public class Agent365ToolingService : IAgent365ToolingService
         return $"{baseUrl}/agents/externalMcpServers/add";
     }
 
+    private string BuildLogRegisterUrl(string environment)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/externalMcpServers/logRegister";
+    }
+
     /// <summary>
     /// Builds URL for deleting a BYO MCP server
     /// </summary>
@@ -812,6 +818,38 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <inheritdoc />
+    public async Task LogRegisterUsageAsync(
+        string serverName,
+        string authType,
+        int toolCount,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var endpointUrl = BuildLogRegisterUrl(_environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogDebug("Skipping telemetry: failed to acquire token");
+                return;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            var payload = JsonSerializer.Serialize(new { serverName, authType, toolCount });
+            var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+
+            _logger.LogDebug("Logging register usage telemetry...");
+            using var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
+            _logger.LogDebug("Telemetry logged: {StatusCode}", response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("Telemetry logging failed (non-blocking): {Error}", ex.Message);
+        }
+    }
+
     public async Task<AddMcpServerResponse?> AddMcpServerAsync(
         AddMcpServerRequest request,
         string? environmentId = null,

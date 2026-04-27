@@ -1214,6 +1214,9 @@ public static class DevelopMcpCommand
                 return;
             }
 
+            await toolingService.LogRegisterUsageAsync(
+                serverName, authType, toolList?.Count ?? 0);
+
             Console.WriteLine($"Registering MCP server '{serverName}'...");
 
             // Step 1: Create Entra app(s) and get secrets
