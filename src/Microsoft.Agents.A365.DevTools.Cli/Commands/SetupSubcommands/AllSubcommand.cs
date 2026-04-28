@@ -134,6 +134,14 @@ internal static class AllSubcommand
             description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint via MCP Platform. " +
                         "Default is false (opt-in); omit this flag for non-M365 agents.");
 
+        var authModeOption = new Option<string?>(
+            "--authmode",
+            description: "Authentication pattern for the agent identity (blueprint agents only).\n" +
+                         "  obo  — on-behalf-of (default); principal-scoped delegated grants; no admin consent needed.\n" +
+                         "  s2s  — service-to-service; app permissions on agent identity; Global Admin needed or PowerShell fallback.\n" +
+                         "  both — delegated grants (OBO) and app permissions (S2S).\n" +
+                         "Not supported with --aiteammate true.");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -143,6 +151,7 @@ internal static class AllSubcommand
         command.AddOption(m365Option);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(authModeOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -159,7 +168,22 @@ internal static class AllSubcommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             bool isM365 = context.ParseResult.GetValueForOption(m365Option);
+            var authMode = context.ParseResult.GetValueForOption(authModeOption)?.ToLowerInvariant();
             var ct = context.GetCancellationToken();
+
+            // --authmode validation
+            if (authMode is not null && authMode is not ("obo" or "s2s" or "both"))
+            {
+                logger.LogError("Invalid --authmode value '{Value}'. Allowed values: obo, s2s, both.", authMode);
+                context.ExitCode = 1;
+                return;
+            }
+            if (authMode is not null && aiTeammateFlag == true)
+            {
+                logger.LogError("--authmode is not supported with --aiteammate true. It only applies to blueprint agents (--aiteammate false).");
+                context.ExitCode = 1;
+                return;
+            }
 
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -267,7 +291,8 @@ internal static class AllSubcommand
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly);
+                    var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode);
                     return;
                 }
 
@@ -302,6 +327,7 @@ internal static class AllSubcommand
                     agentInstanceOnly: agentRegistrationOnly,
                     isBootstrap: isBootstrap,
                     isM365: isM365,
+                    authMode: authMode ?? nonDwConfig.AuthMode,
                     confirmationProvider: confirmationProvider);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);

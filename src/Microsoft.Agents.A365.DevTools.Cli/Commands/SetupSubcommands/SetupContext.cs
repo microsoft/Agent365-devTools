@@ -59,6 +59,21 @@ internal sealed class SetupContext
     public bool IsM365 { get; }
 
     /// <summary>
+    /// Authentication pattern for the agent identity. Resolved from --authmode flag or config.
+    /// Null and "obo" both resolve to OBO (the default).
+    /// </summary>
+    public string? AuthMode { get; }
+
+    /// <summary>Null or "obo" — principal-scoped delegated grants; no admin consent needed.</summary>
+    public bool IsOboMode => AuthMode is null || string.Equals(AuthMode, "obo", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>"s2s" — app role assignments on agent identity; Global Admin needed or PowerShell fallback.</summary>
+    public bool IsS2sMode => string.Equals(AuthMode, "s2s", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>"both" — delegated grants (OBO) and app role assignments (S2S).</summary>
+    public bool IsBothMode => string.Equals(AuthMode, "both", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
     /// Null in production — injected as a no-op in tests to avoid spawning 'az account show'.
     /// </summary>
@@ -107,6 +122,7 @@ internal sealed class SetupContext
         bool agentInstanceOnly = false,
         bool isBootstrap = false,
         bool isM365 = false,
+        string? authMode = null,
         Func<Task<string?>>? loginHintResolver = null,
         IConfirmationProvider? confirmationProvider = null)
     {
@@ -122,6 +138,7 @@ internal sealed class SetupContext
         AgentInstanceOnly = agentInstanceOnly;
         IsBootstrap = isBootstrap;
         IsM365 = isM365;
+        AuthMode = authMode?.ToLowerInvariant();
         ConfigService = configService;
         Executor = executor;
         BackendConfigurator = backendConfigurator;

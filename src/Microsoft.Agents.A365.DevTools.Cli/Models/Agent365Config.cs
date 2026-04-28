@@ -150,6 +150,17 @@ public class Agent365Config
     [JsonPropertyName("clientAppId")]
     public string ClientAppId { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Authentication pattern for the agent identity (blueprint agents only).
+    /// Accepted values: "obo" (default), "s2s", "both".
+    ///   obo  — on-behalf-of; principal-scoped delegated grants; no admin consent needed.
+    ///   s2s  — service-to-service; app role assignments on agent identity; Global Admin needed or PowerShell fallback.
+    ///   both — delegated grants (OBO) and app permissions (S2S).
+    /// Persisted to a365.config.json. Not written to a365.generated.config.json.
+    /// </summary>
+    [JsonPropertyName("authMode")]
+    public string? AuthMode { get; init; }
+
     #endregion
 
     #region Azure OpenAI Configuration
@@ -662,6 +673,7 @@ public class Agent365Config
             Environment = this.Environment,
             MessagingEndpoint = this.MessagingEndpoint,
             ClientAppId = this.ClientAppId,
+            AuthMode = this.AuthMode,
             AiTeammate = this.AiTeammate,
             UseBlueprint = this.UseBlueprint,
             AzureOpenAIName = this.AzureOpenAIName,

@@ -97,7 +97,7 @@ flowchart LR
 
 | File | Content | Editing |
 |------|---------|---------|
-| `a365.config.json` | Tenant ID, subscription, resource names, project path | User edits |
+| `a365.config.json` | Tenant ID, subscription, resource names, project path, `authMode` | User edits |
 | `a365.generated.config.json` | Agent blueprint ID, identity ID, consent status | CLI generates |
 
 ### Configuration File Storage and Portability
@@ -128,6 +128,7 @@ public class Agent365Config
     public string ResourceGroup { get; init; } = string.Empty;
     public string WebAppName { get; init; } = string.Empty;
     public string DeploymentProjectPath { get; init; } = string.Empty;
+    public string? AuthMode { get; init; }   // "obo" | "s2s" | "both"; default obo when null
 
     // DYNAMIC PROPERTIES (get/set) - from a365.generated.config.json
     // Modified at runtime by CLI operations

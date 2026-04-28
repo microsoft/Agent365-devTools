@@ -771,6 +771,15 @@ public class GraphApiService
                 if (grantResponse.IsSuccess)
                     return true;
 
+                // "Permission entry already exists" means the grant is already in place — treat as success.
+                if (grantResponse.Body.Contains("Permission entry already exists", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug(
+                        "OAuth2 permission grant already exists for resource {ResourceSpId} — treating as success (idempotent).",
+                        resourceSpObjectId);
+                    return true;
+                }
+
                 if (!grantResponse.Body.Contains("Directory_ObjectNotFound", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogWarning(

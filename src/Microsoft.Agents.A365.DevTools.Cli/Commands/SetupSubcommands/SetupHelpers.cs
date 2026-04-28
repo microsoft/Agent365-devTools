@@ -421,7 +421,10 @@ internal static class SetupHelpers
         logger.LogInformation("Setup Summary");
         logger.LogInformation("");
 
-        var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
+        // Developer-scoped grants (OBO authmode) are the intentional alternative to AllPrincipals admin consent.
+        // When AgentIdentityPermissionsGranted is true, no admin action is needed for permission grants.
+        var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed
+            && !results.AgentIdentityPermissionsGranted;
         var pendingS2SAction = results.S2SAppRoleGranted == false;
 
         // ── Numbered step rows — mirrors the dry-run step list ─────────────────

@@ -539,4 +539,102 @@ public class SetupCommandTests
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
+
+    // ── --authmode parameter validation ───────────────────────────────────────
+
+    private Command BuildSetupCommand() => SetupCommand.CreateCommand(
+        _mockLogger, _mockConfigService, _mockExecutor, _mockBackendConfigurator,
+        _mockAuthValidator, _mockPlatformDetector,
+        _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService,
+        _mockFederatedCredentialService, _mockClientAppValidator, _mockConfirmationProvider);
+
+    private Agent365Config BlueprintConfig() => new()
+    {
+        TenantId = "tenant",
+        AgentIdentityDisplayName = "agent",
+        AgentBlueprintDisplayName = "TestBlueprint",
+        DeploymentProjectPath = ".",
+        AiTeammate = false,
+        UseBlueprint = true,
+    };
+
+    /// <summary>
+    /// An unrecognised --authmode value must be rejected before any Azure calls are made.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_AuthMode_InvalidValue_ExitsWithCode1()
+    {
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --aiteammate false --authmode invalid", new TestConsole());
+
+        result.Should().Be(1, because: "an unrecognised --authmode value must abort before touching Azure");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Invalid --authmode value")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>
+    /// --authmode is only meaningful for blueprint agents. Passing it with --aiteammate true
+    /// must be rejected because the combination is undefined.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_AuthMode_WithAiteammateTrue_ExitsWithCode1()
+    {
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --aiteammate true --authmode obo", new TestConsole());
+
+        result.Should().Be(1, because: "--authmode is not supported with --aiteammate true");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not supported with --aiteammate true")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>All three valid authMode values must be accepted without error.</summary>
+    [Theory]
+    [InlineData("obo")]
+    [InlineData("s2s")]
+    [InlineData("both")]
+    [InlineData("OBO")]   // case-insensitive
+    [InlineData("S2S")]
+    [InlineData("BOTH")]
+    public async Task SetupAll_AuthMode_ValidValues_ExitWithCode0(string authModeValue)
+    {
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync($"all --aiteammate false --authmode {authModeValue} --dry-run", new TestConsole());
+
+        result.Should().Be(0, because: $"'{authModeValue}' is a valid --authmode value and --dry-run exits 0");
+    }
+
+    /// <summary>
+    /// Omitting --authmode defaults to OBO behaviour — the dry-run plan must show
+    /// delegated grants and must not mention AllPrincipals or admin consent.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_NoAuthMode_DefaultsToOboBehaviour()
+    {
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --aiteammate false --dry-run", new TestConsole());
+
+        result.Should().Be(0, because: "omitting --authmode is valid and dry-run exits 0");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("obo")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
 }
