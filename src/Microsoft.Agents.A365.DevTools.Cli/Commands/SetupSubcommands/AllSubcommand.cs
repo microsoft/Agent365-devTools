@@ -180,7 +180,7 @@ internal static class AllSubcommand
             }
             if (authMode is not null && aiTeammateFlag == true)
             {
-                logger.LogError("--authmode is not supported with --aiteammate true. It only applies to blueprint agents (--aiteammate false).");
+                logger.LogError("--authmode is not supported with --aiteammate — AI Teammate agents automatically use OBO via agent user identity.");
                 context.ExitCode = 1;
                 return;
             }
@@ -200,13 +200,11 @@ internal static class AllSubcommand
                 {
                     if (dryRun)
                     {
-                        // Dry-run: detect tenant only (no client app lookup needed for display)
-                        var dryRunTenantId = tenantIdFlag;
-                        if (string.IsNullOrWhiteSpace(dryRunTenantId))
-                            dryRunTenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(null, executor, logger);
+                        // Dry-run: build config from flags only — no az CLI subprocess needed.
+                        // TenantId is not shown in the plan so detection is skipped intentionally.
                         nonDwConfig = new Agent365Config
                         {
-                            TenantId = dryRunTenantId ?? "(unknown — run 'az login' or pass --tenant-id)",
+                            TenantId = tenantIdFlag ?? string.Empty,
                             ClientAppId = string.Empty,
                             AgentIdentityDisplayName = $"{agentName} Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",

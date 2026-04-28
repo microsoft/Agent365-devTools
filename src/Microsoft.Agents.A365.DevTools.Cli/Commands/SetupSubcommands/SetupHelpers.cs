@@ -463,7 +463,7 @@ internal static class SetupHelpers
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + notRun);
         else if (results.BatchPermissionsPhase1Completed)
-            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + "configured");
+            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + (isNonDw ? "skipped (permissions set directly on agent identity)" : "configured"));
 
         // Permission Grants: step 4 (non-DW) or step 5 (DW)
         if (results.BlueprintFailed)
@@ -515,7 +515,7 @@ internal static class SetupHelpers
             switch (results.MessagingEndpointResult)
             {
                 case null:
-                    logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "skipped (non-M365 agent; use --m365 to enable)");
+                    logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "skipped (non-M365 agent)");
                     break;
                 case Models.EndpointRegistrationResult.Created:
                     logger.LogInformation(
@@ -991,7 +991,7 @@ internal static class SetupHelpers
         }
         else
         {
-            logger.LogInformation(DryRunRow(6, "Messaging endpoint") + "skip (non-M365 agent; pass --m365 to enable)");
+            logger.LogInformation(DryRunRow(6, "Messaging endpoint") + "skipped (non-M365 agent)");
         }
 
         // 7. Project settings (DW has no Agent identity or Agent Registration steps)

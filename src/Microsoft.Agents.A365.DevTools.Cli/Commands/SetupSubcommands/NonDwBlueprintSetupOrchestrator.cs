@@ -96,25 +96,25 @@ internal static class NonDwBlueprintSetupOrchestrator
             logger.LogInformation(sub + "create managed identity");
         }
 
-        // 3. Inheritable Permissions — skipped in all authMode values (admin involvement avoided)
+        // 3. Inheritable Permissions — only applicable to AI Teammate (DW) agents; always skipped here.
         var effectiveMode = (authMode ?? config.AuthMode)?.ToLowerInvariant() ?? "obo";
-        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "skipped (authmode: {AuthMode} — admin involvement avoided)", effectiveMode);
+        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "skipped (permissions set directly on agent identity)");
 
-        // 4. Permission Grants — per authMode
-        if (effectiveMode is "obo" or "both")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent Identity Delegated") + "principal-scoped delegated grants (programmatic, no admin required)");
-        if (effectiveMode is "s2s" or "both")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent Identity App Perms") + "application permissions — attempted programmatically; PowerShell fallback if not Global Admin");
-
-        // 5. Agent identity
+        // 4. Agent identity (created before grants so the SP exists to receive them)
         var agentIdentityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
         var agentRegistrationDisplayName = agentIdentityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
             ? agentIdentityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
             : agentIdentityDisplayName;
         if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", agentIdentityDisplayName, config.AgenticAppId);
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", agentIdentityDisplayName, config.AgenticAppId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "create: {DisplayName}", agentIdentityDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "create: {DisplayName}", agentIdentityDisplayName);
+
+        // 5. Permission Grants — per authMode, applied to the agent identity SP
+        if (effectiveMode is "obo" or "both")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent Identity Delegated") + "principal-scoped delegated grants (programmatic, no admin required)");
+        if (effectiveMode is "s2s" or "both")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent Identity App Perms") + "application permissions — attempted programmatically; PowerShell fallback if not Global Admin");
 
         // 6. Agent Registration
         if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
@@ -133,7 +133,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
         else
         {
-            logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + "skip (non-M365 agent; pass --m365 to enable)");
+            logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + "skipped (non-M365 agent)");
         }
 
         // 8. Project settings
@@ -284,9 +284,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Results.BatchPermissionsPhase1Completed = true;
                 ctx.Results.BatchPermissionsPhase2Completed = true;
                 ctx.Results.AdminConsentGranted = false;
-                ctx.Logger.LogInformation(
-                    "Inheritable perms and AllPrincipals grants skipped (authmode: {AuthMode}).",
-                    ctx.AuthMode ?? "obo");
+                ctx.Logger.LogInformation("Inheritable perms and AllPrincipals grants skipped (permissions set directly on agent identity).");
 
                 // Save state before agent identity steps so progress is not lost on failure.
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);

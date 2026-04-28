@@ -590,11 +590,11 @@ public class SetupCommandTests
 
         var result = await parser.InvokeAsync("all --aiteammate true --authmode obo", new TestConsole());
 
-        result.Should().Be(1, because: "--authmode is not supported with --aiteammate true");
+        result.Should().Be(1, because: "--authmode is not supported with --aiteammate");
         _mockLogger.Received().Log(
             LogLevel.Error,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("not supported with --aiteammate true")),
+            Arg.Is<object>(o => o.ToString()!.Contains("not supported with --aiteammate")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -619,7 +619,7 @@ public class SetupCommandTests
 
     /// <summary>
     /// Omitting --authmode defaults to OBO behaviour — the dry-run plan must show
-    /// delegated grants and must not mention AllPrincipals or admin consent.
+    /// delegated grants (step 5) and must not show S2S app permission grants.
     /// </summary>
     [Fact]
     public async Task SetupAll_NoAuthMode_DefaultsToOboBehaviour()
@@ -633,7 +633,13 @@ public class SetupCommandTests
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("obo")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Agent Identity Delegated")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Agent Identity App Perms")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
