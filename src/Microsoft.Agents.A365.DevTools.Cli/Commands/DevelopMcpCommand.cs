@@ -1270,6 +1270,9 @@ public static class DevelopMcpCommand
             Models.AddMcpServerAuthMetadata? authMetadata = null;
             string? remoteProxyAppObjectId = null;
             string? a365AppObjectId = null;
+            var a365AppName = $"{serverName}-A365Proxy";
+            var remoteProxyAppName = $"{serverName}-RemoteProxy";
+            var publicClientsAppName = $"{serverName}-PublicClients";
 
             // A365 Proxy app is always created (including NoAuth — needed for the A365 Proxy connector)
             if (graphApiService == null)
@@ -1283,7 +1286,7 @@ public static class DevelopMcpCommand
             {
                 logger.LogDebug("Force mode: looking up existing Entra apps to delete...");
 
-                var existingA365ObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-A365Proxy");
+                var existingA365ObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, a365AppName);
                 if (!string.IsNullOrWhiteSpace(existingA365ObjectId))
                 {
                     logger.LogDebug("Deleting existing A365 Proxy app: {ObjectId}", existingA365ObjectId);
@@ -1292,7 +1295,7 @@ public static class DevelopMcpCommand
 
                 if (isEntra)
                 {
-                    var existingRemoteObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-RemoteProxy");
+                    var existingRemoteObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, remoteProxyAppName);
                     if (!string.IsNullOrWhiteSpace(existingRemoteObjectId))
                     {
                         logger.LogDebug("Deleting existing Remote Proxy app: {ObjectId}", existingRemoteObjectId);
@@ -1309,7 +1312,7 @@ public static class DevelopMcpCommand
             }
 
             logger.LogDebug("Creating Entra application for A365 Proxy...");
-            var a365App = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-A365Proxy", serviceTreeId: serviceTreeId);
+            var a365App = await graphApiService.CreateEntraAppAsync(tenantId, a365AppName, serviceTreeId: serviceTreeId);
             if (a365App == null)
             {
                 logger.LogError("Failed to create Entra application for A365 Proxy");
@@ -1344,7 +1347,7 @@ public static class DevelopMcpCommand
                 {
                     // Entra flow: create second Entra app for RemoteProxy
                     logger.LogDebug("Creating Entra application for Remote Proxy...");
-                    var remoteApp = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-RemoteProxy", serviceTreeId: serviceTreeId);
+                    var remoteApp = await graphApiService.CreateEntraAppAsync(tenantId, remoteProxyAppName, serviceTreeId: serviceTreeId);
                     if (remoteApp == null)
                     {
                         logger.LogError("Failed to create Entra application for Remote Proxy");
@@ -1385,7 +1388,7 @@ public static class DevelopMcpCommand
 
             if (force)
             {
-                var existingCopilotObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-PublicClients");
+                var existingCopilotObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, publicClientsAppName);
                 if (!string.IsNullOrWhiteSpace(existingCopilotObjectId))
                 {
                     logger.LogDebug("Deleting existing Copilot app: {ObjectId}", existingCopilotObjectId);
@@ -1394,7 +1397,7 @@ public static class DevelopMcpCommand
             }
 
             logger.LogDebug("Creating Entra application for Public Clients...");
-            var copilotApp = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-PublicClients", serviceTreeId: serviceTreeId);
+            var copilotApp = await graphApiService.CreateEntraAppAsync(tenantId, publicClientsAppName, serviceTreeId: serviceTreeId);
             if (copilotApp != null)
             {
                 copilotAppClientId = copilotApp.Value.ClientId;
@@ -1405,7 +1408,7 @@ public static class DevelopMcpCommand
                 try
                 {
                     await graphApiService.UpdateAppRedirectUrisAsync(tenantId, copilotAppObjectId, new[] { copilotRedirectUri });
-                    logger.LogDebug("Set Public Clients redirect URI: {Uri}", copilotRedirectUri);
+                    logger.LogDebug("Set redirect URI on '{AppName}' ({ObjectId}): {Uri}", publicClientsAppName, copilotAppObjectId, copilotRedirectUri);
                 }
                 catch (Exception ex)
                 {
@@ -1480,8 +1483,7 @@ public static class DevelopMcpCommand
                 {
                     var a365OriginalUri = RemoveTcPrefix(a365RedirectUri);
                     var a365Uris = a365OriginalUri != null ? new[] { a365RedirectUri, a365OriginalUri } : new[] { a365RedirectUri };
-                    logger.LogDebug("A365 Proxy Redirect URIs: {RedirectUris}", string.Join(", ", a365Uris));
-                    logger.LogDebug("Updating redirect URIs on A365 Proxy Entra app...");
+                    logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}", a365AppName, a365AppObjectId, string.Join(", ", a365Uris));
                     await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, a365AppObjectId, a365Uris);
                 }
                 catch (Exception ex)
@@ -1504,8 +1506,7 @@ public static class DevelopMcpCommand
                 {
                     var remoteOriginalUri = RemoveTcPrefix(remoteRedirectUri);
                     var remoteUris = remoteOriginalUri != null ? new[] { remoteRedirectUri, remoteOriginalUri } : new[] { remoteRedirectUri };
-                    logger.LogDebug("Remote MCP Proxy Redirect URIs: {RedirectUris}", string.Join(", ", remoteUris));
-                    logger.LogDebug("Updating redirect URIs on Remote Proxy Entra app...");
+                    logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}", remoteProxyAppName, remoteProxyAppObjectId, string.Join(", ", remoteUris));
                     await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, remoteProxyAppObjectId, remoteUris);
                 }
                 catch (Exception ex)
@@ -1549,7 +1550,7 @@ public static class DevelopMcpCommand
                         var remoteScopeId = await graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName);
                         if (remoteScopeId.HasValue)
                         {
-                            logger.LogDebug("Adding API permission for remote scope on RemoteProxy app...");
+                            logger.LogDebug("Adding API permission '{ScopeName}' (resource: {ResourceAppId}) on '{AppName}' ({ObjectId})", scopeName, resourceAppId, remoteProxyAppName, remoteProxyAppObjectId);
                             await graphApiService.AddRequiredResourceAccessAsync(
                                 tenantId, remoteProxyAppObjectId, resourceAppId, remoteScopeId.Value);
                         }
@@ -1589,7 +1590,7 @@ public static class DevelopMcpCommand
                     {
                         try
                         {
-                            logger.LogDebug("Adding PPMI delegated permission on A365 Proxy app...");
+                            logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission (resource: {PpmiAppId}) on '{AppName}' ({ObjectId})", ppmiAppClientId, a365AppName, a365AppObjectId);
                             await graphApiService.AddRequiredResourceAccessAsync(
                                 tenantId, a365AppObjectId, ppmiAppClientId, ppmiScopeId.Value);
                         }
@@ -1605,7 +1606,7 @@ public static class DevelopMcpCommand
                     {
                         try
                         {
-                            logger.LogDebug("Adding PPMI delegated permission on Copilot app...");
+                            logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission (resource: {PpmiAppId}) on '{AppName}' ({ObjectId})", ppmiAppClientId, publicClientsAppName, copilotAppObjectId);
                             await graphApiService.AddRequiredResourceAccessAsync(
                                 tenantId, copilotAppObjectId, ppmiAppClientId, ppmiScopeId.Value);
                         }
