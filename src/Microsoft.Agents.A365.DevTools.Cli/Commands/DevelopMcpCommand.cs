@@ -1379,13 +1379,13 @@ public static class DevelopMcpCommand
                 };
             }
 
-            // Create Copilot (VS Code) Entra app — same pattern as A365 Proxy
+            // Create Public Clients Entra app — same pattern as A365 Proxy
             string? copilotAppClientId = null;
             string? copilotAppObjectId = null;
 
             if (force)
             {
-                var existingCopilotObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-Copilot");
+                var existingCopilotObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName}-PublicClients");
                 if (!string.IsNullOrWhiteSpace(existingCopilotObjectId))
                 {
                     logger.LogDebug("Deleting existing Copilot app: {ObjectId}", existingCopilotObjectId);
@@ -1393,19 +1393,19 @@ public static class DevelopMcpCommand
                 }
             }
 
-            logger.LogDebug("Creating Entra application for Copilot (VS Code)...");
-            var copilotApp = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-Copilot", serviceTreeId: serviceTreeId);
+            logger.LogDebug("Creating Entra application for Public Clients...");
+            var copilotApp = await graphApiService.CreateEntraAppAsync(tenantId, $"{serverName}-PublicClients", serviceTreeId: serviceTreeId);
             if (copilotApp != null)
             {
                 copilotAppClientId = copilotApp.Value.ClientId;
                 copilotAppObjectId = copilotApp.Value.ObjectId;
-                logger.LogDebug("Created Copilot app: {ClientId}", copilotAppClientId);
+                logger.LogDebug("Created Public Clients app: {ClientId}", copilotAppClientId);
 
                 var copilotRedirectUri = $"ms-appx-web://MicrosoftAAD.BrokerPlugin/{copilotAppClientId}";
                 try
                 {
                     await graphApiService.UpdateAppRedirectUrisAsync(tenantId, copilotAppObjectId, new[] { copilotRedirectUri });
-                    logger.LogDebug("Set Copilot redirect URI: {Uri}", copilotRedirectUri);
+                    logger.LogDebug("Set Public Clients redirect URI: {Uri}", copilotRedirectUri);
                 }
                 catch (Exception ex)
                 {
@@ -1580,6 +1580,49 @@ public static class DevelopMcpCommand
             if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
             {
                 logger.LogDebug("PPMI app provisioned: {PpmiAppClientId}", ppmiAppClientId);
+
+                var ppmiScopeId = await graphApiService!.GetOAuth2PermissionScopeIdAsync(
+                    tenantId, ppmiAppClientId, "Tools.ListInvoke.All");
+                if (ppmiScopeId.HasValue)
+                {
+                    if (a365AppObjectId != null)
+                    {
+                        try
+                        {
+                            logger.LogDebug("Adding PPMI delegated permission on A365 Proxy app...");
+                            await graphApiService.AddRequiredResourceAccessAsync(
+                                tenantId, a365AppObjectId, ppmiAppClientId, ppmiScopeId.Value);
+                        }
+                        catch (Exception ex)
+                        {
+                            var msg = $"Failed to add PPMI permission on A365 Proxy app: {ex.Message}";
+                            logger.LogWarning(msg);
+                            warnings.Add(msg);
+                        }
+                    }
+
+                    if (copilotAppObjectId != null)
+                    {
+                        try
+                        {
+                            logger.LogDebug("Adding PPMI delegated permission on Copilot app...");
+                            await graphApiService.AddRequiredResourceAccessAsync(
+                                tenantId, copilotAppObjectId, ppmiAppClientId, ppmiScopeId.Value);
+                        }
+                        catch (Exception ex)
+                        {
+                            var msg = $"Failed to add PPMI permission on Copilot app: {ex.Message}";
+                            logger.LogWarning(msg);
+                            warnings.Add(msg);
+                        }
+                    }
+                }
+                else
+                {
+                    var msg = $"Could not find 'Tools.ListInvoke.All' scope on PPMI app {ppmiAppClientId}. API permissions not added.";
+                    logger.LogWarning(msg);
+                    warnings.Add(msg);
+                }
             }
 
             // Step 5: Show completion summary
