@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -40,7 +41,7 @@ public class AddMcpServerRequest
     public AddMcpServerAuthMetadata? AuthMetadata { get; set; }
 
     /// <summary>
-    /// Authentication type: "Entra" or "ExternalIDP"
+    /// Authentication type: "EntraOAuth", "ExternalOAuth", "APIKey", or "NoAuth"
     /// </summary>
     [JsonPropertyName("authType")]
     public string? AuthType { get; set; }

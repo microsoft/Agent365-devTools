@@ -127,7 +127,9 @@ public class Agent365ToolingService : IAgent365ToolingService
             var root = doc.RootElement;
 
             var details = root.TryGetProperty("details", out var d) ? d.GetString() : null;
-            var error = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+            var error = root.TryGetProperty("error", out var e)
+                ? (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("message", out var em) ? em.GetString() : e.GetString())
+                : null;
             var message = root.TryGetProperty("message", out var m) ? m.GetString() : null;
 
             return details ?? error ?? message;
@@ -150,9 +152,45 @@ public class Agent365ToolingService : IAgent365ToolingService
         _logger.LogDebug("Request URL: {Url}", url);
         if (!string.IsNullOrEmpty(payload))
         {
-            _logger.LogDebug("Request Payload: {Payload}", payload);
+            _logger.LogDebug("Request Payload: {Payload}", RedactSecretsFromPayload(payload));
         }
         _logger.LogDebug("Making {Method} request to: {Url}", method, url);
+    }
+
+    private static string RedactSecretsFromPayload(string payload)
+    {
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(payload) as System.Text.Json.Nodes.JsonObject;
+            if (node == null) return "[non-JSON payload]";
+
+            RedactSecretFields(node);
+            return node.ToJsonString();
+        }
+        catch
+        {
+            return "[payload redacted]";
+        }
+    }
+
+    private static void RedactSecretFields(System.Text.Json.Nodes.JsonObject obj)
+    {
+        var secretKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "clientApp1Secret", "clientApp2Secret", "clientSecret"
+        };
+
+        foreach (var key in obj.Select(p => p.Key).ToList())
+        {
+            if (secretKeys.Contains(key))
+            {
+                obj[key] = "***REDACTED***";
+            }
+            else if (obj[key] is System.Text.Json.Nodes.JsonObject child)
+            {
+                RedactSecretFields(child);
+            }
+        }
     }
 
     /// <summary>
@@ -279,7 +317,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     private string BuildProvisionIdentityUrl(string environment, string serverName)
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
-        return $"{baseUrl}/agents/mcpServers/{serverName}/provisionIdentity";
+        return $"{baseUrl}/agents/mcpServers/{Uri.EscapeDataString(serverName)}/provisionIdentity";
     }
 
     /// <summary>
@@ -858,7 +896,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         if (request == null)
             throw new ArgumentNullException(nameof(request));
         if (string.IsNullOrWhiteSpace(request.ServerName))
-            throw new ArgumentException("Server name cannot be null or empty", nameof(request));
+            throw new ArgumentException("Server name cannot be null or empty", nameof(request.ServerName));
 
         try
         {
@@ -927,8 +965,8 @@ public class Agent365ToolingService : IAgent365ToolingService
         }
         catch (Exception ex)
         {
-            _logger.LogError("Failed to add MCP server {ServerName}: {ErrorMessage}", request.ServerName, ex.Message);
-            return new AddMcpServerResponse { Status = "Failed", Message = ex.Message };
+            _logger.LogError(ex, "Failed to add MCP server {ServerName}", request.ServerName);
+            return new AddMcpServerResponse { Status = "Failed", Message = "Failed to add MCP server. See logs for details." };
         }
     }
 

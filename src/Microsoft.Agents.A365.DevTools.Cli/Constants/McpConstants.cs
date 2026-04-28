@@ -27,7 +27,7 @@ public static class McpConstants
     /// </summary>
     public static string GetAgent365Domain(string environment)
     {
-        return environment?.ToLower() switch
+        return environment?.ToLowerInvariant() switch
         {
             "prod" or "prd" => Agent365ProdDomain,
             "preprod" or "ppe" => Agent365PreProdDomain,

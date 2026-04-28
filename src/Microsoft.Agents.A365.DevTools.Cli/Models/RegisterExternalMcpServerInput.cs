@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -10,7 +11,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Models;
 public class RegisterExternalMcpServerInput
 {
     /// <summary>
-    /// MCP server name (max 22 chars). If no prefix with '_' is present, 'ext_' is auto-prepended.
+    /// MCP server name (max 22 chars, must start with 'ext_', e.g. ext_MyServer).
     /// </summary>
     [JsonPropertyName("serverName")]
     public string? ServerName { get; set; }

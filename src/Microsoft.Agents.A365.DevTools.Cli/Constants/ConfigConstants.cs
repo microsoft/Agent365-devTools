@@ -162,13 +162,13 @@ public static class ConfigConstants
 public static string GetAgent365ToolsResourceAppId(string environment)
 {
     // Check for custom app ID in environment variable first
-    var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpper()}");
+    var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpperInvariant()}");
     if (!string.IsNullOrEmpty(customAppId))
         return customAppId;
 
-    return environment?.ToLower() switch
+    return environment?.ToLowerInvariant() switch
     {
-        "local" or "test" or "preprod" => "05879165-0320-489e-b644-f72b33f3edf0",
+        "local" or "test" or "preprod" or "ppe" => "05879165-0320-489e-b644-f72b33f3edf0",
         _ => McpConstants.Agent365ToolsProdAppId,
     };
 }

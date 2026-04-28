@@ -546,14 +546,14 @@ public class AuthenticationService
             },
             DeviceCodeCallback = (code, cancellation) =>
             {
-                _logger.LogDebug("");
-                _logger.LogDebug("==========================================================================");
-                _logger.LogDebug("To sign in, use a web browser to open the page:");
-                _logger.LogDebug("    {VerificationUri}", code.VerificationUri);
-                _logger.LogDebug("");
-                _logger.LogDebug("And enter the code: {UserCode}", code.UserCode);
-                _logger.LogDebug("==========================================================================");
-                _logger.LogDebug("");
+                _logger.LogInformation("");
+                _logger.LogInformation("==========================================================================");
+                _logger.LogInformation("To sign in, use a web browser to open the page:");
+                _logger.LogInformation("    {VerificationUri}", code.VerificationUri);
+                _logger.LogInformation("");
+                _logger.LogInformation("And enter the code: {UserCode}", code.UserCode);
+                _logger.LogInformation("==========================================================================");
+                _logger.LogInformation("");
                 return Task.CompletedTask;
             }
         });

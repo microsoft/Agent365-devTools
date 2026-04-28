@@ -815,7 +815,7 @@ public static class DevelopMcpCommand
     {
         var command = new Command("register-external-mcp-server", "Register an external MCP server with Entra, ExternalIDP, or NoAuth authentication");
 
-        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name (max 22 chars). If no '<prefix>_' is present, 'ext_' is auto-prepended.");
+        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name (max 22 chars, must start with 'ext_', e.g. ext_MyServer)");
         command.AddOption(serverNameOption);
 
         var serverUrlOption = new Option<string?>(["--server-url", "-u"], description: "Remote MCP server URL");
@@ -971,7 +971,7 @@ public static class DevelopMcpCommand
                 // Validate required inputs
                 if (string.IsNullOrWhiteSpace(serverName))
                 {
-                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to register: ", "Server name", 100);
+                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name (must start with 'ext_', e.g. ext_MyServer): ", "Server name", 100);
                     if (string.IsNullOrWhiteSpace(serverName)) { logger.LogError("Server name is required"); return; }
                 }
                 else
@@ -980,14 +980,14 @@ public static class DevelopMcpCommand
                     if (serverName == null) { logger.LogError("Invalid server name format"); return; }
                 }
 
-                // Auto-prepend "ext_" if the server name doesn't contain a prefix (no '_' found)
-                if (!serverName.Contains('_'))
+                // Server name must start with "ext_" prefix
+                if (!serverName.StartsWith("ext_", StringComparison.OrdinalIgnoreCase))
                 {
-                    serverName = $"ext_{serverName}";
-                    logger.LogDebug("Server name auto-prefixed to '{ServerName}' (no prefix detected)", serverName);
+                    logger.LogError("Server name must start with 'ext_' prefix. Got: '{ServerName}'", serverName);
+                    return;
                 }
 
-                // Validate server name length (max 27 chars including prefix)
+                // Validate server name length (max 22 chars including prefix)
                 const int maxServerNameLength = 22;
                 if (serverName.Length > maxServerNameLength)
                 {
@@ -999,6 +999,13 @@ public static class DevelopMcpCommand
                 {
                     serverUrl = InputValidator.PromptAndValidateRequiredInput("Enter remote MCP server URL: ", "Server URL", 500);
                     if (string.IsNullOrWhiteSpace(serverUrl)) { logger.LogError("Server URL is required"); return; }
+                }
+
+                if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var parsedUri) ||
+                    (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
+                {
+                    logger.LogError("Server URL '{ServerUrl}' is not a valid HTTP/HTTPS URL", serverUrl);
+                    return;
                 }
 
                 // Validate auth type
@@ -1165,16 +1172,20 @@ public static class DevelopMcpCommand
 
             // Display registration summary
             Console.WriteLine();
+            var prevColor = Console.ForegroundColor;
+            Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("Registration Summary");
             Console.WriteLine("====================");
-            Console.WriteLine($"  Server Name:    {serverName}");
-            Console.WriteLine($"  Server URL:     {serverUrl}");
-            Console.WriteLine($"  Auth Type:      {authType}");
-            Console.WriteLine($"  Publisher:      {publisherName}");
-            Console.WriteLine($"  Description:    {serverDescription}");
+            Console.ForegroundColor = prevColor;
+            WriteLabel("  Server Name:    "); Console.WriteLine(serverName);
+            WriteLabel("  Server URL:     "); Console.WriteLine(serverUrl);
+            WriteLabel("  Auth Type:      "); Console.WriteLine(authType);
+            WriteLabel("  Publisher:      "); Console.WriteLine(publisherName);
+            WriteLabel("  Description:    "); Console.WriteLine(serverDescription);
             if (toolList is not null)
             {
-                Console.WriteLine($"  Tools:");
+                WriteLabel("  Tools:");
+                Console.WriteLine();
                 foreach (var tool in toolList)
                 {
                     var desc = toolDescriptions?.GetValueOrDefault(tool);
@@ -1184,26 +1195,40 @@ public static class DevelopMcpCommand
 
             if (!isNoAuth && !isApiKey && !string.IsNullOrWhiteSpace(remoteScopes))
             {
-                Console.WriteLine($"  Remote Scopes:  {remoteScopes}");
+                WriteLabel("  Remote Scopes:  "); Console.WriteLine(remoteScopes);
             }
 
             if (isExternalIdp)
             {
-                Console.WriteLine($"  IDP Auth URL:   {idpAuthUrl}");
-                Console.WriteLine($"  IDP Token URL:  {idpTokenUrl}");
-                Console.WriteLine($"  IDP Scopes:     {idpScopes}");
-                Console.WriteLine($"  IDP Client ID:  {idpClientId}");
+                WriteLabel("  IDP Auth URL:   "); Console.WriteLine(idpAuthUrl);
+                WriteLabel("  IDP Token URL:  "); Console.WriteLine(idpTokenUrl);
+                WriteLabel("  IDP Scopes:     "); Console.WriteLine(idpScopes);
+                WriteLabel("  IDP Client ID:  "); Console.WriteLine(idpClientId);
             }
 
             if (isApiKey)
             {
-                Console.WriteLine($"  API Key Location: {apiKeyLocation}");
-                Console.WriteLine($"  API Key Name:     {apiKeyName}");
+                WriteLabel("  API Key Location: "); Console.WriteLine(apiKeyLocation);
+                WriteLabel("  API Key Name:     "); Console.WriteLine(apiKeyName);
             }
 
             if (force)
             {
-                Console.WriteLine($"  Force:          true");
+                prevColor = Console.ForegroundColor;
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("  Force:          true");
+                Console.ForegroundColor = prevColor;
+            }
+
+            Console.WriteLine();
+
+            // Confirm before proceeding
+            Console.Write("Proceed with registration? (y/N): ");
+            var confirmation = Console.ReadLine()?.Trim().ToLowerInvariant();
+            if (confirmation != "y" && confirmation != "yes")
+            {
+                Console.WriteLine("Registration cancelled.");
+                return;
             }
 
             Console.WriteLine();
@@ -1222,49 +1247,16 @@ public static class DevelopMcpCommand
             // Step 1: Create Entra app(s) and get secrets
 
             // Auto-detect tenant ID from az account if not provided
-            var tenantId = userTenantId ?? string.Empty;
+            var tenantId = userTenantId;
             if (string.IsNullOrWhiteSpace(tenantId))
             {
-                try
-                {
-                    var isWindows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows);
-                    var psi = new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = isWindows ? "cmd.exe" : "az",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                    };
-                    if (isWindows)
-                    {
-                        psi.ArgumentList.Add("/c");
-                        psi.ArgumentList.Add("az");
-                    }
+                tenantId = await Helpers.TenantDetectionHelper.DetectTenantIdAsync(null, logger);
+            }
 
-                    psi.ArgumentList.Add("account");
-                    psi.ArgumentList.Add("show");
-                    psi.ArgumentList.Add("--query");
-                    psi.ArgumentList.Add("tenantId");
-                    psi.ArgumentList.Add("-o");
-                    psi.ArgumentList.Add("tsv");
-
-                    using var proc = System.Diagnostics.Process.Start(psi);
-                    if (proc != null)
-                    {
-                        var output = await proc.StandardOutput.ReadToEndAsync();
-                        await proc.WaitForExitAsync();
-                        tenantId = output?.Trim() ?? string.Empty;
-                        if (!string.IsNullOrWhiteSpace(tenantId))
-                        {
-                            logger.LogDebug("Auto-detected tenant ID from az account: {TenantId}", tenantId);
-                        }
-                    }
-                }
-                catch
-                {
-                    logger.LogDebug("Could not auto-detect tenant ID from az account");
-                }
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                logger.LogError("Tenant ID could not be determined. Pass --tenant-id or run 'az login'.");
+                return;
             }
 
             Models.AddMcpServerAuthMetadata? authMetadata = null;
@@ -1326,6 +1318,12 @@ public static class DevelopMcpCommand
                 return;
             }
 
+            if (string.IsNullOrWhiteSpace(a365App.Value.ClientId))
+            {
+                logger.LogError("A365 Proxy Entra application was created but returned an empty client ID");
+                return;
+            }
+
             logger.LogDebug("Created A365 Proxy app: {ClientId}", a365App.Value.ClientId);
             a365AppObjectId = a365App.Value.ObjectId;
 
@@ -1358,6 +1356,12 @@ public static class DevelopMcpCommand
                     if (string.IsNullOrWhiteSpace(remoteSecret))
                     {
                         logger.LogError("Failed to create secret for Remote Proxy Entra application");
+                        return;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(remoteApp.Value.ClientId))
+                    {
+                        logger.LogError("Remote Proxy Entra application was created but returned an empty client ID");
                         return;
                     }
 
@@ -1481,8 +1485,9 @@ public static class DevelopMcpCommand
             {
                 try
                 {
-                    var a365OriginalUri = RemoveTcPrefix(a365RedirectUri);
-                    var a365Uris = a365OriginalUri != null ? new[] { a365RedirectUri, a365OriginalUri } : new[] { a365RedirectUri };
+                    var a365TcUri = AddTcPrefix(a365RedirectUri);
+                    var a365NonTcUri = RemoveTcPrefix(a365RedirectUri);
+                    var a365Uris = BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
                     logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}", a365AppName, a365AppObjectId, string.Join(", ", a365Uris));
                     await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, a365AppObjectId, a365Uris);
                 }
@@ -1504,8 +1509,9 @@ public static class DevelopMcpCommand
             {
                 try
                 {
-                    var remoteOriginalUri = RemoveTcPrefix(remoteRedirectUri);
-                    var remoteUris = remoteOriginalUri != null ? new[] { remoteRedirectUri, remoteOriginalUri } : new[] { remoteRedirectUri };
+                    var remoteTcUri = AddTcPrefix(remoteRedirectUri);
+                    var remoteNonTcUri = RemoveTcPrefix(remoteRedirectUri);
+                    var remoteUris = BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
                     logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}", remoteProxyAppName, remoteProxyAppObjectId, string.Join(", ", remoteUris));
                     await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, remoteProxyAppObjectId, remoteUris);
                 }
@@ -1629,17 +1635,17 @@ public static class DevelopMcpCommand
             // Step 5: Show completion summary
             if (warnings.Count == 0)
             {
-                var prevColor = Console.ForegroundColor;
+                var successColor = Console.ForegroundColor;
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"MCP server '{serverName}' has been registered successfully.");
-                Console.ForegroundColor = prevColor;
+                Console.ForegroundColor = successColor;
             }
             else
             {
-                var prevColor = Console.ForegroundColor;
+                var warnColor = Console.ForegroundColor;
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine($"MCP server '{serverName}' was registered with {warnings.Count} warning(s):");
-                Console.ForegroundColor = prevColor;
+                Console.ForegroundColor = warnColor;
                 Console.WriteLine();
                 foreach (var w in warnings)
                 {
@@ -1660,22 +1666,58 @@ public static class DevelopMcpCommand
         return command;
     }
 
-    /// <summary>
-    /// Removes the "tc-" prefix from the last path segment of a redirect URI to get the original URI.
-    /// </summary>
-    private static string? RemoveTcPrefix(string tcPrefixedUri)
+    private static void WriteLabel(string label)
     {
-        var lastSlash = tcPrefixedUri.LastIndexOf('/');
+        var prevColor = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.DarkCyan;
+        Console.Write(label);
+        Console.ForegroundColor = prevColor;
+    }
+
+    private static string? RemoveTcPrefix(string uri)
+    {
+        var lastSlash = uri.LastIndexOf('/');
         if (lastSlash >= 0)
         {
-            var lastSegment = tcPrefixedUri.Substring(lastSlash + 1);
+            var lastSegment = uri.Substring(lastSlash + 1);
             if (lastSegment.StartsWith("tc-", StringComparison.Ordinal))
             {
-                return tcPrefixedUri.Substring(0, lastSlash + 1) + lastSegment.Substring(3);
+                return uri.Substring(0, lastSlash + 1) + lastSegment.Substring(3);
             }
         }
 
         return null;
+    }
+
+    private static string? AddTcPrefix(string uri)
+    {
+        var lastSlash = uri.LastIndexOf('/');
+        if (lastSlash >= 0)
+        {
+            var lastSegment = uri.Substring(lastSlash + 1);
+            if (!lastSegment.StartsWith("tc-", StringComparison.Ordinal))
+            {
+                return uri.Substring(0, lastSlash + 1) + "tc-" + lastSegment;
+            }
+        }
+
+        return null;
+    }
+
+    private static string[] BuildRedirectUriList(string original, string? tcVariant, string? nonTcVariant)
+    {
+        var uris = new HashSet<string>(StringComparer.Ordinal) { original };
+        if (tcVariant != null)
+        {
+            uris.Add(tcVariant);
+        }
+
+        if (nonTcVariant != null)
+        {
+            uris.Add(nonTcVariant);
+        }
+
+        return uris.ToArray();
     }
 
     /// <summary>
@@ -1828,41 +1870,10 @@ public static class DevelopMcpCommand
             var userTenantId = context.ParseResult.GetValueForOption(tenantIdOption);
             var force = context.ParseResult.GetValueForOption(forceOption);
 
-            var tenantId = userTenantId ?? string.Empty;
+            var tenantId = userTenantId;
             if (string.IsNullOrWhiteSpace(tenantId))
             {
-                try
-                {
-                    var psi = new System.Diagnostics.ProcessStartInfo("az")
-                    {
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                    };
-                    psi.ArgumentList.Add("account");
-                    psi.ArgumentList.Add("show");
-                    psi.ArgumentList.Add("--query");
-                    psi.ArgumentList.Add("tenantId");
-                    psi.ArgumentList.Add("-o");
-                    psi.ArgumentList.Add("tsv");
-
-                    using var proc = System.Diagnostics.Process.Start(psi);
-                    if (proc != null)
-                    {
-                        var output = await proc.StandardOutput.ReadToEndAsync();
-                        await proc.WaitForExitAsync();
-                        tenantId = output?.Trim() ?? string.Empty;
-                        if (!string.IsNullOrWhiteSpace(tenantId))
-                        {
-                            logger.LogDebug("Auto-detected tenant ID from az account: {TenantId}", tenantId);
-                        }
-                    }
-                }
-                catch
-                {
-                    logger.LogDebug("Could not auto-detect tenant ID from az account");
-                }
+                tenantId = await Helpers.TenantDetectionHelper.DetectTenantIdAsync(null, logger);
             }
 
             if (string.IsNullOrWhiteSpace(tenantId))

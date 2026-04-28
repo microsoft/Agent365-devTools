@@ -994,10 +994,23 @@ public class GraphApiService
             return null;
         }
 
-        var objectId = doc.RootElement.GetProperty("id").GetString();
-        var clientId = doc.RootElement.GetProperty("appId").GetString();
+        if (!doc.RootElement.TryGetProperty("id", out var objectIdElement) ||
+            !doc.RootElement.TryGetProperty("appId", out var clientIdElement))
+        {
+            _logger.LogError("Graph response for application {DisplayName} missing required fields (id or appId)", displayName);
+            return null;
+        }
+
+        var objectId = objectIdElement.GetString();
+        var clientId = clientIdElement.GetString();
+        if (string.IsNullOrEmpty(objectId) || string.IsNullOrEmpty(clientId))
+        {
+            _logger.LogError("Graph response for application {DisplayName} returned empty id or appId", displayName);
+            return null;
+        }
+
         _logger.LogDebug("Created Entra application {DisplayName}: objectId={ObjectId}, clientId={ClientId}", displayName, objectId, clientId);
-        return (objectId!, clientId!);
+        return (objectId, clientId);
     }
 
     /// <summary>
@@ -1026,7 +1039,13 @@ public class GraphApiService
             return null;
         }
 
-        var secretText = doc.RootElement.GetProperty("secretText").GetString();
+        if (!doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
+        {
+            _logger.LogError("Graph response for application {ObjectId} did not contain secretText", applicationObjectId);
+            return null;
+        }
+
+        var secretText = secretTextElement.GetString();
         _logger.LogDebug("Added password to application {ObjectId}", applicationObjectId);
         return secretText;
     }
@@ -1065,7 +1084,7 @@ public class GraphApiService
 
     /// <summary>
     /// Looks up an application by its appId (clientId) and returns the object ID.
-    /// Retries up to 3 times with a delay to handle replication lag for newly created apps.
+    /// Retries up to 6 times with a 10-second delay to handle replication lag for newly created apps.
     /// </summary>
     public async Task<string?> GetAppObjectIdByClientIdAsync(
         string tenantId, string clientId, CancellationToken ct = default)
@@ -1106,10 +1125,10 @@ public class GraphApiService
     public async Task<string?> GetAppObjectIdByDisplayNameAsync(
         string tenantId, string displayName, CancellationToken ct = default)
     {
-        var encodedName = Uri.EscapeDataString(displayName);
+        var escapedDisplayName = displayName.Replace("'", "''", StringComparison.Ordinal);
         var response = await GraphGetWithResponseAsync(
             tenantId,
-            $"/v1.0/applications?$filter=displayName eq '{encodedName}'&$select=id",
+            $"/v1.0/applications?$filter=displayName eq '{escapedDisplayName}'&$select=id",
             ct);
 
         if (response.IsSuccess && response.Json != null)
@@ -1230,20 +1249,51 @@ public class GraphApiService
             return false;
         }
 
-        var existingAccess = new List<object>();
+        var existingAccess = new System.Text.Json.Nodes.JsonArray();
+        bool merged = false;
         if (doc.RootElement.TryGetProperty("requiredResourceAccess", out var rra))
         {
             foreach (var entry in rra.EnumerateArray())
             {
-                existingAccess.Add(JsonSerializer.Deserialize<object>(entry.GetRawText())!);
+                var entryNode = System.Text.Json.Nodes.JsonNode.Parse(entry.GetRawText()) as System.Text.Json.Nodes.JsonObject;
+                if (entryNode != null &&
+                    entryNode["resourceAppId"]?.GetValue<string>() == resourceAppId)
+                {
+                    var existingScopes = entryNode["resourceAccess"] as System.Text.Json.Nodes.JsonArray ?? new System.Text.Json.Nodes.JsonArray();
+                    var existingScopeIds = new HashSet<string>();
+                    foreach (var scope in existingScopes)
+                    {
+                        var id = scope?["id"]?.GetValue<string>();
+                        if (id != null) existingScopeIds.Add(id);
+                    }
+
+                    foreach (var scopeId in scopeIds)
+                    {
+                        if (!existingScopeIds.Contains(scopeId.ToString()))
+                        {
+                            existingScopes.Add(System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new { id = scopeId, type = "Scope" })));
+                        }
+                    }
+
+                    entryNode["resourceAccess"] = existingScopes;
+                    existingAccess.Add(entryNode);
+                    merged = true;
+                }
+                else
+                {
+                    existingAccess.Add(entryNode);
+                }
             }
         }
 
-        existingAccess.Add(new
+        if (!merged)
         {
-            resourceAppId,
-            resourceAccess = scopeIds.Select(id => new { id, type = "Scope" }).ToArray(),
-        });
+            existingAccess.Add(System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new
+            {
+                resourceAppId,
+                resourceAccess = scopeIds.Select(id => new { id, type = "Scope" }).ToArray(),
+            })));
+        }
 
         var payload = new
         {

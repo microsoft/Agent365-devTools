@@ -41,7 +41,7 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(8);
+        command.Subcommands.Should().HaveCount(9);
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         subcommandNames.Should().Contain(new[]
@@ -53,7 +53,8 @@ public class DevelopMcpCommandTests
             "approve",
             "block",
             "package-mcp-server",
-            "register-external-mcp-server"
+            "register-external-mcp-server",
+            "delete-external-mcp-server"
         });
     }
 
@@ -260,8 +261,12 @@ public class DevelopMcpCommandTests
         // Act
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
-        // Assert - All subcommands should have dry-run option for safety
-        foreach (var subcommand in command.Subcommands)
+        // delete-external-mcp-server does not support --dry-run by design
+        var subcommandsWithDryRun = command.Subcommands
+            .Where(sc => sc.Name != "delete-external-mcp-server");
+
+        // Assert - All applicable subcommands should have dry-run option for safety
+        foreach (var subcommand in subcommandsWithDryRun)
         {
             var dryRunOption = subcommand.Options.FirstOrDefault(o => o.Name == "dry-run");
             dryRunOption.Should().NotBeNull($"Subcommand '{subcommand.Name}' should have --dry-run option");
