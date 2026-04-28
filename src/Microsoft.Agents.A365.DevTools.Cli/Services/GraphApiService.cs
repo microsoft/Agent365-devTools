@@ -661,8 +661,13 @@ public class GraphApiService
         if (!string.IsNullOrWhiteSpace(objectId))
         {
             var allUris = AuthenticationConstants.GetRequiredRedirectUris(appId);
-            await GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}",
+            var redirectUrisPatched = await GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}",
                 new { publicClient = new { redirectUris = allUris } }, ct);
+            if (!redirectUrisPatched)
+                _logger.LogError(
+                    "App created ({AppId}) in tenant {TenantId}, but patching redirect URIs failed for application object {ObjectId}. " +
+                    "The app registration may be missing required redirect URIs and authentication may fail until they are added.",
+                    appId, tenantId, objectId);
         }
 
         var spId = await EnsureServicePrincipalForAppIdAsync(tenantId, appId, ct);

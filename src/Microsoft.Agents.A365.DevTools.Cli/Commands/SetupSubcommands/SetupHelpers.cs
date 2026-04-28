@@ -510,16 +510,19 @@ internal static class SetupHelpers
         logger.LogInformation("Setup Summary");
         logger.LogInformation("");
 
-        // Developer-scoped grants (OBO authmode) are the intentional alternative to AllPrincipals admin consent.
-        // When AgentIdentityPermissionsGranted is true, no admin action is needed for permission grants.
-        // In S2S flows, admin action is signalled by pendingS2SAction (Global Admin needed for app role
-        // assignments). pendingAdminAction is reserved for the inheritable-permissions admin-consent path
-        // and must be suppressed here to avoid a duplicate row in the summary.
+        // In S2S flows, app role assignment is the relevant success signal for permission grants,
+        // so the summary must not fall back to AdminConsentGranted when determining whether that
+        // step is pending. pendingAdminAction remains reserved for the inheritable-permissions
+        // admin-consent path, while pendingS2SAction is reserved for the S2S app-role-assignment path.
         var isS2SFlow = results.S2SAppRoleGranted.HasValue;
-        var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed
-            && !results.AgentIdentityPermissionsGranted
-            && !isS2SFlow;
-        var pendingS2SAction = results.S2SAppRoleGranted == false;
+        var permissionGrantsCompleted = isS2SFlow
+            ? results.S2SAppRoleGranted == true
+            : results.AdminConsentGranted || results.AgentIdentityPermissionsGranted;
+        var permissionGrantsPending = isS2SFlow
+            ? results.S2SAppRoleGranted == false
+            : !permissionGrantsCompleted && results.BatchPermissionsPhase2Completed;
+        var pendingAdminAction = permissionGrantsPending && !isS2SFlow;
+        var pendingS2SAction = permissionGrantsPending && isS2SFlow;
 
         // ── Numbered step rows — mirrors the dry-run step list ─────────────────
         // Non-DW omits the Azure hosting step, so all steps after 1 are shifted down by 1.
@@ -559,33 +562,39 @@ internal static class SetupHelpers
         else if (results.BatchPermissionsPhase1Completed)
             logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + (isNonDw ? "skipped (permissions set directly on agent identity)" : "configured"));
 
-        // Permission Grants: step 4 (non-DW) or step 5 (DW)
-        if (results.BlueprintFailed)
-            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + notRun);
-        else if (results.AgentIdentityPermissionsGranted)
-            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + "ok (developer-scoped)");
-        else if (results.BatchPermissionsPhase2Completed)
-            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
-
-        // Non-DW only: Agent identity (5) and Agent Registration (6)
+        // Non-DW only: Agent identity — step 4 (before Permission Grants, matching dry-run order)
         if (isNonDw)
         {
             if (results.BlueprintFailed)
+                logger.LogInformation(DryRunRow(4, "Agent identity") + notRun);
+            else if (results.AgentIdentityCreated)
             {
-                logger.LogInformation(DryRunRow(5, "Agent identity") + notRun);
-                logger.LogInformation(DryRunRow(6, "Agent Registration") + notRun);
+                var identityVerb = (results.AgentIdentityAlreadyExisted ? "reused" : "created").PadRight(9);
+                logger.LogInformation(DryRunRow(4, "Agent identity") + identityVerb + " '{Name}' (ID: {Id})",
+                    results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
             }
+            else if (results.AgentIdentityFailed)
+                logger.LogWarning(DryRunRow(4, "Agent identity") + "failed — see warnings");
+        }
+
+        // Permission Grants: step 5 (non-DW: 5, DW: 4+s=5 — same step for both)
+        var permGrantStep = isNonDw ? 5 : 4 + s;
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + notRun);
+        else if (isS2SFlow && results.S2SAppRoleGranted == true)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "ok (S2S app roles)");
+        else if (results.AgentIdentityPermissionsGranted)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "ok (developer-scoped)");
+        else if (results.BatchPermissionsPhase2Completed)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
+
+        // Non-DW only: Agent Registration — step 6
+        if (isNonDw)
+        {
+            if (results.BlueprintFailed)
+                logger.LogInformation(DryRunRow(6, "Agent Registration") + notRun);
             else
             {
-                if (results.AgentIdentityCreated)
-                {
-                    var identityVerb = (results.AgentIdentityAlreadyExisted ? "reused" : "created").PadRight(9);
-                    logger.LogInformation(DryRunRow(5, "Agent identity") + identityVerb + " '{Name}' (ID: {Id})",
-                        results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
-                }
-                else if (results.AgentIdentityFailed)
-                    logger.LogWarning(DryRunRow(5, "Agent identity") + "failed — see warnings");
-
                 if (results.AgentInstanceRegistered)
                 {
                     var registrationVerb = (results.AgentRegistrationAlreadyExisted ? "reused" : "registered").PadRight(12);
