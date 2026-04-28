@@ -193,10 +193,28 @@ internal static class SetupHelpers
             if (graphApiService == null)
                 return null;
 
-            logger.LogError("Entra app \"{AppName}\" was not found in tenant {TenantId}.",
+            logger.LogInformation("App \"{AppName}\" was not found in tenant {TenantId}.",
                 AuthenticationConstants.WellKnownClientAppDisplayName, tenantId);
-            Console.Write("Enter your client app ID (or press Enter to cancel): ");
-            var entered = Console.ReadLine()?.Trim();
+
+            logger.LogInformation("Checking tenant permissions...");
+            var adminCheck = await graphApiService.IsCurrentUserAdminAsync(tenantId, ct);
+            var isAdmin = adminCheck == Models.RoleCheckResult.HasRole;
+
+            string? entered;
+            if (isAdmin)
+            {
+                Console.Write("Enter a client app ID, or [C] to create one: ");
+                entered = Console.ReadLine()?.Trim();
+
+                if (string.Equals(entered, "C", StringComparison.OrdinalIgnoreCase))
+                    return await CreateAndConsentClientAppAsync(tenantId, graphApiService, logger, ct);
+            }
+            else
+            {
+                Console.Write("Enter the client app ID: ");
+                entered = Console.ReadLine()?.Trim();
+            }
+
             if (string.IsNullOrWhiteSpace(entered))
             {
                 logger.LogInformation("Client app ID entry cancelled.");
@@ -215,6 +233,77 @@ internal static class SetupHelpers
         }
 
         return clientAppId;
+    }
+
+    private static async Task<string?> CreateAndConsentClientAppAsync(
+        string tenantId,
+        GraphApiService graphApiService,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        logger.LogInformation("Creating app registration '{Name}'...",
+            AuthenticationConstants.WellKnownClientAppDisplayName);
+
+        var (appId, spId) = await graphApiService.CreateCliClientAppAsync(
+            tenantId, AuthenticationConstants.WellKnownClientAppDisplayName, ct);
+
+        if (string.IsNullOrWhiteSpace(appId))
+        {
+            logger.LogError("App creation failed. Check errors above.");
+            return null;
+        }
+
+        logger.LogInformation("App created: {AppId}", appId);
+
+        // Show all required permissions and ask for consent confirmation.
+        // AgentRegistration.ReadWrite.All is excluded from RequiredClientAppPermissions because
+        // ClientAppValidator acquires it via .default to avoid AADSTS650053; here we grant it explicitly.
+        var consentScopes = AuthenticationConstants.RequiredClientAppPermissions
+            .Append("AgentRegistration.ReadWrite.All")
+            .ToArray();
+
+        logger.LogInformation("The following permissions will be granted on behalf of all users:");
+        logger.LogInformation("  Microsoft Graph / Agent 365 API:");
+        foreach (var scope in consentScopes)
+            logger.LogInformation("    - {Scope}", scope);
+
+        Console.Write("Grant admin consent for these permissions? [y/N]: ");
+        var consentChoice = Console.ReadLine()?.Trim().ToUpperInvariant();
+
+        if (consentChoice != "Y")
+        {
+            logger.LogInformation("Admin consent skipped. Grant consent manually in the Entra portal and run 'a365 setup requirements' again.");
+            return appId;
+        }
+
+        if (string.IsNullOrWhiteSpace(spId))
+        {
+            logger.LogWarning("Service principal not found for the new app — cannot grant admin consent automatically.");
+            logger.LogWarning("Grant consent manually in the Entra portal after the SP propagates.");
+            return appId;
+        }
+
+        logger.LogInformation("Granting admin consent...");
+        var graphSpId = await graphApiService.LookupServicePrincipalByAppIdAsync(
+            tenantId, AuthenticationConstants.MicrosoftGraphResourceAppId, ct,
+            AuthenticationConstants.RequiredPermissionGrantScopes);
+
+        if (string.IsNullOrWhiteSpace(graphSpId))
+        {
+            logger.LogWarning("Microsoft Graph service principal not found in tenant {TenantId} — admin consent could not be granted.", tenantId);
+            return appId;
+        }
+
+        var granted = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+            tenantId, spId, graphSpId, consentScopes, ct,
+            AuthenticationConstants.RequiredPermissionGrantScopes);
+
+        if (granted)
+            logger.LogInformation("Admin consent granted. Run 'a365 setup requirements' again to verify.");
+        else
+            logger.LogWarning("Admin consent could not be granted. Grant consent manually in the Entra portal and run 'a365 setup requirements' again.");
+
+        return appId;
     }
 
     private static async Task<string?> TryGetLocalClientAppIdAsync(
@@ -423,8 +512,13 @@ internal static class SetupHelpers
 
         // Developer-scoped grants (OBO authmode) are the intentional alternative to AllPrincipals admin consent.
         // When AgentIdentityPermissionsGranted is true, no admin action is needed for permission grants.
+        // In S2S flows, admin action is signalled by pendingS2SAction (Global Admin needed for app role
+        // assignments). pendingAdminAction is reserved for the inheritable-permissions admin-consent path
+        // and must be suppressed here to avoid a duplicate row in the summary.
+        var isS2SFlow = results.S2SAppRoleGranted.HasValue;
         var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed
-            && !results.AgentIdentityPermissionsGranted;
+            && !results.AgentIdentityPermissionsGranted
+            && !isS2SFlow;
         var pendingS2SAction = results.S2SAppRoleGranted == false;
 
         // ── Numbered step rows — mirrors the dry-run step list ─────────────────

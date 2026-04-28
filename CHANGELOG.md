@@ -27,6 +27,7 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 ```
 
 ### Added
+- `setup requirements` Global Administrator path: when the well-known CLI client app is not found in a new tenant, Global Admins are offered a three-choice menu to create the app and grant admin consent automatically.
 - `--authmode obo|s2s|both` option on `setup all` — controls how the agent identity service principal receives permissions:
   - `obo` (default): principal-scoped delegated grants (`consentType: "Principal"`); no Global Administrator required.
   - `s2s`: application role assignments on the agent identity SP; attempted programmatically, falls back to printed PowerShell instructions if the caller lacks Global Administrator.

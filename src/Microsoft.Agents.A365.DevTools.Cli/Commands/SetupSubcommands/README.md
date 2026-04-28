@@ -69,7 +69,7 @@ a365 setup permissions     # Configure permissions only
 
 ### Authentication mode (`--authmode`)
 
-The `--authmode` option controls how the agent identity service principal is granted permissions. It is available on `setup all`, `setup blueprint`, and `setup permissions mcp/bot/custom`.
+The `--authmode` option controls how the agent identity service principal is granted permissions. It is available on `setup all` only.
 
 | Value | Behaviour |
 |-------|-----------|

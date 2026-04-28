@@ -37,6 +37,7 @@ public class Agent365Config
         }
 
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+        ValidateAuthMode(AuthMode, errors);
 
         // Validate custom blueprint permissions
         if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
@@ -81,6 +82,7 @@ public class Agent365Config
         else
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+        ValidateAuthMode(AuthMode, errors);
 
         return errors;
     }
@@ -93,6 +95,19 @@ public class Agent365Config
         if (!Guid.TryParse(value, out _))
         {
             errors.Add($"{fieldName} must be a valid GUID format.");
+        }
+    }
+
+    /// <summary>
+    /// Validates AuthMode is either unset (null/whitespace) or one of "obo", "s2s", "both" (case-insensitive).
+    /// </summary>
+    private static void ValidateAuthMode(string? value, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var normalised = value.Trim().ToLowerInvariant();
+        if (normalised is not ("obo" or "s2s" or "both"))
+        {
+            errors.Add($"authMode '{value}' is invalid. Allowed values: obo, s2s, both.");
         }
     }
 

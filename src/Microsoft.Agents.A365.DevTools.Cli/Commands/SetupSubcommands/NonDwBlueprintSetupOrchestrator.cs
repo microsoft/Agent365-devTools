@@ -97,7 +97,10 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
 
         // 3. Inheritable Permissions — only applicable to AI Teammate (DW) agents; always skipped here.
-        var effectiveMode = (authMode ?? config.AuthMode)?.ToLowerInvariant() ?? "obo";
+        var selectedAuthMode = authMode ?? config.AuthMode;
+        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
+            ? "obo"
+            : selectedAuthMode.Trim().ToLowerInvariant();
         logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "skipped (permissions set directly on agent identity)");
 
         // 4. Agent identity (created before grants so the SP exists to receive them)

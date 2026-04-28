@@ -628,7 +628,51 @@ public class GraphApiService
         return idProp.GetString();
     }
 
-    public async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
+    /// <summary>
+    /// Creates a new Entra app registration (public client) and its service principal for the CLI client app.
+    /// Used by setup requirements when the well-known CLI client app is not found in a new tenant.
+    /// Returns (appId, spObjectId), or (null, null) on failure.
+    /// </summary>
+    public virtual async Task<(string? appId, string? spId)> CreateCliClientAppAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
+    {
+        var body = new
+        {
+            displayName,
+            signInAudience = "AzureADMyOrg",
+            isFallbackPublicClient = true,
+            publicClient = new { redirectUris = AuthenticationConstants.RequiredRedirectUris }
+        };
+
+        using var appDoc = await GraphPostAsync(tenantId, "/v1.0/applications", body, ct);
+        if (appDoc == null
+            || !appDoc.RootElement.TryGetProperty("appId", out var appIdProp)
+            || !appDoc.RootElement.TryGetProperty("id", out var objIdProp))
+        {
+            _logger.LogError("Failed to create app registration in tenant {TenantId}.", tenantId);
+            return (null, null);
+        }
+
+        var appId = appIdProp.GetString();
+        var objectId = objIdProp.GetString();
+        if (string.IsNullOrWhiteSpace(appId)) return (null, null);
+
+        // Patch in the WAM broker redirect URI — requires the appId to be known first.
+        if (!string.IsNullOrWhiteSpace(objectId))
+        {
+            var allUris = AuthenticationConstants.GetRequiredRedirectUris(appId);
+            await GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}",
+                new { publicClient = new { redirectUris = allUris } }, ct);
+        }
+
+        var spId = await EnsureServicePrincipalForAppIdAsync(tenantId, appId, ct);
+        if (string.IsNullOrWhiteSpace(spId))
+            _logger.LogWarning("App created ({AppId}) but service principal creation failed — admin consent may fail until the SP exists.", appId);
+
+        return (appId, spId);
+    }
+
+    public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
         string tenantId,
         string clientSpObjectId,
         string resourceSpObjectId,

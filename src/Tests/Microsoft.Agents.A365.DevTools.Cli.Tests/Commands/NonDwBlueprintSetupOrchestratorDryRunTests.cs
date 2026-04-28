@@ -98,7 +98,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
 
         // Phase 2a (inheritable permissions) is skipped in all authMode values to avoid Global Admin
         // involvement. The dry-run communicates this explicitly rather than listing specific APIs.
-        AnyLogContains("skipped").Should().BeTrue(because: "inheritable permissions are skipped in all authMode values to avoid Global Admin involvement");
+        AnyLogContains("permissions set directly on agent identity").Should().BeTrue(because: "inheritable permissions row must explain that permissions are set directly on the agent identity (not just contain the word 'skipped' which can match unrelated rows)");
     }
 
     [Fact]
@@ -204,6 +204,6 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: authMode);
 
-        AnyLogContains("skipped").Should().BeTrue(because: $"authmode '{authMode ?? "null (obo)"}' must skip inheritable permissions to avoid Global Admin involvement");
+        AnyLogContains("permissions set directly on agent identity").Should().BeTrue(because: $"authmode '{authMode ?? "null (obo)"}' must skip inheritable permissions and explain permissions are set directly on the agent identity");
     }
 }

@@ -138,7 +138,7 @@ internal sealed class SetupContext
         AgentInstanceOnly = agentInstanceOnly;
         IsBootstrap = isBootstrap;
         IsM365 = isM365;
-        AuthMode = authMode?.ToLowerInvariant();
+        AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.ToLowerInvariant();
         ConfigService = configService;
         Executor = executor;
         BackendConfigurator = backendConfigurator;

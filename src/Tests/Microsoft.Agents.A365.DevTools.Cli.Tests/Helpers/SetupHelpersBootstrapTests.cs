@@ -340,6 +340,8 @@ public class SetupHelpersBootstrapTests : IDisposable
         _mockGraph.FindApplicationByDisplayNameAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
+        _mockGraph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
         _mockGraph.ApplicationExistsByAppIdAsync(
             Arg.Any<string>(), enteredId, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(true));
@@ -369,6 +371,8 @@ public class SetupHelpersBootstrapTests : IDisposable
         _mockGraph.FindApplicationByDisplayNameAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
+        _mockGraph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
 
         var originalIn = Console.In;
         Console.SetIn(new StringReader("\n"));
@@ -397,6 +401,8 @@ public class SetupHelpersBootstrapTests : IDisposable
         _mockGraph.FindApplicationByDisplayNameAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
+        _mockGraph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
         _mockGraph.ApplicationExistsByAppIdAsync(
             Arg.Any<string>(), badId, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(false));
@@ -412,6 +418,175 @@ public class SetupHelpersBootstrapTests : IDisposable
             // Assert
             result.Should().BeNull(
                 because: "an app ID that Graph cannot find must fail fast rather than proceeding with an invalid ID");
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    // ── Global Administrator menu (Create / Enter / Cancel) ───────────────────
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_Admin_ChooseCreate_CreatesAppAndReturnsId()
+    {
+        // Arrange: well-known Entra app missing, current user is Global Admin,
+        // user picks (C)reate and confirms (Y)es to consent.
+        const string newAppId = "new-app-id";
+        const string newSpId = "new-sp-id";
+        const string graphSpId = "graph-sp-id";
+
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+        _mockGraph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.HasRole));
+        _mockGraph.CreateCliClientAppAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(string?, string?)>((newAppId, newSpId)));
+        _mockGraph.LookupServicePrincipalByAppIdAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(id => id == AuthenticationConstants.MicrosoftGraphResourceAppId),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<string?>(graphSpId));
+        _mockGraph.CreateOrUpdateOauth2PermissionGrantAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
+
+        var originalIn = Console.In;
+        Console.SetIn(new StringReader("C\nY\n"));
+        try
+        {
+            // Act
+            var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+                "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+            // Assert: the newly created app ID is returned and the permission grant was attempted.
+            result.Should().Be(newAppId,
+                because: "when an admin chooses (C)reate, the helper must return the appId returned by CreateCliClientAppAsync");
+
+            await _mockGraph.Received(1).CreateCliClientAppAsync(
+                Arg.Any<string>(),
+                Arg.Is<string>(name => name == AuthenticationConstants.WellKnownClientAppDisplayName),
+                Arg.Any<CancellationToken>());
+
+            await _mockGraph.Received(1).CreateOrUpdateOauth2PermissionGrantAsync(
+                Arg.Any<string>(),
+                Arg.Is<string>(id => id == newSpId),
+                Arg.Is<string>(id => id == graphSpId),
+                Arg.Any<IEnumerable<string>>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_Admin_EntersExistingId_ReturnsId()
+    {
+        // Arrange: admin user types an existing app ID directly at the single prompt.
+        const string existingId = "existing-app-id";
+
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+        _mockGraph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.HasRole));
+        _mockGraph.ApplicationExistsByAppIdAsync(
+            Arg.Any<string>(), existingId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        var originalIn = Console.In;
+        Console.SetIn(new StringReader($"{existingId}\n"));
+        try
+        {
+            // Act
+            var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+                "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+            // Assert: the entered app ID is returned, app creation was NOT attempted.
+            result.Should().Be(existingId,
+                because: "an admin who types an existing app ID at the prompt receives that ID after Graph confirms it exists");
+
+            await _mockGraph.DidNotReceive().CreateCliClientAppAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_Admin_EmptyInput_ReturnsNull()
+    {
+        // Arrange: admin presses Enter without typing — cancels the flow.
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+        _mockGraph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.HasRole));
+
+        var originalIn = Console.In;
+        Console.SetIn(new StringReader("\n"));
+        try
+        {
+            // Act
+            var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+                "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+            // Assert
+            result.Should().BeNull(
+                because: "empty input at the admin prompt cancels and returns null without creating or verifying any app");
+
+            await _mockGraph.DidNotReceive().CreateCliClientAppAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            await _mockGraph.DidNotReceive().ApplicationExistsByAppIdAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_NonAdmin_OnlyIdPrompt()
+    {
+        // Arrange: non-admin user — the menu must not be shown; only the existing
+        // 'Enter your client app ID' prompt runs.
+        const string existingId = "existing-app-id";
+
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+        _mockGraph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
+        _mockGraph.ApplicationExistsByAppIdAsync(
+            Arg.Any<string>(), existingId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        var originalIn = Console.In;
+        // Single-line input — non-admin does not see the menu, so only the existing
+        // 'Enter your client app ID' prompt consumes input.
+        Console.SetIn(new StringReader($"{existingId}\n"));
+        try
+        {
+            // Act
+            var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+                "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+            // Assert
+            result.Should().Be(existingId,
+                because: "non-admin users skip the create/enter/cancel menu and go straight to the app ID prompt");
+
+            await _mockGraph.DidNotReceive().CreateCliClientAppAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         }
         finally
         {

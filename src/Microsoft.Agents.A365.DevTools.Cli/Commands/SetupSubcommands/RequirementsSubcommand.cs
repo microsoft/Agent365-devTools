@@ -153,7 +153,7 @@ internal static class RequirementsSubcommand
             return null;
         }
 
-        logger.LogInformation("No a365.config.json found. Resolving client app from Entra...");
+        logger.LogDebug("No a365.config.json found. Resolving client app from Entra...");
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(tenantId, graphApiService, logger, ct);
         if (string.IsNullOrWhiteSpace(clientAppId))
         {

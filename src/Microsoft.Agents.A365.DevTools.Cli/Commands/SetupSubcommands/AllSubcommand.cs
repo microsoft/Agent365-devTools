@@ -279,6 +279,18 @@ internal static class AllSubcommand
                 }
             }
 
+            // Validate the effective authMode (flag OR config). The CLI flag was validated above;
+            // this re-check catches an invalid authMode persisted in a365.config.json that was not
+            // caught at load time (e.g. a user manually edited the file with a bad value).
+            var effectiveAuthModeForValidation = authMode ?? nonDwConfig?.AuthMode?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(effectiveAuthModeForValidation) &&
+                effectiveAuthModeForValidation is not ("obo" or "s2s" or "both"))
+            {
+                logger.LogError("Invalid authMode value '{Value}' (from --authmode flag or a365.config.json). Allowed values: obo, s2s, both.", effectiveAuthModeForValidation);
+                context.ExitCode = 1;
+                return;
+            }
+
             // AI Teammate (DW) agents are M365 agents by design — auto-enable messaging endpoint.
             // --m365 remains opt-in for blueprint agents (non-DW path).
             if (nonDwConfig is null)
