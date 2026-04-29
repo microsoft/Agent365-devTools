@@ -617,7 +617,7 @@ internal class RegisterCommandExecutor
             var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{publicClientsClientId}";
             try
             {
-                await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, publicClientsObjectId, new[] { copilotRedirectUri, "http://localhost:8080/callback" });
+                await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, publicClientsObjectId, new[] { copilotRedirectUri, "http://localhost:8080/callback", "https://vscode.dev/redirect", "http://localhost" });
                 _logger.LogDebug("Set redirect URI on '{AppName}' ({ObjectId}): {Uri}", publicClientsAppName, publicClientsObjectId, copilotRedirectUri);
             }
             catch (Exception ex)
