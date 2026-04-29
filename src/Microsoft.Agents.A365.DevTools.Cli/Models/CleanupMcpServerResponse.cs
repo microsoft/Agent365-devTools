@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -7,7 +8,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Models;
 /// <summary>
 /// Response model for deleting a BYO MCP server
 /// </summary>
-public class DeleteMcpServerResponse
+public class CleanupMcpServerResponse
 {
     /// <summary>
     /// Status of the operation
@@ -25,7 +26,7 @@ public class DeleteMcpServerResponse
     /// App IDs that were associated with the server and should be cleaned up
     /// </summary>
     [JsonPropertyName("appIds")]
-    public List<DeleteMcpServerAppEntry>? AppIds { get; set; }
+    public List<CleanupMcpServerAppEntry>? AppIds { get; set; }
 
     /// <summary>
     /// MOS title ID that was targeted for deletion
@@ -55,7 +56,7 @@ public class DeleteMcpServerResponse
 /// <summary>
 /// App entry returned from the delete MCP server operation
 /// </summary>
-public class DeleteMcpServerAppEntry
+public class CleanupMcpServerAppEntry
 {
     /// <summary>
     /// Display name of the app (e.g., "serverName-A365Proxy")

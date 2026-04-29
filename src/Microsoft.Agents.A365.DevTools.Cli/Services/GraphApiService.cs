@@ -584,7 +584,12 @@ public class GraphApiService
                 string.Equals(v.GetString(), scopeName, StringComparison.OrdinalIgnoreCase) &&
                 scope.TryGetProperty("id", out var id))
             {
-                var scopeId = Guid.Parse(id.GetString()!);
+                if (!Guid.TryParse(id.GetString(), out var scopeId))
+                {
+                    _logger.LogWarning("Scope '{ScopeName}' on resource {ResourceAppId} has invalid ID: {ScopeIdValue}", scopeName, resourceAppId, id.GetString());
+                    return null;
+                }
+
                 _logger.LogDebug("Found scope '{ScopeName}' with ID {ScopeId} on resource {ResourceAppId}", scopeName, scopeId, resourceAppId);
                 return scopeId;
             }
@@ -965,7 +970,7 @@ public class GraphApiService
     /// <param name="displayName">Display name for the application.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Tuple of (applicationObjectId, applicationClientId), or null on failure.</returns>
-    public async Task<(string ObjectId, string ClientId)?> CreateEntraAppAsync(
+    public virtual async Task<(string ObjectId, string ClientId)?> CreateEntraAppAsync(
         string tenantId, string displayName, string? serviceTreeId = null, CancellationToken ct = default)
     {
         object payload;
@@ -1021,7 +1026,7 @@ public class GraphApiService
     /// <param name="displayName">Display name for the secret.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The secret text, or null on failure.</returns>
-    public async Task<string?> AddAppPasswordAsync(
+    public virtual async Task<string?> AddAppPasswordAsync(
         string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", CancellationToken ct = default)
     {
         var payload = new
@@ -1058,7 +1063,7 @@ public class GraphApiService
     /// <param name="redirectUris">The redirect URIs to set.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>True if successful.</returns>
-    public async Task<bool> UpdateAppRedirectUrisAsync(
+    public virtual async Task<bool> UpdateAppRedirectUrisAsync(
         string tenantId, string applicationObjectId, IEnumerable<string> redirectUris, CancellationToken ct = default)
     {
         var payload = new
@@ -1085,7 +1090,7 @@ public class GraphApiService
     /// <summary>
     /// Updates the publicClient redirect URIs on an Entra application registration.
     /// </summary>
-    public async Task<bool> UpdateAppPublicClientRedirectUrisAsync(
+    public virtual async Task<bool> UpdateAppPublicClientRedirectUrisAsync(
         string tenantId, string applicationObjectId, IEnumerable<string> redirectUris, CancellationToken ct = default)
     {
         var payload = new
@@ -1113,7 +1118,7 @@ public class GraphApiService
     /// Looks up an application by its appId (clientId) and returns the object ID.
     /// Retries up to 6 times with a 10-second delay to handle replication lag for newly created apps.
     /// </summary>
-    public async Task<string?> GetAppObjectIdByClientIdAsync(
+    public virtual async Task<string?> GetAppObjectIdByClientIdAsync(
         string tenantId, string clientId, CancellationToken ct = default)
     {
         const int maxAttempts = 6;
@@ -1149,7 +1154,7 @@ public class GraphApiService
     /// Finds an application's object ID by its display name.
     /// Returns null if not found.
     /// </summary>
-    public async Task<string?> GetAppObjectIdByDisplayNameAsync(
+    public virtual async Task<string?> GetAppObjectIdByDisplayNameAsync(
         string tenantId, string displayName, CancellationToken ct = default)
     {
         var escapedDisplayName = displayName.Replace("'", "''", StringComparison.Ordinal);
@@ -1173,7 +1178,7 @@ public class GraphApiService
     /// <summary>
     /// Deletes an Entra application by its object ID.
     /// </summary>
-    public async Task<bool> DeleteEntraAppAsync(
+    public virtual async Task<bool> DeleteEntraAppAsync(
         string tenantId, string applicationObjectId, CancellationToken ct = default)
     {
         _logger.LogDebug("Deleting Entra application {ObjectId}", applicationObjectId);
@@ -1256,7 +1261,7 @@ public class GraphApiService
     /// <summary>
     /// Adds a required resource access entry (API permission) to an application for a single scope.
     /// </summary>
-    public async Task<bool> AddRequiredResourceAccessAsync(
+    public virtual async Task<bool> AddRequiredResourceAccessAsync(
         string tenantId, string applicationObjectId, string resourceAppId, Guid scopeId, CancellationToken ct = default)
     {
         return await AddRequiredResourceAccessAsync(tenantId, applicationObjectId, resourceAppId, new[] { scopeId }, ct);
@@ -1265,7 +1270,7 @@ public class GraphApiService
     /// <summary>
     /// Adds a required resource access entry (API permission) to an application for one or more scopes.
     /// </summary>
-    public async Task<bool> AddRequiredResourceAccessAsync(
+    public virtual async Task<bool> AddRequiredResourceAccessAsync(
         string tenantId, string applicationObjectId, string resourceAppId, IEnumerable<Guid> scopeIds, CancellationToken ct = default)
     {
         // First read current requiredResourceAccess

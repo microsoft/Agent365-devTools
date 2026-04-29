@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft Corporation.  
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
@@ -124,7 +125,7 @@ public interface IAgent365ToolingService
     /// <param name="serverName">MCP server name to delete</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Response containing app IDs to clean up, or null on failure</returns>
-    Task<DeleteMcpServerResponse?> DeleteMcpServerAsync(
+    Task<CleanupMcpServerResponse?> DeleteMcpServerAsync(
         string serverName,
         bool force = false,
         CancellationToken cancellationToken = default);

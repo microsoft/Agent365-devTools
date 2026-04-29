@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft Corporation.  
-// Licensed under the MIT License. 
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -1038,7 +1039,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <inheritdoc />
-    public async Task<DeleteMcpServerResponse?> DeleteMcpServerAsync(
+    public async Task<CleanupMcpServerResponse?> DeleteMcpServerAsync(
         string serverName,
         bool force = false,
         CancellationToken cancellationToken = default)
@@ -1083,7 +1084,7 @@ public class Agent365ToolingService : IAgent365ToolingService
                 return null;
             }
 
-            var deleteResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<DeleteMcpServerResponse>(
+            var deleteResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<CleanupMcpServerResponse>(
                 responseContent!, _logger);
 
             _logger.LogDebug("Successfully deleted MCP server {ServerName}", serverName);

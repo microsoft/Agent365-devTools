@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-using Microsoft.Agents.A365.DevTools.Cli.Constants;
+
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -900,9 +900,7 @@ public static class DevelopMcpCommand
             var publisherName = context.ParseResult.GetValueForOption(publisherOption);
             var serverDescription = context.ParseResult.GetValueForOption(descriptionOption);
             var force = context.ParseResult.GetValueForOption(forceOption);
-            var configPath = context.ParseResult.GetValueForOption(configOption)!;
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
-            var verbose = context.ParseResult.GetValueForOption(verboseOption);
 
             // Load input file if provided, and use file values as defaults for CLI options not explicitly set
             RegisterExternalMcpServerInput? inputFileData = null;
