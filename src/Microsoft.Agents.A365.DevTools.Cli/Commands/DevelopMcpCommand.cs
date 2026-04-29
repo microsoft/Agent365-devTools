@@ -1090,6 +1090,27 @@ public static class DevelopMcpCommand
                 // Tool names: CLI --tools > input file tools > interactive prompt
                 if (string.IsNullOrWhiteSpace(toolsInput) && inputFileData?.Tools is not null && inputFileData.Tools.Count > 0)
                 {
+                    // Validate tool names from input file
+                    foreach (var tool in inputFileData.Tools)
+                    {
+                        if (string.IsNullOrWhiteSpace(tool.Name))
+                        {
+                            logger.LogError("Input file contains a tool with a null or empty name");
+                            return;
+                        }
+                    }
+
+                    var duplicateTools = inputFileData.Tools
+                        .GroupBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                        .Where(g => g.Count() > 1)
+                        .Select(g => g.Key)
+                        .ToList();
+                    if (duplicateTools.Count > 0)
+                    {
+                        logger.LogError("Input file contains duplicate tool names (case-insensitive): {Duplicates}", string.Join(", ", duplicateTools));
+                        return;
+                    }
+
                     // Use tools from input file (both names and descriptions)
                     toolList = inputFileData.Tools.Select(t => t.Name).ToList();
                     toolDescriptions = new Dictionary<string, string>();
@@ -1220,6 +1241,15 @@ public static class DevelopMcpCommand
 
             Console.WriteLine();
 
+            if (dryRun)
+            {
+                logger.LogInformation("[DRY RUN] Would create Entra app registrations for server '{ServerName}'", serverName);
+                logger.LogInformation("[DRY RUN] Auth type: {AuthType}", authType);
+                logger.LogInformation("[DRY RUN] Tools to register: {ToolCount} ({Tools})", toolList?.Count ?? 0, string.Join(", ", toolList ?? new List<string>()));
+                logger.LogInformation("[DRY RUN] Would call AddMcpServer API and configure redirect URIs");
+                return;
+            }
+
             // Confirm before proceeding
             Console.Write("Proceed with registration? (y/N): ");
             var confirmation = Console.ReadLine()?.Trim().ToLowerInvariant();
@@ -1230,12 +1260,6 @@ public static class DevelopMcpCommand
             }
 
             Console.WriteLine();
-
-            if (dryRun)
-            {
-                logger.LogInformation("[DRY RUN] Would create Entra apps and register MCP server {ServerName}", serverName);
-                return;
-            }
 
             await toolingService.LogRegisterUsageAsync(
                 serverName, authType, toolList?.Count ?? 0);
@@ -1453,6 +1477,50 @@ public static class DevelopMcpCommand
                 Force = force,
             };
 
+            async Task RollbackEntraAppsAsync()
+            {
+                logger.LogInformation("Rolling back Entra app registrations...");
+
+                if (a365AppObjectId is not null)
+                {
+                    try
+                    {
+                        await graphApiService!.DeleteEntraAppAsync(tenantId, a365AppObjectId);
+                        logger.LogInformation("Rolled back A365 Proxy app ({ObjectId})", a365AppObjectId);
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        logger.LogWarning("Failed to roll back A365 Proxy app ({ObjectId}): {Error}", a365AppObjectId, rollbackEx.Message);
+                    }
+                }
+
+                if (remoteProxyAppObjectId is not null)
+                {
+                    try
+                    {
+                        await graphApiService!.DeleteEntraAppAsync(tenantId, remoteProxyAppObjectId);
+                        logger.LogInformation("Rolled back Remote Proxy app ({ObjectId})", remoteProxyAppObjectId);
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        logger.LogWarning("Failed to roll back Remote Proxy app ({ObjectId}): {Error}", remoteProxyAppObjectId, rollbackEx.Message);
+                    }
+                }
+
+                if (copilotAppObjectId is not null)
+                {
+                    try
+                    {
+                        await graphApiService!.DeleteEntraAppAsync(tenantId, copilotAppObjectId);
+                        logger.LogInformation("Rolled back Public Clients app ({ObjectId})", copilotAppObjectId);
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        logger.LogWarning("Failed to roll back Public Clients app ({ObjectId}): {Error}", copilotAppObjectId, rollbackEx.Message);
+                    }
+                }
+            }
+
             Models.AddMcpServerResponse? addResponse;
             try
             {
@@ -1462,6 +1530,7 @@ public static class DevelopMcpCommand
             {
                 logger.LogError("Failed to register MCP server '{ServerName}': {Error}", serverName, ex.Message);
                 logger.LogDebug("Exception details: {Exception}", ex.ToString());
+                await RollbackEntraAppsAsync();
                 return;
             }
 
@@ -1469,6 +1538,7 @@ public static class DevelopMcpCommand
             {
                 var errorMsg = addResponse?.Message ?? "No response received";
                 logger.LogError("Failed to add MCP server {ServerName}: {Error}", serverName, errorMsg);
+                await RollbackEntraAppsAsync();
                 return;
             }
 
@@ -1878,6 +1948,14 @@ public static class DevelopMcpCommand
             {
                 logger.LogError("Tenant ID is required. Pass --tenant-id or sign in via az login.");
                 context.ExitCode = 1;
+                return;
+            }
+
+            Console.Write($"This will delete MCP server '{serverName}' and all associated Entra app registrations. Proceed? (y/N): ");
+            var confirmation = Console.ReadLine()?.Trim().ToLowerInvariant();
+            if (confirmation != "y" && confirmation != "yes")
+            {
+                Console.WriteLine("Cleanup cancelled.");
                 return;
             }
 

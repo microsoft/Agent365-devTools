@@ -288,6 +288,101 @@ public class DevelopMcpCommandTests
         }
     }
 
+    [Fact]
+    public void RegisterExternalMcpServerSubcommand_HasAllExpectedOptions()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "register-external-mcp-server");
+
+        // Assert
+        subcommand.Description.Should().Be("Register an external MCP server with Entra, ExternalIDP, or NoAuth authentication");
+
+        var options = subcommand.Options.ToList();
+        var optionNames = options.Select(o => o.Name).ToList();
+
+        optionNames.Should().Contain("server-name");
+        optionNames.Should().Contain("server-url");
+        optionNames.Should().Contain("auth-type");
+        optionNames.Should().Contain("idp-authorization-url");
+        optionNames.Should().Contain("idp-token-url");
+        optionNames.Should().Contain("idp-scopes");
+        optionNames.Should().Contain("idp-client-id");
+        optionNames.Should().Contain("idp-client-secret");
+        optionNames.Should().Contain("api-key-location");
+        optionNames.Should().Contain("api-key-name");
+        optionNames.Should().Contain("tools");
+        optionNames.Should().Contain("input-file");
+        optionNames.Should().Contain("remote-scopes");
+        optionNames.Should().Contain("tenant-id");
+        optionNames.Should().Contain("service-tree-id");
+        optionNames.Should().Contain("config");
+        optionNames.Should().Contain("publisher");
+        optionNames.Should().Contain("description");
+        optionNames.Should().Contain("force");
+        optionNames.Should().Contain("dry-run");
+        optionNames.Should().Contain("verbose");
+
+        // Verify critical aliases
+        var serverNameOption = options.First(o => o.Name == "server-name");
+        serverNameOption.Aliases.Should().Contain("-s");
+        serverNameOption.Aliases.Should().Contain("--server-name");
+
+        var serverUrlOption = options.First(o => o.Name == "server-url");
+        serverUrlOption.Aliases.Should().Contain("-u");
+
+        var authTypeOption = options.First(o => o.Name == "auth-type");
+        authTypeOption.Aliases.Should().Contain("-a");
+
+        var inputFileOption = options.First(o => o.Name == "input-file");
+        inputFileOption.Aliases.Should().Contain("-f");
+
+        var tenantIdOption = options.First(o => o.Name == "tenant-id");
+        tenantIdOption.Aliases.Should().Contain("-t");
+
+        var configOption = options.First(o => o.Name == "config");
+        configOption.Aliases.Should().Contain("-c");
+
+        var verboseOption = options.First(o => o.Name == "verbose");
+        verboseOption.Aliases.Should().Contain("-v");
+    }
+
+    [Fact]
+    public void CleanupExternalMcpServerResourcesSubcommand_HasCorrectOptions()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "cleanup-external-mcp-server-resources");
+
+        // Assert
+        subcommand.Description.Should().Be("Delete a registered external MCP server and clean up all associated Entra app registrations");
+
+        var options = subcommand.Options.ToList();
+        var optionNames = options.Select(o => o.Name).ToList();
+
+        optionNames.Should().Contain("server-name");
+        optionNames.Should().Contain("tenant-id");
+        optionNames.Should().Contain("force");
+        optionNames.Should().Contain("config");
+        optionNames.Should().Contain("verbose");
+
+        // Verify server-name is required
+        var serverNameOption = options.First(o => o.Name == "server-name");
+        serverNameOption.IsRequired.Should().BeTrue();
+
+        // Verify critical aliases
+        serverNameOption.Aliases.Should().Contain("-s");
+
+        var tenantIdOption = options.First(o => o.Name == "tenant-id");
+        tenantIdOption.Aliases.Should().Contain("-t");
+
+        var configOption = options.First(o => o.Name == "config");
+        configOption.Aliases.Should().Contain("-c");
+
+        var verboseOption = options.First(o => o.Name == "verbose");
+        verboseOption.Aliases.Should().Contain("-v");
+    }
+
     [Theory]
     [InlineData("list-servers", "environment-id", "-e")]
     [InlineData("publish", "environment-id", "-e")]
@@ -296,6 +391,13 @@ public class DevelopMcpCommandTests
     [InlineData("unpublish", "server-name", "-s")]
     [InlineData("approve", "server-name", "-s")]
     [InlineData("block", "server-name", "-s")]
+    [InlineData("register-external-mcp-server", "server-name", "-s")]
+    [InlineData("register-external-mcp-server", "server-url", "-u")]
+    [InlineData("register-external-mcp-server", "auth-type", "-a")]
+    [InlineData("register-external-mcp-server", "input-file", "-f")]
+    [InlineData("register-external-mcp-server", "tenant-id", "-t")]
+    [InlineData("cleanup-external-mcp-server-resources", "server-name", "-s")]
+    [InlineData("cleanup-external-mcp-server-resources", "tenant-id", "-t")]
     public void CriticalOptions_HaveConsistentAliases(string subcommandName, string optionName, string expectedAlias)
     {
         // Act
