@@ -221,7 +221,7 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
-        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (AdminSubcommand, PublishCommand)
+        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (PublishCommand)
         // AgentRegistration.ReadWrite.All (resource: 00000003-0000-0000-c000-000000000000, ID: 20f263bf-7d50-4e66-912c-16b4b4194fd4)
         // is required for POST/DELETE /beta/copilot/agentRegistrations. It is acquired via .default
         // on the custom app token provider (not enumerated explicitly) to avoid AADSTS650053.

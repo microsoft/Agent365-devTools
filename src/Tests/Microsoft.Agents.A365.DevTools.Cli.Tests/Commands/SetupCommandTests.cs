@@ -633,13 +633,13 @@ public class SetupCommandTests
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Agent Identity Delegated")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Permission Grants") && o.ToString()!.Contains("delegated")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
         _mockLogger.DidNotReceive().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Agent Identity App Perms")),
+            Arg.Is<object>(o => o.ToString()!.Contains("S2S")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

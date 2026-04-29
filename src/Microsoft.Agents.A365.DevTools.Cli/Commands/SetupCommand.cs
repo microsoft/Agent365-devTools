@@ -53,8 +53,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "  3. a365 setup permissions bot\n" +
                 "Or run all steps at once:\n" +
                 "  a365 setup all                      # Full setup\n\n" +
-                "For non-admin users — complete GA-only grants after setup all:\n" +
-                "  a365 setup admin --config-dir \"<path>\"  # Run as Global Administrator");
+                "If you are not a Global Administrator, setup all will print next steps\n" +
+                "for a Global Administrator to complete the required consent grants.");
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
@@ -68,9 +68,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
 
             command.AddCommand(AllSubcommand.CreateCommand(
                 logger, configService, executor, backendConfigurator, authValidator, platformDetector, graphApiService, blueprintService, clientAppValidator, blueprintLookupService, federatedCredentialService, armApiService, confirmationProvider, resolver));
-
-            command.AddCommand(AdminSubcommand.CreateCommand(
-                logger, configService, authValidator, graphApiService, confirmationProvider, blueprintService, resolver: resolver));
 
             return command;
         }

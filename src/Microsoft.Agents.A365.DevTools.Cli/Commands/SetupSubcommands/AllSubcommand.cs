@@ -411,6 +411,7 @@ internal static class AllSubcommand
 
                 setupResults.PrerequisitesSkipped = skipRequirements;
                 setupResults.InfrastructureSkipped = true;
+                setupResults.TenantId = setupConfig.TenantId;
 
                 // Validate all prerequisites in one pass
                 if (!skipRequirements)

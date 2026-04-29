@@ -34,7 +34,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 ///
 /// Phase 3 — Admin consent (Global Administrator only):
 ///   For GA: skipped entirely — Phase 2b grants satisfy consent.
-///   For non-admin: shows the 'a365 setup admin' command to hand off to a GA.
+///   For non-admin: surfaces next steps in the setup summary for handoff to a GA.
 ///   The consent URL is still generated for Graph scopes as a fallback reference.
 ///
 /// This class is a parallel implementation alongside SetupHelpers.EnsureResourcePermissionsAsync,
@@ -184,9 +184,9 @@ internal static class BatchPermissionsOrchestrator
                 }
 
                 // Grants failed (e.g. SP propagation lag). Return false so the summary shows
-                // the failure and next steps (re-run 'a365 setup admin').
+                // the failure and next steps for the GA to retry.
                 logger.LogWarning("OAuth2 grants failed — the service principal may still be propagating.");
-                logger.LogWarning("Re-run 'a365 setup admin' to retry once propagation is complete.");
+                logger.LogWarning("Re-run 'a365 setup all' once propagation is complete to retry.");
                 var graphScopes = specs
                     .Where(s => s.ResourceAppId == AuthenticationConstants.MicrosoftGraphResourceAppId)
                     .SelectMany(s => s.Scopes.Select(scope => $"{graph.GraphBaseUrl}/{scope}"))
@@ -454,7 +454,7 @@ internal static class BatchPermissionsOrchestrator
     /// <summary>
     /// Grants S2S app role assignments for all specs that carry <see cref="ResourcePermissionSpec.AppRoleScopes"/>.
     /// Idempotent: skips roles already assigned. Sets <see cref="SetupResults.S2SAppRoleGranted"/> on completion.
-    /// Requires Global Administrator and <see cref="AuthenticationConstants.RequiredS2SGrantScopes"/>.
+    /// Requires Application Administrator or Global Administrator and <see cref="AuthenticationConstants.RequiredS2SGrantScopes"/>.
     /// </summary>
     private static async Task PerformS2SGrantsAsync(
         AgentBlueprintService blueprintService,
@@ -496,7 +496,7 @@ internal static class BatchPermissionsOrchestrator
             else
             {
                 logger.LogWarning("   - Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
-                setupResults?.Warnings.Add($"S2S app role assignment failed for {spec.ResourceName}. Re-run 'a365 setup admin' to retry.");
+                setupResults?.Warnings.Add($"S2S app role assignment failed for {spec.ResourceName}. Re-run 'a365 setup all' as Global Administrator to retry.");
                 allS2SOk = false;
             }
         }
@@ -546,7 +546,7 @@ internal static class BatchPermissionsOrchestrator
         // Check if consent already exists for ALL resolved resources (Phase 2b programmatic grants
         // satisfy this check). Run this regardless of whether Graph scopes are present — non-DW
         // blueprints have no Graph scopes but still require oauth2PermissionGrants for Observability
-        // and Power Platform APIs created by GA via Phase 2b or 'a365 setup admin'.
+        // and Power Platform APIs created by a Global Administrator via Phase 2b.
         if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
         {
             var specsWithResolvedSp = specs
@@ -590,7 +590,7 @@ internal static class BatchPermissionsOrchestrator
         }
 
         // Grants not fully in place. When there are no Graph scopes (non-DW path), there is no
-        // consent URL to open — the admin must run 'a365 setup admin' to create the oauth2PermissionGrants.
+        // consent URL to open — the admin must grant consent via Entra portal or PowerShell.
         // No inline message: the caller surfaces this as an Action Required item in the summary.
         if (graphScopes.Count == 0)
         {
@@ -733,9 +733,9 @@ internal static class BatchPermissionsOrchestrator
         IReadOnlyDictionary<string, string> ResourceSpObjectIds);
 
     /// <summary>
-    /// Entry point for 'a365 setup admin'. Performs only Phase 1 (SP resolution) and
-    /// Phase 2b (AllPrincipals OAuth2 grants). Inheritable permissions are assumed to
-    /// have been set already by 'a365 setup all' run by an Agent ID Admin.
+    /// Performs Phase 1 (SP resolution) and Phase 2b (AllPrincipals OAuth2 grants).
+    /// Inheritable permissions are assumed to have been set already by 'a365 setup all'
+    /// run by an Agent ID Admin.
     /// Returns the blueprint SP object ID for the verification query, and a boolean
     /// indicating whether all grants were configured successfully.
     /// </summary>

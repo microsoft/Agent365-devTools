@@ -16,8 +16,8 @@ public class SetupHelpersAdminConsentInstructionsTests
 {
     private const string BlueprintId = "bp-app-id-123";
     private const string AgentIdentityId = "ai-app-id-456";
+    private const string TenantId = "tenant-id-789";
 
-    // Captures formatted log messages for content assertions.
     private sealed class CapturingLogger : ILogger
     {
         private readonly List<string> _messages = [];
@@ -32,119 +32,95 @@ public class SetupHelpersAdminConsentInstructionsTests
     }
 
     [Fact]
-    public void LogNonDwAdminConsentInstructions_WithAgentIdentitySpObjectId_OptionAOmitsStep7AndShowsNote()
-    {
-        var logger = new CapturingLogger();
-
-        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, AgentIdentityId);
-
-        logger.AllOutput.Should().NotContain("7. Grant Application permissions",
-            because: "agent identity Application permissions are granted via PowerShell (Option B), not the Entra portal; step 7 was intentionally removed from Option A");
-        logger.AllOutput.Should().Contain("Application permissions for the agent identity",
-            because: "a note redirecting the admin to Option B PowerShell must appear when agent identity is provided");
-        logger.AllOutput.Should().Contain(AgentIdentityId,
-            because: "agent identity SP object ID must appear in the PowerShell $ai lookup in Option B");
-    }
-
-    [Fact]
-    public void LogNonDwAdminConsentInstructions_WithoutAgentIdentityAppId_OmitsStep7()
+    public void LogNonDwAdminConsentInstructions_OptionA_ContainsDirectLinkWithBlueprintId()
     {
         var logger = new CapturingLogger();
 
         SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
 
-        logger.AllOutput.Should().NotContain("7. Grant Application permissions",
-            because: "step 7 must be omitted when no agent identity ID is given");
+        logger.AllOutput.Should().Contain(BlueprintId,
+            because: "the direct Entra portal link must embed the blueprint app ID");
+        logger.AllOutput.Should().Contain("entra.microsoft.com",
+            because: "Option A must link to the Entra portal");
+        logger.AllOutput.Should().Contain("CallAnAPI",
+            because: "the deep link must target the API permissions blade");
     }
 
     [Fact]
-    public void LogNonDwAdminConsentInstructions_WithAgentIdentityAppId_EmitsAgentIdentityAppRoleAssignmentInOptionB()
-    {
-        var logger = new CapturingLogger();
-
-        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, AgentIdentityId);
-
-        logger.AllOutput.Should().Contain("$ai = Get-MgServicePrincipal",
-            because: "Option B must declare the $ai variable when agent identity is provided");
-        logger.AllOutput.Should().Contain("-ServicePrincipalId $ai.Id -PrincipalId $ai.Id",
-            because: "app role must be assigned to the agent identity SP");
-        logger.AllOutput.Should().Contain(AgentIdentityId,
-            because: "agent identity app ID must appear in the $ai lookup");
-    }
-
-    [Fact]
-    public void LogNonDwAdminConsentInstructions_WithoutAgentIdentityAppId_OmitsAgentIdentityGrantInOptionB()
+    public void LogNonDwAdminConsentInstructions_OptionA_ShowsDelegatedPermissionsInStep2()
     {
         var logger = new CapturingLogger();
 
         SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
 
-        logger.AllOutput.Should().NotContain("$ai",
-            because: "no $ai variable or assignment should appear when agent identity is absent");
-    }
-
-    [Fact]
-    public void LogNonDwAdminConsentInstructions_WithAgentIdentity_EmitsAgentIdentityAppRoleAssignmentInOptionB()
-    {
-        var logger = new CapturingLogger();
-
-        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, AgentIdentityId);
-
-        logger.AllOutput.Should().Contain("-ServicePrincipalId $ai.Id -PrincipalId $ai.Id",
-            because: "non-AI teammate S2S app role must be assigned to the agent identity SP — the blueprint is not the token-acquiring principal in the non-DW flow");
-        logger.AllOutput.Should().NotContain("-ServicePrincipalId $bp.Id -PrincipalId $bp.Id",
-            because: "the blueprint must not receive the app role in the non-DW flow; only the agent identity acquires S2S tokens");
-    }
-
-    [Fact]
-    public void LogNonDwAdminConsentInstructions_AlwaysEmitsDelegatedGrantForBlueprint()
-    {
-        var logger = new CapturingLogger();
-
-        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
-
-        logger.AllOutput.Should().Contain("oauth2PermissionGrants",
-            because: "delegated oauth2 grant must always be emitted for blueprint");
-        logger.AllOutput.Should().Contain("clientId = $bp.Id",
-            because: "oauth2 grant clientId must reference the blueprint SP");
-    }
-
-    [Fact]
-    public void LogNonDwAdminConsentInstructions_OptionAStep5_ShowsDelegatedPermissionsOnly()
-    {
-        var logger = new CapturingLogger();
-
-        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
-
-        // Step 5 covers the blueprint's delegated grants only. Application (S2S) permissions
-        // go to the agent identity SP via Option B PowerShell — they do not appear in the
-        // blueprint's "API permissions" pane in the Entra portal.
         var obsLines = logger.Messages
             .Where(m => m.Contains("Observability API") && m.Contains(ConfigConstants.ObservabilityApiOtelWriteScope))
             .ToList();
         obsLines.Should().HaveCount(1,
-            because: "Observability API delegated scope must appear exactly once in step 5");
+            because: "Observability API delegated scope must appear exactly once");
         obsLines[0].Should().Contain("Delegated",
-            because: "step 5 shows only delegated grants for the blueprint");
-        obsLines[0].Should().NotContain("Application",
-            because: "Application permissions for the Observability API are granted to the agent identity, not the blueprint, and are handled by Option B PowerShell");
+            because: "only delegated grants are needed for OBO — no Application permissions");
     }
 
     [Fact]
-    public void LogNonDwAdminConsentInstructions_DelegatedBlock_UsesSeparateIdVariable()
+    public void LogNonDwAdminConsentInstructions_DoesNotEmitOptionBPowerShell()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, AgentIdentityId);
+
+        logger.AllOutput.Should().NotContain("Option B",
+            because: "OBO mode needs only Entra portal consent — no PowerShell required");
+        logger.AllOutput.Should().NotContain("Connect-MgGraph",
+            because: "no PowerShell commands should be emitted for OBO-only consent");
+        logger.AllOutput.Should().NotContain("New-MgServicePrincipalAppRoleAssignment",
+            because: "app role assignments are not needed for delegated OBO grants");
+    }
+
+    [Fact]
+    public void LogNonDwAdminConsentInstructions_CopyPasteBlock_ContainsBlueprintId()
     {
         var logger = new CapturingLogger();
 
         SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
 
-        // The delegated block must use an Id-suffixed variable (e.g. $observabilityId)
-        // so it does not overwrite the full SP object set in the app role assignment block.
-        logger.AllOutput.Should().Contain("$observabilityId",
-            because: "delegated block must use an Id-suffixed variable to avoid overwriting the SP object");
-        logger.AllOutput.Should().Contain("$powerplatformId",
-            because: "Power Platform API delegated entry must also use an Id-suffixed variable");
-        logger.AllOutput.Should().Contain("resourceId = $observabilityId",
-            because: "Invoke-MgGraphRequest body must reference the Id-suffixed variable");
+        logger.AllOutput.Should().Contain($"Blueprint : {BlueprintId}",
+            because: "the copy-paste block must include the blueprint ID for the admin");
+    }
+
+    [Fact]
+    public void LogNonDwAdminConsentInstructions_CopyPasteBlock_ContainsTenantIdWhenProvided()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, tenantId: TenantId);
+
+        logger.AllOutput.Should().Contain($"Tenant    : {TenantId}",
+            because: "the copy-paste block must include the tenant ID when provided");
+    }
+
+    [Fact]
+    public void LogNonDwAdminConsentInstructions_CopyPasteBlock_OmitsTenantIdWhenAbsent()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
+
+        logger.AllOutput.Should().NotContain("Tenant    :",
+            because: "tenant ID line must be omitted when no tenantId is passed");
+    }
+
+    [Fact]
+    public void LogNonDwAdminConsentInstructions_CopyPasteBlock_ContainsDirectLink()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
+
+        logger.AllOutput.Should().Contain("Grant admin consent:",
+            because: "the copy-paste block must include a direct consent link label");
+        logger.AllOutput.Should().Contain(BlueprintId,
+            because: "the copy-paste block link must include the blueprint ID");
     }
 
     // ── NonDwAdminConsentSpecs contract ───────────────────────────────────────
