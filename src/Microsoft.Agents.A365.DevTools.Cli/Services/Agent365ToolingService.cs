@@ -51,12 +51,23 @@ public class Agent365ToolingService : IAgent365ToolingService
         string operationName, 
         CancellationToken cancellationToken)
     {
+        // Extract server-side correlation ID for troubleshooting
+        string? serverCorrelationId = null;
+        if (response.Headers.TryGetValues("x-ms-correlation-id", out var correlationValues))
+        {
+            serverCorrelationId = correlationValues.FirstOrDefault();
+        }
+
         // Check HTTP status first
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("Failed to {Operation}. Status: {Status}", operationName, response.StatusCode);
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError("Error response: {Error}", errorContent);
+            if (!string.IsNullOrWhiteSpace(serverCorrelationId))
+            {
+                _logger.LogError("Server correlation ID (x-ms-correlation-id): {CorrelationId}", serverCorrelationId);
+            }
             return (false, errorContent);
         }
 
@@ -87,6 +98,10 @@ public class Agent365ToolingService : IAgent365ToolingService
                     }
                     
                     _logger.LogError("{Operation} failed: {Message}", operationName, errorMessage);
+                    if (!string.IsNullOrWhiteSpace(serverCorrelationId))
+                    {
+                        _logger.LogError("Server correlation ID (x-ms-correlation-id): {CorrelationId}", serverCorrelationId);
+                    }
                     return (false, responseContent);
                 }
             }
@@ -882,6 +897,15 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Logging register usage telemetry...");
             using var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
             _logger.LogDebug("Telemetry logged: {StatusCode}", response.StatusCode);
+            if (!response.IsSuccessStatusCode &&
+                response.Headers.TryGetValues("x-ms-correlation-id", out var telemetryCorrelationValues))
+            {
+                var telemetryCorrelationId = telemetryCorrelationValues.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(telemetryCorrelationId))
+                {
+                    _logger.LogDebug("Telemetry server correlation ID: {CorrelationId}", telemetryCorrelationId);
+                }
+            }
         }
         catch (Exception ex)
         {

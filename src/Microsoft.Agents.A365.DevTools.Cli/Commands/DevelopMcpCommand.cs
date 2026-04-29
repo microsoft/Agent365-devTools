@@ -1231,6 +1231,9 @@ public static class DevelopMcpCommand
 
             Console.WriteLine();
 
+            logger.LogWarning("Tool names must exactly match the names exposed by the remote MCP server. Mismatched names will cause tool invocations to fail at runtime.");
+            Console.WriteLine();
+
             if (dryRun)
             {
                 logger.LogInformation("[DRY RUN] Would create Entra app registrations for server '{ServerName}'", serverName);
@@ -1319,14 +1322,15 @@ public static class DevelopMcpCommand
             var a365App = await graphApiService.CreateEntraAppAsync(tenantId, a365AppName, serviceTreeId: serviceTreeId);
             if (a365App == null)
             {
-                logger.LogError("Failed to create Entra application for A365 Proxy");
+                logger.LogError("Failed to create Entra application '{AppName}'. Ensure you have Application.ReadWrite.All permission in the target tenant. Run with -v for details.", a365AppName);
                 return;
             }
+            logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", a365AppName, a365App.Value.ClientId);
 
             var a365Secret = await graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId);
             if (string.IsNullOrWhiteSpace(a365Secret))
             {
-                logger.LogError("Failed to create secret for A365 Proxy Entra application");
+                logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", a365AppName);
                 return;
             }
 
@@ -1360,14 +1364,15 @@ public static class DevelopMcpCommand
                     var remoteApp = await graphApiService.CreateEntraAppAsync(tenantId, remoteProxyAppName, serviceTreeId: serviceTreeId);
                     if (remoteApp == null)
                     {
-                        logger.LogError("Failed to create Entra application for Remote Proxy");
+                        logger.LogError("Failed to create Entra application '{AppName}'. Ensure you have Application.ReadWrite.All permission in the target tenant. Run with -v for details.", remoteProxyAppName);
                         return;
                     }
+                    logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", remoteProxyAppName, remoteApp.Value.ClientId);
 
                     var remoteSecret = await graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId);
                     if (string.IsNullOrWhiteSpace(remoteSecret))
                     {
-                        logger.LogError("Failed to create secret for Remote Proxy Entra application");
+                        logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", remoteProxyAppName);
                         return;
                     }
 
@@ -1418,7 +1423,7 @@ public static class DevelopMcpCommand
             {
                 copilotAppClientId = copilotApp.Value.ClientId;
                 copilotAppObjectId = copilotApp.Value.ObjectId;
-                logger.LogDebug("Created Public Clients app: {ClientId}", copilotAppClientId);
+                logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", publicClientsAppName, copilotAppClientId);
 
                 var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{copilotAppClientId}";
                 try
@@ -1548,6 +1553,7 @@ public static class DevelopMcpCommand
                     var a365Uris = BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
                     logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}", a365AppName, a365AppObjectId, string.Join(", ", a365Uris));
                     await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, a365AppObjectId, a365Uris);
+                    logger.LogInformation("Updated redirect URIs on '{AppName}'", a365AppName);
                 }
                 catch (Exception ex)
                 {
@@ -1572,6 +1578,7 @@ public static class DevelopMcpCommand
                     var remoteUris = BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
                     logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}", remoteProxyAppName, remoteProxyAppObjectId, string.Join(", ", remoteUris));
                     await graphApiService!.UpdateAppRedirectUrisAsync(tenantId, remoteProxyAppObjectId, remoteUris);
+                    logger.LogInformation("Updated redirect URIs on '{AppName}'", remoteProxyAppName);
                 }
                 catch (Exception ex)
                 {
@@ -1657,6 +1664,7 @@ public static class DevelopMcpCommand
                             logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission (resource: {PpmiAppId}) on '{AppName}' ({ObjectId})", ppmiAppClientId, a365AppName, a365AppObjectId);
                             await graphApiService.AddRequiredResourceAccessAsync(
                                 tenantId, a365AppObjectId, ppmiAppClientId, ppmiScopeId.Value);
+                            logger.LogInformation("Added API permission on '{AppName}'", a365AppName);
                         }
                         catch (Exception ex)
                         {
