@@ -180,10 +180,6 @@ public static string GetAgent365ToolsResourceAppId(string environment)
     if (!string.IsNullOrEmpty(customAppId))
         return customAppId;
 
-    return environment?.ToLowerInvariant() switch
-    {
-        "local" or "test" or "preprod" or "ppe" => "05879165-0320-489e-b644-f72b33f3edf0",
-        _ => McpConstants.WorkIQToolsProdAppId,
-    };
+    return McpConstants.WorkIQToolsProdAppId;
 }
 }
