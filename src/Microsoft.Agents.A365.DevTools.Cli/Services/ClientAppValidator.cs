@@ -19,11 +19,13 @@ public sealed class ClientAppValidator : IClientAppValidator
 {
     private readonly ILogger<ClientAppValidator> _logger;
     private readonly GraphApiService _graphApiService;
+    private readonly IConfirmationProvider? _confirmationProvider;
 
-    public ClientAppValidator(ILogger<ClientAppValidator> logger, GraphApiService graphApiService)
+    public ClientAppValidator(ILogger<ClientAppValidator> logger, GraphApiService graphApiService, IConfirmationProvider? confirmationProvider = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _graphApiService = graphApiService ?? throw new ArgumentNullException(nameof(graphApiService));
+        _confirmationProvider = confirmationProvider;
     }
 
     /// <summary>
@@ -33,11 +35,14 @@ public sealed class ClientAppValidator : IClientAppValidator
     /// </summary>
     /// <param name="clientAppId">The client app ID to validate</param>
     /// <param name="tenantId">The tenant ID where the app should exist</param>
+    /// <param name="skipConfirmation">When true, applies any required app registration fixes without prompting the user.
+    /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="ClientAppValidationException">Thrown when validation fails</exception>
     public async Task EnsureValidClientAppAsync(
         string clientAppId,
         string tenantId,
+        bool skipConfirmation = false,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
@@ -71,7 +76,7 @@ public sealed class ClientAppValidator : IClientAppValidator
 
             _logger.LogDebug("Found client app: {DisplayName} ({AppId})", appInfo.DisplayName, clientAppId);
 
-            // Step 3: Validate permissions in manifest
+            // Step 3: Validate permissions in manifest (read-only)
             var missingPermissions = await ValidatePermissionsConfiguredAsync(appInfo, tenantId, ct);
 
             // Step 3.5: For any unresolvable permissions (beta APIs), check oauth2PermissionGrants as fallback
@@ -87,8 +92,103 @@ public sealed class ClientAppValidator : IClientAppValidator
                 }
             }
 
+            // Read-only pre-flight: collect what redirect URIs and public client settings need fixing
+            var missingRedirectUris = await CollectMissingRedirectUrisAsync(clientAppId, tenantId, ct);
+            var publicClientNeedsEnabling = await IsPublicClientFlowsDisabledAsync(clientAppId, tenantId, ct);
+
+            // Check whether the existing consent grant is per-user (Principal) rather than tenant-wide (AllPrincipals).
+            // A Principal grant only covers the specific admin who first consented; other users (e.g. developers
+            // running blueprint creation) see "Need admin approval" even though permissions are technically granted.
+            bool needsConsentUpgrade = await HasPrincipalOnlyConsentGrantAsync(clientAppId, tenantId, ct);
+
+            // Determine what mutations are needed
+            bool hasMissingPermissions = missingPermissions.Count > 0;
+            bool hasMissingRedirectUris = missingRedirectUris.Count > 0;
+            bool needsPublicClientEnabled = publicClientNeedsEnabling;
+            bool hasPendingMutations = hasMissingPermissions || hasMissingRedirectUris || needsPublicClientEnabled || needsConsentUpgrade;
+
+            // Prompt the user before making any changes (unless skipConfirmation or no confirmation provider)
+            bool applyFixes = true;
+            if (hasPendingMutations && _confirmationProvider != null && !skipConfirmation)
+            {
+                // Check if the user has admin privileges before offering to make changes.
+                // Non-admin users cannot modify app registrations — skip the prompt and fail immediately
+                // with actionable guidance including the admin consent URL.
+                var (isAdmin, _) = await _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(tenantId, ct);
+                if (!isAdmin)
+                {
+                    _logger.LogDebug("User does not have admin privileges to modify app registration — skipping auto-provision prompt");
+                    var missingDetails = new List<string>();
+                    if (hasMissingPermissions)
+                        missingDetails.Add($"Missing permissions: {string.Join(", ", missingPermissions)}");
+                    if (hasMissingRedirectUris)
+                        missingDetails.Add($"Missing redirect URIs: {string.Join(", ", missingRedirectUris)}");
+                    if (needsPublicClientEnabled)
+                        missingDetails.Add("Public client flows ('Allow public client flows') must be enabled");
+                    var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+                    var steps = new List<string>
+                    {
+                        "Next Steps — Global Administrator action required:",
+                        "  Option 1 — Run the CLI as a Global Administrator:",
+                        "    a365 setup requirements"
+                    };
+                    if (consentUrl != null)
+                    {
+                        steps.Add("  Option 2 — Share this consent URL with your Global Administrator:");
+                        steps.Add($"    {consentUrl}");
+                    }
+                    throw new ClientAppValidationException(
+                        issueDescription: "Client app configuration requires a Global Administrator",
+                        errorDetails: missingDetails,
+                        mitigationSteps: steps);
+                }
+
+                _logger.LogInformation("The following changes will be applied to app registration ({AppId}):", clientAppId);
+                _logger.LogInformation("");
+                if (hasMissingPermissions)
+                {
+                    _logger.LogInformation("  - Add permissions and grant admin consent for all users:");
+                    foreach (var perm in missingPermissions)
+                        _logger.LogInformation("      {Permission}", perm);
+                }
+                if (needsConsentUpgrade)
+                {
+                    _logger.LogInformation("  - Upgrade consent grant from per-user to tenant-wide (AllPrincipals)");
+                    _logger.LogInformation("    This allows all users in the tenant to use the CLI without individual consent prompts.");
+                    _logger.LogInformation("    (Required for multi-user workflows: admin runs setup, developer runs blueprint creation)");
+                }
+                if (hasMissingRedirectUris)
+                {
+                    _logger.LogInformation("  - Add redirect URIs:");
+                    foreach (var uri in missingRedirectUris)
+                        _logger.LogInformation("      {Uri}", uri);
+                }
+                if (needsPublicClientEnabled)
+                    _logger.LogInformation("  - Enable 'Allow public client flows' (required for device code fallback)");
+                _logger.LogInformation("For more information: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/custom-client-app-registration");
+                _logger.LogInformation("");
+
+                applyFixes = await _confirmationProvider.ConfirmAsync("Do you want to proceed? (y/N): ");
+                if (!applyFixes)
+                {
+                    _logger.LogInformation("App registration was not modified. Re-run and accept the prompt, or configure manually.");
+
+                    var details = new List<string>();
+                    if (hasMissingPermissions)
+                        details.Add($"Missing permissions: {string.Join(", ", missingPermissions)}");
+                    if (hasMissingRedirectUris)
+                        details.Add($"Missing redirect URIs: {string.Join(", ", missingRedirectUris)}");
+                    if (needsPublicClientEnabled)
+                        details.Add("Public client flows ('Allow public client flows') must be enabled");
+                    throw ClientAppValidationException.ValidationFailed(
+                        "App registration changes were declined — manual configuration required",
+                        details,
+                        clientAppId);
+                }
+            }
+
             // Step 3.6: Auto-provision any remaining missing permissions (self-healing)
-            if (missingPermissions.Count > 0)
+            if (applyFixes && missingPermissions.Count > 0)
             {
                 _logger.LogInformation("Auto-provisioning {Count} missing permission(s): {Permissions}",
                     missingPermissions.Count, string.Join(", ", missingPermissions));
@@ -118,23 +218,35 @@ public sealed class ClientAppValidator : IClientAppValidator
                 throw ClientAppValidationException.MissingPermissions(clientAppId, missingPermissions);
             }
 
-            // Step 4: Verify admin consent
+            // Step 3.7: Upgrade consent grant from per-user to tenant-wide if needed.
+            // Must run before ValidateAdminConsentAsync so the consentType check passes.
+            if (applyFixes && needsConsentUpgrade)
+                await UpgradeConsentGrantToAllPrincipalsAsync(clientAppId, tenantId, ct);
+
+            // Step 4: Verify admin consent (requires AllPrincipals grant)
             if (!await ValidateAdminConsentAsync(clientAppId, tenantId, ct))
             {
-                throw ClientAppValidationException.MissingAdminConsent(clientAppId);
+                throw ClientAppValidationException.MissingAdminConsent(clientAppId, tenantId);
             }
 
             // Step 5: Verify and fix redirect URIs
-            await EnsureRedirectUrisAsync(clientAppId, tenantId, ct);
+            if (applyFixes)
+                await EnsureRedirectUrisAsync(clientAppId, tenantId, ct);
 
-            // Step 6: Verify and fix public client flows (required for device code fallback on non-Windows)
-            await EnsurePublicClientFlowsEnabledAsync(clientAppId, tenantId, ct);
+            // Step 6: Verify and fix public client flows (required for device code fallback)
+            if (applyFixes)
+                await EnsurePublicClientFlowsEnabledAsync(clientAppId, tenantId, ct);
 
             _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
         }
         catch (ClientAppValidationException)
         {
             // Re-throw validation exceptions as-is
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            // Ctrl+C / cancellation — propagate immediately without wrapping
             throw;
         }
         catch (JsonException ex)
@@ -298,7 +410,10 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return;
             }
 
-            _logger.LogInformation("Enabling 'Allow public client flows' on app registration (required for device code authentication fallback).");
+            _logger.LogInformation(
+                "Enabling 'Allow public client flows' on app registration " +
+                "(required for device code authentication fallback on macOS, Linux, WSL, " +
+                "headless environments, and as a Conditional Access Policy fallback on Windows).");
             _logger.LogInformation("Run 'a365 setup requirements' at any time to re-verify and auto-fix this setting.");
 
             var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
@@ -519,12 +634,18 @@ public sealed class ClientAppValidator : IClientAppValidator
 
                 var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
                     $"/v1.0/oauth2PermissionGrants/{grantId}",
-                    new { scope = updatedScope },
+                    new JsonObject
+                    {
+                        ["scope"] = updatedScope,
+                        ["consentType"] = "AllPrincipals",
+                        ["principalId"] = null
+                    },
                     ct);
 
                 if (patchSuccess)
                 {
-                    _logger.LogInformation("Extended consent grant with scope(s): {Scopes}", string.Join(", ", scopesToAdd));
+                    _logger.LogInformation("Extending admin consent grant with {Count} new permission(s): {Scopes}.",
+                        scopesToAdd.Count, string.Join(", ", scopesToAdd));
                 }
                 else
                 {
@@ -540,6 +661,227 @@ public sealed class ClientAppValidator : IClientAppValidator
         }
     }
 
+    /// <summary>
+    /// Returns the subset of <see cref="AuthenticationConstants.RequiredClientAppPermissions"/>
+    /// that are not yet present in the client app's oauth2PermissionGrant (i.e. not consented).
+    /// </summary>
+    public async Task<List<string>> GetUnconsentedRequiredPermissionsAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        var consented = await GetConsentedPermissionsAsync(clientAppId, tenantId, ct);
+        return AuthenticationConstants.RequiredClientAppPermissions
+            .Where(p => !consented.Contains(p, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Extends the client app's oauth2PermissionGrant to include the specified permissions.
+    /// Call after the user has confirmed they want to grant admin consent.
+    /// </summary>
+    public Task GrantConsentForPermissionsAsync(
+        string clientAppId,
+        List<string> permissions,
+        string tenantId,
+        CancellationToken ct = default)
+        => TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
+
+
+    /// <summary>
+    /// Read-only check: returns the redirect URIs that are missing from the app registration
+    /// without making any changes. Used to build the pre-flight mutation summary.
+    /// </summary>
+    private async Task<List<string>> CollectMissingRedirectUrisAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient", ct);
+
+            if (appDoc == null) return new List<string>();
+
+            var response = JsonNode.Parse(appDoc.RootElement.GetRawText());
+            var apps = response?["value"]?.AsArray();
+            if (apps == null || apps.Count == 0) return new List<string>();
+
+            var publicClient = apps[0]!.AsObject()["publicClient"]?.AsObject();
+            var currentRedirectUris = publicClient?["redirectUris"]?.AsArray()
+                ?.Select(uri => uri?.GetValue<string>())
+                .Where(uri => !string.IsNullOrWhiteSpace(uri))
+                .Select(uri => uri!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            return AuthenticationConstants.GetRequiredRedirectUris(clientAppId)
+                .Where(uri => !currentRedirectUris.Contains(uri))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            // On error, assume all redirect URIs are missing so the prompt still appears.
+            // Failing closed (prompt) is safer than failing open (silent mutation without disclosure).
+            _logger.LogDebug("CollectMissingRedirectUrisAsync failed — assuming all redirect URIs missing: {Message}", ex.Message);
+            return AuthenticationConstants.GetRequiredRedirectUris(clientAppId).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Read-only check: returns true if 'Allow public client flows' (isFallbackPublicClient)
+    /// is currently disabled on the app registration, without making any changes.
+    /// </summary>
+    private async Task<bool> IsPublicClientFlowsDisabledAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,isFallbackPublicClient", ct);
+
+            if (appDoc == null) return false;
+
+            var response = JsonNode.Parse(appDoc.RootElement.GetRawText());
+            var apps = response?["value"]?.AsArray();
+            if (apps == null || apps.Count == 0) return false;
+
+            var isFallbackPublicClient = apps[0]!.AsObject()["isFallbackPublicClient"]?.GetValue<bool>() ?? false;
+            return !isFallbackPublicClient;
+        }
+        catch (Exception ex)
+        {
+            // On error, assume public client flows need enabling so the prompt still appears.
+            // Failing closed (prompt) is safer than failing open (silent mutation without disclosure).
+            _logger.LogDebug("IsPublicClientFlowsDisabledAsync failed — assuming public client flows need enabling: {Message}", ex.Message);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Returns true if the client app has only per-user (consentType: "Principal") consent grants
+    /// and no tenant-wide (AllPrincipals) grant covering required permissions.
+    /// When true, users other than the consenting admin see "Need admin approval" during interactive auth.
+    /// </summary>
+    private async Task<bool> HasPrincipalOnlyConsentGrantAsync(string clientAppId, string tenantId, CancellationToken ct)
+    {
+        try
+        {
+            using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
+            if (spDoc == null) return false;
+
+            var spJson = JsonNode.Parse(spDoc.RootElement.GetRawText());
+            var spObjectId = spJson?["value"]?.AsArray().FirstOrDefault()?.AsObject()["id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(spObjectId)) return false;
+
+            using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+            if (grantsDoc == null) return false;
+
+            var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
+            var grants = grantsJson?["value"]?.AsArray();
+            if (grants == null || grants.Count == 0) return false;
+
+            bool hasAllPrincipals = false;
+            bool hasPrincipal = false;
+
+            foreach (var grantNode in grants)
+            {
+                var grantObj = grantNode?.AsObject();
+                var consentType = grantObj?["consentType"]?.GetValue<string>();
+                var scope = grantObj?["scope"]?.GetValue<string>() ?? string.Empty;
+
+                // Only consider grants that cover required CLI permissions
+                bool isRelevantGrant = AuthenticationConstants.RequiredClientAppPermissions
+                    .Any(p => scope.Contains(p, StringComparison.OrdinalIgnoreCase));
+                if (!isRelevantGrant) continue;
+
+                if (string.Equals(consentType, "AllPrincipals", StringComparison.OrdinalIgnoreCase))
+                    hasAllPrincipals = true;
+                else if (string.Equals(consentType, "Principal", StringComparison.OrdinalIgnoreCase))
+                    hasPrincipal = true;
+            }
+
+            // Upgrade needed only when there's a Principal grant covering CLI permissions but no AllPrincipals grant
+            return hasPrincipal && !hasAllPrincipals;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("HasPrincipalOnlyConsentGrantAsync failed (non-fatal): {Message}", ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Upgrades all per-user (consentType: "Principal") oauth2PermissionGrants that cover required
+    /// CLI permissions to tenant-wide (consentType: "AllPrincipals", principalId: null).
+    /// This ensures that any user in the tenant can authenticate without seeing "Need admin approval".
+    /// </summary>
+    private async Task UpgradeConsentGrantToAllPrincipalsAsync(string clientAppId, string tenantId, CancellationToken ct)
+    {
+        try
+        {
+            using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
+            if (spDoc == null) return;
+
+            var spJson = JsonNode.Parse(spDoc.RootElement.GetRawText());
+            var spObjectId = spJson?["value"]?.AsArray().FirstOrDefault()?.AsObject()["id"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(spObjectId)) return;
+
+            using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+            if (grantsDoc == null) return;
+
+            var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
+            var grants = grantsJson?["value"]?.AsArray();
+            if (grants == null) return;
+
+            foreach (var grantNode in grants)
+            {
+                var grant = grantNode?.AsObject();
+                if (grant == null) continue;
+
+                var grantId = grant["id"]?.GetValue<string>();
+                var consentType = grant["consentType"]?.GetValue<string>();
+                var scope = grant["scope"]?.GetValue<string>() ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(grantId)) continue;
+
+                // Only upgrade Principal grants that cover required CLI permissions
+                if (!string.Equals(consentType, "Principal", StringComparison.OrdinalIgnoreCase)) continue;
+
+                bool isRelevantGrant = AuthenticationConstants.RequiredClientAppPermissions
+                    .Any(p => scope.Contains(p, StringComparison.OrdinalIgnoreCase));
+                if (!isRelevantGrant) continue;
+
+                _logger.LogInformation("Upgrading consent grant from per-user to tenant-wide (AllPrincipals)...");
+
+                var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
+                    $"/v1.0/oauth2PermissionGrants/{grantId}",
+                    new JsonObject
+                    {
+                        ["consentType"] = "AllPrincipals",
+                        ["principalId"] = null,
+                        ["scope"] = scope
+                    },
+                    ct);
+
+                if (patchSuccess)
+                    _logger.LogInformation("Consent grant upgraded to AllPrincipals — all tenant users can now authenticate without individual consent prompts.");
+                else
+                    _logger.LogWarning("Failed to upgrade consent grant to AllPrincipals (may require Global Administrator role).");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error upgrading consent grant (non-fatal): {Message}", ex.Message);
+        }
+    }
+
     #region Private Helper Methods
 
     private async Task<ClientAppInfo?> GetClientAppInfoAsync(string clientAppId, string tenantId, CancellationToken ct)
@@ -548,7 +890,7 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         const string path = "/v1.0/applications?$filter=appId eq '{0}'&$select=id,appId,displayName,requiredResourceAccess";
         var graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-            string.Format(path, clientAppId), ct);
+            string.Format(path, clientAppId), ct: ct);
 
         if (graphResponse == null || !graphResponse.IsSuccess)
         {
@@ -561,10 +903,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return null;
             }
 
-            _logger.LogDebug("Graph app query returned 401 — invalidating token cache and retrying (possible CAE revocation)");
-            AzCliHelper.InvalidateAzCliTokenCache();
+            _logger.LogDebug("Graph app query returned 401 — retrying with fresh token (possible CAE revocation)");
             graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-                string.Format(path, clientAppId), ct);
+                string.Format(path, clientAppId), forceRefresh: true, ct: ct);
 
             if (!graphResponse.IsSuccess)
                 throw ClientAppValidationException.TokenRevoked(clientAppId);
@@ -641,9 +982,12 @@ public sealed class ClientAppValidator : IClientAppValidator
             }
             else
             {
-                _logger.LogWarning("Could not resolve permission ID for: {PermissionName}", permissionName);
-                _logger.LogWarning("This permission may be a beta API or unavailable in your tenant. Validation cannot verify its presence.");
-                // Don't add to missing list - we can't verify it
+                // GUID not in v1.0 oauth2PermissionScopes (e.g. preview scopes like AgentIdentity.Create.All).
+                // Add to missing so EnsurePermissionsConfiguredAsync -> TryExtendConsentGrantScopesAsync
+                // patches the consent grant by scope name (no GUID required). The step-3.5 consent
+                // fallback will remove this entry if already granted.
+                _logger.LogDebug("Could not resolve permission GUID for {PermissionName} — will verify via consent grants", permissionName);
+                missingPermissions.Add(permissionName);
             }
         }
 
@@ -829,7 +1173,18 @@ public sealed class ClientAppValidator : IClientAppValidator
         if (grantsDoc == null)
         {
             _logger.LogDebug("Could not verify admin consent status");
-            return true; // Best-effort check
+            _logger.LogWarning(
+                "Admin consent status could not be verified — insufficient permissions to read consent grants.");
+            _logger.LogWarning(
+                "If you see 'Need admin approval' during blueprint creation, admin consent has not been granted.");
+            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+            if (consentUrl != null)
+            {
+                _logger.LogWarning("A Global Administrator must either:");
+                _logger.LogWarning("  1. Run 'a365 setup requirements' with an admin account to auto-grant consent, OR");
+                _logger.LogWarning("  2. Open this URL to grant consent: {ConsentUrl}", consentUrl);
+            }
+            return true; // Best-effort — still allow developer to proceed
         }
 
         var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
@@ -840,27 +1195,80 @@ public sealed class ClientAppValidator : IClientAppValidator
             return false; // No grants found - admin consent missing
         }
 
-        // Check if there's a grant for Microsoft Graph with required scopes
-        var hasGraphGrant = grants
-            .Select(grant => grant?.AsObject())
-            .Select(grantObj => grantObj?["scope"]?.GetValue<string>())
-            .Where(scope => !string.IsNullOrWhiteSpace(scope))
-            .Any(scope =>
+        // Require a tenant-wide (AllPrincipals) grant. A per-user (Principal) grant only covers the
+        // specific admin who consented; other users see "Need admin approval" during interactive auth.
+        // Graph may split permissions across multiple grants (e.g. one per resource SP), so accumulate
+        // consented scopes across all AllPrincipals grants before comparing.
+        var consentedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var grant in grants)
+        {
+            var grantObj = grant?.AsObject();
+            if (!string.Equals(
+                grantObj?["consentType"]?.GetValue<string>(),
+                "AllPrincipals",
+                StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var scope = grantObj?["scope"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(scope)) continue;
+
+            foreach (var s in scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                consentedScopes.Add(s);
+        }
+
+        var foundPermissions = AuthenticationConstants.RequiredClientAppPermissions
+            .Intersect(consentedScopes, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        bool hasAllPrincipalsGraphGrant;
+        if (foundPermissions.Count == AuthenticationConstants.RequiredClientAppPermissions.Length)
+        {
+            _logger.LogDebug("Admin consent (AllPrincipals) verified for all {Count} required permissions", foundPermissions.Count);
+            hasAllPrincipalsGraphGrant = true;
+        }
+        else
+        {
+            if (foundPermissions.Count > 0)
             {
-                var grantedScopes = scope!.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                var foundPermissions = AuthenticationConstants.RequiredClientAppPermissions
-                    .Intersect(grantedScopes, StringComparer.OrdinalIgnoreCase)
+                var missingPermissions = AuthenticationConstants.RequiredClientAppPermissions
+                    .Except(foundPermissions, StringComparer.OrdinalIgnoreCase)
                     .ToList();
+                _logger.LogDebug(
+                    "Admin consent grants found but missing {MissingCount} permission(s): {Missing}",
+                    missingPermissions.Count,
+                    string.Join(", ", missingPermissions));
+            }
+            hasAllPrincipalsGraphGrant = false;
+        }
 
-                if (foundPermissions.Count > 0)
-                {
-                    _logger.LogDebug("Admin consent verified for {Count} permissions", foundPermissions.Count);
-                    return true;
-                }
-                return false;
-            });
+        if (!hasAllPrincipalsGraphGrant)
+        {
+            // Check if there's a Principal-only grant — surface a more specific actionable message
+            bool hasPrincipalGrant = grants
+                .Select(g => g?.AsObject())
+                .Any(g => string.Equals(g?["consentType"]?.GetValue<string>(), "Principal", StringComparison.OrdinalIgnoreCase));
 
-        return hasGraphGrant;
+            if (hasPrincipalGrant)
+            {
+                _logger.LogWarning("Consent grant is per-user only (consentType: Principal). Tenant-wide (AllPrincipals) consent is required.");
+            }
+            else
+            {
+                _logger.LogWarning("No admin consent grant found for the required permissions.");
+            }
+
+            // Print the admin consent URL so the user (or their admin) can fix this immediately
+            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+            if (consentUrl != null)
+            {
+                _logger.LogInformation("To grant tenant-wide admin consent, share this URL with a Global Administrator:");
+                _logger.LogInformation("  {ConsentUrl}", consentUrl);
+                _logger.LogInformation("After consent is granted, re-run 'a365 setup requirements' to verify.");
+                _logger.LogInformation("");
+            }
+        }
+
+        return hasAllPrincipalsGraphGrant;
     }
 
     #endregion

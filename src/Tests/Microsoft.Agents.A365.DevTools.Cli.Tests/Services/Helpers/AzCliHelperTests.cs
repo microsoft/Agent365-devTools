@@ -16,11 +16,9 @@ public class AzCliHelperTests : IDisposable
 {
     public AzCliHelperTests()
     {
-        // Start each test with a clean slate — both static caches
+        // Start each test with a clean slate
         AzCliHelper.LoginHintResolverOverride = null;
         AzCliHelper.ResetLoginHintCacheForTesting();
-        AzCliHelper.AzCliTokenAcquirerOverride = null;
-        AzCliHelper.ResetAzCliTokenCacheForTesting();
     }
 
     public void Dispose()
@@ -28,8 +26,6 @@ public class AzCliHelperTests : IDisposable
         // Restore static state so other tests are not affected
         AzCliHelper.LoginHintResolverOverride = null;
         AzCliHelper.ResetLoginHintCacheForTesting();
-        AzCliHelper.AzCliTokenAcquirerOverride = null;
-        AzCliHelper.ResetAzCliTokenCacheForTesting();
     }
 
     [Fact]
@@ -101,96 +97,6 @@ public class AzCliHelperTests : IDisposable
 
         callCount.Should().Be(2,
             because: "ResetLoginHintCacheForTesting clears the cache, forcing a fresh resolve — required for test isolation");
-    }
-
-    // -------------------------------------------------------------------------
-    // AcquireAzCliTokenAsync — process-level token cache
-    // -------------------------------------------------------------------------
-
-    [Fact]
-    public async Task AcquireAzCliTokenAsync_WhenOverrideSet_ReturnsOverrideValue()
-    {
-        AzCliHelper.AzCliTokenAcquirerOverride = (_, __) => Task.FromResult<string?>("test-token");
-
-        var result = await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-1");
-
-        result.Should().Be("test-token",
-            because: "the override replaces the real az subprocess — used in tests to inject known tokens");
-    }
-
-    [Fact]
-    public async Task AcquireAzCliTokenAsync_CalledTwiceSameKey_InvokesAcquirerOnce()
-    {
-        var callCount = 0;
-        AzCliHelper.AzCliTokenAcquirerOverride = (_, __) =>
-        {
-            callCount++;
-            return Task.FromResult<string?>("shared-token");
-        };
-
-        await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-1");
-        await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-1");
-
-        callCount.Should().Be(1,
-            because: "the process-level cache must serve the same (resource, tenant) token " +
-                     "after the first acquisition — calling az account get-access-token on every " +
-                     "request costs 20-40s per call");
-    }
-
-    [Fact]
-    public async Task AcquireAzCliTokenAsync_DifferentTenants_InvokesAcquirerForEach()
-    {
-        var callCount = 0;
-        AzCliHelper.AzCliTokenAcquirerOverride = (_, __) =>
-        {
-            callCount++;
-            return Task.FromResult<string?>("token");
-        };
-
-        await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-1");
-        await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-2");
-
-        callCount.Should().Be(2,
-            because: "different tenant IDs are different cache keys — each tenant requires its own token");
-    }
-
-    [Fact]
-    public async Task AcquireAzCliTokenAsync_AfterInvalidation_InvokesAcquirerAgain()
-    {
-        var callCount = 0;
-        AzCliHelper.AzCliTokenAcquirerOverride = (_, __) =>
-        {
-            callCount++;
-            return Task.FromResult<string?>("token");
-        };
-
-        await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-1");
-        AzCliHelper.InvalidateAzCliTokenCache();
-        await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-1");
-
-        callCount.Should().Be(2,
-            because: "InvalidateAzCliTokenCache clears the cache — the next call must re-acquire " +
-                     "a fresh token; this is required after 'az login' or a CAE token revocation event");
-    }
-
-    [Fact]
-    public async Task WarmAzCliTokenCache_InjectedToken_ReturnedOnNextCall()
-    {
-        // Override that always fails — should NOT be called after warming the cache
-        AzCliHelper.AzCliTokenAcquirerOverride = (_, __) =>
-            Task.FromResult<string?>(null);
-
-        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-1", "warmed-token");
-
-        // The warmup bypasses the GetOrAdd — the cache entry is set directly.
-        // Reset override so we can verify the warmed value is returned, not re-acquired.
-        AzCliHelper.AzCliTokenAcquirerOverride = null;
-        var result = await AzCliHelper.AcquireAzCliTokenAsync("https://graph.microsoft.com/", "tenant-1");
-
-        result.Should().Be("warmed-token",
-            because: "WarmAzCliTokenCache injects a token acquired via auth recovery into the " +
-                     "process-level cache — subsequent callers must receive the injected token " +
-                     "without re-running az account get-access-token");
     }
 }
 

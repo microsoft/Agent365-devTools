@@ -277,7 +277,7 @@ public class PowerShellModulesRequirementCheck : RequirementCheck
             var processStartInfo = new ProcessStartInfo
             {
                 FileName = executable,
-                Arguments = $"-Command \"{wrappedCommand}\"",
+                Arguments = $"-NoProfile -NonInteractive -Command \"{wrappedCommand}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

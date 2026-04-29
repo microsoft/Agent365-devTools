@@ -24,11 +24,6 @@ internal static class AddPermissionsSubcommand
             "add-permissions",
             "Add MCP server API permissions to a custom application");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var manifestOption = new Option<FileInfo?>(
             ["--manifest", "-m"],
             description: "Path to ToolingManifest.json (defaults to current directory)");
@@ -55,35 +50,41 @@ internal static class AddPermissionsSubcommand
             ["--dry-run"],
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(manifestOption);
         command.AddOption(appIdOption);
         command.AddOption(scopesOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, manifest, appId, scopes, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var manifest = context.ParseResult.GetValueForOption(manifestOption);
+            var appId = context.ParseResult.GetValueForOption(appIdOption);
+            var scopes = context.ParseResult.GetValueForOption(scopesOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+
             try
             {
+                var configFile = new FileInfo("a365.config.json");
                 logger.LogInformation("Adding MCP server permissions to application...");
                 logger.LogInformation("");
 
                 // Check if config file exists or if --app-id was provided
-                var setupConfig = File.Exists(config.FullName) 
-                    ? await configService.LoadAsync(config.FullName) 
+                var setupConfig = File.Exists(configFile.FullName)
+                    ? await configService.LoadAsync(configFile.FullName)
                     : null;
 
                 if (setupConfig == null && string.IsNullOrWhiteSpace(appId))
                 {
-                    logger.LogError("Configuration file not found: {ConfigPath}", config.FullName);
+                    logger.LogError("Configuration file not found: {ConfigPath}", configFile.FullName);
                     logger.LogInformation("");
                     logger.LogInformation("To add MCP server permissions, you must either:");
-                    logger.LogInformation("  1. Create a config file using: a365 config init");
+                    logger.LogInformation("  1. Run 'a365 setup all --agent-name <name>' to create a config file.");
                     logger.LogInformation("  2. Specify the application ID using: a365 develop addpermissions --app-id <your-app-id>");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop addpermissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -104,27 +105,31 @@ internal static class AddPermissionsSubcommand
                     logger.LogError("No application ID specified. Use --app-id or ensure ClientAppId is set in config.");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop addpermissions --app-id <your-app-id>");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
                 // Determine manifest path
-                var manifestPath = manifest?.FullName 
+                var manifestPath = manifest?.FullName
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, McpConstants.ToolingManifestFileName);
 
-                // Determine which scopes to add
-                string[] requestedScopes;
-                
+                var environment = setupConfig?.Environment ?? "prod";
+                var atgResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+
+                // Determine which scopes to add.
+                // Explicit --scopes: single ATG call (no audience info available).
+                // Manifest: per-audience calls via GetScopesByAudienceAsync (V1 + V2 support).
+                string[]? requestedScopes = null;
+                Dictionary<string, string[]>? scopesByAudience = null;
+
                 if (scopes != null && scopes.Length > 0)
                 {
-                    // User provided explicit scopes
                     requestedScopes = scopes;
                     logger.LogInformation("Using user-specified scopes: {Scopes}", string.Join(", ", requestedScopes));
                     logger.LogInformation("");
                 }
                 else
                 {
-                    // Read scopes from ToolingManifest.json
                     if (!File.Exists(manifestPath))
                     {
                         logger.LogError("ToolingManifest.json not found at: {Path}", manifestPath);
@@ -133,31 +138,27 @@ internal static class AddPermissionsSubcommand
                         logger.LogInformation("or specify scopes explicitly with --scopes option.");
                         logger.LogInformation("");
                         logger.LogInformation("Example: a365 develop addpermissions --scopes McpServers.Mail.All McpServers.Calendar.All");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
                     logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
 
-                    // Use ManifestHelper to extract scopes (includes fallback to mappings and McpServersMetadata.Read.All)
-                    requestedScopes = await ManifestHelper.GetRequiredScopesAsync(manifestPath);
+                    scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, resolvedAtgAppId: atgResourceAppId);
 
-                    if (requestedScopes.Length == 0)
+                    if (scopesByAudience.Count == 0)
                     {
                         logger.LogError("No scopes found in ToolingManifest.json");
                         logger.LogInformation("You can specify scopes explicitly with --scopes option.");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
-                    logger.LogInformation("Collected {Count} unique scope(s) from manifest: {Scopes}", 
-                        requestedScopes.Length, string.Join(", ", requestedScopes));
+                    var totalScopes = scopesByAudience.Values.SelectMany(s => s).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                    logger.LogInformation("Found {AudienceCount} audience(s) with {ScopeCount} unique scope(s) from manifest",
+                        scopesByAudience.Count, totalScopes);
                 }
 
-                var environment = setupConfig?.Environment ?? "prod";
-                var resourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
-                
-                logger.LogInformation("Target resource: Agent 365 Tools ({ResourceAppId})", resourceAppId);
                 logger.LogInformation("");
 
                 // Dry run mode
@@ -166,8 +167,15 @@ internal static class AddPermissionsSubcommand
                     logger.LogInformation("DRY RUN: Add MCP Server Permissions");
                     logger.LogInformation("Would add the following permissions to application {AppId}:", targetAppId);
                     logger.LogInformation("");
-                    logger.LogInformation("Resource: {ResourceAppId}", resourceAppId);
-                    logger.LogInformation("  Scopes: {Scopes}", string.Join(", ", requestedScopes));
+                    if (scopesByAudience != null)
+                    {
+                        foreach (var kvp in scopesByAudience)
+                            logger.LogInformation("  {ResourceAppId} — {Scopes}", kvp.Key, string.Join(", ", kvp.Value));
+                    }
+                    else
+                    {
+                        logger.LogInformation("  {ResourceAppId} — {Scopes}", atgResourceAppId, string.Join(", ", requestedScopes!));
+                    }
                     logger.LogInformation("");
                     logger.LogInformation("No changes made (dry run mode)");
                     return;
@@ -177,37 +185,56 @@ internal static class AddPermissionsSubcommand
                 logger.LogInformation("Adding permissions to application...");
                 logger.LogInformation("");
 
-                // Determine tenant ID (from config or detect from Azure CLI)
                 string tenantId = await TenantDetectionHelper.DetectTenantIdAsync(setupConfig, logger) ?? string.Empty;
 
-                logger.LogInformation("Processing resource: {ResourceAppId}", resourceAppId);
-                
-                bool success;
-                try
+                bool success = true;
+                if (scopesByAudience != null)
                 {
-                    success = await blueprintService.AddRequiredResourceAccessAsync(
-                        tenantId,
-                        targetAppId,
-                        resourceAppId,
-                        requestedScopes,
-                        isDelegated: true);
+                    // Per-audience calls — one entry per resource app ID (V1 + V2)
+                    foreach (var kvp in scopesByAudience)
+                    {
+                        logger.LogInformation("Processing resource: {ResourceAppId}", kvp.Key);
+                        try
+                        {
+                            var ok = await blueprintService.AddRequiredResourceAccessAsync(
+                                tenantId, targetAppId, kvp.Key, kvp.Value, isDelegated: true);
+                            if (ok)
+                                logger.LogInformation("  Added permissions for {ResourceAppId}", kvp.Key);
+                            else
+                            {
+                                logger.LogError("  Failed to add permissions for {ResourceAppId}", kvp.Key);
+                                success = false;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError("  {ResourceAppId}: {Message}", kvp.Key, ex.Message);
+                            logger.LogDebug("    {StackTrace}", ex.StackTrace);
+                            success = false;
+                        }
+                    }
+                }
+                else
+                {
+                    // Explicit --scopes: single ATG call
+                    logger.LogInformation("Processing resource: {ResourceAppId}", atgResourceAppId);
+                    try
+                    {
+                        success = await blueprintService.AddRequiredResourceAccessAsync(
+                            tenantId, targetAppId, atgResourceAppId, requestedScopes!, isDelegated: true);
+                        if (success)
+                            logger.LogInformation("  Added permissions for {ResourceAppId}", atgResourceAppId);
+                        else
+                            logger.LogError("  Failed to add permissions for {ResourceAppId}", atgResourceAppId);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError("  Exception adding permissions for {ResourceAppId}: {Message}", atgResourceAppId, ex.Message);
+                        logger.LogDebug("    {StackTrace}", ex.StackTrace);
+                        success = false;
+                    }
+                }
 
-                    if (success)
-                    {
-                        logger.LogInformation("  [SUCCESS] Successfully added permissions for {ResourceAppId}", resourceAppId);
-                    }
-                    else
-                    {
-                        logger.LogError("  [FAILED] Failed to add permissions for {ResourceAppId}", resourceAppId);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError("  [ERROR] Exception adding permissions for {ResourceAppId}: {Message}", resourceAppId, ex.Message);
-                    logger.LogDebug("    {StackTrace}", ex.StackTrace);
-                    success = false;
-                }
-                
                 logger.LogInformation("");
 
                 // Summary
@@ -215,22 +242,22 @@ internal static class AddPermissionsSubcommand
 
                 if (success)
                 {
-                    logger.LogInformation("[SUCCESS] All permissions added successfully!");
+                    logger.LogInformation("All permissions added successfully");
                     logger.LogInformation("");
                     logger.LogInformation("  Review permissions in Azure Portal: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{AppId}", targetAppId);
                 }
                 else
                 {
                     logger.LogWarning("Permission addition failed. Review the errors above.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                 }
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to add MCP server permissions: {Message}", ex.Message);
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
-        }, configOption, manifestOption, appIdOption, scopesOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }

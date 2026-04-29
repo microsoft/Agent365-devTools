@@ -15,6 +15,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// <summary>
 /// Tests must run sequentially because the constructor redirects Console.In (global state)
 /// to auto-answer interactive prompts without blocking.
+///
+/// LoadAsync stubs use the two-parameter form (configPath, statePath) throughout because
+/// PublishCommand merges both the static config and the generated config at load time.
+/// NSubstitute requires the stub to match the exact argument count at the call site.
 /// </summary>
 [CollectionDefinition("PublishCommandTests", DisableParallelization = true)]
 public class PublishCommandTestCollection { }
@@ -49,7 +53,7 @@ public class PublishCommandTests : IDisposable
             TenantId = "test-tenant",
             AgentBlueprintDisplayName = "Test Agent"
         };
-        _configService.LoadAsync().Returns(config);
+        _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
 
         var root = new RootCommand();
         root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService));
@@ -77,7 +81,7 @@ public class PublishCommandTests : IDisposable
             await File.WriteAllTextAsync(Path.Combine(manifestDir, "manifest.json"), "{\"id\":\"old-id\"}");
             await File.WriteAllTextAsync(Path.Combine(manifestDir, "agenticUserTemplateManifest.json"), "{\"id\":\"old-id\"}");
 
-            _configService.LoadAsync().Returns(new Agent365Config
+            _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(new Agent365Config
             {
                 AgentBlueprintId = "test-blueprint-id",
                 AgentBlueprintDisplayName = "Test Agent",
@@ -116,7 +120,7 @@ public class PublishCommandTests : IDisposable
             await File.WriteAllTextAsync(Path.Combine(manifestDir, "manifest.json"), "{\"id\":\"old-id\"}");
             await File.WriteAllTextAsync(Path.Combine(manifestDir, "agenticUserTemplateManifest.json"), "{\"agentIdentityBlueprintId\":\"old-id\"}");
 
-            _configService.LoadAsync().Returns(new Agent365Config
+            _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(new Agent365Config
             {
                 AgentBlueprintId = "test-blueprint-id",
                 AgentBlueprintDisplayName = "Test Agent",
@@ -150,7 +154,7 @@ public class PublishCommandTests : IDisposable
             await File.WriteAllTextAsync(Path.Combine(manifestDir, "manifest.json"), "{\"id\":\"old-id\"}");
             await File.WriteAllTextAsync(Path.Combine(manifestDir, "agenticUserTemplateManifest.json"), "{\"agentIdentityBlueprintId\":\"old-id\"}");
 
-            _configService.LoadAsync().Returns(new Agent365Config
+            _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(new Agent365Config
             {
                 AgentBlueprintId = "test-blueprint-id",
                 AgentBlueprintDisplayName = "This Display Name Is Way Too Long For Short",
@@ -180,7 +184,7 @@ public class PublishCommandTests : IDisposable
     [Fact]
     public async Task PublishCommand_WithException_ShouldReturnExitCode1()
     {
-        _configService.LoadAsync()
+        _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns<Agent365Config>(_ => throw new InvalidOperationException("Test exception"));
 
         var root = new RootCommand();
@@ -195,5 +199,52 @@ public class PublishCommandTests : IDisposable
             Arg.Is<object>(o => o.ToString()!.Contains("Publish command failed")),
             Arg.Is<Exception>(ex => ex.Message == "Test exception"),
             Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    // Regression: resolver must be called with isCleanupMode=true so AgentBlueprintId is loaded from the generated config.
+    [Fact]
+    public async Task PublishCommand_WithAgentName_CallsResolverWithCleanupModeTrue()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var manifestDir = Path.Combine(tempDir, "manifest");
+        Directory.CreateDirectory(manifestDir);
+
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(manifestDir, "manifest.json"), "{\"id\":\"old-id\"}");
+            await File.WriteAllTextAsync(Path.Combine(manifestDir, "agenticUserTemplateManifest.json"), "{\"id\":\"old-id\"}");
+
+            var resolver = Substitute.For<IBootstrapConfigResolver>();
+            resolver
+                .ResolveAsync(
+                    Arg.Any<string?>(),
+                    Arg.Any<string?>(),
+                    Arg.Any<FileInfo>(),
+                    isCleanupMode: true,
+                    Arg.Any<CancellationToken>())
+                .Returns(new Agent365Config
+                {
+                    AgentBlueprintId = "blueprint-from-generated-config",
+                    AgentBlueprintDisplayName = "Test Agent",
+                    TenantId = "test-tenant",
+                    DeploymentProjectPath = tempDir
+                });
+
+            var root = new RootCommand();
+            root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService, resolver: resolver));
+
+            await root.InvokeAsync("publish --agent-name TestAgent");
+
+            await resolver.Received(1).ResolveAsync(
+                Arg.Any<string?>(),
+                Arg.Any<string?>(),
+                Arg.Any<FileInfo>(),
+                isCleanupMode: true,
+                Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
     }
 }

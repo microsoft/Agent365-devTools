@@ -352,7 +352,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -431,7 +431,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -505,7 +505,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -592,7 +592,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -653,7 +653,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -715,7 +715,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -807,7 +807,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         // Send the request
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {

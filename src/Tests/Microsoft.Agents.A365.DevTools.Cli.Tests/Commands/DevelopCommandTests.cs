@@ -78,7 +78,6 @@ public class DevelopCommandTests
 
         // Assert
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         Assert.Contains("dry-run", optionNames);
         Assert.Contains("skip-auth", optionNames);
     }
@@ -92,8 +91,8 @@ public class DevelopCommandTests
 
         // Assert
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         Assert.Contains("dry-run", optionNames);
+        Assert.Contains("project-path", optionNames);
     }
 
     [Fact]
@@ -106,11 +105,12 @@ public class DevelopCommandTests
         // Assert
         Assert.Single(subcommand.Arguments);
         Assert.Equal("servers", subcommand.Arguments[0].Name);
-        Assert.Equal(2, subcommand.Options.Count);
+        Assert.Equal(3, subcommand.Options.Count);
 
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         Assert.Contains("dry-run", optionNames);
+        Assert.Contains("project-path", optionNames);
+        Assert.Contains("verbose", optionNames);
     }
 
     [Fact]
@@ -123,11 +123,12 @@ public class DevelopCommandTests
         // Assert
         Assert.Single(subcommand.Arguments);
         Assert.Equal("servers", subcommand.Arguments[0].Name);
-        Assert.Equal(2, subcommand.Options.Count);
+        Assert.Equal(3, subcommand.Options.Count);
 
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         Assert.Contains("dry-run", optionNames);
+        Assert.Contains("project-path", optionNames);
+        Assert.Contains("verbose", optionNames);
     }
 
     [Fact]
@@ -139,7 +140,6 @@ public class DevelopCommandTests
 
         // Assert
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         Assert.Contains("app-id", optionNames);
         Assert.Contains("manifest", optionNames);
         Assert.Contains("scopes", optionNames);
@@ -157,7 +157,6 @@ public class DevelopCommandTests
 
         // Assert
         var optionNames = subcommand.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         Assert.Contains("manifest", optionNames);
         Assert.Contains("app-id", optionNames);
         Assert.Contains("scopes", optionNames);

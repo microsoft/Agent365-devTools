@@ -168,7 +168,7 @@ public class AuthenticationServiceTests : IDisposable
 
             // Assert - Should return default Power Platform scope when no MCP scopes are found
             Assert.Single(noScopeResult);
-            var scope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+            var scope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
             Assert.Equal(scope, noScopeResult[0]);
         }
         finally
@@ -334,7 +334,7 @@ public class AuthenticationServiceTests : IDisposable
 
         // Assert
         scopes.Should().ContainSingle();
-        var expectedScope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+        var expectedScope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
         scopes[0].Should().Be(expectedScope);
     }
 
@@ -360,7 +360,7 @@ public class AuthenticationServiceTests : IDisposable
 
             // Assert
             scopes.Should().ContainSingle();
-            var expectedScope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+            var expectedScope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
             scopes[0].Should().Be(expectedScope);
         }
         finally
@@ -530,7 +530,7 @@ public class AuthenticationServiceTests : IDisposable
 
             // Assert
             scopes.Should().ContainSingle();
-            var expectedScope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+            var expectedScope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
             scopes[0].Should().Be(expectedScope);
         }
         finally
@@ -976,6 +976,85 @@ public class AuthenticationServiceTests : IDisposable
         await act.Should().ThrowAsync<AzureAuthenticationException>(
             because: "when device code itself fails there is no further fallback — " +
                      "the error must surface to the user rather than looping");
+    }
+
+    #endregion
+
+    #region ResolveLoginHintFromCacheAsync
+
+    private static string BuildJwt(object payload)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(payload);
+        // JWT uses Base64Url: replace standard Base64 chars to match real MSAL token format.
+        var payloadB64Url = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        return $"header.{payloadB64Url}.signature";
+    }
+
+    private void WriteTokenCache(string accessToken)
+    {
+        var cacheDir = Path.GetDirectoryName(_testCachePath)!;
+        Directory.CreateDirectory(cacheDir);
+        var cache = new
+        {
+            Tokens = new Dictionary<string, object>
+            {
+                ["key"] = new { AccessToken = accessToken, ExpiresOn = DateTime.UtcNow.AddHours(1), TenantId = "tid" }
+            }
+        };
+        File.WriteAllText(_testCachePath, System.Text.Json.JsonSerializer.Serialize(cache));
+    }
+
+    [Fact]
+    public async Task ResolveLoginHintFromCacheAsync_WhenCacheHasUpnClaim_ReturnsUpn()
+    {
+        WriteTokenCache(BuildJwt(new { upn = "user@test.com" }));
+
+        var result = await _authService.ResolveLoginHintFromCacheAsync();
+
+        result.Should().Be("user@test.com",
+            because: "the upn claim in the cached JWT should be returned as the login hint");
+    }
+
+    [Fact]
+    public async Task ResolveLoginHintFromCacheAsync_WhenCacheHasPreferredUsernameClaim_ReturnsIt()
+    {
+        WriteTokenCache(BuildJwt(new { preferred_username = "user@contoso.com" }));
+
+        var result = await _authService.ResolveLoginHintFromCacheAsync();
+
+        result.Should().Be("user@contoso.com",
+            because: "preferred_username is the fallback claim when upn is absent");
+    }
+
+    [Fact]
+    public async Task ResolveLoginHintFromCacheAsync_WhenCacheFileDoesNotExist_ReturnsNull()
+    {
+        _authService.ClearCache();
+
+        var result = await _authService.ResolveLoginHintFromCacheAsync();
+
+        result.Should().BeNull(because: "no cache file means no login hint can be resolved");
+    }
+
+    [Fact]
+    public async Task ResolveLoginHintFromCacheAsync_WhenJwtHasNoUpnClaims_ReturnsNull()
+    {
+        WriteTokenCache(BuildJwt(new { sub = "some-subject", oid = "some-oid" }));
+
+        var result = await _authService.ResolveLoginHintFromCacheAsync();
+
+        result.Should().BeNull(because: "a JWT without upn or preferred_username cannot provide a login hint");
+    }
+
+    [Fact]
+    public async Task ResolveLoginHintFromCacheAsync_WhenJwtIsMalformed_ReturnsNull()
+    {
+        WriteTokenCache("not-a-valid-jwt");
+
+        var result = await _authService.ResolveLoginHintFromCacheAsync();
+
+        result.Should().BeNull(because: "a malformed JWT should be swallowed and null returned");
     }
 
     #endregion

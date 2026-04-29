@@ -177,7 +177,7 @@ Ready? Type 'yes' to proceed."
 
 **Poor:**
 ```
-"Running a365 config init. Answer the questions."
+"Running a365 setup all --agent-name. Answer the questions."
 ```
 
 ### Pattern 2: Confirming Destructive Actions
@@ -718,7 +718,7 @@ Required inputs:
 
 Command:
 ┌────────────────────────────┐
-│ a365 config init          │
+│ a365 setup all --agent-name          │
 └────────────────────────────┘
 
 Ready to proceed? (yes/no): yes

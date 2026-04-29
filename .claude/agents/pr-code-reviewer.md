@@ -144,14 +144,68 @@ For each changed file, analyze:
    - Path separators
    - OS-specific code
 
-7. **CHANGELOG.md Check** (for user-facing changes)
-   - If the PR adds features, fixes bugs, or changes observable behavior, verify `CHANGELOG.md` has an entry in the `[Unreleased]` section
-   - Internal refactors, test-only changes, and tooling/CI-only changes do not require a CHANGELOG entry
-   - Flag as `low` severity if missing from a user-facing PR
+7. **Documentation Completeness Check** (for user-visible surface changes)
+
+   This is a first-class review axis. Do NOT rely on the diff showing you a CHANGELOG entry — you must actively *detect* the need for one and then *verify* it is present in the staged/PR diff.
+
+   **Step 7a — Detect user-visible surface changes.** Scan the diff for any of these signals:
+   - New `new Option<...>(` declaration in a command — indicates a new CLI flag
+   - Change to an existing `Option<...>` description, or to a command's help text / `.Description` string
+   - New `public` method, class, interface, enum value, or constant on a non-test type
+   - Rename of a `public` class or interface (old type removed + new type added in Services/, Models/, Commands/)
+   - Change to an observable log message the user has been observed to grep for (e.g., `"Messaging endpoint registered"` → different wording)
+   - New or changed HTTP request payload shape, endpoint URL, or wire contract
+   - Change to a command's validation rules (new required field, new error message)
+   - Deletion of a `public` API
+   - Bug fix that changes observable behavior
+
+   **Step 7b — Verify the corresponding docs are updated.** For every signal found in 7a, check that the PR staged file set includes:
+
+   - `CHANGELOG.md` — under `[Unreleased]`, in the appropriate subsection:
+     - `### Added` for new flags/methods/classes
+     - `### Changed` for renames, behavior changes, payload shape changes
+     - `### Removed` for deletions
+     - `### Fixed` for bug fixes with user-visible impact
+   - The nearest `README.md` — if the command surface changed, the README in the command's folder must reflect it:
+     - New flag on `a365 setup blueprint` → update `Commands/SetupSubcommands/README.md`
+     - Rename of a service → update `Services/README.md` table and `design.md` structure tree
+   - **For renames specifically**: run `grep -rn "<OldTypeName>" --include="*.md"` across the repo. Any surviving hits are stale and must be updated in the same PR.
+
+   **Step 7c — Severity calibration.**
+   - Missing CHANGELOG entry for a user-visible change → **HIGH** (not low). User-visible changes without a changelog entry silently accumulate and get lost when the release goes out.
+   - Stale type/method name in README or design.md after a rename → **HIGH**. These mislead future readers and the grep check is trivial.
+   - Missing README update for a new flag → **MEDIUM**. The flag is self-documenting via `--help`, but discoverability suffers.
+   - Internal refactors, test-only changes, dependency bumps, and CI/tooling-only changes do not require CHANGELOG or README updates.
+
+   **Step 7d — What does NOT count as an excuse.**
+   - "The flag is opt-in / preview / temporary" — still needs CHANGELOG and README. Opt-in/preview status goes *in* the CHANGELOG entry.
+   - "Microsoft Learn docs will cover it" — that's a separate pipeline; the repo's CHANGELOG and READMEs are the source of truth for what shipped in a given version.
+   - "The reviewer can see it in the diff" — yes, *you* can; future readers of CHANGELOG.md cannot.
 
 8. **Test Coverage Gaps**
    - Based on the conditional logic, what specific test scenarios are needed?
    - Generate concrete test code examples
+
+9. **Holistic Related-File Expansion** (for patterns that span unstaged files)
+
+   Do not limit analysis to staged/diff lines. For the following patterns, actively fetch and read related unstaged files before generating findings:
+
+   **A. New property on a model class → check validators (even if not staged)**
+   When the diff adds a new `public` property to any class in `Models/` or `SetupSubcommands/` (e.g., `Agent365Config`, `SetupContext`, `SetupResults`):
+   - Read the full `Validate()` and `ValidateNonDwMinimal()` methods of that class — they may not be in the diff
+   - Also `Grep` for `ValidateAsync` methods in `ConfigService.cs` that take the same model type (see Anti-Pattern #25)
+   - If the new property represents a discrete set of values (e.g., `"obo|s2s|both"`) and no validation exists in any of these methods, flag HIGH (see Anti-Pattern #27)
+
+   **B. New CLI `Option<...>` → read the directory README (even if not staged)**
+   When the diff adds `new Option<...>(` to a command file under `Commands/`:
+   - Read `README.md` in that same directory
+   - If the new option is not documented, flag MEDIUM (missing README update)
+   - Also verify the README does not claim the option is available on commands where it is not wired — check the command class to confirm scope
+
+   **C. Changed observable log message → grep tests for old string**
+   When the diff changes a quoted string in a `LogInformation`/`LogWarning`/`LogError` call:
+   - Run `Grep` for the old string in `src/Tests/**/*.cs`
+   - If test files assert `Contains("old string")` and the old string is gone, the test will silently pass with the wrong message — flag HIGH
 
 ### Step 3: Generate Findings
 
@@ -654,12 +708,177 @@ When a catch block, comment, or doc string covers multiple distinct error condit
   // After:  "Device code flow may succeed depending on your tenant's CAP configuration."
   ```
 
+### 26. Bare `catch (Exception)` Not Excluding `OperationCanceledException`
+
+A catch block that uses `catch (Exception)` or `catch (Exception ex)` without a `when (ex is not OperationCanceledException)` filter, where the method has a `CancellationToken` in scope. This swallows cancellation silently — setup continues, config may be cleared or re-registration triggered, and Ctrl+C appears to hang.
+
+- **Pattern to catch**:
+  - `catch (Exception)` or `catch (Exception ex)` in a method whose signature includes `CancellationToken ct` or `CancellationToken cancellationToken`
+  - The catch body returns a default/null/false value rather than re-throwing
+  - No explicit `catch (OperationCanceledException)` block preceding the broad catch
+- **Severity**: `high` — cancellation is silently swallowed; operations that should terminate on Ctrl+C continue running and may corrupt or clear persisted state
+- **Check**: For every `catch (Exception)` or `catch (Exception ex)` in the diff, check if the enclosing method signature has a `CancellationToken` parameter. If yes and there is no `when (ex is not OperationCanceledException)` filter and no dedicated `catch (OperationCanceledException)` block above it, flag it.
+- **Fix**:
+  ```csharp
+  catch (Exception ex) when (ex is not OperationCanceledException)
+  {
+      _logger.LogDebug(ex, "...");
+      return false; // or null, or default
+  }
+  ```
+  Alternatively, place a dedicated re-throw block first:
+  ```csharp
+  catch (OperationCanceledException)
+  {
+      throw; // propagate immediately — do not swallow
+  }
+  catch (Exception ex)
+  {
+      _logger.LogDebug(ex, "...");
+      return false;
+  }
+  ```
+- **Real examples** (from PR #384): `AgentRegistrationExistsAsync` in `GraphApiService.cs` and `FindExistingAgentIdentityAsync` in `AgentBlueprintService.cs` both had bare `catch (Exception ex)` blocks that swallowed `OperationCanceledException`, causing setup to continue (and potentially clear valid stored state) after cancellation.
+
 **MANDATORY REPORTING RULE**: Whenever the diff contains any test file (`.Tests.cs`), you MUST emit a named finding for this check — even if no violation is found. The finding must appear in the review output with one of three statuses:
   - **`high` severity** if a violation is found (missing warmup, dead executor mock, etc.)
   - **`info` — FIXED** if the PR is fixing a prior violation (warmup added to previously-cold classes) — list each class fixed and its measured or estimated speedup
   - **`info` — PASS** if all test classes with real service instances already have warmup in their constructors
 
 Do NOT silently omit this check. The rule exists because silent omission is how the regression in `da6f750` went undetected.
+
+### 22. Extractable Code Duplicated Across Sibling Files or Methods
+
+When a block of code — a method body, a collection initializer, a sequence of API calls, or a set of constant references — appears verbatim (or near-verbatim, differing only in a single parameter or flag) in two or more sibling classes or methods, it is a maintainability defect. Future changes must be applied to every copy; one copy will eventually be missed.
+
+- **Pattern to catch**:
+  - The same logical block (3+ lines, or any block constructing a data structure with domain constants) appears in two or more sibling files in the same namespace or folder
+  - The copies differ only in a single simple parameter: a boolean flag, an enum value, a string literal, or a single variable binding
+  - Common manifestations in this codebase:
+    - Identical `List<ResourcePermissionSpec>` or array initializers referencing the same `ConfigConstants.*` values across multiple `*Subcommand.cs` files
+    - The same sequence of `await service.DoX(); await service.DoY();` calls in parallel command handlers
+    - Repeated `if (dryRun) { logger.LogInformation(...) }` blocks with the same message template in multiple subcommands
+- **Severity**: `medium` — inconsistency risk on every future change to the duplicated logic; flag as `high` if the block contains security-sensitive data (auth scopes, app IDs)
+- **Check**: For each substantial block (3+ non-trivial lines) in the diff, use `Grep` to search for the same constant names, method call signatures, or string literals in sibling files. If the same pattern appears in two or more files, assess whether the differing part can be parameterized.
+- **Fix**: Extract the shared logic into a shared helper method, extension method, or factory, parameterizing the varying element:
+  ```csharp
+  // SetupHelpers.cs — single source of truth
+  internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) => [ ... ];
+
+  // AllSubcommand.cs
+  specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
+
+  // AdminSubcommand.cs
+  specs.AddRange(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: false));
+  ```
+
+**Real example (from `users/sellak/blueprintScopes`):** `AllSubcommand.cs`, `AdminSubcommand.cs`, and `PermissionsSubcommand.cs` each contained an identical three-entry block for Bot API, Observability API, and Power Platform API. When `Agent365.Observability.OtelWrite` was added, the new scope had to be written in three places — and would have been missed without manual cross-file inspection. Extracted to `SetupHelpers.GetFixedApiPermissionSpecs(bool setInheritable)`.
+
+### 23. Unconditional Success Log After Multiple Fallible Operations
+
+A success or completion log message is emitted unconditionally after a sequence of independent operations that each have their own `if (!ok)` warning branches. The final message claims the whole step succeeded regardless of which individual operations failed.
+
+- **Pattern to catch**:
+  - A sequence of: `var aOk = await DoA(...); if (!aOk) LogWarning(...); var bOk = await DoB(...); if (!bOk) LogWarning(...); LogInformation("completed successfully");`
+  - The success log appears at the end without checking `aOk && bOk` — it fires even if every preceding operation returned false
+  - Common in multi-grant admin consent flows, multi-step provisioning, and batch operations
+- **Severity**: `high` — users see "completed successfully" in the terminal while one or more required operations silently failed; they have no indication follow-up action is needed
+- **Check**: For every `LogInformation("...success..." or "...completed...")` in the diff, scan backwards to find all `bool`-returning async calls in the same block. Verify each outcome variable is included in a combined guard before the success log.
+- **Fix**: Accumulate outcomes and gate the success log:
+  ```csharp
+  var aOk = await DoA(...);
+  if (!aOk) logger.LogWarning("A failed.");
+  var bOk = await DoB(...);
+  if (!bOk) logger.LogWarning("B failed.");
+
+  if (!aOk || !bOk)
+  {
+      logger.LogError("Step completed with errors. One or more operations failed and follow-up action is required.");
+      throw new InvalidOperationException("Step did not complete successfully for all operations.");
+  }
+  logger.LogInformation("Step completed successfully.");
+  ```
+- **Real example** (`CreateInstanceCommand.cs`): Three separate `CreateOrUpdateOauth2PermissionGrantAsync` calls (MCP scopes, Bot API, Observability API) each had their own `LogWarning` on failure, but a single `LogInformation("Admin consent granted ... completed successfully")` was always emitted at the end. Fixed by computing `adminConsentGrantOk = mcpGrantOk && botApiGrantOk && observabilityApiGrantOk` and throwing if false.
+
+### 24. Expensive Unconditional Startup Code Before Command Dispatch
+
+An HTTP call, token acquisition, subprocess spawn, or other expensive/network-dependent operation runs unconditionally in startup — before `parser.InvokeAsync(args)` and before the user's chosen command is even parsed. This adds latency to every invocation (including `--help`, `--version`, and offline/CI scenarios) and can fail in environments without network access even when the command doesn't require it.
+
+- **Pattern to catch**:
+  - Any `await SomeService.NetworkCallAsync(...)` in `Program.cs` (or equivalent startup file) between `services.BuildServiceProvider()` and `parser.InvokeAsync(args)`
+  - Calls to `configService.TryResolveXxx(graphApiService)`, `graphApiService.AnyMethodAsync(...)`, or `AzCliHelper.*` that are NOT inside a command handler lambda
+  - The call is not guarded by a check of whether the command actually needs the result
+- **Severity**: `medium` — noticeable latency on every invocation; breaks offline/CI scenarios; especially bad for interactive developer workflows where `a365 --help` should be instant
+- **Fix**: Guard with a check of the args array to skip for informational invocations, or move the call inside the command handlers that actually need it:
+  ```csharp
+  // Skip for help, version, and empty invocations — must work offline
+  var isHelpOrVersion = args.Length == 0 || args.Any(a => a is "--help" or "-h" or "--version");
+  if (!isHelpOrVersion)
+  {
+      try { await configService.TryResolveClientAppIdAsync(graphApiService); }
+      catch (Exception ex) { logger.LogDebug(ex, "Pre-resolution skipped: {Message}", ex.Message); }
+  }
+  ```
+  Alternatively, move the call into a `System.CommandLine` middleware so it runs lazily only when a command handler needs it.
+- **Real example** (`Program.cs`): `TryResolveClientAppIdAsync` was called unconditionally before `parser.InvokeAsync(args)`, causing a Graph API call + az token acquisition on every invocation including `a365 --help`. Fixed by guarding with `isHelpOrVersion`.
+
+### 25. Validation Rule Change in Model Not Mirrored in Service-Layer Validator
+
+When a required-field check is added, removed, or relaxed in a model's `Validate()` method, the same change is almost always needed in the service-level `ValidateAsync()` method — and vice versa. Failing to update both is the root cause of "fixed in one place but still broken in the other" bugs.
+
+- **Pattern to catch**:
+  - A diff removes (or adds) a `ValidateRequired(...)` call, or an `if (string.IsNullOrWhiteSpace(...))` guard, inside any `Validate()` method on a model class
+  - The diff does NOT also touch the service-level validator (`ConfigService.ValidateAsync`, or any method named `ValidateAsync` that takes the same model type)
+- **Severity**: `high` — the fix is incomplete; the rule will still fire (or fail to fire) via the other path
+- **Check**: For every model-level validation change in the diff, run `Grep` for the same field name + `"is required"` or `ValidateRequired` in `ConfigService.cs`. If the service-level validator has the same rule and the diff doesn't touch it, flag it.
+- **Fix**: Apply the same change in both validators, or — better — consolidate so `ConfigService.ValidateAsync` calls `config.Validate()` for required-field rules and only adds format checks on top:
+  ```csharp
+  // ConfigService.ValidateAsync — required-field rules delegated to the model
+  var errors = new List<string>(config.Validate());
+  // Format-only checks follow...
+  if (!string.IsNullOrWhiteSpace(config.TenantId))
+      ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
+  ```
+- **Real example**: Removing `"messagingEndpoint is required when needDeployment is 'no'."` from `Agent365Config.Validate()` without removing the parallel `ValidateRequired(config.MessagingEndpoint, ...)` call in `ConfigService.ValidateAsync`. The fix appeared in `Agent365ConfigTests.cs` and `Agent365Config.cs` but not in `ConfigService.cs`, so `a365 cleanup` still failed with `MessagingEndpoint is required` on bootstrap-path projects.
+
+### 27. New Nullable Config Property Without Validation in `Validate()`
+
+When a new nullable string property is added to a config model class (`Agent365Config`, `SetupContext`, or similar) to represent a discrete set of allowed values (e.g., `obo|s2s|both`), and no validation is added to `Validate()` / `ValidateNonDwMinimal()` / `ValidateAsync()`, the property becomes a silent misconfiguration path: a typo in `a365.config.json` passes through unnoticed and silently disables the feature or skips grant branches.
+
+- **Pattern to catch**:
+  - `[JsonPropertyName("someMode")] public string? SomeMode { get; init; }` added to a model class
+  - No corresponding discrete-value check in `Validate()` / `ValidateNonDwMinimal()` for that property name
+  - Often paired with Anti-Pattern #28 (assignment without whitespace normalization)
+- **Severity**: `high` — incorrect config values silently skip grant/permission branches; user gets no error
+- **Check**: For every new property in a model class diff, read the `Validate()` method of that class (even if not staged) and search for the property name. If absent, flag it.
+- **Fix**: Add a private helper and call it from all `Validate()` overloads:
+  ```csharp
+  private static void ValidateSomeMode(string? value, List<string> errors)
+  {
+      if (value is not null && value is not ("a" or "b" or "c"))
+          errors.Add($"someMode must be 'a', 'b', or 'c' when set (got '{value}').");
+  }
+  ```
+- **Real example (PR #391, Comments 4 & 5)**: `Agent365Config.AuthMode` was added without validation. `a365.config.json` could contain `"authMode": "typo"` and the run would proceed, silently skipping all grant branches.
+
+### 28. Mode/Enum-Like String Property Normalized With `?.ToLowerInvariant()` Instead of `IsNullOrWhiteSpace`
+
+When a string property represents a discrete set of values (e.g., `"obo"`, `"s2s"`, `"both"`), the assignment `AuthMode = authMode?.ToLowerInvariant()` looks correct but lets empty string through: `""?.ToLowerInvariant()` returns `""`, not `null`. An empty string from `a365.config.json` then makes `IsOboMode`/`IsS2sMode`/`IsBothMode` all return `false` — silently skipping all grant branches with no error.
+
+- **Pattern to catch**:
+  - `SomeMode = someMode?.ToLowerInvariant();` where `SomeMode` is a nullable string used in discrete-value comparisons (e.g., `== "obo"`)
+  - Appears in `SetupContext` constructors, settings classes, or model property setters
+- **Severity**: `high` — empty-string config value silently disables all mode-dependent branches
+- **Check**: For every `?.ToLowerInvariant()` assignment in the diff where the left-hand side is compared against a finite set of literals elsewhere, verify the `IsNullOrWhiteSpace` guard is present.
+- **Fix**:
+  ```csharp
+  // Wrong — empty string passes through as a real mode
+  AuthMode = authMode?.ToLowerInvariant();
+
+  // Correct — empty/whitespace becomes null (= use documented default)
+  AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.Trim().ToLowerInvariant();
+  ```
+- **Real example (PR #391, Comments 7 & 8)**: `SetupContext.AuthMode` and `NonDwBlueprintSetupOrchestrator.effectiveMode` both used `?.ToLowerInvariant()`, allowing `""` to disable OBO without any visible error.
 
 ## Example Invocation
 

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System;
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 
 /// <summary>
@@ -34,9 +36,19 @@ public static class ConfigConstants
     public const string CustomClientAppRegistrationUrl = "https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration";
 
     /// <summary>
-    /// Production Agent 365 Tools Discover endpoint URL
+    /// Microsoft Learn documentation URL for configuring the messaging endpoint manually in
+    /// the Teams Developer Portal. Used as the fallback action item whenever automated Teams
+    /// Graph backend configuration cannot complete (non-M365 agents, contract-mismatch
+    /// responses, ownership/permission failures).
     /// </summary>
-    public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/discoverToolServers";
+    public const string TeamsDeveloperPortalConfigureEndpointUrl =
+        "https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal";
+
+    /// <summary>
+    /// Agent 365 Tools Discover endpoint URL (V2)
+    /// </summary>
+
+    public const string ProductionDiscoverEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers";
 
     /// <summary>
     /// Production Agent 365 Tools Create endpoint URL
@@ -77,11 +89,25 @@ public static class ConfigConstants
     public const string MessagingBotApiAdminConsentScope = "AgentData.ReadWrite";
 
     /// <summary>
-    /// Observability API scope used for admin consent URL construction.
-    /// Note: the orchestrator grants "user_impersonation" via OAuth2 permission grants; this
-    /// scope is the consent-URL-facing name for the same resource.
+    /// Observability API scope used in admin consent URLs.
+    /// This is the only scope published by the Observability API resource app manifest
+    /// that is valid for the /v2.0/adminconsent endpoint.
+    /// Note: OtelWrite causes AADSTS650053 in the consent URL flow; OtelWrite is granted
+    /// separately via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiAdminConsentScope = "Maven.ReadWrite.All";
+
+    /// <summary>
+    /// Observability API scope for writing OpenTelemetry data.
+    /// Granted to all provisioned agent identities via OAuth2PermissionGrants.
+    /// </summary>
+    public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
+
+    /// <summary>
+    /// Delegated scope value exposed on the blueprint app registration to enable
+    /// OBO (On-Behalf-Of) callers to acquire tokens scoped to the agent.
+    /// </summary>
+    public const string BlueprintOboScope = "access_agent_as_user";
 
     /// <summary>
     /// Production deployment environment
@@ -106,21 +132,10 @@ public static class ConfigConstants
         "Chat.Read",
         "Chat.ReadWrite",
         "Files.Read.All",
-        "Sites.Read.All"
+        "Sites.Read.All",
+        "ChannelMessage.Read.All",
+        "ChannelMessage.Send",
     };
-
-    /// <summary>
-    /// Default App Service Plan SKU - B1 (Basic tier) for production workloads.
-    /// Note: B1 often has zero quota by default in Azure subscriptions.
-    /// For development/testing without quota issues, consider F1 (Free tier).
-    /// </summary>
-    public const string DefaultAppServicePlanSku = "B1";
-
-    /// <summary>
-    /// Default Azure location for resource deployment when not specified.
-    /// East US is chosen as a widely available region with good quota availability.
-    /// </summary>
-    public const string DefaultAzureLocation = "eastus";
 
     /// <summary>
     /// Default Microsoft Graph API scopes for agent application
@@ -131,7 +146,10 @@ public static class ConfigConstants
         "Mail.Send",
         "Chat.ReadWrite",
         "User.Read.All",
-        "Sites.Read.All"
+        "Sites.Read.All",
+        "Files.ReadWrite.All",
+        "ChannelMessage.Read.All",
+        "ChannelMessage.Send",
     };
 
 
@@ -148,10 +166,6 @@ public static class ConfigConstants
         // Default to production endpoint
         return environment?.ToLower() switch
         {
-            "prod" => ProductionDiscoverEndpointUrl,
-            "test" => $"https://{McpConstants.Agent365TestDomain}/agents/discoverToolServers",
-            "preprod" or "ppe" => $"https://{McpConstants.Agent365PreProdDomain}/agents/discoverToolServers",
-            "local" => "http://localhost:52857/agents/discoverToolServers",
             _ => ProductionDiscoverEndpointUrl
         };
     }
@@ -169,7 +183,7 @@ public static string GetAgent365ToolsResourceAppId(string environment)
     return environment?.ToLowerInvariant() switch
     {
         "local" or "test" or "preprod" or "ppe" => "05879165-0320-489e-b644-f72b33f3edf0",
-        _ => McpConstants.Agent365ToolsProdAppId,
+        _ => McpConstants.WorkIQToolsProdAppId,
     };
 }
 }

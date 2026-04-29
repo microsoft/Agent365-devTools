@@ -6,7 +6,6 @@ using System.Net.Http;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -23,32 +22,25 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// all queued responses in their Dispose methods. Suppressing CA2000 for this pattern.
 /// </remarks>
 #pragma warning disable CA2000 // Dispose objects before losing scope
-[Collection("AzCliTokenCache")]
 public class GraphApiServiceIsApplicationOwnerTests
 {
     private readonly ILogger<GraphApiService> _mockLogger;
     private readonly CommandExecutor _mockExecutor;
+
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
+    }
 
     public GraphApiServiceIsApplicationOwnerTests()
     {
         _mockLogger = Substitute.For<ILogger<GraphApiService>>();
         var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
         _mockExecutor = Substitute.ForPartsOf<CommandExecutor>(mockExecutorLogger);
-        AzCliHelper.ResetAzCliTokenCacheForTesting();
-        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tenant-123", "fake-graph-token");
-
-        // Mock Azure CLI authentication
-        _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo =>
-            {
-                var cmd = callInfo.ArgAt<string>(0);
-                var args = callInfo.ArgAt<string>(1);
-                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
-                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
-                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
-            });
     }
 
     [Fact]
@@ -56,7 +48,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";
@@ -88,7 +80,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";
@@ -120,7 +112,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";
@@ -152,7 +144,7 @@ public class GraphApiServiceIsApplicationOwnerTests
                 capturedMeRequest = req;
             }
         });
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";
@@ -191,7 +183,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";
@@ -214,7 +206,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";
@@ -245,7 +237,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";
@@ -276,7 +268,7 @@ public class GraphApiServiceIsApplicationOwnerTests
                 capturedOwnersRequest = req;
             }
         });
-        var service = new GraphApiService(_mockLogger, _mockExecutor, handler);
+        var service = new GraphApiService(_mockLogger, _mockExecutor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         var tenantId = "tenant-123";
         var appObjectId = "app-obj-456";

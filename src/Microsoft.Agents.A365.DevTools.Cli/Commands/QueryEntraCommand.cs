@@ -20,13 +20,14 @@ public class QueryEntraCommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("query-entra", "Query Microsoft Entra ID for agent information (scopes, permissions, consent status)");
 
         // Add subcommands for different query types
-        command.AddCommand(CreateBlueprintScopesSubcommand(logger, configService, executor, graphApiService, blueprintService));
-        command.AddCommand(CreateInstanceScopesSubcommand(logger, configService, executor));
+        command.AddCommand(CreateBlueprintScopesSubcommand(logger, configService, executor, graphApiService, blueprintService, resolver));
+        command.AddCommand(CreateInstanceScopesSubcommand(logger, configService, executor, resolver));
 
         return command;
     }
@@ -39,29 +40,47 @@ public class QueryEntraCommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("blueprint-scopes", "List configured scopes and consent status for the agent blueprint");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
 
-        command.AddOption(configOption);
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
-        command.SetHandler(async (config) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+            var ct = context.GetCancellationToken();
             try
             {
                 logger.LogInformation("Querying Entra ID for agent blueprint inheritable permissions...");
-                
-                // Load configuration to get the blueprint ID and tenant ID
-                var setupConfig = await LoadConfigAsync(config, logger, configService);
+
+                Agent365Config? setupConfig;
+                if (resolver != null)
+                    setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+                else
+                    setupConfig = await LoadConfigAsync(configFile, logger, configService);
                 if (setupConfig == null)
                 {
                     logger.LogError("Failed to load configuration");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -69,14 +88,14 @@ public class QueryEntraCommand
                 {
                     logger.LogError("Agent Blueprint ID not found in configuration. Please run 'a365 setup blueprint' first.");
                     logger.LogInformation("The blueprint must be created before you can query its scopes.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
                 if (string.IsNullOrEmpty(setupConfig.TenantId))
                 {
                     logger.LogError("Tenant ID not found in configuration.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -94,7 +113,7 @@ public class QueryEntraCommand
                 {
                     logger.LogError("Failed to query inheritable permissions from Microsoft Graph API");
                     logger.LogInformation("Make sure you are authenticated and have permission to read agent blueprints.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -180,9 +199,9 @@ public class QueryEntraCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to query blueprint inheritable permissions: {Message}", ex.Message);
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
-        }, configOption);
+        });
 
         return command;
     }
@@ -193,29 +212,47 @@ public class QueryEntraCommand
     private static Command CreateInstanceScopesSubcommand(
         ILogger<QueryEntraCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("instance-scopes", "List configured scopes and consent status for the agent instance");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
 
-        command.AddOption(configOption);
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
-        command.SetHandler(async (config) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+            var ct = context.GetCancellationToken();
             try
             {
                 logger.LogInformation("Querying Entra ID for agent instance scopes and consent status...");
-                
-                // Load configuration to get the instance identity
-                var instanceConfig = await LoadConfigAsync(config, logger, configService);
+
+                Agent365Config? instanceConfig;
+                if (resolver != null)
+                    instanceConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+                else
+                    instanceConfig = await LoadConfigAsync(configFile, logger, configService);
                 if (instanceConfig == null)
                 {
                     logger.LogError("Failed to load configuration");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -237,7 +274,7 @@ public class QueryEntraCommand
                 {
                     logger.LogError("No agent identity found in configuration. Please run 'a365 create-instance' first.");
                     logger.LogInformation("An agent identity must be created before you can query OAuth2 grants.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -255,7 +292,7 @@ public class QueryEntraCommand
                 {
                     logger.LogError("Failed to query service principal: {Error}", spResult.StandardError);
                     logger.LogInformation("Make sure you are logged in with 'az login' and have permission to read the application.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -264,7 +301,7 @@ public class QueryEntraCommand
                 if (spDoc.RootElement.ValueKind != JsonValueKind.Array || spDoc.RootElement.GetArrayLength() == 0)
                 {
                     logger.LogWarning("No service principal found for this application. The app may not be installed in this tenant.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
                 
@@ -371,9 +408,9 @@ public class QueryEntraCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to query instance scopes: {Message}", ex.Message);
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
-        }, configOption);
+        });
 
         return command;
     }

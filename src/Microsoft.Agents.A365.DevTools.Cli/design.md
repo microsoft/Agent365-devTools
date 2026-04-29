@@ -30,7 +30,7 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   ├── DotNetBuilder.cs          # .NET project builder
 │   ├── NodeBuilder.cs            # Node.js project builder
 │   ├── PythonBuilder.cs          # Python project builder
-│   ├── BotConfigurator.cs        # Messaging endpoint registration
+│   ├── TeamsGraphBackendConfigurator.cs  # Messaging endpoint (Teams Graph backend config)
 │   ├── GraphApiService.cs        # Graph API interactions
 │   ├── AuthenticationService.cs  # MSAL.NET authentication
 │   ├── AzureAuthValidator.cs     # Azure CLI auth + App Service token validation
@@ -97,7 +97,7 @@ flowchart LR
 
 | File | Content | Editing |
 |------|---------|---------|
-| `a365.config.json` | Tenant ID, subscription, resource names, project path | User edits |
+| `a365.config.json` | Tenant ID, subscription, resource names, project path, `authMode` | User edits |
 | `a365.generated.config.json` | Agent blueprint ID, identity ID, consent status | CLI generates |
 
 ### Configuration File Storage and Portability
@@ -128,6 +128,7 @@ public class Agent365Config
     public string ResourceGroup { get; init; } = string.Empty;
     public string WebAppName { get; init; } = string.Empty;
     public string DeploymentProjectPath { get; init; } = string.Empty;
+    public string? AuthMode { get; init; }   // "obo" | "s2s" | "both"; default obo when null
 
     // DYNAMIC PROPERTIES (get/set) - from a365.generated.config.json
     // Modified at runtime by CLI operations
@@ -171,51 +172,100 @@ By default the CLI targets the commercial Microsoft Graph endpoint. For sovereig
 
 This field is optional. When omitted, `https://graph.microsoft.com` is used.
 
-The value is read from `Agent365Config.GraphBaseUrl` and forwarded to `GraphApiService` via its `GraphBaseUrl` property after config is loaded. This controls both the HTTP endpoint used for all Graph API calls and the token resource identifier passed to `az account get-access-token`.
+The value is read from `Agent365Config.GraphBaseUrl` and forwarded to `GraphApiService` via its `GraphBaseUrl` property after config is loaded. This controls both the HTTP endpoint used for all Graph API calls and the token resource identifier passed to `AuthenticationService.GetAccessTokenAsync`.
+
+---
+
+## Authentication Architecture
+
+All token acquisition goes through **MSAL.NET via `AuthenticationService`**. No az CLI subprocess is used for tokens.
+
+### Token Acquisition Flow
+
+```
+All callers (GraphApiService, ArmApiService, TeamsGraphBackendConfigurator, ...)
+        |
+        v
+AuthenticationService.GetAccessTokenAsync(resource, tenantId)
+        |
+        +-- Check persistent disk cache (%LocalAppData%\Agent365\token-cache.json)
+        |       Cache key: {resource}[:tenant:{tenantId}][:user:{userId}]
+        |
+        +-- Cache hit + not expiring: return token immediately (0 prompts)
+        |
+        +-- Cache miss / expired: MsalBrowserCredential.GetTokenAsync(scopes)
+                |
+                +-- Windows:  WAM broker (no browser, SSO, CAP-compliant)
+                +-- macOS:    System browser → device code fallback if restricted
+                +-- Linux:    Device code flow
+```
+
+### Two Auth Paths
+
+| Path | When used | Scopes | Client app |
+|---|---|---|---|
+| **Default (MSAL)** | ARM, Graph `.default` calls | `{resource}/.default` | PowerShell client ID |
+| **Delegated scopes (MSAL)** | Graph calls needing specific permissions (e.g. `AgentInstance.ReadWrite.All`) | Explicit scope list | `clientAppId` from config |
+
+### Login Hint Resolution
+
+To prevent WAM from selecting a stale or wrong account, a login hint (UPN) is resolved before interactive auth:
+1. `AzCliHelper.ResolveLoginHintAsync()` — reads `az account show` if az CLI is present
+2. `AuthenticationService.ResolveLoginHintFromCacheAsync()` — decodes `upn`/`preferred_username` from a cached JWT if az CLI is unavailable
+
+### IAuthenticationService Interface
+
+`IAuthenticationService` is defined in the same file as `AuthenticationService` (`AuthenticationService.cs`). This is intentional — the interface is narrow (two methods), tightly coupled to its single implementation, and co-location follows the **related-interfaces convention** in the copilot instructions. It exists solely to enable test substitution in `ArmApiService` and `GraphApiService` without triggering real MSAL/WAM prompts.
+
+Only `GetAccessTokenAsync` and `ResolveLoginHintFromCacheAsync` are on the interface. Other methods (`GetAccessTokenWithScopesAsync`, `GetAccessTokenForMcpAsync`, `ClearCache`) stay on the concrete class and are used by commands that take `AuthenticationService` directly.
+
+### Token Caching
+
+- **Persistent cache** (`AuthenticationService`): survives across CLI invocations, keyed by resource + tenant + user
+- **Process-level login hint cache** (`AzCliHelper`): caches the result of `az account show` for the process lifetime — invalidated after `az login` operations
+
+### Platform Notes
+
+- **Windows**: WAM handles token acquisition at the OS level — no browser popup, no Python subprocess, corporate proxy not involved
+- **macOS/Linux**: Browser redirect or device code — falls back to device code automatically if browser auth is blocked by tenant policy (e.g., corp-managed macOS)
 
 ---
 
 ## Command Pattern Implementation
 
-Commands follow the Spectre.Console `AsyncCommand<T>` pattern:
+Commands use `System.CommandLine` with a static factory method pattern. Each command exposes a `CreateCommand(...)` method that receives its dependencies as explicit parameters and returns a `Command` object wired with a `SetHandler` lambda.
 
 ```csharp
-public class SetupCommand : AsyncCommand<SetupCommand.Settings>
+// Factory method receives dependencies explicitly — no reflection-based DI
+internal static Command CreateCommand(
+    ILogger logger,
+    IConfigService configService,
+    GraphApiService graphApiService,
+    ...)
 {
-    private readonly ILogger<SetupCommand> _logger;
-    private readonly IConfigService _configService;
+    var command = new Command("setup", "...");
+    var configOption = new Option<FileInfo>(["--config", "-c"], ...);
+    command.AddOption(configOption);
 
-    public SetupCommand(ILogger<SetupCommand> logger, IConfigService configService)
+    command.SetHandler(async (InvocationContext context) =>
     {
-        _logger = logger;
-        _configService = configService;
-    }
+        var config = context.ParseResult.GetValueForOption(configOption)!;
+        var ct = context.GetCancellationToken();
 
-    public class Settings : CommandSettings
-    {
-        [CommandOption("--config")]
-        [Description("Path to configuration file")]
-        public string? ConfigFile { get; init; }
-
-        [CommandOption("--non-interactive")]
-        [Description("Run without interactive prompts")]
-        public bool NonInteractive { get; init; }
-    }
-
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
-    {
-        _logger.LogInformation("Starting setup...");
         // Implementation
-        return 0; // Success
-    }
+        context.ExitCode = 0;
+    });
+
+    return command;
 }
 ```
 
 **Guidelines:**
-- Keep commands thin - delegate business logic to services
-- Use dependency injection for services
-- Return 0 for success, non-zero for errors (use `ErrorCodes`)
-- Log progress with `ILogger<T>` and structured placeholders
+- Keep command handlers thin — delegate business logic to services or orchestrators
+- Dependencies are passed as constructor-style parameters to `CreateCommand`
+- Exit code: 0 = success, 1 = failure (set via `context.ExitCode` or `Environment.Exit`)
+- Log progress with `ILogger<T>` and structured placeholders (`{Name}` syntax)
+- Dry-run guard: check `dryRun` flag before any mutating work
 
 ---
 
@@ -402,29 +452,79 @@ Because the two permission layers require different roles, the CLI supports a tw
 
 The entry point handles:
 
-1. **Logging Configuration** - Serilog with console and file sinks
-2. **Dependency Injection** - Service registration via `IServiceCollection`
-3. **Command Registration** - Commands registered with Spectre.Console.Cli
-4. **Exception Handling** - Global exception handler with user-friendly messages
+1. **Logging Configuration** - `Microsoft.Extensions.Logging` with clean console and file sinks (per-command log file under `%LocalAppData%`)
+2. **Service Resolution** - Services are registered in a DI container (ServiceCollection/ServiceProvider) and passed to `CreateCommand` factory methods
+3. **Command Registration** - `System.CommandLine` `RootCommand` with subcommands added via `AddCommand`
+4. **Exception Handling** - `CommandLineBuilder` middleware + `ExceptionHandler` for user-friendly messages
 
 ```csharp
 // Simplified structure
-var services = new ServiceCollection();
-services.AddSingleton<IConfigService, ConfigService>();
-services.AddSingleton<IDeploymentService, DeploymentService>();
+var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
+var configService = new ConfigService(loggerFactory.CreateLogger<ConfigService>());
+var graphApiService = new GraphApiService(...);
 // ... more services
 
-var app = new CommandApp(new TypeRegistrar(services));
-app.Configure(config =>
-{
-    config.AddCommand<ConfigCommand>("config");
-    config.AddCommand<SetupCommand>("setup");
-    config.AddCommand<DeployCommand>("deploy");
-    // ... more commands
-});
+var rootCommand = new RootCommand("a365 — Microsoft Agent 365 CLI");
+rootCommand.AddCommand(SetupCommand.CreateCommand(logger, configService, ...));
+rootCommand.AddCommand(DeployCommand.CreateCommand(logger, configService, ...));
+// ... more commands
 
-return await app.RunAsync(args);
+return await new CommandLineBuilder(rootCommand)
+    .UseDefaults()
+    .Build()
+    .InvokeAsync(args);
 ```
+
+---
+
+## Setup Workflow Architecture
+
+### Two Agent Flows
+
+`a365 setup all` supports two distinct agent types, controlled by `--aiteammate` (CLI) or `aiTeammate` (config):
+
+| Agent Type | Flag | What it creates |
+|---|---|---|
+| **AI Teammate agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
+| **Custom Engine Agent / Blueprint** (default) | omit `--aiteammate` | Agent Blueprint + batch permissions (Graph + A365 Tools only) + Agent Instance (Graph API) |
+
+Non-DW blueprint agents do not use Azure Bot Service, so there is no infrastructure step, no manifest zip, and no messaging endpoint registration. The final step is `POST /beta/agentRegistry/agentInstances` instead.
+
+### SetupContext — Shared Step State
+
+`SetupContext` is a bundle of mutable state and services passed to each extracted step method. It enables the non-DW orchestrator to reuse the same step implementations as the DW flow without duplicating code.
+
+```
+AllSubcommand.ExecuteAsync
+  │
+  ├── builds SetupContext (config, results, logger, services)
+  │
+  ├── DW path:
+  │     ExecuteInfrastructureStepAsync(ctx)     ← DW only
+  │     ExecuteBlueprintStepAsync(ctx)           ← shared
+  │     ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (5 resources)
+  │     ExecuteMessagingEndpointStepAsync(ctx)   ← DW only
+  │
+  └── Non-DW path:
+        NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx)
+          ExecuteBlueprintStepAsync(ctx)         ← reuses DW step
+          ExecuteBatchPermissionsStepAsync(ctx, nonDwSpecs)  ← reuses, 2 resources only
+          RegisterAgentInstanceAsync(...)        ← non-DW final step
+```
+
+`SetupContext.Config` is intentionally mutable — the blueprint step reloads configuration from disk after writing `AgentBlueprintId`, and the updated instance must be visible to all subsequent steps.
+
+### Batch Permissions — Resource Specs
+
+The non-DW spec list is a strict subset of the DW list:
+
+| Resource | DW | Non-DW Blueprint |
+|---|---|---|
+| Microsoft Graph (delegated) | ✓ | — |
+| Agent 365 Tools (delegated) | ✓ | — |
+| Messaging Bot API | ✓ | — |
+| Observability API | ✓ | ✓ |
+| Power Platform API | ✓ | ✓ |
 
 ---
 

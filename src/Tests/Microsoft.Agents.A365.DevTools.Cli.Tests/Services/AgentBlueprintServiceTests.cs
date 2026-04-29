@@ -7,8 +7,8 @@ using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
-using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -30,7 +30,6 @@ public class AgentBlueprintServiceTests
         // instead of falling through to the real implementation and spawning actual az processes.
         _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
-        AzCliHelper.WarmAzCliTokenCache("https://graph.microsoft.com/", "tid", "fake-graph-token");
     }
 
     [Fact]
@@ -63,7 +62,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // ResolveBlueprintObjectIdAsync: First GET to check if blueprintAppId is objectId (returns 404 NotFound)
@@ -123,7 +122,7 @@ public class AgentBlueprintServiceTests
                 return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
             });
 
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         // Existing entry with one scope
@@ -167,6 +166,100 @@ public class AgentBlueprintServiceTests
     }
 
     [Fact]
+    public async Task SetInheritablePermissionsAsync_ReturnsFalse_WhenPatchThrows()
+    {
+        // Arrange — use a subclass that overrides GraphPatchAsync to throw,
+        // simulating a transient network error during the PATCH call (#366 regression).
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new ThrowingOnPatchGraphApiService(_mockGraphLogger, executor, FakeAuth(), handler);
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // ResolveBlueprintObjectIdAsync: 404 → resolve via appId filter
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // GET existing permissions — returns an entry so the merge+PATCH path is taken
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[] { new { resourceAppId = "resAppId", inheritableScopes = new { scopes = new[] { "scope1" } } } }
+            }))
+        });
+
+        // Act
+        var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
+
+        // Assert — must not throw; must surface the failure gracefully
+        ok.Should().BeFalse(because: "GraphPatchAsync threw an exception and the caller must not crash");
+        already.Should().BeFalse();
+        err.Should().Be("Network error during PATCH");
+    }
+
+    [Fact]
+    public async Task SetInheritablePermissionsAsync_ReturnsFalse_WhenPatchReturnsFalse()
+    {
+        // Arrange — GraphPatchAsync succeeds at the HTTP level but returns a non-2xx status,
+        // causing GraphPatchAsync to return false. The method must return (ok: false) without throwing.
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // ResolveBlueprintObjectIdAsync: 404 → resolve via appId filter
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        // GET existing permissions — returns an entry so the PATCH path is taken
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                value = new[] { new { resourceAppId = "resAppId", inheritableScopes = new { scopes = new[] { "scope1" } } } }
+            }))
+        });
+
+        // PATCH returns 400 Bad Request — GraphPatchAsync returns false
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("{\"error\":{\"code\":\"BadRequest\",\"message\":\"Invalid payload\"}}")
+        });
+
+        // Act
+        var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
+
+        // Assert — must not throw; must surface the failure gracefully
+        ok.Should().BeFalse(because: "GraphPatchAsync returned false (HTTP 400)");
+        already.Should().BeFalse();
+        err.Should().Contain("Graph PATCH returned false", because: "error message must identify the failing operation");
+    }
+
+    [Fact]
     public async Task DeleteAgentIdentityAsync_WithValidIdentity_ReturnsTrue()
     {
         // Arrange
@@ -179,7 +272,7 @@ public class AgentBlueprintServiceTests
             // Override with specific scope assertion
             _mockTokenProvider.GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentity.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>(),
@@ -196,7 +289,7 @@ public class AgentBlueprintServiceTests
 
             await _mockTokenProvider.Received(1).GetMgGraphAccessTokenAsync(
                 tenantId,
-                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentityBlueprint.DeleteRestore.All")),
+                Arg.Is<IEnumerable<string>>(scopes => scopes.Contains("AgentIdentity.DeleteRestore.All")),
                 false,
                 Arg.Any<string?>(),
                 Arg.Any<CancellationToken>(),
@@ -232,7 +325,7 @@ public class AgentBlueprintServiceTests
     {
         // Arrange
         using var handler = new FakeHttpMessageHandler();
-        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, handler, tokenProvider: null);
+        var graphService = new GraphApiService(_mockGraphLogger, _mockExecutor, Substitute.For<IAuthenticationService>(), handler, tokenProvider: null);
         var service = new AgentBlueprintService(_mockLogger, graphService);
 
         const string tenantId = "12345678-1234-1234-1234-123456789012";
@@ -441,6 +534,36 @@ public class AgentBlueprintServiceTests
         }
     }
 
+    // Test helper — overrides GraphPatchAsync to throw, simulating a transient network failure.
+    private sealed class ThrowingOnPatchGraphApiService : GraphApiService
+    {
+        public ThrowingOnPatchGraphApiService(
+            ILogger<GraphApiService> logger,
+            CommandExecutor executor,
+            IAuthenticationService authService,
+            HttpMessageHandler handler)
+            // loginHintResolver: no-op — prevents AzCliHelper.ResolveLoginHintAsync() from
+            // spawning a real 'az account get-access-token' subprocess in tests.
+            : base(logger, executor, authService, handler, loginHintResolver: () => Task.FromResult<string?>(null)) { }
+
+        public override Task<bool> GraphPatchAsync(
+            string tenantId,
+            string relativePath,
+            object payload,
+            CancellationToken ct = default,
+            IEnumerable<string>? scopes = null)
+            => Task.FromException<bool>(new HttpRequestException("Network error during PATCH"));
+    }
+
+    private static IAuthenticationService FakeAuth()
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult("fake-token"));
+        return mock;
+    }
+
     private (AgentBlueprintService service, FakeHttpMessageHandler handler) CreateServiceWithFakeHandler()
     {
         var handler = new FakeHttpMessageHandler();
@@ -456,9 +579,279 @@ public class AgentBlueprintServiceTests
         // Pass a no-op login hint resolver to skip the real 'az account show' process spawned by
         // AzCliHelper.ResolveLoginHintAsync — that static call bypasses the mocked CommandExecutor
         // and causes each test to wait several seconds for the real az CLI.
-        var graphService = new GraphApiService(_mockGraphLogger, executor, handler, _mockTokenProvider,
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, _mockTokenProvider,
             loginHintResolver: () => Task.FromResult<string?>(null));
         return (new AgentBlueprintService(_mockLogger, graphService), handler);
+    }
+
+    // ── GrantAppRoleAssignmentAsync tests ──────────────────────────────────────
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenResourceSpNotFound_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup returns empty value array
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenRoleNotFoundOnResourceSp_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP has no matching app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[]}")
+            });
+            // Existing assignments
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenRoleAlreadyAssigned_ReturnsTrueWithoutPost()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — role already assigned
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"resourceId\":\"resource-sp-id\",\"appRoleId\":\"role-id-1\"}]}")
+            });
+            // No POST should be queued — if the handler is called a 4th time it returns 404
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenPostSucceeds_ReturnsTrue()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST succeeds
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent("{\"id\":\"assignment-id\"}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WhenPostFails_ReturnsFalse()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // SP lookup
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"resource-sp-id\"}]}")
+            });
+            // Resource SP app roles
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Agent365.Observability.OtelWrite\",\"id\":\"role-id-1\"}]}")
+            });
+            // Existing assignments — none
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            // POST fails
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
+            });
+
+            // Act
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                new[] { "Agent365.Observability.OtelWrite" });
+
+            // Assert
+            result.Should().BeFalse();
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WithEmptyRoleNames_ReturnsTrue()
+    {
+        // Arrange
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            // Act — no HTTP calls should be made for an empty role list
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id",
+                Array.Empty<string>());
+
+            // Assert
+            result.Should().BeTrue();
+        }
+    }
+
+    // ── FindExistingAgentIdentityAsync tests ──────────────────────────────────
+
+    /// <summary>
+    /// Returns a partial mock of AgentBlueprintService with GetAgentInstancesForBlueprintAsync
+    /// available for stubbing. The GraphApiService dependency is inert (no HTTP calls expected).
+    /// </summary>
+    private AgentBlueprintService BuildPartialBlueprintService() =>
+        Substitute.ForPartsOf<AgentBlueprintService>(
+            _mockLogger,
+            new GraphApiService(_mockGraphLogger, _mockExecutor,
+                Substitute.For<IAuthenticationService>(),
+                new FakeHttpMessageHandler(),
+                tokenProvider: null));
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsSpId_WhenDisplayNameMatches()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>
+            {
+                new() { IdentitySpId = "sp-id-123", DisplayName = "sellakapri211 Identity" }
+            });
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().Be("sp-id-123",
+            because: "the service must return the SP ID of the matching agent identity");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_IsCaseInsensitive()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>
+            {
+                new() { IdentitySpId = "sp-id-456", DisplayName = "MY AGENT IDENTITY" }
+            });
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "my agent identity");
+
+        result.Should().Be("sp-id-456",
+            because: "display name matching must be case-insensitive");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsNull_WhenNoMatch()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>
+            {
+                new() { IdentitySpId = "sp-id-999", DisplayName = "Some Other Agent Identity" }
+            });
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().BeNull(because: "no entry matches the requested display name");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsNull_WhenListIsEmpty()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns(new List<AgentInstanceInfo>());
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().BeNull(because: "an empty list means no agent identities exist for the blueprint");
+    }
+
+    [Fact]
+    public async Task FindExistingAgentIdentityAsync_ReturnsNull_WhenLookupThrows()
+    {
+        var service = BuildPartialBlueprintService();
+        service.GetAgentInstancesForBlueprintAsync("tenant-id", "blueprint-id", Arg.Any<CancellationToken>())
+            .Returns<IReadOnlyList<AgentInstanceInfo>>(_ => throw new InvalidOperationException("Network error"));
+
+        var result = await service.FindExistingAgentIdentityAsync("tenant-id", "blueprint-id", "sellakapri211 Identity");
+
+        result.Should().BeNull(because: "exceptions from the underlying query must be swallowed non-fatally");
     }
 }
 

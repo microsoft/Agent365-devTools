@@ -11,7 +11,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Models;
 /// <summary>
 /// Unified configuration model for Agent 365 CLI.
 /// Merges static configuration (from a365.config.json) and dynamic state (from a365.generated.config.json).
-/// 
+///
 /// DESIGN PATTERN: Hybrid Merged Model (Option C)
 /// - Static properties use 'init' (immutable after construction, from a365.config.json)
 /// - Dynamic properties use 'get; set' (mutable at runtime, from a365.generated.config.json)
@@ -36,23 +36,8 @@ public class Agent365Config
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         }
 
-        if (string.IsNullOrWhiteSpace(SubscriptionId)) errors.Add("subscriptionId is required.");
-        if (string.IsNullOrWhiteSpace(ResourceGroup)) errors.Add("resourceGroup is required.");
-
-        if (NeedDeployment)
-        {
-            if (string.IsNullOrWhiteSpace(Location)) errors.Add("location is required.");
-            if (string.IsNullOrWhiteSpace(AppServicePlanName)) errors.Add("appServicePlanName is required.");
-            if (string.IsNullOrWhiteSpace(WebAppName)) errors.Add("webAppName is required.");
-        }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(MessagingEndpoint))
-                errors.Add("messagingEndpoint is required when needDeployment is 'no'.");
-        }
-
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
-        if (string.IsNullOrWhiteSpace(DeploymentProjectPath)) errors.Add("deploymentProjectPath is required.");
+        ValidateAuthMode(AuthMode, errors);
 
         // Validate custom blueprint permissions
         if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
@@ -84,6 +69,25 @@ public class Agent365Config
     }
 
     /// <summary>
+    /// Minimal validation for the config-free non-DW bootstrap path (--agent-name flow).
+    /// Only requires TenantId, ClientAppId, and AgentIdentityDisplayName.
+    /// </summary>
+    public List<string> ValidateNonDwMinimal()
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
+        if (string.IsNullOrWhiteSpace(ClientAppId))
+            errors.Add($"clientAppId could not be resolved. Ensure an Entra app named \"{AuthenticationConstants.WellKnownClientAppDisplayName}\" exists in your tenant.");
+        else
+            ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
+        if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+        ValidateAuthMode(AuthMode, errors);
+
+        return errors;
+    }
+
+    /// <summary>
     /// Helper method to validate GUID format
     /// </summary>
     private static void ValidateGuid(string value, string fieldName, List<string> errors)
@@ -91,6 +95,19 @@ public class Agent365Config
         if (!Guid.TryParse(value, out _))
         {
             errors.Add($"{fieldName} must be a valid GUID format.");
+        }
+    }
+
+    /// <summary>
+    /// Validates AuthMode is either unset (null/whitespace) or one of "obo", "s2s", "both" (case-insensitive).
+    /// </summary>
+    private static void ValidateAuthMode(string? value, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var normalised = value.Trim().ToLowerInvariant();
+        if (normalised is not ("obo" or "s2s" or "both"))
+        {
+            errors.Add($"authMode '{value}' is invalid. Allowed values: obo, s2s, both.");
         }
     }
 
@@ -108,24 +125,6 @@ public class Agent365Config
     public string TenantId { get; init; } = string.Empty;
 
     /// <summary>
-    /// Azure Subscription ID for resource deployment.
-    /// </summary>
-    [JsonPropertyName("subscriptionId")]
-    public string SubscriptionId { get; init; } = string.Empty;
-
-    /// <summary>
-    /// Azure Resource Group name where all resources will be deployed.
-    /// </summary>
-    [JsonPropertyName("resourceGroup")]
-    public string ResourceGroup { get; init; } = string.Empty;
-
-    /// <summary>
-    /// Azure region for resource deployment (e.g., "eastus", "westus2").
-    /// </summary>
-    [JsonPropertyName("location")]
-    public string Location { get; init; } = string.Empty;
-
-    /// <summary>
     /// Target environment for Agent 365 services (test, preprod, prod).
     /// Controls which endpoints are used for Teams Graph API, Agent 365 Tools, etc.
     /// Default: preprod
@@ -134,20 +133,11 @@ public class Agent365Config
     public string Environment { get; init; } = "prod";
 
     /// <summary>
-    /// For External hosting, this is the HTTPS messaging endpoint that Bot Framework will call.
-    /// For AzureAppService, this is optional; the CLI derives the endpoint from webAppName.
+    /// HTTPS messaging endpoint that Bot Framework will call for this agent.
+    /// Required when the agent is externally hosted.
     /// </summary>
     [JsonPropertyName("messagingEndpoint")]
     public string MessagingEndpoint { get; init; } = string.Empty;
-
-    /// <summary>
-    /// Whether the CLI should create and deploy an Azure Web App for this agent.
-    /// Backed by the 'needDeployment' config value:
-    /// - true (default) => CLI provisions App Service + MSI, a365 deploy app is active.
-    /// - false => CLI does NOT create a web app; a365 deploy app is a no-op and MessagingEndpoint must be provided.
-    /// </summary>
-    [JsonPropertyName("needDeployment")]
-    public bool NeedDeployment { get; init; } = true;
 
     /// <summary>
     /// Base URL for Microsoft Graph API.
@@ -166,40 +156,92 @@ public class Agent365Config
     /// <summary>
     /// Client Application ID for interactive authentication with Microsoft Graph.
     /// This must be a client app registration you create in your Entra ID tenant.
-    /// 
+    ///
     /// Required delegated permissions are defined in <see cref="Constants.AuthenticationConstants.RequiredClientAppPermissions"/>.
     /// All permissions require admin consent.
-    /// 
+    ///
     /// For setup instructions, see the Agent 365 CLI documentation at <see cref="Constants.ConfigConstants.Agent365CliDocumentationUrl"/>.
     /// </summary>
     [JsonPropertyName("clientAppId")]
     public string ClientAppId { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Authentication pattern for the agent identity (blueprint agents only).
+    /// Accepted values: "obo" (default), "s2s", "both".
+    ///   obo  — on-behalf-of; principal-scoped delegated grants; no admin consent needed.
+    ///   s2s  — service-to-service; app role assignments on agent identity; Global Admin needed or PowerShell fallback.
+    ///   both — delegated grants (OBO) and app permissions (S2S).
+    /// Persisted to a365.config.json. Not written to a365.generated.config.json.
+    /// </summary>
+    [JsonPropertyName("authMode")]
+    public string? AuthMode { get; init; }
+
     #endregion
 
-    #region App Service Configuration
+    #region Azure OpenAI Configuration
 
     /// <summary>
-    /// Name of the App Service Plan for hosting the agent web app.
+    /// Name of the Azure OpenAI resource to create (blueprint agents only).
+    /// If set and NeedAzureOpenAI is true, setup will provision this resource.
     /// </summary>
-    [JsonPropertyName("appServicePlanName")]
-    public string AppServicePlanName { get; init; } = string.Empty;
+    [JsonPropertyName("azureOpenAIName")]
+    public string? AzureOpenAIName { get; init; }
 
     /// <summary>
-    /// App Service Plan SKU/pricing tier (e.g., "B1", "S1", "P1v2").
+    /// Azure region for the OpenAI resource.
+    /// OpenAI resource availability varies by region.
     /// </summary>
-    [JsonPropertyName("appServicePlanSku")]
-    public string AppServicePlanSku { get; init; } = string.Empty;
+    [JsonPropertyName("azureOpenAILocation")]
+    public string? AzureOpenAILocation { get; init; }
 
     /// <summary>
-    /// Name of the Azure Web App (must be globally unique).
+    /// Name of the model deployment to create inside the Azure OpenAI resource (e.g., "gpt-4.1").
     /// </summary>
-    [JsonPropertyName("webAppName")]
-    public string WebAppName { get; init; } = string.Empty;
+    [JsonPropertyName("azureOpenAIModelDeploymentName")]
+    public string? AzureOpenAIModelDeploymentName { get; init; }
+
+    /// <summary>
+    /// When true, setup will provision an Azure OpenAI resource.
+    /// Only relevant for blueprint agent deployments.
+    /// </summary>
+    [JsonPropertyName("needAzureOpenAI")]
+    public bool NeedAzureOpenAI { get; init; }
 
     #endregion
 
     #region Agent Configuration
+
+    /// <summary>
+    /// Controls which setup and publish flow is used.
+    /// true (default) = AI Teammate agent: setup all provisions blueprint and permissions only;
+    ///   agent identity SP and Entra user are created separately via 'a365 create-instance'.
+    /// false = blueprint-only agent: setup all auto-creates agent identity SP; no Entra user. Two variants:
+    ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
+    ///   - UseBlueprint = true:  Blueprint-only non-DW flow (Agent Identity Blueprint + Agent Instance).
+    /// Can be overridden per-command with the --aiteammate flag.
+    /// </summary>
+    [JsonPropertyName("aiTeammate")]
+    public bool? AiTeammate { get; init; }
+
+    /// <summary>
+    /// When true, use the blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
+    /// Only meaningful when AiTeammate is false.
+    /// Can be overridden per-command with the --use-blueprint flag.
+    /// </summary>
+    [JsonPropertyName("useBlueprint")]
+    public bool? UseBlueprint { get; init; }
+
+    /// <summary>
+    /// Returns true when this config represents a blueprint agent deployment.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsBlueprintAgent => AiTeammate == false;
+
+    /// <summary>
+    /// Returns true when this config uses the blueprint-based non-DW flow.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsNonDwBlueprint => AiTeammate == false && UseBlueprint == true;
 
     /// <summary>
     /// Display name for the agent identity in Azure AD.
@@ -253,33 +295,22 @@ public class Agent365Config
     public List<string> AgentApplicationScopes => ConfigConstants.DefaultAgentApplicationScopes;
 
     /// <summary>
-    /// Relative or absolute path to the agent project directory for deployment.
+    /// Relative or absolute path to the agent project directory for development and publishing.
     /// </summary>
     [JsonPropertyName("deploymentProjectPath")]
     public string DeploymentProjectPath { get; init; } = string.Empty;
 
     #endregion
 
-    // BotName and BotDisplayName are now derived properties
     /// <summary>
-    /// Gets the final, validated endpoint name for registration and deletion.
-    /// Returns an already-processed name — callers must NOT wrap this in
-    /// <see cref="EndpointHelper.GetEndpointName"/> again.
-    /// - Azure App Service (NeedDeployment=true): derived from WebAppName.
-    /// - Non-Azure hosting (NeedDeployment=false): derived from MessagingEndpoint host + blueprint ID suffix.
-    /// This mirrors the routing logic in SetupHelpers so that cleanup always targets the same
-    /// endpoint name that setup registered.
+    /// Gets the endpoint name derived from the MessagingEndpoint host and blueprint ID.
+    /// Returns an already-processed name — callers must NOT wrap this in EndpointHelper.GetEndpointName again.
     /// </summary>
     [JsonIgnore]
     public string BotName
     {
         get
         {
-            if (NeedDeployment && !string.IsNullOrWhiteSpace(WebAppName))
-            {
-                return EndpointHelper.GetEndpointName($"{WebAppName}-endpoint");
-            }
-
             if (!string.IsNullOrWhiteSpace(MessagingEndpoint) &&
                 Uri.TryCreate(MessagingEndpoint, UriKind.Absolute, out var uri) &&
                 !string.IsNullOrWhiteSpace(uri.Host))
@@ -292,10 +323,10 @@ public class Agent365Config
     }
 
     /// <summary>
-    /// Gets the display name for the bot, derived from AgentBlueprintDisplayName or WebAppName.
+    /// Gets the display name for the bot, derived from AgentBlueprintDisplayName.
     /// </summary>
     [JsonIgnore]
-    public string BotDisplayName => !string.IsNullOrWhiteSpace(AgentBlueprintDisplayName) ? AgentBlueprintDisplayName! : WebAppName;
+    public string BotDisplayName => AgentBlueprintDisplayName ?? string.Empty;
 
     #region Bot Configuration
 
@@ -358,7 +389,8 @@ public class Agent365Config
     #region App Service State
 
     /// <summary>
-    /// Principal ID of the managed identity assigned to the App Service.
+    /// Principal ID of the managed identity. Can be set manually for migration scenarios.
+    /// Read by BlueprintSubcommand for Federated Identity Credential creation.
     /// </summary>
     [JsonPropertyName("managedIdentityPrincipalId")]
     public string? ManagedIdentityPrincipalId { get; set; }
@@ -372,6 +404,20 @@ public class Agent365Config
     /// </summary>
     [JsonPropertyName("agentBlueprintId")]
     public string? AgentBlueprintId { get; set; }
+
+    /// <summary>
+    /// Unique identifier for the agent instance registered via the Agent Registry Graph API.
+    /// Set by 'a365 publish' for blueprint-based non-DW agents.
+    /// </summary>
+    [JsonPropertyName("agentInstanceId")]
+    public string? AgentInstanceId { get; set; }
+
+    /// <summary>
+    /// Unique identifier returned by the AgentX Agent Registration API V2.
+    /// Stored separately from agentInstanceId which tracks the Graph agentRegistry instance.
+    /// </summary>
+    [JsonPropertyName("agentRegistrationId")]
+    public string? AgentRegistrationId { get; set; }
 
     /// <summary>
     /// Azure AD object ID for the agent blueprint application.
@@ -442,6 +488,23 @@ public class Agent365Config
 
     #endregion
 
+    #region Azure OpenAI State
+
+    /// <summary>
+    /// Endpoint URL for the provisioned Azure OpenAI resource.
+    /// Set by setup, consumed by appsettings.generated.json output.
+    /// </summary>
+    [JsonPropertyName("azureOpenAIEndpoint")]
+    public string? AzureOpenAIEndpoint { get; set; }
+
+    /// <summary>
+    /// API key for the provisioned Azure OpenAI resource.
+    /// </summary>
+    [JsonPropertyName("azureOpenAIApiKey")]
+    public string? AzureOpenAIApiKey { get; set; }
+
+    #endregion
+
     #region Consent State
 
     /// <summary>
@@ -484,38 +547,6 @@ public class Agent365Config
 
         return botResources.All(rc => rc.InheritablePermissionsConfigured == true);
     }
-
-    #endregion
-
-    #region MCP State
-
-    #endregion
-
-    #region Deployment State
-
-    /// <summary>
-    /// Timestamp of the most recent deployment.
-    /// </summary>
-    [JsonPropertyName("deploymentLastTimestamp")]
-    public DateTime? DeploymentLastTimestamp { get; set; }
-
-    /// <summary>
-    /// Status of the most recent deployment.
-    /// </summary>
-    [JsonPropertyName("deploymentLastStatus")]
-    public string? DeploymentLastStatus { get; set; }
-
-    /// <summary>
-    /// Git commit hash of the last deployed code.
-    /// </summary>
-    [JsonPropertyName("deploymentLastCommitHash")]
-    public string? DeploymentLastCommitHash { get; set; }
-
-    /// <summary>
-    /// Build identifier from the deployment system.
-    /// </summary>
-    [JsonPropertyName("deploymentLastBuildId")]
-    public string? DeploymentLastBuildId { get; set; }
 
     #endregion
 
@@ -563,7 +594,7 @@ public class Agent365Config
     {
         var result = new Dictionary<string, object?>();
         var properties = GetType().GetProperties();
-        
+
         foreach (var prop in properties)
         {
             // Check if property has init-only setter (static config)
@@ -573,7 +604,7 @@ public class Agent365Config
                 var jsonAttr = prop.GetCustomAttribute<System.Text.Json.Serialization.JsonPropertyNameAttribute>();
                 var jsonName = jsonAttr?.Name ?? prop.Name;
                 var value = prop.GetValue(this);
-                
+
                 // Only include non-null/non-empty values to keep config clean
                 if (value != null && (value is not string str || !string.IsNullOrEmpty(str)))
                 {
@@ -581,7 +612,7 @@ public class Agent365Config
                 }
             }
         }
-        
+
         return result;
     }
 
@@ -593,7 +624,7 @@ public class Agent365Config
     {
         var result = new Dictionary<string, object?>();
         var properties = GetType().GetProperties();
-        
+
         foreach (var prop in properties)
         {
             // Check if property has regular setter (generated config) - not init-only
@@ -603,7 +634,7 @@ public class Agent365Config
                 var jsonAttr = prop.GetCustomAttribute<JsonPropertyNameAttribute>();
                 var jsonName = jsonAttr?.Name ?? prop.Name;
                 var value = prop.GetValue(this);
-                
+
                 // Only include non-null/non-empty values to keep config clean
                 if (value != null && (value is not string str || !string.IsNullOrEmpty(str)))
                 {
@@ -611,7 +642,7 @@ public class Agent365Config
                 }
             }
         }
-        
+
         return result;
     }
 
@@ -623,19 +654,19 @@ public class Agent365Config
     /// <returns>Dictionary with decrypted secrets suitable for display</returns>
     public Dictionary<string, object?> GetGeneratedConfigForDisplay(Microsoft.Extensions.Logging.ILogger logger)
     {
-        var config = GetGeneratedConfig() as Dictionary<string, object?> 
+        var config = GetGeneratedConfig() as Dictionary<string, object?>
             ?? throw new InvalidOperationException("GetGeneratedConfig must return Dictionary<string, object?>");
 
         // Decrypt agentBlueprintClientSecret if protected
-        if (config.TryGetValue("agentBlueprintClientSecret", out var secretObj) && 
+        if (config.TryGetValue("agentBlueprintClientSecret", out var secretObj) &&
             config.TryGetValue("agentBlueprintClientSecretProtected", out var protectedObj) &&
             secretObj is string encryptedSecret &&
             protectedObj is bool isProtected &&
             isProtected)
         {
             var decryptedSecret = Helpers.SecretProtectionHelper.UnprotectSecret(
-                encryptedSecret, 
-                isProtected, 
+                encryptedSecret,
+                isProtected,
                 logger);
             config["agentBlueprintClientSecret"] = decryptedSecret;
         }
@@ -654,16 +685,16 @@ public class Agent365Config
         return new Agent365Config
         {
             TenantId = this.TenantId,
-            SubscriptionId = this.SubscriptionId,
-            ResourceGroup = this.ResourceGroup,
-            Location = this.Location,
             Environment = this.Environment,
             MessagingEndpoint = this.MessagingEndpoint,
-            NeedDeployment = this.NeedDeployment,
             ClientAppId = this.ClientAppId,
-            AppServicePlanName = this.AppServicePlanName,
-            AppServicePlanSku = this.AppServicePlanSku,
-            WebAppName = this.WebAppName,
+            AuthMode = this.AuthMode,
+            AiTeammate = this.AiTeammate,
+            UseBlueprint = this.UseBlueprint,
+            AzureOpenAIName = this.AzureOpenAIName,
+            AzureOpenAILocation = this.AzureOpenAILocation,
+            AzureOpenAIModelDeploymentName = this.AzureOpenAIModelDeploymentName,
+            NeedAzureOpenAI = this.NeedAzureOpenAI,
             AgentIdentityDisplayName = this.AgentIdentityDisplayName,
             AgentBlueprintDisplayName = this.AgentBlueprintDisplayName,
             AgentUserPrincipalName = this.AgentUserPrincipalName,
@@ -685,55 +716,4 @@ public class Agent365Config
     {
         return this;
     }
-}
-
-// ============================================================================
-// Service Helper Classes
-// ============================================================================
-// These are internal DTOs used by various services for specific operations.
-// They are not part of the unified configuration file format.
-
-/// <summary>
-/// Internal DTO for deployment operations - supports multi-platform deployments
-/// </summary>
-public class DeploymentConfiguration
-{
-    // Universal properties
-    public string ResourceGroup { get; set; } = string.Empty;
-    public string AppName { get; set; } = string.Empty;
-    public string ProjectPath { get; set; } = string.Empty;
-    public string DeploymentZip { get; set; } = "app.zip";
-    public string PublishOutputPath { get; set; } = "publish";
-    
-    // Platform-specific (optional, auto-detected if null)
-    public ProjectPlatform? Platform { get; set; }
-    
-    // Legacy properties (kept for backward compatibility)
-    public string ProjectFile { get; set; } = string.Empty;
-    public string RuntimeVersion { get; set; } = "8.0";
-    public string BuildConfiguration { get; set; } = "Release";
-    public PublishOptions PublishOptions { get; set; } = new();
-}
-
-/// <summary>
-/// Publish options for deployment
-/// </summary>
-public class PublishOptions
-{
-    public bool SelfContained { get; set; } = true;
-    public string Runtime { get; set; } = "win-x64";
-    public string OutputPath { get; set; } = "./publish";
-}
-
-/// <summary>
-/// Internal DTO for ATG (Agent Tooling Gateway) configuration operations
-/// </summary>
-public class AtgConfiguration
-{
-    public string ResourceGroup { get; set; } = string.Empty;
-    public string AppServiceName { get; set; } = string.Empty;
-    public string Agent365ToolsUrl { get; set; } = string.Empty;
-    public List<McpServerConfig> McpServers { get; set; } = new();
-    public List<string> ToolsServers { get; set; } = new();
-    public string Agent365ToolsEndpoint { get; set; } = string.Empty;
 }

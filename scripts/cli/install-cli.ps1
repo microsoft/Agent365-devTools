@@ -1,6 +1,17 @@
-# install-cli.ps1
-# This script installs the Agent 365 CLI from a local NuGet package.
-# Delegates to install-cli.sh (requires bash - Git Bash on Windows, system bash on macOS/Linux)
+<#
+.SYNOPSIS
+    Installs the Agent 365 CLI from a locally built NuGet package.
+
+.DESCRIPTION
+    Delegates to install-cli.sh (requires bash - Git Bash on Windows, system bash on macOS/Linux).
+
+.NOTES
+    Prerequisites: Git for Windows (provides bash) on Windows; bash on macOS/Linux.
+    Run from any directory — the script resolves its own location automatically.
+#>
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 
 $shScript = Join-Path $PSScriptRoot "install-cli.sh"
 if (-not (Test-Path $shScript)) {

@@ -1,24 +1,65 @@
 # Agent 365 CLI Setup Instructions for AI Agents
 
+> **SCOPE — THIS FILE ONLY:** This file covers provisioning and deploying an agent using the Agent 365 CLI (`a365 setup`, `a365 publish`, `a365 deploy`). It does **NOT** cover adding observability, telemetry, or SDK integrations to the agent's code. If the user asked to add observability, close this file and open `a365-observability-instructions.md` instead.
+
 ---
 
-> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Call `manage_todo_list` (or equivalent) to create the 5 todos listed below. Then mark Todo 1 in-progress and jump to Step 1. **Do NOT read further. Do NOT run any commands. Do NOT gather values. Do NOT ask questions.**
+> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the two path-determination questions below. Do NOT create todos, run commands, or read further until the user has answered both questions. After both answers are received, create all todos for the determined path and mark Todo 1 in-progress.
 
-**RULE 1 — CREATE EXACTLY 5 TODOS:
+**RULE 1 — ASK TWO QUESTIONS FIRST, THEN CREATE ALL TODOS.**
 
+Before creating any todos or running any commands, ask the user these two questions (one at a time, wait for each response):
+
+**Question 1: Is your agent already available in Teams or Copilot?**
+
+- Yes
+- No
+
+Wait for the answer. Store as `agentType`:
+- If **Yes**: `agentType = 1` (M365 custom engine agent)
+- If **No**: `agentType = 2` (All other agents)
+
+**Question 2: What capabilities do you want to enable?**
+
+Present only the options that apply to the user's `agentType`:
+
+- **If `agentType = 1`** (M365 — Discoverability is already included):
+  1. Observability
+  2. Work IQ
+  3. AI Teammate
+- **If `agentType = 2`** (All other agents):
+  1. Discoverability
+  2. Observability
+  3. Work IQ
+  4. AI Teammate
+
+Wait for the answer. Store as `capabilities`.
+
+> **Note:** The setup automatically includes all prerequisite capabilities for your selection.
+
+After both questions are answered, set `isAiTeammate = true` if `capabilities = AI Teammate`, else `isAiTeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
+
+**AI Teammate agent path** — `isAiTeammate = true` (5 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
 - Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
 - Todo 3: `Step 3: Configure the Agent 365 CLI (Initialize Configuration)`
 - Todo 4: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 - Todo 5: `Step 5: Publish and Deploy the Agent Application`
 
-**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step.
+**Standard path** — `isAiTeammate = false` (3 todos total):
+- Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
+- Todo 2: `Step 2: Ensure Prerequisites and Environment Configuration`
+- Todo 3: `Step 4: Run Agent 365 Setup to Provision Prerequisites`
 
-**RULE 3 — SUB-SECTIONS ARE NOT SEPARATE TODOS.** Each `## Step` has internal sub-sections — these are tasks WITHIN that step, NOT separate todos. Exactly 5 todos total.
+**RULE 2 — ALWAYS BEGIN FROM STEP 1.** No step is optional within your path. Even if the CLI appears installed or Azure appears logged in, you MUST run the validation commands in each step. Step 3 (Configure) is only required on the AI Teammate path (`isAiTeammate = true`) — it is skipped entirely on all other paths.
 
-**RULE 4 — ONE STEP AT A TIME.** Complete each step fully. Mark its todo in-progress when starting, complete when done. Do NOT run `az account show`, ask about deployment type, or gather Azure values — those belong to Step 3, which comes AFTER Steps 1 and 2.
+**RULE 3 — SUB-SECTIONS ARE NOT SEPARATE TODOS.** Each `## Step` has internal sub-sections — these are tasks WITHIN that step, NOT separate todos.
 
-**RULE 5 — INPUT FIELDS.** In Step 3, present exactly 5 fields (Azure-hosted) or 2 fields (self-hosted). The `clientAppId` is collected in Step 2 — do NOT ask for it again.
+**RULE 4 — ONE STEP AT A TIME.** Complete each step fully. Mark its todo in-progress when starting, complete when done. Do NOT run `az account show`, ask about deployment type, or gather Azure values — those belong to Steps 3 and 2 respectively. The path determination questions (`agentType`, `capabilities`) were already answered before Step 1.
+
+**RULE 6 — SILENT EXECUTION.** Work silently. Do NOT narrate what you are about to do, announce step transitions ("Proceeding to Step 2", "CLI installed, moving on"), print todo state, emoji checklists, or step completion summaries. Only speak to the user when you need input, have an error to report, or need confirmation before a destructive action.
+
+**RULE 5 — INPUT FIELDS.** In Step 3 (AI Teammate agent path only), present exactly 5 fields (Azure-hosted) or 2 fields (self-hosted). Do NOT ask the user for a client app ID — the CLI resolves it automatically by the well-known app name "Agent 365 CLI".
 
 ---
 
@@ -26,7 +67,7 @@
 
 You are an AI coding agent with access to execute shell commands, read the Agent365-devTools repository (code and docs), and browse the web for documentation or GitHub issues. Your task is to set up, configure, and deploy all prerequisite components for a Microsoft Agent 365–compliant agent using the Agent 365 CLI. You must handle this end-to-end: from installation and configuration to deployment. Work step-by-step, and adapt to any issues or differences in CLI versions along the way.
 
-> **CRITICAL BLOCKING PREREQUISITE:** Before running ANY `a365` CLI commands (including `config init`, `setup`, `publish`, or `deploy`), you MUST validate that the custom client app registration exists in Entra ID with all required permissions and admin consent. This is validated in Step 2. Failure to validate this will cause all CLI commands to fail. Do NOT skip this validation step.
+> **CRITICAL BLOCKING PREREQUISITE:** Before running ANY `a365` CLI commands (including `setup all`, `publish`, or `deploy`), you MUST validate that the custom client app registration exists in Entra ID with all required permissions and admin consent. This is validated in Step 2. Failure to validate this will cause all CLI commands to fail. Do NOT skip this validation step.
 
 ---
 
@@ -57,7 +98,7 @@ After installing or updating, confirm the CLI is ready by running `a365 -h` to d
 
 ### Adapt to CLI version differences
 
-The CLI is under active development, and some commands may have changed in recent versions. The instructions in this prompt assume you have the latest version. If you discover that a command referenced later (such as `publish`) is not recognized, it means you have an older version – in that case, upgrade the CLI. Using the latest version is essential because older flows (e.g. the `create-instance` command) have been deprecated in favor of new commands (`publish`, etc.). If upgrading isn't possible, adjust your steps according to the older CLI's documentation (for example, use the old `a365 create-instance` command in place of `publish`), but prefer to upgrade if at all feasible.
+The CLI is under active development, and some commands may have changed in recent versions. The instructions in this prompt assume you have the latest version. If you discover that a command referenced later (such as `publish`) is not recognized, it means you have an older version – in that case, upgrade the CLI. Using the latest version is essential because the CLI evolves rapidly and newer versions include important fixes and new commands (e.g. `create-instance`, `publish`). If upgrading isn't possible, adjust your steps according to the older CLI's documentation, but prefer to upgrade if at all feasible.
 
 ### Step 1 completion
 
@@ -73,44 +114,34 @@ The CLI is under active development, and some commands may have changed in recen
 
 The Agent 365 CLI relies on Azure context for deploying resources and may use your Azure credentials. Verify that the Azure CLI (`az`) is installed by running `az --version`. If it's not available, install the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) for your platform or prompt the user to do so.
 
-If the Azure CLI is installed, ensure that you are logged in to the correct Azure account and tenant. Run `az login` (and `az account set -s <SubscriptionNameOrID>` if you need to select a specific subscription). If you cannot perform an interactive login directly, output a clear instruction for the user to log in (the user may need to follow a device-code login URL if running in a headless environment). The Agent 365 CLI will use this Azure authentication context to create resources.
+> **CRITICAL — Complete `az login --allow-no-subscriptions` before any `a365` command.**
+>
+> The Agent 365 CLI authenticates to Microsoft Graph using **MSAL** with the token acquired by `az login`. If `az login` has not been completed successfully, the CLI will launch an interactive auth prompt (WAM on Windows, browser on Mac/Linux) that **you as a coding agent cannot interact with**. This will block setup indefinitely.
+>
+> Use `az login --allow-no-subscriptions` — the non-DW setup flow requires no Azure subscription, and plain `az login` will fail for users who have none.
+>
+> **You must ensure `az login --allow-no-subscriptions` is complete and `az account show` returns a valid account before proceeding past Step 2.**
+
+Run the following and verify the output shows a valid account:
+
+```bash
+az account show --query "{user:user.name, tenantId:tenantId}" -o json
+```
+
+- If this succeeds: the login is active. Continue.
+- If this fails or returns no output: **STOP. Tell the user to run `az login --allow-no-subscriptions` in their terminal and complete the login, then confirm back to you.** Do NOT proceed until `az account show` returns a valid account.
+
+> **Why this matters:** After a successful `az login --allow-no-subscriptions`, the CLI can acquire Graph tokens **silently** from the cache — no WAM dialog, no browser tab, no device code. Skipping this step is the most common cause of interactive auth prompts that block automated setup.
 
 ### Microsoft Entra ID (Azure AD) roles
 
 The user account you authenticate with must have sufficient privileges to create the necessary resources. According to documentation, the account needs to be at least an **Agent ID Administrator** or **Agent ID Developer**, and certain commands (like the full environment setup) require **Global Administrator + Azure Contributor** roles. If you attempt an operation without adequate permissions, it will fail. Thus, before proceeding, confirm that the logged-in user has one of the required roles (Global Admin is the safest choice for preview setups). If not, prompt the user to either use an appropriate account or have an admin grant the needed roles.
 
-### Custom client app validation
+### Custom client app
 
-Ask the user: "Please provide the Application (client) ID for your custom Agent 365 client app registration." If they don't have one, see "What to do if validation fails" below.
+The Agent 365 CLI resolves the client app automatically by the well-known display name **"Agent 365 CLI"** registered in the tenant. Do NOT ask the user for a client app ID.
 
-Once the user provides the ID, replace `<CLIENT_APP_ID>` in the command below and paste it into the terminal verbatim. **Use this exact command — do not write your own queries, do not split it, do not run `az ad app show` or `az ad app permission` separately:**
-
-```bash
-az ad app show --id <CLIENT_APP_ID> --query "{appId:appId, displayName:displayName, requiredResourceAccess:requiredResourceAccess}" -o json && az ad app permission list-grants --id <CLIENT_APP_ID> --query "[].{resourceDisplayName:resourceDisplayName, scope:scope}" -o table
-```
-
-From the output of the command above, verify these 5 permissions appear with admin consent. If any are missing or consent is not granted, see "What to do if validation fails" below.
-
-Required **delegated** Microsoft Graph permissions (all must have **admin consent granted**):
-
-| Permission | Description |
-|------------|-------------|
-| `AgentIdentityBlueprint.ReadWrite.All` | Manage Agent 365 Blueprints |
-| `AgentIdentityBlueprint.UpdateAuthProperties.All` | Update Blueprint auth properties |
-| `Application.ReadWrite.All` | Create and manage Azure AD applications |
-| `DelegatedPermissionGrant.ReadWrite.All` | Grant delegated permissions |
-| `Directory.Read.All` | Read directory data |
-
-If the app does not exist, permissions are missing, or admin consent has not been granted, see "What to do if validation fails" below.
-
-**If validation fails** (app not found, permissions missing, or no admin consent):
-
-1. STOP — do not proceed to run any `a365` CLI commands.
-2. Inform the user the custom client app registration is missing or incomplete.
-3. Direct the user to the official setup guide: register the app, configure as a Public client with redirect URI `http://localhost:8400`, add all five permissions above, and have a Global Admin grant admin consent.
-4. Wait for the user to confirm the app is properly configured, then re-run the same validation command above.
-
-Save the `clientAppId` value — it will be used automatically in Step 3 (do NOT ask the user for it again).
+The CLI will validate permissions and prompt for consent at runtime if anything is missing. If the CLI reports that the "Agent 365 CLI" app cannot be found in the tenant, inform the user that an admin must register an Entra app with that exact display name and grant admin consent for the required permissions, then retry.
 
 ### Validate language-specific prerequisites (REQUIRED)
 
@@ -181,306 +212,221 @@ pip --version
 
 ### Step 2 completion
 
-> **BEFORE MOVING ON:** Mark Todo 2 (Step 2) as **completed** now. Summarize to the user what was validated. Then mark Todo 3 (Step 3) as **in-progress**. Only then proceed to Step 3 below.
+> **BEFORE MOVING ON:** Mark Todo 2 (Step 2) as **completed** now. Summarize to the user what was validated. Then proceed based on your path:
+> - **AI Teammate agent path** (`isAiTeammate = true`): Mark Todo 3 in-progress and proceed to Step 3.
+> - **All other paths** (`isAiTeammate = false`): Skip Step 3 entirely. Mark Todo 3 in-progress and jump directly to Step 4.
 >
-> **VERIFY YOUR TODO STATE:** At this point your todos MUST look like this:
-> - Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
->
-> If your todo list does not exist or does not look like the above, STOP — go back to "BEFORE YOU BEGIN" and start over.
+> **VERIFY YOUR TODO STATE:**
+> - AI Teammate path: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress** | Todo 4: not-started | Todo 5: not-started
+> - All other paths: Todo 1: **completed** | Todo 2: **completed** | Todo 3: **in-progress**
 
 ---
 
 ## Step 3: Configure the Agent 365 CLI (Initialize Configuration)
 
+> **AI TEAMMATE AGENT PATH ONLY** (`capabilities = AI Teammate`, `isAiTeammate = true`).
+>
+> If `isAiTeammate = false` (Standard path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
+>
+> If `isAiTeammate = true`, continue below.
+
 > **MANDATORY GATE — DO NOT PROCEED WITHOUT VERIFICATION:**
 > 
 > Before executing ANY part of this step, verify ALL of the following:
-> - [ ] You created exactly 5 todos (RULE 1)
+> - [ ] You created exactly 5 todos (AI Teammate agent path — RULE 1)
 > - [ ] Todo 1 (Step 1) is marked **completed** — CLI was verified/installed
 > - [ ] Todo 2 (Step 2) is marked **completed** — Azure CLI login confirmed, custom client app validated, build tools verified
 > - [ ] Todo 3 (Step 3) is marked **in-progress**
 > 
 > **If ANY checkbox above is not satisfied, STOP. Go back to the incomplete step and finish it first.**
 > 
-> Common mistake: Jumping to this step first because it has `az account show` commands. Those commands are for Step 3 ONLY — Steps 1 and 2 must be done first.
+> Common mistake: Jumping to this step before completing Steps 1 and 2. The CLI requires a working Azure CLI login and a validated custom client app before setup will succeed.
 
-Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), create the Agent 365 CLI configuration file. The `a365 config init` command is non-interactive, so you must create an `a365.config.json` file directly and then import it.
+Once all prerequisites are in place (CLI installed, Azure CLI logged in, **custom app validated**, **build tools verified**), run setup using `a365 setup all --aiteammate --agent-name <name>`. This single command bootstraps the configuration from Entra and provisions all required resources. No config file is needed — the CLI auto-detects your tenant ID and client app ID from your Azure CLI session.
 
-### Gather auto-detected values
+### Collect setup inputs
 
-Retrieve the following values automatically using the Azure CLI:
+Ask the user for the agent base name only. No other values are needed for this path — the CLI auto-detects everything else.
 
-```bash
-# Get tenant ID and subscription ID
-az account show --query "{tenantId:tenantId, subscriptionId:id}" -o json
-```
-
-You should already have the `clientAppId` from the Step 2 validation.
-
-Set `deploymentProjectPath` to the current working directory (use absolute path).
-
-### Ask deployment type
-
-Send the user the following message and then **STOP and WAIT for their reply**. Your message must contain **ONLY** the text below — no tables, no input fields, no additional questions, no follow-up content:
-
----
-
-**Do you want to create a web app in Azure for this agent? (yes/no)**
-
-- **Yes** = Azure-hosted (recommended for production)
-- **No** = Self-hosted (e.g., local development with dev tunnel)
-
----
-
-> ⛔ **STOP. OUTPUT ONLY THE QUESTION ABOVE. DO NOT INCLUDE ANYTHING ELSE.**
-> Do NOT show input fields. Do NOT show a table. Do NOT mention resource groups, agent names, or any configuration values.
-> The next section ("Collect configuration inputs") must NOT appear in this message.
-> WAIT for the user to respond before doing anything else.
-
-After the user responds, set the internal value:
-- If **yes**: `needDeployment: true`
-- If **no**: `needDeployment: false`
-
-Then proceed to "Collect configuration inputs" below.
-
----
-
-### Collect configuration inputs
-
-> ⛔ **DO NOT EXECUTE THIS SECTION** until the user has answered the deployment type question above.
-> If you have not yet received the user's yes/no answer, STOP and go back to ask it.
-
-#### First: Query the subscription for real example values
-
-Before presenting input fields, run the following **single command** to gather real values from the user's Azure subscription. Use these values as **examples** in the input table so the user sees context-specific suggestions instead of generic placeholders.
-
-```bash
-az ad signed-in-user show --query userPrincipalName -o tsv; az group list --query "[].{Name:name, Location:location}" -o table; az appservice plan list --query "[].{Name:name, ResourceGroup:resourceGroup, Location:location}" -o table
-```
-
-> **Run this as ONE command.** Do NOT split into separate terminal calls.
-
-From the output, extract:
-- `{loggedInUser}` — the signed-in user's UPN (e.g., `admin@contoso.onmicrosoft.com`)
-- `{existingResourceGroup}` — name of an existing resource group (e.g., `agent365-rg`)
-- `{existingLocations}` — locations from the resource groups (e.g., `eastus, canadacentral, westus2`)
-- `{existingAppServicePlan}` — name of an existing App Service plan (e.g., `agent365-plan`)
-
-If a query returns no results (e.g., no existing resource groups or App Service plans), use a descriptive fallback like `my-agent-rg` or `my-agent-plan`.
-
-#### Present the input fields
-
-Based on the user's deployment type answer, present the appropriate set of input fields **with the real values you queried above as examples**.
-
-#### If Azure-hosted (`needDeployment: true`)
-
-Present the following fields in a single prompt:
-
-**"Please provide the following values to configure your Azure-hosted agent:"**
+**"Please provide the following value to set up your AI Teammate:"**
 
 | Field | Description | Example |
 |-------|-------------|---------|
-| **Resource Group** | Azure Resource Group (new or existing) | `{existingResourceGroup}` |
-| **Location** | Azure region for deployment | `{existingLocations}` |
-| **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
-| **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
-| **App Service Plan** | Azure App Service Plan name | `{existingAppServicePlan}` |
+| **Agent Name** | Unique base name for your agent | `contoso-support-agent` |
 
-> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive the web app URL (`{name}-webapp.azurewebsites.net`), Agent Identity, Blueprint, and User Principal Name. Lowercase letters, numbers, hyphens only. Start with a letter. 3-20 chars recommended. Tip: include your org name.
+> **Agent Name rules:** Must be **globally unique across all of Azure**. Letters, numbers, hyphens only; any casing is accepted. Start with a letter. 3-20 chars recommended. Tip: include your org name.
 >
-> **Examples** show real values from your subscription. You can reuse existing resources or provide new names — the CLI will create them if they don't exist.
+> The CLI derives all other identifiers from this name: `{name} Identity`, `{name} Blueprint`, etc.
 >
-> **Do NOT ask for `clientAppId` here.** It was already collected and validated in Step 2. Present ONLY the 5 fields listed above.
+> **Do NOT ask for** `tenantId`, `subscriptionId`, `clientAppId`, resource group, location, or any other values. The CLI auto-detects or auto-derives all of these from your Azure CLI session and Entra lookup.
 
-#### If self-hosted (`needDeployment: false`)
+### Run setup all
 
-Present the following fields in a single prompt:
-
-**"Please provide the following values to configure your self-hosted agent:"**
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| **Resource Group** | Azure Resource Group (new or existing) | `{existingResourceGroup}` |
-| **Location** | Azure region for deployment | `{existingLocations}` |
-| **Agent Name** | Unique name for your agent (see rules below) | `contoso-support-agent` |
-| **Manager Email** | M365 manager email (must be from your tenant) | `{loggedInUser}` |
-
-> **Agent Name rules:** Must be **globally unique across all of Azure**. Used to derive Agent Identity, Blueprint, and User Principal Name. Lowercase letters, numbers, hyphens only. Start with a letter. 3-20 chars recommended. Tip: include your org name.
-
-After collecting these inputs, proceed to Step 3.3.1 to determine the messaging endpoint.
-
-#### After receiving the user's answers
-
-1. **Validate the inputs** — Check that all required fields are provided, the email format looks valid, and the agent name meets the naming requirements.
-2. **If any field is missing or unclear**, ask only about that specific field — do not re-ask for all inputs.
-3. **Proceed** to derive naming values (or determine the messaging endpoint first for self-hosted deployments).
-
-#### Determine messaging endpoint (non-Azure deployments only)
-
-Only perform this step if the user chose self-hosted deployment.
-
-Ask: **"Would you like to use a dev tunnel for local development, or provide a custom messaging endpoint? (devtunnel/custom)"**
-
-Provide this context:
-- **Dev tunnel**: Creates a secure tunnel from the internet to your local machine. Ideal for development and testing - no need to deploy your code anywhere. The tunnel URL will be your messaging endpoint.
-- **Custom endpoint**: Use this if you already have a publicly accessible HTTPS URL where your agent is hosted (e.g., on another cloud provider, on-premises with a public IP, or behind a reverse proxy).
-
-- If **devtunnel**: Proceed to set up a dev tunnel (next section). The dev tunnel URL will be used as the `messagingEndpoint`.
-- If **custom**: Ask the user to provide their `messagingEndpoint` URL (e.g., `https://myagent.example.com/api/messages`).
-
-#### Set up a dev tunnel (for local development)
-
-### Derive naming values from base name
-
-Using the `agentBaseName` provided by the user and the domain extracted from `managerEmail`, derive the following values:
-
-| Field | Pattern | Example (baseName=`mya365agent`, domain=`contoso.onmicrosoft.com`) |
-|-------|---------|---------|
-| `agentIdentityDisplayName` | `{baseName} Identity` | `mya365agent Identity` |
-| `agentBlueprintDisplayName` | `{baseName} Blueprint` | `mya365agent Blueprint` |
-| `agentUserPrincipalName` | `UPN.{baseName}@{domain}` | `UPN.mya365agent@contoso.onmicrosoft.com` |
-| `agentUserDisplayName` | `{baseName} Agent User` | `mya365agent Agent User` |
-| `agentDescription` | `{baseName} - Agent 365 Agent` | `mya365agent - Agent 365 Agent` |
-| `webAppName` (Azure-hosted only) | `{baseName}-webapp` | `mya365agent-webapp` |
-
-### Confirm derived values with user
-
-After deriving the values above, present them to the user and ask for confirmation. Display the derived values in a clear format:
-
-**"Based on your inputs, the following values have been derived as defaults:"**
-
-| Field | Derived Value |
-|-------|---------------|
-| `agentIdentityDisplayName` | `{baseName} Identity` |
-| `agentBlueprintDisplayName` | `{baseName} Blueprint` |
-| `agentUserPrincipalName` | `UPN.{baseName}@{domain}` |
-| `agentUserDisplayName` | `{baseName} Agent User` |
-| `agentDescription` | `{baseName} - Agent 365 Agent` |
-| `webAppName` (if Azure-hosted) | `{baseName}-webapp` |
-
-Then ask: **"Would you like to update any of these derived values, or proceed with the defaults? (update/proceed)"**
-
-- If the user chooses **"proceed"**: Continue to create the config file with the derived default values.
-- If the user chooses **"update"**: Ask which field(s) they want to change and collect the new value(s). After updates, display the final values again for confirmation before proceeding.
-
-### Create the a365.config.json file
-
-Create the `a365.config.json` file in the current working directory with all gathered and derived values.
-
-**Template for Azure-hosted deployment** (`needDeployment: true`):
-
-```json
-{
-  "tenantId": "<from az account show>",
-  "subscriptionId": "<from az account show>",
-  "resourceGroup": "<user provided>",
-  "location": "<user provided>",
-  "environment": "prod",
-  "needDeployment": true,
-  "clientAppId": "<from Step 2 validation>",
-  "appServicePlanName": "<user provided>",
-  "webAppName": "<derived from baseName>",
-  "agentIdentityDisplayName": "<derived from baseName>",
-  "agentBlueprintDisplayName": "<derived from baseName>",
-  "agentUserPrincipalName": "<derived from baseName and domain>",
-  "agentUserDisplayName": "<derived from baseName>",
-  "managerEmail": "<user provided>",
-  "agentUserUsageLocation": "US",
-  "deploymentProjectPath": "<current working directory>",
-  "agentDescription": "<derived from baseName>"
-}
-```
-
-**Template for non-Azure hosted deployment** (`needDeployment: false`):
-
-```json
-{
-  "tenantId": "<from az account show>",
-  "subscriptionId": "<from az account show>",
-  "resourceGroup": "<user provided>",
-  "location": "<user provided>",
-  "environment": "prod",
-  "messagingEndpoint": "<user provided>",
-  "needDeployment": false,
-  "clientAppId": "<from Step 2 validation>",
-  "agentIdentityDisplayName": "<derived from baseName>",
-  "agentBlueprintDisplayName": "<derived from baseName>",
-  "agentUserPrincipalName": "<derived from baseName and domain>",
-  "agentUserDisplayName": "<derived from baseName>",
-  "managerEmail": "<user provided>",
-  "agentUserUsageLocation": "US",
-  "deploymentProjectPath": "<current working directory>",
-  "agentDescription": "<derived from baseName>"
-}
-```
-
-### Import the configuration
-
-After creating the `a365.config.json` file, import it using:
+Run setup using the agent name. The CLI bootstraps configuration from Entra and provisions all resources:
 
 ```bash
-a365 config init -c ./a365.config.json
+a365 setup all --aiteammate --agent-name <agent-base-name>
 ```
+
+The CLI will:
+- Auto-detect the tenant ID from `az account show`
+- Look up the Client App ID from Entra
+- Derive `<name> Identity` and `<name> Blueprint` display names
+- Record provisioned resource IDs for use by subsequent commands
 
 ### Validation
 
-The `config init` process will attempt to validate your inputs. Notably, it will check:
+The `setup all` process validates your inputs. Notably, it will check:
 
-- That the provided Application (client) ID corresponds to an existing app in the tenant and that it has the required permissions (the CLI might automatically verify the presence of the Graph permissions and admin consent). If this validation fails (for example, "app not found" or "missing permission X"), do not proceed further until the issue is resolved. Refer back to the app registration guide and fix the configuration (you may need the user's help to adjust the app's settings or wait for an admin consent).
-- **Azure subscription and resource availability:** it might check that the subscription ID is accessible and you have Contributor rights (if you logged in via Azure CLI, this should be okay).
-- It could also test the project path for a recognizable project (looking for a `.csproj`, `package.json`, or `pyproject.toml` to identify .NET/Node/Python). If it warns that it "could not detect project platform" or similar, double-check the `deploymentProjectPath` you provided. If it's wrong, update it and re-import the configuration.
+- That the CLI client app exists in the tenant and has the required permissions. If this validation fails, refer back to the app registration guide and fix the configuration.
+- It also detects the project platform from the directory (looking for a `.csproj`, `package.json`, or `pyproject.toml`). If it warns it could not detect the project platform, run the command from the agent project directory.
 
-If any validation fails, correct the `a365.config.json` file and re-run `a365 config init -c ./a365.config.json`.
+If any validation fails, correct the issues and re-run `a365 setup all --aiteammate --agent-name <agent-base-name>`.
 
-### Proceed when config is successful
+### Proceed when setup is successful
 
-Once `a365 config init` completes without errors, you have a baseline configuration ready. The CLI now knows your environment details and is authenticated. This configuration will be used by subsequent commands.
+Once `a365 setup all` completes without errors, the CLI has provisioned your environment. Use the same `--agent-name <name>` flag with any subsequent command — no config file is needed.
 
 ---
 
 ## Step 4: Run Agent 365 Setup to Provision Prerequisites
 
-With the CLI configured, the next major step is to set up the cloud resources and Agent 365 blueprint required for your agent. The CLI provides a one-stop command to do this:
+### 4.1 — Collect provisioning inputs
 
-### Execute the setup command
+**For the Standard path (`isAiTeammate = false`):**
 
-Run `a365 setup all`. This single command performs all the necessary setup steps in sequence. Under the hood, it will:
+Ask the user two questions (one at a time, wait for each response):
 
-- Create or validate the Azure infrastructure for the agent (Resource Group, App Service Plan, Web App, and enabling a system-assigned Managed Identity on the web app).
-- Create the Agent 365 Blueprint in your Microsoft Entra ID (Azure AD). This involves creating an Azure AD application (the "blueprint") that represents the agent's identity and blueprint configuration. The CLI uses Microsoft Graph API for this.
-- Configure the blueprint's permissions (for MCP and for the bot/App Service). This likely entails granting certain API permissions or setting up roles so that the agent's identity can function (for example, granting the blueprint the ability to have "inheritable permissions" or other settings, which requires Graph API operations).
-- Register the messaging endpoint for the agent's integration (this ties the web application to the Agent 365 service so that Teams and other Microsoft 365 apps can communicate with the agent).
+1. **"What agent name should be used for provisioning?"**
+   - Must be globally unique across Azure
+   - Letters, numbers, and hyphens only; start with a letter; 3–20 characters recommended
+   - **No casing restriction** — mixed case is fine. `SunilsAgent1` is a valid name. Pass it to the CLI exactly as the user typed it.
+   - Example: `contoso-support-agent`
+   - If the user replies `default`, use `developer`
 
-In summary, "setup all" carries out what used to be multiple sub-commands (`setup infrastructure`, `setup blueprint`, `setup permissions mcp`, `setup permissions bot`, etc.), so running it will perform a comprehensive initial setup.
+   Store as `agent_name`. Pass it to the CLI verbatim — do NOT normalize or change the casing.
 
-### Monitor the output
+2. **"What is the project directory containing your agent code? Reply with a full path, or reply 'current' to use the current working directory."**
 
-This command may take a few minutes as it provisions cloud resources and does Graph API calls. Monitor the console output carefully:
+   Store as `project_dir`. If the user replies `current`, use the current working directory.
 
-- The CLI will log progress in multiple steps (often numbered like `[0/5]`, `[1/5]`, etc.). Watch for any errors or warnings. Common points of failure include: Azure resource creation issues (quota exceeded, region not available, etc.), or Graph permission issues when creating the blueprint (e.g. insufficient privileges causing a "Forbidden" or "Authorization_RequestDenied" error).
-- If the CLI outputs a warning about Azure CLI using 32-bit Python on 64-bit system (on Windows) or similar performance notices, you can note them but they don't block execution — they just suggest installing a 64-bit Azure CLI for better performance. This is not critical for functionality.
-- If resource group or app services already exist (maybe from a previous run or a partially completed setup), the CLI will usually detect them and skip creating duplicates, which is fine.
+**For the AI Teammate path (`isAiTeammate = true`):**
 
-### Important considerations
+- `agent_name` is derived from `agentBaseName` collected in Step 3 — do NOT ask again.
+- `project_dir` is the directory where Step 3 was run — do NOT ask again.
 
-- **Quota limits:** If you see an error like "Operation cannot be completed without additional quota" during App Service plan creation, that means the Azure subscription has hit a quota limit (for example, no free capacity for new App Service in that region or SKU). In this case, you might need to change the region or service plan SKU, or have the user request a quota increase. This is an Azure issue, not a CLI bug. Report this clearly to the user and halt, or try choosing a different region if possible (you would need to update the config's `location` and possibly rerun setup).
-- **Region support:** If you see errors related to Azure region support (for instance, an error about an Azure resource not available in region), recall that Agent 365 preview might support only certain regions for Bot Service or other components. If that happens, choose a supported region (update your `a365.config.json` with a supported `location` and run `a365 setup all` again).
-- **Graph API permission errors:** If there are Graph API permission errors while creating the blueprint (e.g., a "Forbidden" error creating the application or setting permissions), this likely indicates the account running the CLI lacks a required directory role or the custom app's permissions aren't correctly consented. For example, an error containing "Authorization_RequestDenied" or mention of missing `AgentIdentityBlueprint` permissions suggests the custom app might not have those delegated permissions with admin consent. In such a case, stop and resolve the permission issue (see Step 2). You may need to have a Global Admin grant the consent or use an account with the appropriate role. After fixing, you can retry `a365 setup all`.
-- **Interactive authentication during setup:** The CLI might attempt to do an interactive login to Azure AD (especially for granting some permissions or acquiring tokens for Graph). If running in a headless environment, this could fail (e.g., you see an error about `InteractiveBrowserCredential` or needing a GUI window). The CLI should ideally use the Azure CLI token, but for certain Graph calls (like `AgentIdentityBlueprint.ReadWrite.All` which might not be covered by Azure CLI's token), it might launch a browser auth. If this happens, see troubleshooting below for how to handle interactive auth in a non-interactive setting.
+---
 
-### Completion of setup
+### 4.2 — Dry-run preview (REQUIRED — do not skip)
 
-If `a365 setup all` completes successfully, you should see a confirmation in the output. It typically indicates that the blueprint is created and the messaging endpoint is registered. The CLI might output important information such as: the Agent Blueprint Application ID it created, or any Consent URLs for adding additional permissions. For instance, sometimes after setup, the CLI might provide a URL for admin consent (though if the custom app was properly set up with consent, ideally this isn't needed). If any consent URL or similar is printed, make sure to surface that to the user with an explanation (e.g., "The CLI is asking for admin consent for additional permissions; please open the provided URL in a browser and approve it as a Global Admin, then press Enter to continue."). The CLI may pause until consent is granted in such cases.
+> **This is a safety check. You MUST run the dry-run and show the output to the user before applying anything.**
 
-### Note on Idempotency
+Run the following command and display the full output to the user:
 
-You can generally re-run `a365 setup all` if something went wrong and you fixed it. The CLI is designed to skip or reuse existing resources, as seen in the logs (e.g., resource group already exists, etc.). So don't hesitate to run it again after addressing an issue. If for some reason you need to start over, the CLI provides a cleanup command (`a365 cleanup`) to remove resources, but use that with caution (it can delete a lot). It's usually not necessary unless you want to wipe everything and retry from scratch.
+**Standard path:**
+```bash
+cd "<project_dir>" && a365 setup all --agent-name <agent_name> --dry-run
+```
+
+**AI Teammate agent path:**
+```bash
+cd "<project_dir>" && a365 setup all --dry-run
+```
+
+After displaying the full output, ask the user:
+
+**"Do you want to proceed with the setup shown above? (yes/no)"**
+
+- If **no** (or anything other than yes/y): Stop. Tell the user "Setup cancelled. Return to Step 4 when ready." Do NOT proceed.
+- If **yes**: Proceed to 4.3.
+
+---
+
+### 4.3 — Apply setup
+
+Run the following command from `project_dir` and stream all output:
+
+**Standard path:**
+```bash
+cd "<project_dir>" && a365 setup all --agent-name <agent_name>
+```
+
+**AI Teammate agent path:**
+```bash
+cd "<project_dir>" && a365 setup all
+```
+
+This single command performs all necessary setup steps in sequence:
+- Creates or validates the Azure infrastructure (Resource Group, App Service Plan, Web App, Managed Identity)
+- Creates the Agent 365 Blueprint in Microsoft Entra ID
+- Configures the blueprint's permissions
+- Registers the messaging endpoint
+
+This command may take several minutes. Monitor output carefully:
+
+- The CLI logs progress in numbered steps (e.g., `[1/5]`, `[2/5]`). Watch for errors or warnings.
+- Performance notices (e.g., 32-bit Azure CLI on 64-bit system) are non-blocking — note them but continue.
+- If existing resources are detected from a previous run, the CLI will skip recreating them — this is expected.
+
+**Important considerations:**
+
+- **Quota limits:** An error like "Operation cannot be completed without additional quota" means the Azure subscription has hit a capacity limit for that region/SKU. Report this to the user and halt. If possible, update `location` in the config (AI Teammate agent path) or ask the user for a new region (Standard path) and retry.
+- **Region support:** If an Azure resource is not available in the selected region, update the location and retry. Agent 365 preview supports only certain regions.
+- **Graph API permission errors:** A "Forbidden" or "Authorization_RequestDenied" error during blueprint creation indicates insufficient directory role or missing admin consent. Stop and resolve the permission issue (refer back to Step 2). After fixing, re-run `a365 setup all`.
+- **Interactive authentication — WAM on Windows / browser on Mac/Linux (expected on first run):**
+  On the first run on a new machine the CLI's own token cache is empty. Even with `az login` done, the CLI may need the user to authenticate once to populate its cache. After that first auth, all subsequent runs are silent.
+
+  **Before you run `a365 setup all`, warn the user:**
+
+  > "The setup command may open a Windows sign-in dialog (WAM) or browser tab to authenticate to Microsoft Graph. Please watch your screen and complete any sign-in prompt that appears — the command will continue automatically once you do."
+
+  **While `a365 setup all` is running, monitor the output:**
+
+  - If you see `"Authenticating via Windows Account Manager..."`: the CLI is waiting for the user to complete a **native Windows dialog** that appeared on their screen. **Do NOT kill the process.** Send the user this message: "A Windows sign-in dialog has appeared on your screen. Please complete it — the setup will continue automatically." Then continue monitoring output and wait for the CLI to resume.
+  - If you see a browser URL printed (device code flow): the CLI is in device code mode. Share the URL and code with the user, tell them to visit it in a browser and sign in, then wait.
+  - If the CLI is silent for more than 3 minutes after one of these messages: ask the user whether they completed the dialog/code. If yes, the CLI may have an issue — cancel and re-run `a365 setup all`. If no, remind them to complete it.
+
+  Once the user completes auth once, the token is cached. Subsequent runs will be fully silent.
+- **Idempotency:** `a365 setup all` is safe to re-run after fixing an issue. It skips or reuses existing resources. Use `a365 cleanup` only as a last resort.
+
+---
+
+### 4.4 — Show setup output to user
+
+After `a365 setup all` completes, show the user exactly this — nothing more, nothing less:
+
+1. **The Setup Summary table** from the CLI output — copy it verbatim.
+
+2. **If the CLI printed an admin consent action item (Permission Grants):** Show both options exactly as printed by the CLI:
+   - Option A (Entra portal steps) — verbatim
+   - Option B (PowerShell script) — verbatim
+
+3. **Skip the client secret action item entirely.** Do not show it, do not mention it.
+
+4. After showing the CLI output sections above, output exactly one of these closing lines — choose based on what the CLI reported:
+   - **If the CLI printed an admin consent action item** (i.e., you showed a PowerShell script in step 2 above):
+     > "Your agent is provisioned. Have a Global Admin run the PowerShell script above to complete admin consent."
+   - **If Permission Grants row in the Summary shows `ok`** (no action item was printed):
+     > "Your agent is provisioned."
+
+### Step 4 completion
+
+Mark all todos as completed, then check `capabilities`:
+
+> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Work IQ, or `agentType = 2` with Observability or Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
+>
+> **Otherwise**: say to the user verbatim:
+> "Your agent is provisioned. Would you like to add observability so you can trace LLM calls, tool dispatches, and agent-to-agent calls?"
+> - If **yes**: follow `#file:a365-observability-instructions.md` to add observability. Do not proceed to Step 5.
+> - If **no**: this is the final action — do NOT send any further response, do NOT proceed to Step 5.
 
 ---
 
 ## Step 5: Publish and Deploy the Agent Application
 
-At this stage, your environment (Azure infrastructure and identity blueprint) is set up. Next, you need to publish the agent and deploy the application code so that the agent is live.
+> **AI TEAMMATE AGENT PATH ONLY.** This step does not exist on the Standard path. If `isAiTeammate = false`, you should not be here.
+
+At this stage, your agent is set up. You should be able to see your agent in Microsoft Admin Center Agent Registry. Observability will be added after this step completes.
 
 ### Review and Update the Manifest File (REQUIRED)
 
@@ -595,21 +541,17 @@ For complete details, see [Create agent instances](https://learn.microsoft.com/e
 
 Provide the user with the following instructions:
 
-1. **Get your blueprint app ID** by running:
-   ```bash
-   a365 config display -g
-   ```
-   Copy the `agentBlueprintAppId` value from the output.
+1. **Get your blueprint ID** from `a365.generated.config.json` (field: `agentBlueprintId`) or from the setup summary output.
 
 2. **Navigate to Developer Portal** by opening your browser and going to:
    ```
-   https://dev.teams.microsoft.com/tools/agent-blueprint/<your-blueprint-app-id>/configuration
+   https://dev.teams.microsoft.com/tools/agent-blueprint/<your-blueprint-id>/configuration
    ```
-   Replace `<your-blueprint-app-id>` with the value you copied.
+   Replace `<your-blueprint-id>` with the value you copied.
 
 3. **Configure the agent** in the Developer Portal:
-   - Set **Agent Type** to `Bot Based`
-   - Set **Bot ID** to your `agentBlueprintAppId` value
+   - Set **Agent Type** to `API Based`
+   - Set **Notification URL** to your agent's messaging endpoint (from `a365.config.json` field `messagingEndpoint`).
    - Select **Save**
 
 > **Note:** If the user doesn't have access to the Developer Portal, they should contact their tenant administrator to grant access or complete this configuration on their behalf.
@@ -650,6 +592,11 @@ az webapp log tail --name <your-web-app> --resource-group <your-resource-group>
 
 If your agent instance isn't working as expected, see the Troubleshooting section below or the [Agent 365 Troubleshooting Guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/troubleshooting).
 
+### Step 5 completion
+
+> **REQUIRED — do not skip this step.**
+> AI Teammate includes observability. Immediately start following `#file:a365-observability-instructions.md`. Do NOT ask the user — just proceed.
+
 ---
 
 ## Error Handling and Troubleshooting
@@ -666,6 +613,22 @@ If any step results in an error, stop and analyze the error message carefully. F
 - Check log files: Windows `%APPDATA%/a365/logs/`, Linux/Mac `~/.config/a365/logs/`.
 - Most `a365` commands are idempotent — safe to re-run after fixing an issue.
 - Use `a365 cleanup azure` or `a365 cleanup blueprint` only as a last resort to remove created resources.
+
+### Windows Account Manager (WAM) authentication
+
+**What it is:** On Windows, the Agent 365 CLI uses the Windows Account Manager (WAM) broker instead of a browser for interactive Microsoft Graph authentication. WAM opens a native OS dialog — not a browser tab — so it is invisible to terminal output.
+
+**What the coding agent sees:** The log line `"Authenticating via Windows Account Manager..."` followed by silence. The CLI is not hung; it is waiting for the user to complete a dialog that appeared on their screen.
+
+**What to do:** Tell the user: "A Windows sign-in dialog has appeared on your screen. Please complete the authentication to continue the setup." Do not kill the process. Once the user completes the dialog, the CLI resumes automatically.
+
+**If the dialog doesn't appear or disappears:** Have the user check minimized windows and the taskbar. If no dialog appeared, the token may already be cached (setup continues silently) — wait 10–15 seconds before assuming it's stuck.
+
+**If running headless (no desktop, e.g. a remote VM without a display):** WAM cannot show a dialog. Workaround: have the user run `az login --allow-no-subscriptions` in an interactive terminal session first. If az CLI has a cached token for the tenant and the correct account, the CLI will use it silently without needing WAM. If `az login` is not an option, the user must run the setup command from a machine with a desktop session.
+
+**WAM hangs with no dialog and no error (rare):** Kill the process (`Ctrl+C`), have the user run `az login --allow-no-subscriptions --tenant <tenant-id>` to refresh the az CLI credential, then retry `a365 setup all`.
+
+---
 
 ### Dev tunnel issues
 

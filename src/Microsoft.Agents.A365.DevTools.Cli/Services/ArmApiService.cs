@@ -15,8 +15,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// Service for Azure Resource Manager (ARM) existence checks via direct HTTP.
 /// Replaces subprocess-based 'az group exists', 'az appservice plan show', and
 /// 'az webapp show' calls — each drops from ~15-20s to ~0.5s.
-/// Token acquisition is handled by AzCliHelper (process-level cache shared with
-/// other services using the management endpoint).
+/// Token acquisition uses MSAL via AuthenticationService (WAM on Windows,
+/// browser/device-code on macOS/Linux) — no az CLI subprocess involved.
 /// </summary>
 public class ArmApiService : IDisposable
 {
@@ -27,17 +27,21 @@ public class ArmApiService : IDisposable
 
     private readonly ILogger<ArmApiService> _logger;
     private readonly HttpClient _httpClient;
+    private readonly IAuthenticationService _authService;
+    private readonly RetryHelper _retryHelper;
 
-    // Allow injecting a custom HttpMessageHandler for unit testing.
-    public ArmApiService(ILogger<ArmApiService> logger, HttpMessageHandler? handler = null)
+    // Allow injecting a custom HttpMessageHandler and RetryHelper for unit testing.
+    public ArmApiService(ILogger<ArmApiService> logger, IAuthenticationService authService, HttpMessageHandler? handler = null, RetryHelper? retryHelper = null)
     {
         _logger = logger;
+        _authService = authService;
         _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
+        _retryHelper = retryHelper ?? new RetryHelper(_logger);
     }
 
     // Parameterless constructor to ease test mocking/substitution frameworks.
     public ArmApiService()
-        : this(NullLogger<ArmApiService>.Instance, null)
+        : this(NullLogger<ArmApiService>.Instance, new AuthenticationService(NullLogger<AuthenticationService>.Instance), null)
     {
     }
 
@@ -45,7 +49,7 @@ public class ArmApiService : IDisposable
 
     private async Task<bool> EnsureArmHeadersAsync(string tenantId, CancellationToken ct)
     {
-        var token = await AzCliHelper.AcquireAzCliTokenAsync(ArmResource, tenantId);
+        var token = await _authService.GetAccessTokenAsync(ArmResource, tenantId, ct: ct);
         if (string.IsNullOrWhiteSpace(token))
         {
             _logger.LogWarning("Unable to acquire ARM access token for tenant {TenantId}", tenantId);
@@ -74,7 +78,8 @@ public class ArmApiService : IDisposable
 
         try
         {
-            using var response = await _httpClient.GetAsync(url, ct);
+            using var response = await _retryHelper.ExecuteWithRetryAsync(
+                ct => _httpClient.GetAsync(url, ct), cancellationToken: ct);
             _logger.LogDebug("ARM resource group check: {StatusCode}", response.StatusCode);
             if (response.StatusCode == HttpStatusCode.OK) return true;
             if (response.StatusCode == HttpStatusCode.NotFound) return false;
@@ -82,7 +87,10 @@ public class ArmApiService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "ARM resource group check failed — will fall back to az CLI");
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "ARM resource group check failed — will fall back to az CLI");
             return null;
         }
     }
@@ -106,7 +114,8 @@ public class ArmApiService : IDisposable
 
         try
         {
-            using var response = await _httpClient.GetAsync(url, ct);
+            using var response = await _retryHelper.ExecuteWithRetryAsync(
+                ct => _httpClient.GetAsync(url, ct), cancellationToken: ct);
             _logger.LogDebug("ARM app service plan check: {StatusCode}", response.StatusCode);
             if (response.StatusCode == HttpStatusCode.OK) return true;
             if (response.StatusCode == HttpStatusCode.NotFound) return false;
@@ -114,7 +123,10 @@ public class ArmApiService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "ARM app service plan check failed — will fall back to az CLI");
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "ARM app service plan check failed — will fall back to az CLI");
             return null;
         }
     }
@@ -138,7 +150,8 @@ public class ArmApiService : IDisposable
 
         try
         {
-            using var response = await _httpClient.GetAsync(url, ct);
+            using var response = await _retryHelper.ExecuteWithRetryAsync(
+                ct => _httpClient.GetAsync(url, ct), cancellationToken: ct);
             _logger.LogDebug("ARM web app check: {StatusCode}", response.StatusCode);
             if (response.StatusCode == HttpStatusCode.OK) return true;
             if (response.StatusCode == HttpStatusCode.NotFound) return false;
@@ -146,7 +159,10 @@ public class ArmApiService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "ARM web app check failed — will fall back to az CLI");
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "ARM web app check failed — will fall back to az CLI");
             return null;
         }
     }
@@ -186,7 +202,8 @@ public class ArmApiService : IDisposable
 
         try
         {
-            using var response = await _httpClient.GetAsync(url, ct);
+            using var response = await _retryHelper.ExecuteWithRetryAsync(
+                ct => _httpClient.GetAsync(url, ct), cancellationToken: ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogDebug("ARM role assignment check returned {StatusCode}", response.StatusCode);
@@ -218,8 +235,12 @@ public class ArmApiService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "ARM role assignment check failed — will fall back to az CLI");
+            if (NetworkHelper.IsConnectionResetByProxy(ex))
+                _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+            else
+                _logger.LogDebug(ex, "ARM role assignment check failed — will fall back to az CLI");
             return null;
         }
     }
+
 }

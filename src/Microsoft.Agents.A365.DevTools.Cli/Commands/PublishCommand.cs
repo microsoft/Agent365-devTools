@@ -54,23 +54,130 @@ public class PublishCommand
     public static Command CreateCommand(
         ILogger<PublishCommand> logger,
         IConfigService configService,
-        ManifestTemplateService manifestTemplateService)
+        ManifestTemplateService manifestTemplateService,
+        GraphApiService? graphApiService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
 
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
+
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
+        var aiTeammateOption = new Option<bool?>(
+            "--aiteammate",
+            description: "true = AI Teammate agent: setup provisions blueprint and permissions only;\n" +
+                        "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+                        "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
+                        "Overrides the aiTeammate field in a365.config.json");
+
+        var useBlueprintOption = new Option<bool>(
+            "--use-blueprint",
+            description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
+                        "Only meaningful with --aiteammate false");
+
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(dryRunOption);
+        command.AddOption(aiTeammateOption);
+        command.AddOption(useBlueprintOption);
+        command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
+            var useBlueprintFlag = context.ParseResult.GetValueForOption(useBlueprintOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+            var ct = context.GetCancellationToken();
 
             var isNormalExit = false;
 
+            // Dry-run gate: when no config can be resolved (no --agent-name, no config file),
+            // show a generic preview instead of letting the resolver log a spurious ERROR.
+            // When config CAN be resolved (gracefully via DryRunHelper), fall through to the
+            // try block which has per-path inline dry-run logic with specific details.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: false, ct);
+
+                if (dryRunConfig is null)
+                {
+                    logger.LogInformation("Dry run: a365 publish --dry-run");
+                    logger.LogInformation("");
+                    logger.LogInformation("Would update manifest.json with blueprint and instance IDs");
+                    logger.LogInformation("Would create manifest package zip");
+                    logger.LogInformation("");
+                    logger.LogInformation("Pass --agent-name <name> or provide a365.config.json to preview specific IDs.");
+                    logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                    isNormalExit = true;
+                    return;
+                }
+                // Config resolved — fall through to the try block for per-path dry-run output.
+            }
+
             try
             {
-                var config = await configService.LoadAsync();
+                Agent365Config config;
+                if (resolver != null)
+                {
+                    var resolved = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+                    if (resolved is null) { context.ExitCode = 1; return; }
+                    config = resolved;
+                }
+                else
+                {
+                    config = await configService.LoadAsync(configFile.FullName);
+                }
+
+                // Effective agent type: CLI flag > config value > default (AI Teammate agent)
+                var isBlueprintAgent =
+                    aiTeammateFlag == false ||
+                    (!aiTeammateFlag.HasValue && config.IsBlueprintAgent);
+
+                if (isBlueprintAgent)
+                {
+                    var isBlueprint = useBlueprintFlag || (isBlueprintAgent && config.UseBlueprint == true);
+
+                    if (dryRun)
+                    {
+                        if (isBlueprint)
+                            PrintNonDwBlueprintDryRunPlan(config, logger);
+                        else
+                            PrintNonDwDryRunPlan(config, logger);
+                        isNormalExit = true;
+                        return;
+                    }
+
+                    if (isBlueprint)
+                    {
+                        isNormalExit = await PublishBlueprintNonDwAsync(config, graphApiService, configService, logger, context, ct: context.GetCancellationToken());
+                        return;
+                    }
+
+                    // App-based non-DW Phase B not yet implemented — team feedback on dry-run output first.
+                    logger.LogError(
+                        "App-based non-DW publish (Phase B) is not yet implemented. " +
+                        "Run with --dry-run to preview the manifest substitution plan.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                // --- AI Teammate agent (default) path ---
                 var blueprintId = config.AgentBlueprintId;
                 var displayName = config.AgentBlueprintDisplayName;
 
@@ -157,7 +264,8 @@ public class PublishCommand
 
                     Console.Write("Press Enter when you have finished editing the manifest to continue: ");
                     Console.Out.Flush();
-                    Console.ReadLine();
+                    if (Console.ReadLine() is null)
+                        throw new OperationCanceledException();
                     Console.WriteLine();
                 }
 
@@ -190,6 +298,113 @@ public class PublishCommand
         });
 
         return command;
+    }
+
+    /// <summary>
+    /// Registers the agent instance via POST /beta/agentRegistry/agentInstances and saves
+    /// the returned instance ID to the generated config. Returns true on success.
+    /// </summary>
+    private static async Task<bool> PublishBlueprintNonDwAsync(
+        Agent365Config config,
+        GraphApiService? graphApiService,
+        IConfigService configService,
+        ILogger logger,
+        System.CommandLine.Invocation.InvocationContext context,
+        CancellationToken ct)
+    {
+        if (graphApiService == null)
+        {
+            logger.LogError("GraphApiService is not available. This is a configuration error.");
+            context.ExitCode = 1;
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.TenantId))
+        {
+            logger.LogError("tenantId is required for blueprint non-DW publish. Set it in a365.config.json.");
+            context.ExitCode = 1;
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.AgentIdentityDisplayName))
+        {
+            logger.LogError("agentIdentityDisplayName is required. Set it in a365.config.json.");
+            context.ExitCode = 1;
+            return false;
+        }
+
+        logger.LogInformation("Registering agent instance...");
+        logger.LogInformation("  POST /beta/agentRegistry/agentInstances");
+        logger.LogInformation("  displayName            : {DisplayName}", config.AgentIdentityDisplayName);
+        if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
+            logger.LogInformation("  agentIdentityBlueprintId: {BlueprintId}", config.AgentBlueprintId);
+
+        var instanceId = await graphApiService.RegisterAgentInstanceAsync(
+            config.TenantId,
+            config.AgentIdentityDisplayName,
+            config.AgentBlueprintId,
+            ct);
+
+        if (string.IsNullOrWhiteSpace(instanceId))
+        {
+            logger.LogError("Agent instance registration failed.");
+            context.ExitCode = 1;
+            return false;
+        }
+
+        logger.LogInformation("Agent instance registered: {InstanceId}", instanceId);
+
+        config.AgentInstanceId = instanceId;
+        await configService.SaveStateAsync(config);
+        logger.LogInformation("Saved agentInstanceId to generated config.");
+
+        return true;
+    }
+
+    private static void PrintNonDwBlueprintDryRunPlan(Models.Agent365Config config, ILogger logger)
+    {
+        var blueprintId = !string.IsNullOrWhiteSpace(config.AgentBlueprintId)
+            ? config.AgentBlueprintId
+            : "<agentBlueprintId — run setup first>";
+
+        logger.LogInformation("Non-DW Blueprint Publish Plan (dry run — no API calls will be made)");
+        logger.LogInformation("");
+        logger.LogInformation("  Agent Instance Registration");
+        logger.LogInformation("    Call Agent Instance Graph API");
+        logger.LogInformation("    Blueprint ID                 {BlueprintId}", blueprintId);
+        logger.LogInformation("    Tenant                       {TenantId}", config.TenantId);
+        logger.LogInformation("");
+        logger.LogInformation("  No manifest or zip created for blueprint-based agents.");
+        logger.LogInformation("");
+        logger.LogInformation("Run without --dry-run to register the agent instance.");
+    }
+
+    private static void PrintNonDwDryRunPlan(Models.Agent365Config config, ILogger logger)
+    {
+        var clientAppId = !string.IsNullOrWhiteSpace(config.ClientAppId)
+            ? config.ClientAppId
+            : "<clientAppId — run setup first>";
+
+        var webAppDomain = "<host>.azurewebsites.net";
+
+        logger.LogInformation("Non-DW Publish Plan (dry run — no files will be written)");
+        logger.LogInformation("");
+        logger.LogInformation("  Source of truth   : ClientAppId = {ClientAppId}", clientAppId);
+        logger.LogInformation("");
+        logger.LogInformation("  Fields to substitute:");
+        logger.LogInformation("    id                                     -> {ClientAppId}", clientAppId);
+        logger.LogInformation("    bots[0].botId                          -> {ClientAppId}", clientAppId);
+        logger.LogInformation("    copilotAgents.customEngineAgents[0].id -> {ClientAppId}", clientAppId);
+        logger.LogInformation("    validDomains[1]                        -> {Domain}", webAppDomain);
+        logger.LogInformation("    webApplicationInfo.id                  -> {ClientAppId}", clientAppId);
+        logger.LogInformation("    webApplicationInfo.resource            -> api://botid-{ClientAppId}", clientAppId);
+        logger.LogInformation("");
+        logger.LogInformation("  Zip contents:");
+        logger.LogInformation("    manifest.json");
+        logger.LogInformation("    color.png");
+        logger.LogInformation("    outline.png");
+        logger.LogInformation("");
+        logger.LogInformation("Run without --dry-run to write the manifest files and create the zip.");
     }
 
     private static async Task<string> UpdateManifestFileAsync(string? displayName, string blueprintId, string manifestPath)

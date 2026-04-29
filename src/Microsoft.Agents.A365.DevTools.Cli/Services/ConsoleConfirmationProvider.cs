@@ -16,8 +16,18 @@ public class ConsoleConfirmationProvider : IConfirmationProvider
     public Task<bool> ConfirmAsync(string prompt)
     {
         Console.Write(prompt);
-        var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-        return Task.FromResult(response == "y" || response == "yes");
+        var response = Console.ReadLine();
+
+        // null means stdin was closed (Ctrl+C / EOF) — exit immediately without further output,
+        // matching az CLI behavior where Ctrl+C terminates cleanly with no trailing messages.
+        if (response == null)
+        {
+            Console.WriteLine();
+            throw new OperationCanceledException();
+        }
+
+        return Task.FromResult(response.Trim().Equals("y", StringComparison.OrdinalIgnoreCase)
+            || response.Trim().Equals("yes", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

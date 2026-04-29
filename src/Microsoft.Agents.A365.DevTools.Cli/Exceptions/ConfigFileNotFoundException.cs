@@ -16,7 +16,8 @@ public class ConfigFileNotFoundException : Agent365Exception
             mitigationSteps:
             [
                 "Make sure you are running this command from your agent project directory.",
-                "If you have not created a configuration file yet, run: a365 config init"
+                "Pass --agent-name <name> to run without a config file.",
+                "Or run 'a365 setup all --agent-name <name>' to perform a full setup."
             ])
     {
     }

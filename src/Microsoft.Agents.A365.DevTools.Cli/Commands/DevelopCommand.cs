@@ -8,6 +8,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using System.CommandLine;
+using System.CommandLine.Invocation;
 using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
@@ -31,17 +32,10 @@ public static class DevelopCommand
     {
         var developCommand = new Command("develop", "Manage MCP tool servers for agent development");
 
-        // Add common options
-        var configOption = new Option<string>(
-            ["--config", "-c"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path");
-
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
             description: "Enable verbose logging");
 
-        developCommand.AddOption(configOption);
         developCommand.AddOption(verboseOption);
 
         // Add subcommands
@@ -67,13 +61,6 @@ public static class DevelopCommand
     {
         var command = new Command("list-available", "List all MCP servers available in the catalog (what you can install)");
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
@@ -86,52 +73,63 @@ public static class DevelopCommand
         );
         command.AddOption(skipAuthOption);
 
-        command.SetHandler(async (configPath, dryRun, skipAuth) =>
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (InvocationContext context) =>
         {
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var skipAuth = context.ParseResult.GetValueForOption(skipAuthOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+
             logger.LogInformation("Starting list-available MCP Servers operation...");
 
             if (dryRun)
             {
-                logger.LogInformation("[DRY RUN] Would read config from {ConfigPath}", configPath);
+                logger.LogInformation("[DRY RUN] Would resolve environment from A365_ENVIRONMENT (defaults to 'prod')");
                 logger.LogInformation("[DRY RUN] Would query endpoint directly for available MCP Servers");
                 logger.LogInformation("[DRY RUN] Would display catalog of available MCP Servers");
                 await Task.CompletedTask;
                 return;
             }
 
-            // Try direct endpoint call only (DiscoverEndpointUrl fallback disabled for testing)
-            var success = await CallDiscoverToolServersAsync(configService, skipAuth, logger, authService);
+            var success = await CallDiscoverToolServersAsync(skipAuth, logger, authService);
 
             if (!success)
             {
                 logger.LogError("Direct endpoint call failed. Please check your configuration.");
-                return; // Exit without fallback
+                context.ExitCode = 1;
+                return;
             }
 
 
             // Success - exit here
             return;
 
-        }, configOption, dryRunOption, skipAuthOption);
+        });
 
         return command;
     }
 
     /// <summary>
-    /// Call the discoverToolServers endpoint directly
+    /// Call the discoverMCPServers endpoint directly.
+    /// Environment is resolved from the <c>A365_ENVIRONMENT</c> environment variable
+    /// (defaults to <c>prod</c>) — this command does not depend on <c>a365.config.json</c>.
     /// </summary>
-    private static async Task<bool> CallDiscoverToolServersAsync(IConfigService configService, bool skipAuth, ILogger logger, AuthenticationService authService, bool skipLogs = false)
+    private static async Task<bool> CallDiscoverToolServersAsync(bool skipAuth, ILogger logger, AuthenticationService authService, bool skipLogs = false)
     {
         // Generate correlation ID at workflow entry point
         var correlationId = Services.Internal.HttpClientFactory.GenerateCorrelationId();
 
         try
         {
-            var config = configService.LoadAsync().Result;
-            var discoverEndpointUrl = ConfigConstants.GetDiscoverEndpointUrl(config.Environment);
+            var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+            var discoverEndpointUrl = ConfigConstants.GetDiscoverEndpointUrl(environment);
 
-            logger.LogInformation("Calling discoverToolServers endpoint directly (CorrelationId: {CorrelationId})...", correlationId);
-            logger.LogInformation("Environment: {Env}", config.Environment);
+            logger.LogInformation("Calling discoverMCPServers endpoint directly (CorrelationId: {CorrelationId})...", correlationId);
+            logger.LogInformation("Environment: {Env}", environment);
             logger.LogInformation("Endpoint URL: {Url}", discoverEndpointUrl);
 
             // Get authentication token interactively (unless skip-auth is specified)
@@ -141,9 +139,9 @@ public static class DevelopCommand
                 logger.LogInformation("Getting authentication token...");
 
                 // Determine the audience (App ID) based on the environment
-                var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+                var audience = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
 
-                logger.LogInformation("Environment: {Environment}, Audience: {Audience}", config.Environment, audience);
+                logger.LogInformation("Environment: {Environment}, Audience: {Audience}", environment, audience);
 
                 // Resolve az CLI login hint so WAM targets the correct account instead of
                 // defaulting to the first cached MSAL account (which may be stale).
@@ -172,7 +170,7 @@ public static class DevelopCommand
 
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogError("Failed to call discoverToolServers endpoint. Status: {Status}", response.StatusCode);
+                logger.LogError("Failed to call discoverMCPServers endpoint. Status: {Status}", response.StatusCode);
                 var errorContent = await response.Content.ReadAsStringAsync();
                 logger.LogError("Error response: {Error}", errorContent);
                 return false;
@@ -180,13 +178,17 @@ public static class DevelopCommand
 
             var responseContent = await response.Content.ReadAsStringAsync();
 
-            logger.LogInformation("Successfully received response from discoverToolServers endpoint");
+            logger.LogInformation("Successfully received response from discoverMCPServers endpoint");
+
+            // Normalize before parsing: V2 returns a bare array; V1 returns a wrapped object.
+            // Both WriteCatalog and the display loop below expect the wrapped {"mcpServers":[...]} shape.
+            var normalizedContent = Services.Internal.McpServerCatalogWriter.Normalize(responseContent);
 
             // Parse and display the MCP servers
-            using var responseDoc = JsonDocument.Parse(responseContent);
+            using var responseDoc = JsonDocument.Parse(normalizedContent);
             var responseRoot = responseDoc.RootElement;
 
-            var catalogPath = Services.Internal.McpServerCatalogWriter.WriteCatalog(responseContent);
+            var catalogPath = Services.Internal.McpServerCatalogWriter.WriteCatalog(normalizedContent);
             logger.LogInformation("Catalog saved to {CatalogPath}", catalogPath);
 
             // Display available MCP servers
@@ -217,7 +219,8 @@ public static class DevelopCommand
                         if (server.TryGetProperty("scope", out var scopeElement))
                         {
                             var scope = scopeElement.GetString();
-                            if (!string.IsNullOrWhiteSpace(scope))
+                            if (!string.IsNullOrWhiteSpace(scope) &&
+                                !string.Equals(scope, "null", StringComparison.OrdinalIgnoreCase))
                             {
                                 Console.WriteLine($"     Required Scope: {scope}");
                             }
@@ -244,7 +247,7 @@ public static class DevelopCommand
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to call discoverToolServers endpoint directly");
+            logger.LogError(ex, "Failed to call discoverMCPServers endpoint directly");
             return false;
         }
     }
@@ -256,21 +259,30 @@ public static class DevelopCommand
     {
         var command = new Command("list-configured", "List currently configured MCP servers from your local ToolingManifest.json");
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (configPath, dryRun) =>
+        var projectPathOption = new Option<string?>(
+            name: "--project-path",
+            description: "Path to the agent project directory containing ToolingManifest.json. " +
+                         "Overrides DeploymentProjectPath from a365.config.json."
+        );
+        command.AddOption(projectPathOption);
+
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (InvocationContext context) =>
         {
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var projectPath = context.ParseResult.GetValueForOption(projectPathOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+
             logger.LogInformation("Starting list-configured MCP Servers operation...");
 
             if (dryRun)
@@ -282,36 +294,14 @@ public static class DevelopCommand
                 return;
             }
 
-            // Load config to get deploymentProjectPath
-            Agent365Config config;
-            try
-            {
-                config = await configService.LoadAsync(configPath);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to load configuration");
-                return;
-            }
-
-            // Determine manifest path - use deploymentProjectPath if available
-            string manifestPath;
-            if (!string.IsNullOrEmpty(config.DeploymentProjectPath))
-            {
-                manifestPath = Path.Combine(config.DeploymentProjectPath, McpConstants.ToolingManifestFileName);
-                logger.LogInformation("Using ToolingManifest.json from deployment project path: {Path}", manifestPath);
-            }
-            else
-            {
-                var currentDir = Directory.GetCurrentDirectory();
-                manifestPath = Path.Combine(currentDir, McpConstants.ToolingManifestFileName);
-                logger.LogWarning("No deploymentProjectPath in config, using current directory: {Path}", manifestPath);
-            }
+            // Resolve manifest path without requiring a365.config.json
+            var manifestPath = await ResolveToolingManifestPath(projectPath, configService, logger);
 
             if (!File.Exists(manifestPath))
             {
-                logger.LogInformation("No {FileName} found at: {Path}", McpConstants.ToolingManifestFileName, manifestPath);
-                logger.LogInformation("Use 'add-mcp-servers' to create and configure servers");
+                logger.LogInformation(
+                    "No ToolingManifest.json found. Run 'a365 develop add-mcp-servers <server>' to configure MCP servers, " +
+                    "or run with --project-path <path> if your project is in a different directory.");
                 return;
             }
 
@@ -335,6 +325,7 @@ public static class DevelopCommand
                 if (serversElement.ValueKind != JsonValueKind.Array)
                 {
                     logger.LogError("'{PropertyName}' section is not an array", McpConstants.ManifestProperties.McpServers);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -384,7 +375,17 @@ public static class DevelopCommand
                         if (string.IsNullOrWhiteSpace(audience)) audience = mappedAudience ?? "";
                     }
 
+                    var publisher = serverElement.TryGetProperty(McpConstants.ManifestProperties.Publisher, out var publisherElement)
+                        ? publisherElement.GetString() ?? ""
+                        : "";
+
+                    // Derive protocol version from scope
+                    var version = McpConstants.IsV1Scope(scope) ? "V1"
+                        : string.Equals(scope, McpConstants.V2ScopeValue, StringComparison.OrdinalIgnoreCase) ? "V2"
+                        : "Unknown";
+
                     logger.LogInformation("  {Name}", serverName);
+                    logger.LogInformation("     Version: {Version}", version);
                     logger.LogInformation("     URL: {Url}", serverUrl);
 
                     if (!string.IsNullOrWhiteSpace(scope))
@@ -405,15 +406,21 @@ public static class DevelopCommand
                         logger.LogInformation("     Audience: Not specified");
                     }
 
+                    if (!string.IsNullOrWhiteSpace(publisher))
+                    {
+                        logger.LogInformation("     Publisher: {Publisher}", publisher);
+                    }
+
                     logger.LogInformation(""); // Empty line for readability
                 }
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to read or parse {FileName}", McpConstants.ToolingManifestFileName);
+                context.ExitCode = 1;
                 return;
             }
-        }, configOption, dryRunOption);
+        });
 
         return command;
     }
@@ -431,21 +438,31 @@ public static class DevelopCommand
         );
         command.AddArgument(serversArgument);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (servers, configPath, dryRun) =>
+        var projectPathOption = new Option<string?>(
+            name: "--project-path",
+            description: "Path to the agent project directory containing ToolingManifest.json. " +
+                         "Overrides DeploymentProjectPath from a365.config.json."
+        );
+        command.AddOption(projectPathOption);
+
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (InvocationContext context) =>
         {
+            var servers = context.ParseResult.GetValueForArgument(serversArgument);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var projectPath = context.ParseResult.GetValueForOption(projectPathOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+
             logger.LogInformation("Starting add-mcp-servers operation...");
 
             var catalogPath = Services.Internal.McpServerCatalogWriter.GetCatalogPath();
@@ -453,7 +470,14 @@ public static class DevelopCommand
             {
                 // Call the fetch logic (reuse from list-available, but no output)
                 logger.LogInformation("Fetching latest MCP server catalog...");
-                await CallDiscoverToolServersAsync(configService, false, logger, authService, skipLogs: true);
+                await CallDiscoverToolServersAsync(false, logger, authService, skipLogs: true);
+            }
+
+            if (!File.Exists(catalogPath))
+            {
+                logger.LogError("MCP server catalog is not available. Run 'a365 develop list-available' to fetch the catalog.");
+                context.ExitCode = 1;
+                return;
             }
 
             var catalogJson = await File.ReadAllTextAsync(catalogPath);
@@ -464,6 +488,7 @@ public static class DevelopCommand
             if (catalog == null)
             {
                 logger.LogError("Could not load MCP server catalog. Aborting.");
+                context.ExitCode = 1;
                 return;
             }
 
@@ -472,6 +497,7 @@ public static class DevelopCommand
             {
                 logger.LogError("No servers specified. Please provide at least one server name.");
                 logger.LogInformation("Usage: a365 develop add-mcp-servers <server1> <server2> ...");
+                context.ExitCode = 1;
                 return;
             }
 
@@ -488,30 +514,15 @@ public static class DevelopCommand
                 return;
             }
 
-            // Load config to get deploymentProjectPath
-            Agent365Config config;
-            try
-            {
-                config = await configService.LoadAsync(configPath);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to load configuration");
-                return;
-            }
+            // Resolve manifest path without requiring a365.config.json
+            var manifestPath = await ResolveToolingManifestPath(projectPath, configService, logger);
 
-            // Determine manifest path - use deploymentProjectPath if available
-            string manifestPath;
-            if (!string.IsNullOrEmpty(config.DeploymentProjectPath))
+            if (!File.Exists(manifestPath))
             {
-                manifestPath = Path.Combine(config.DeploymentProjectPath, McpConstants.ToolingManifestFileName);
-                logger.LogInformation("Using ToolingManifest.json from deployment project path: {Path}", manifestPath);
-            }
-            else
-            {
-                var currentDir = Directory.GetCurrentDirectory();
-                manifestPath = Path.Combine(currentDir, McpConstants.ToolingManifestFileName);
-                logger.LogWarning("No deploymentProjectPath in config, using current directory: {Path}", manifestPath);
+                logger.LogError(
+                    "ToolingManifest.json not found. Run with --project-path <path> to specify your agent project directory.");
+                context.ExitCode = 1;
+                return;
             }
 
             try
@@ -548,10 +559,11 @@ public static class DevelopCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to add MCP servers to manifest");
+                context.ExitCode = 1;
                 throw;
             }
 
-        }, serversArgument, configOption, dryRunOption);
+        });
 
         return command;
     }
@@ -569,21 +581,31 @@ public static class DevelopCommand
         );
         command.AddArgument(serversArgument);
 
-        var configOption = new Option<string>(
-            ["-c", "--config"],
-            getDefaultValue: () => "a365.config.json",
-            description: "Configuration file path"
-        );
-        command.AddOption(configOption);
-
         var dryRunOption = new Option<bool>(
             name: "--dry-run",
             description: "Show what would be done without executing"
         );
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (servers, configPath, dryRun) =>
+        var projectPathOption = new Option<string?>(
+            name: "--project-path",
+            description: "Path to the agent project directory containing ToolingManifest.json. " +
+                         "Overrides DeploymentProjectPath from a365.config.json."
+        );
+        command.AddOption(projectPathOption);
+
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (InvocationContext context) =>
         {
+            var servers = context.ParseResult.GetValueForArgument(serversArgument);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var projectPath = context.ParseResult.GetValueForOption(projectPathOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+
             logger.LogInformation("Starting remove-mcp-servers operation...");
 
             // Validate input
@@ -591,6 +613,7 @@ public static class DevelopCommand
             {
                 logger.LogError("No servers specified. Please provide at least one server name.");
                 logger.LogInformation("Usage: a365 develop remove-mcp-servers <server1> <server2> ...");
+                context.ExitCode = 1;
                 return;
             }
 
@@ -607,36 +630,14 @@ public static class DevelopCommand
                 return;
             }
 
-            // Load config to get deploymentProjectPath
-            Agent365Config config;
-            try
-            {
-                config = await configService.LoadAsync(configPath);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to load configuration");
-                return;
-            }
-
-            // Determine manifest path - use deploymentProjectPath if available
-            string manifestPath;
-            if (!string.IsNullOrEmpty(config.DeploymentProjectPath))
-            {
-                manifestPath = Path.Combine(config.DeploymentProjectPath, McpConstants.ToolingManifestFileName);
-                logger.LogInformation("Using ToolingManifest.json from deployment project path: {Path}", manifestPath);
-            }
-            else
-            {
-                var currentDir = Directory.GetCurrentDirectory();
-                manifestPath = Path.Combine(currentDir, McpConstants.ToolingManifestFileName);
-                logger.LogWarning("No deploymentProjectPath in config, using current directory: {Path}", manifestPath);
-            }
+            // Resolve manifest path without requiring a365.config.json
+            var manifestPath = await ResolveToolingManifestPath(projectPath, configService, logger);
 
             if (!File.Exists(manifestPath))
             {
-                logger.LogError("No {FileName} found at: {Path}", McpConstants.ToolingManifestFileName, manifestPath);
-                logger.LogInformation("Nothing to remove.");
+                logger.LogError(
+                    "ToolingManifest.json not found. Run with --project-path <path> to specify your agent project directory.");
+                context.ExitCode = 1;
                 return;
             }
 
@@ -648,6 +649,7 @@ public static class DevelopCommand
                 if (!manifestData.HasValue)
                 {
                     logger.LogError("Failed to read {FileName}", McpConstants.ToolingManifestFileName);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -714,12 +716,57 @@ public static class DevelopCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to remove MCP servers from manifest");
+                context.ExitCode = 1;
                 throw;
             }
 
-        }, serversArgument, configOption, dryRunOption);
+        });
 
         return command;
+    }
+
+    /// <summary>
+    /// Resolves the path to <c>ToolingManifest.json</c> for the develop commands.
+    /// Resolution order:
+    /// 1. Explicit <paramref name="projectPath"/> (from <c>--project-path</c>) — used as-is.
+    /// 2. <c>a365.config.json</c> in the current directory — if present, use its
+    ///    <c>DeploymentProjectPath</c>; fall back to CWD when the property is empty.
+    /// 3. Current working directory.
+    /// </summary>
+    private static async Task<string> ResolveToolingManifestPath(string? projectPath, IConfigService configService, ILogger logger)
+    {
+        // 1. Explicit --project-path takes precedence
+        if (!string.IsNullOrWhiteSpace(projectPath))
+        {
+            var path = Path.Combine(projectPath, McpConstants.ToolingManifestFileName);
+            logger.LogInformation("Using ToolingManifest.json from --project-path: {Path}", path);
+            return path;
+        }
+
+        // 2. If a365.config.json exists locally, honor its DeploymentProjectPath
+        var configPath = Path.Combine(Directory.GetCurrentDirectory(), ConfigConstants.DefaultConfigFileName);
+        if (File.Exists(configPath))
+        {
+            try
+            {
+                var config = await configService.LoadAsync(configPath);
+                if (!string.IsNullOrWhiteSpace(config.DeploymentProjectPath))
+                {
+                    var path = Path.Combine(config.DeploymentProjectPath, McpConstants.ToolingManifestFileName);
+                    logger.LogInformation("Using ToolingManifest.json from DeploymentProjectPath in a365.config.json: {Path}", path);
+                    return path;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Could not load {ConfigPath}; falling back to current directory.", configPath);
+            }
+        }
+
+        // 3. Default to current working directory
+        var cwdPath = Path.Combine(Directory.GetCurrentDirectory(), McpConstants.ToolingManifestFileName);
+        logger.LogDebug("Using ToolingManifest.json from current directory: {Path}", cwdPath);
+        return cwdPath;
     }
 
     /// <summary>
@@ -762,13 +809,22 @@ public static class DevelopCommand
                     if (catalogEntry.ValueKind != JsonValueKind.Undefined)
                     {
                         var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
-                        var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+                        var scopeRaw = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+                        var scope = string.Equals(scopeRaw, "null", StringComparison.OrdinalIgnoreCase) ? null : scopeRaw;
                         var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
+                        var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
-                        var updatedServerObject = ManifestHelper.CreateCompleteServerObject(existingServerName, existingServerName, url, scope, audience);
+                        var updatedServerObject = ManifestHelper.CreateCompleteServerObject(existingServerName, existingServerName, url, scope, audience, publisher);
                         updatedServers.Add(updatedServerObject);
                         updatedCount++;
                         logger.LogInformation("Updated existing server: {Server}", existingServerName);
+
+                        // Warn when the resolved audience is still the legacy ATG AppId (V1 entry)
+                        var resolvedAudience = McpConstants.ResolveAudienceOrAtgFallback(audience);
+                        if (string.Equals(resolvedAudience, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", existingServerName);
+                        }
                     }
                     else
                     {
@@ -823,11 +879,20 @@ public static class DevelopCommand
             }
 
             var url = catalogEntry.TryGetProperty("url", out var urlElement) ? urlElement.GetString() : null;
-            var scope = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+            var scopeRaw = catalogEntry.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : null;
+            var scope = string.Equals(scopeRaw, "null", StringComparison.OrdinalIgnoreCase) ? null : scopeRaw;
             var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
+            var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
-            var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience);
+            var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience, publisher);
             updatedServers.Add(serverObject);
+
+            // Warn when the resolved audience is still the legacy ATG AppId (V1 entry).
+            var resolvedAudienceForNew = McpConstants.ResolveAudienceOrAtgFallback(audience);
+            if (string.Equals(resolvedAudienceForNew, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("{Server} uses a legacy ATG audience and may not work correctly. Consider re-running add-mcp-servers to pick up the latest catalog.", serverName);
+            }
         }
 
         return (updatedServers, addedCount, updatedCount);

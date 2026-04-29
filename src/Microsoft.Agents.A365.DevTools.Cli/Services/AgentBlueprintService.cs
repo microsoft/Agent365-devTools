@@ -137,16 +137,16 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent identity application: {ApplicationId}", applicationId);
 
-            // Agent Identity deletion requires the same DeleteRestore scope as blueprint deletion.
-            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
+            // Agent Identity deletion requires AgentIdentity.DeleteRestore.All — NOT the blueprint scope.
+            // DELETE /beta/servicePrincipals/{id} for agent identities uses the AgentIdentity permission family.
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityDeleteRestoreAllScope };
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
+            _logger.LogInformation("Acquiring access token with AgentIdentity.DeleteRestore.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
-            // Use the special servicePrincipals endpoint for deletion
             var deletePath = $"/beta/servicePrincipals/{applicationId}";
 
-            // Use GraphDeleteAsync with the special scopes required for identity operations
+            // Use GraphDeleteAsync with the correct scope for agent identity deletion
             return await _graphApiService.GraphDeleteAsync(
                 tenantId,
                 deletePath,
@@ -176,7 +176,7 @@ public class AgentBlueprintService
         string blueprintId,
         CancellationToken cancellationToken = default)
     {
-        var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope };
+        var requiredScopes = new[] { AuthenticationConstants.AgentIdentityReadAllScope };
         var encodedId = Uri.EscapeDataString(blueprintId);
 
         // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers
@@ -225,6 +225,35 @@ public class AgentBlueprintService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Returns the service principal ID of an existing agent identity for the given blueprint
+    /// whose display name matches <paramref name="displayName"/>, or null if none is found.
+    /// Wraps <see cref="GetAgentInstancesForBlueprintAsync"/>; exceptions are caught and logged
+    /// non-fatally so callers can fall through to creation.
+    /// </summary>
+    public virtual async Task<string?> FindExistingAgentIdentityAsync(
+        string tenantId,
+        string blueprintId,
+        string displayName,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var instances = await GetAgentInstancesForBlueprintAsync(tenantId, blueprintId, cancellationToken);
+            var match = instances.FirstOrDefault(i =>
+                string.Equals(i.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+            // IdentitySpId is the Graph SP object ID — the same value CreateAgentIdentityDelegatedAsync
+            // returns and stores in AgenticAppId (both are /beta/servicePrincipals/{id} object IDs).
+            return match?.IdentitySpId;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Could not look up existing agent identities for blueprint {BlueprintId} (non-fatal): {Message}",
+                blueprintId, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>
@@ -339,10 +368,11 @@ public class AgentBlueprintService
         // Normalize into array form expected by Graph (each element is a single scope string)
         var desiredArray = desiredSet.ToArray();
 
+        string? blueprintObjectId = null;
         try
         {
             // Resolve blueprintId to object ID if needed
-            var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
+            blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
 
             // Retrieve existing inheritable permissions
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
@@ -388,10 +418,22 @@ public class AgentBlueprintService
                     }
                 };
 
-                var patched = await _graphApiService.GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
+                var patched = false;
+                try
+                {
+                    patched = await _graphApiService.GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
+                }
+                catch (Exception patchEx)
+                {
+                    if (patchEx is OperationCanceledException && ct.IsCancellationRequested) throw;
+                    _logger.LogError(patchEx, "Exception during PATCH of inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                    return (ok: false, alreadyExists: false, error: patchEx.Message);
+                }
+
                 if (!patched)
                 {
-                    return (ok: false, alreadyExists: false, error: "PATCH failed");
+                    _logger.LogWarning("PATCH request to update inheritable permissions failed for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                    return (ok: false, alreadyExists: false, error: $"Graph PATCH returned false for blueprint {blueprintObjectId} resource {resourceAppId}");
                 }
 
                 _logger.LogDebug("Patched inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
@@ -429,7 +471,8 @@ public class AgentBlueprintService
         }
         catch (Exception ex)
         {
-            _logger.LogError("Failed to set inheritable permissions: {Error}", ex.Message);
+            if (ex is OperationCanceledException && ct.IsCancellationRequested) throw;
+            _logger.LogError(ex, "Failed to set inheritable permissions for blueprint {Blueprint} resource {Resource}: {Error}", blueprintObjectId ?? blueprintId, resourceAppId, ex.Message);
             return (ok: false, alreadyExists: false, error: ex.Message);
         }
     }
@@ -946,6 +989,149 @@ public class AgentBlueprintService
 
         // Fallback to original ID if resolution fails
         return blueprintAppId;
+    }
+
+    /// <summary>
+    /// Grants application role assignments (appRoleAssignments) on the blueprint's service principal
+    /// for each named app role on the given resource. This enables S2S (service-to-service) access
+    /// where the blueprint identity calls the resource using a client-credentials token with no user
+    /// context. Idempotent: existing assignments for the same role are skipped.
+    /// Requires Global Administrator.
+    /// </summary>
+    /// <param name="tenantId">Tenant ID.</param>
+    /// <param name="blueprintSpObjectId">Object ID of the blueprint's service principal.</param>
+    /// <param name="resourceAppId">Application ID of the resource (e.g. Observability API).</param>
+    /// <param name="appRoleNames">Names of the app roles to assign (e.g. "Agent365.Observability.OtelWrite").</param>
+    /// <param name="requiredScopes">Graph scopes required to perform the operation.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>True when all assignments succeeded or already existed; false if any failed.</returns>
+    public virtual async Task<bool> GrantAppRoleAssignmentAsync(
+        string tenantId,
+        string blueprintSpObjectId,
+        string resourceAppId,
+        IEnumerable<string> appRoleNames,
+        IEnumerable<string>? requiredScopes = null,
+        CancellationToken ct = default)
+    {
+        // De-dup upfront: duplicate names map to the same role ID and would cause a redundant POST.
+        var roleNames = appRoleNames?
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? new List<string>();
+        if (roleNames.Count == 0) return true;
+
+        try
+        {
+            // Resolve the resource service principal.
+            var resourceSpId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
+                tenantId, resourceAppId, ct, requiredScopes);
+            if (string.IsNullOrWhiteSpace(resourceSpId))
+            {
+                _logger.LogWarning("Resource SP not found for app ID {ResourceAppId} — S2S app role assignment skipped.", resourceAppId);
+                return false;
+            }
+
+            // Fetch the resource SP's app roles to map names -> IDs.
+            using var resourceSpDoc = await _graphApiService.GraphGetAsync(
+                tenantId, $"/v1.0/servicePrincipals/{resourceSpId}?$select=appRoles", ct,
+                scopes: requiredScopes);
+            if (resourceSpDoc == null)
+            {
+                _logger.LogError("Failed to retrieve app roles for resource SP {ResourceSpId}.", resourceSpId);
+                return false;
+            }
+
+            // Build a name -> id map from the resource SP's appRoles array.
+            var roleIdByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (resourceSpDoc.RootElement.TryGetProperty("appRoles", out var appRolesEl) &&
+                appRolesEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var role in appRolesEl.EnumerateArray())
+                {
+                    if (role.TryGetProperty("value", out var valEl) &&
+                        role.TryGetProperty("id", out var idEl))
+                    {
+                        var name = valEl.GetString();
+                        var id = idEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id))
+                            roleIdByName[name] = id;
+                    }
+                }
+            }
+
+            // Fetch existing assignments on the blueprint SP to avoid duplicates.
+            var existingRoleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var existingDoc = await _graphApiService.GraphGetAsync(
+                tenantId,
+                $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
+                ct, scopes: requiredScopes);
+            if (existingDoc != null &&
+                existingDoc.RootElement.TryGetProperty("value", out var existingArr) &&
+                existingArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var assignment in existingArr.EnumerateArray())
+                {
+                    if (assignment.TryGetProperty("resourceId", out var resId) &&
+                        resId.GetString()?.Equals(resourceSpId, StringComparison.OrdinalIgnoreCase) == true &&
+                        assignment.TryGetProperty("appRoleId", out var roleIdEl))
+                    {
+                        var id = roleIdEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(id)) existingRoleIds.Add(id);
+                    }
+                }
+            }
+
+            var allOk = true;
+            foreach (var roleName in roleNames)
+            {
+                if (!roleIdByName.TryGetValue(roleName, out var appRoleId))
+                {
+                    _logger.LogWarning("App role '{RoleName}' not found on resource {ResourceAppId} — assignment skipped.", roleName, resourceAppId);
+                    allOk = false;
+                    continue;
+                }
+
+                if (existingRoleIds.Contains(appRoleId))
+                {
+                    _logger.LogDebug("App role '{RoleName}' already assigned on blueprint SP {BpSpId}.", roleName, blueprintSpObjectId);
+                    continue;
+                }
+
+                var payload = new
+                {
+                    principalId = blueprintSpObjectId,
+                    resourceId = resourceSpId,
+                    appRoleId = appRoleId
+                };
+
+                var resp = await _graphApiService.GraphPostWithResponseAsync(
+                    tenantId,
+                    $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
+                    payload,
+                    ct,
+                    requiredScopes);
+
+                if (resp.IsSuccess)
+                {
+                    _logger.LogDebug("App role '{RoleName}' assigned to blueprint SP {BpSpId}.", roleName, blueprintSpObjectId);
+                    existingRoleIds.Add(appRoleId); // prevent duplicate POST if same ID appears again
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Failed to assign app role '{RoleName}': HTTP {Status} {Reason} — {Body}",
+                        roleName, (int)resp.StatusCode, resp.ReasonPhrase, resp.Body);
+                    allOk = false;
+                }
+            }
+
+            return allOk;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception granting app role assignments on {ResourceAppId}: {Message}", resourceAppId, ex.Message);
+            return false;
+        }
     }
 
     private static List<string> ParseInheritableScopesFromJson(JsonElement entry)

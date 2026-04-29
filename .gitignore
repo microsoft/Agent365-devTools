@@ -1,5 +1,11 @@
 # Internal working documents
 docs/plans/
+docs/Permissions-Review.md
+docs/Testing.md
+scripts/skills/
+
+# IDE launch profiles (developer-specific)
+**/Properties/launchSettings.json
 
 ## A streamlined .gitignore for modern .NET projects
 ## including temporary files, build results, and

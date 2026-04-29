@@ -199,7 +199,7 @@ The CLI now supports configuring custom API permissions for agent blueprints bey
 
 **Key Components**:
 - **Configuration Model**: `CustomResourcePermission` with GUID validation, scope validation, and duplicate detection
-- **Configuration Command**: `a365 config permissions` to add/update/reset custom permissions in `a365.config.json`
+- **Setup Command**: `a365 setup permissions custom --resource-app-id <guid> --scopes <scopes>` to apply inline custom permissions
 - **Setup Commands**: `a365 setup permissions custom` and integration with `a365 setup all`
 - **Storage**: Custom permissions stored in `a365.config.json` (static configuration)
 
@@ -210,13 +210,10 @@ User configures → a365.config.json → Setup applies → OAuth2 grants + Inher
 
 **Usage**:
 ```bash
-# Configure custom permissions
-a365 config permissions \
+# Apply inline custom permissions to blueprint
+a365 setup permissions custom \
   --resource-app-id 00000003-0000-0000-c000-000000000000 \
   --scopes Presence.ReadWrite,Files.Read.All
-
-# Apply to blueprint
-a365 setup permissions custom
 
 # Or use setup all (auto-applies if configured)
 a365 setup all

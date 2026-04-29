@@ -1,4 +1,7 @@
-﻿namespace Microsoft.Agents.A365.DevTools.Cli.Services;
+﻿// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
 /// Provides delegated access tokens for Microsoft Graph via PowerShell authentication.
@@ -23,5 +26,6 @@ public interface IMicrosoftGraphTokenProvider
         bool useDeviceCode = false,
         string? clientAppId = null,
         CancellationToken ct = default,
-        string? loginHint = null);
+        string? loginHint = null,
+        bool forceRefresh = false);
 }

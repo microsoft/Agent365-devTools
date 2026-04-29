@@ -13,6 +13,26 @@ using System.Text.Json;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
+/// Abstraction over MSAL token acquisition used by ArmApiService and GraphApiService.
+/// Enables test substitution without triggering real interactive authentication.
+/// Co-located with AuthenticationService per the related-interfaces convention.
+/// </summary>
+public interface IAuthenticationService
+{
+    Task<string> GetAccessTokenAsync(
+        string resourceUrl,
+        string? tenantId = null,
+        bool forceRefresh = false,
+        string? clientId = null,
+        IEnumerable<string>? scopes = null,
+        bool useInteractiveBrowser = true,
+        string? userId = null,
+        CancellationToken ct = default);
+
+    Task<string?> ResolveLoginHintFromCacheAsync();
+}
+
+/// <summary>
 /// Service for handling authentication to Agent 365 Tools and Microsoft Graph API.
 ///
 /// AUTHENTICATION STRATEGY:
@@ -37,7 +57,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// - Subsequent commands: 0 prompts (uses cached tokens)
 /// - Token refresh: Automatic when within 5 minutes of expiration
 /// </summary>
-public class AuthenticationService
+public class AuthenticationService : IAuthenticationService
 {
     private readonly ILogger<AuthenticationService> _logger;
     private readonly string _tokenCachePath;
@@ -66,7 +86,8 @@ public class AuthenticationService
         string? clientId = null,
         IEnumerable<string>? scopes = null,
         bool useInteractiveBrowser = true,
-        string? userId = null)
+        string? userId = null,
+        CancellationToken ct = default)
     {
         // Build cache key based on resource, tenant, and user identity.
         // Including userId ensures that cached tokens are not shared across different users
@@ -105,9 +126,31 @@ public class AuthenticationService
                         }
                         else
                         {
-                            _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
-                                resourceUrl, tenantId);
-                            return cachedToken.AccessToken;
+                            // Validate UPN: cached token must be for the same user identity as the cache key.
+                            if (!string.IsNullOrWhiteSpace(userId))
+                            {
+                                var tokenUpn = TryExtractUpnFromJwt(cachedToken.AccessToken);
+                                if (!string.IsNullOrWhiteSpace(tokenUpn) &&
+                                    !string.Equals(tokenUpn, userId, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    _logger.LogDebug(
+                                        "Cached token is for user {TokenUser} but requested user is {RequestedUser}. Re-authenticating...",
+                                        tokenUpn, userId);
+                                    // Fall through to re-authenticate
+                                }
+                                else
+                                {
+                                    _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                                        resourceUrl, tenantId);
+                                    return cachedToken.AccessToken;
+                                }
+                            }
+                            else
+                            {
+                                _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
+                                    resourceUrl, tenantId);
+                                return cachedToken.AccessToken;
+                            }
                         }
                     }
                     else
@@ -124,8 +167,28 @@ public class AuthenticationService
         }
 
         // Authenticate interactively with specific tenant and scopes
-        _logger.LogInformation("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
+        _logger.LogDebug("Authentication required for Agent 365 Tools");
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, ct: ct);
+
+        // Validate the token identity before caching: if a userId was requested,
+        // ensure the returned token is actually for that user. WAM may return a
+        // guest/cross-app token for an account it considers "equivalent" (same Microsoft
+        // account in a different tenant). Caching the wrong token would cause silent
+        // failures on the next run.
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            var returnedUpn = TryExtractUpnFromJwt(token.AccessToken);
+            if (!string.IsNullOrWhiteSpace(returnedUpn) &&
+                !string.Equals(returnedUpn, userId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug(
+                    "Authentication returned token for {ReturnedUser} but {RequestedUser} was requested. Not caching.",
+                    returnedUpn, userId);
+                // Return the token as-is — it may still be valid for this call.
+                // Do not write it to cache under the userId key.
+                return token.AccessToken;
+            }
+        }
 
         // Cache the token with the appropriate cache key
         await CacheTokenAsync(cacheKey, token);
@@ -147,7 +210,8 @@ public class AuthenticationService
         string? clientId = null,
         IEnumerable<string>? explicitScopes = null,
         bool useInteractiveBrowser = false,
-        string? loginHint = null)
+        string? loginHint = null,
+        CancellationToken ct = default)
     {
         // Declare variables outside try block so they're available in catch for logging
         string effectiveTenantId = tenantId ?? "unknown";
@@ -175,7 +239,7 @@ public class AuthenticationService
             {
                 string scope;
                 // Check if this is the production App ID
-                if (resourceUrl == McpConstants.Agent365ToolsProdAppId)
+                if (resourceUrl == McpConstants.WorkIQToolsProdAppId)
                 {
                     scope = $"{resourceUrl}/.default";
                     _logger.LogDebug("Authenticating to Agent 365 Tools");
@@ -186,9 +250,9 @@ public class AuthenticationService
                     // Use production App ID by default
                     // For non-production environments, users should provide the App ID directly via config
                     // or set environment variable A365_MCP_APP_ID (without environment suffix for backward compatibility)
-                    var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.Agent365ToolsProdAppId;
+                    var appId = Environment.GetEnvironmentVariable("A365_MCP_APP_ID") ?? McpConstants.WorkIQToolsProdAppId;
 
-                    if (appId != McpConstants.Agent365ToolsProdAppId)
+                    if (appId != McpConstants.WorkIQToolsProdAppId)
                     {
                         _logger.LogDebug("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
                     }
@@ -205,11 +269,11 @@ public class AuthenticationService
                     // This allows passing custom App IDs directly via config
                     scope = resourceUrl.EndsWith("/.default", StringComparison.OrdinalIgnoreCase)
                         ? resourceUrl
-                        : $"{resourceUrl}/.default";
+                        : $"{resourceUrl.TrimEnd('/')}/.default";
                     _logger.LogDebug("Using custom resource for authentication: {Resource}", resourceUrl);
                 }
                 scopes = [scope];
-                _logger.LogDebug($"Token scope: {scope}");
+                _logger.LogDebug("Token scope: {Scope}", scope);
             }
 
             _logger.LogDebug("Authenticating for tenant: {TenantId}", effectiveTenantId);
@@ -224,9 +288,7 @@ public class AuthenticationService
             if (useInteractiveBrowser)
             {
                 // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
-                _logger.LogDebug("Using interactive authentication...");
-                _logger.LogDebug("Please sign in with your Microsoft account and grant consent for the requested permissions.");
-                _logger.LogDebug("");
+                _logger.LogDebug("Using interactive authentication (browser/WAM)...");
 
                 credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint);
             }
@@ -242,7 +304,7 @@ public class AuthenticationService
             AccessToken tokenResult;
             try
             {
-                tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
+                tokenResult = await credential.GetTokenAsync(tokenRequestContext, ct);
             }
             catch (MsalAuthenticationFailedException ex) when (useInteractiveBrowser && ex.InnerException is PlatformNotSupportedException)
             {
@@ -250,7 +312,7 @@ public class AuthenticationService
                 _logger.LogDebug("Using device code authentication...");
                 _logger.LogDebug("Please sign in with your Microsoft account");
                 var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
-                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
+                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, ct);
             }
             _logger.LogDebug("Authentication successful!");
 
@@ -407,7 +469,7 @@ public class AuthenticationService
     public string[] ResolveScopesForResource(string resourceUrl, string? manifestPath = null)
     {
         // Default to Agent 365 Tools resource app ID scope for backward compatibility
-        var scope = $"{McpConstants.Agent365ToolsProdAppId}/.default";
+        var scope = $"{McpConstants.WorkIQToolsProdAppId}/.default";
         var defaultScopes = new[] { scope };
 
         // If no manifest path provided, try to find it in current directory
@@ -557,6 +619,59 @@ public class AuthenticationService
                 return Task.CompletedTask;
             }
         });
+    }
+
+    /// <summary>
+    /// Resolves the login hint (UPN) from the persistent token cache by decoding a cached JWT.
+    /// Used to pre-select the correct account for WAM/MSAL when az CLI is not available.
+    /// Returns null if no cached token exists or the UPN claim cannot be read.
+    /// </summary>
+    public async Task<string?> ResolveLoginHintFromCacheAsync()
+    {
+        if (!File.Exists(_tokenCachePath))
+            return null;
+        try
+        {
+            var json = await File.ReadAllTextAsync(_tokenCachePath);
+            var cache = JsonSerializer.Deserialize<TokenCache>(json);
+            if (cache?.Tokens == null) return null;
+            foreach (var entry in cache.Tokens.Values)
+            {
+                var upn = TryExtractUpnFromJwt(entry.AccessToken);
+                if (!string.IsNullOrWhiteSpace(upn))
+                    return upn;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve login hint from token cache");
+        }
+        return null;
+    }
+
+    private static string? TryExtractUpnFromJwt(string? jwt)
+    {
+        if (string.IsNullOrWhiteSpace(jwt)) return null;
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return null;
+            var payload = parts[1];
+            // JWT uses Base64Url encoding: replace URL-safe chars before standard Base64 decode.
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            // Restore Base64 padding stripped by JWT encoding.
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            var bytes = Convert.FromBase64String(payload);
+            using var doc = JsonDocument.Parse(bytes);
+            if (doc.RootElement.TryGetProperty("upn", out var upn) && !string.IsNullOrWhiteSpace(upn.GetString()))
+                return upn.GetString();
+            if (doc.RootElement.TryGetProperty("preferred_username", out var pref) && !string.IsNullOrWhiteSpace(pref.GetString()))
+                return pref.GetString();
+            if (doc.RootElement.TryGetProperty("unique_name", out var uniqueName) && !string.IsNullOrWhiteSpace(uniqueName.GetString()))
+                return uniqueName.GetString();
+        }
+        catch { } // Static helper — no logger access. Caller logs via ResolveLoginHintFromCacheAsync.
+        return null;
     }
 
     /// <summary>

@@ -12,10 +12,14 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 public class RetryHelper
 {
     private readonly ILogger _logger;
+    private readonly int _maxRetries;
+    private readonly int _baseDelaySeconds;
 
-    public RetryHelper(ILogger logger)
+    public RetryHelper(ILogger logger, int maxRetries = 3, int baseDelaySeconds = 1)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _maxRetries = maxRetries;
+        _baseDelaySeconds = baseDelaySeconds;
     }
 
     /// <summary>
@@ -24,8 +28,8 @@ public class RetryHelper
     /// <typeparam name="T">Return type of the operation</typeparam>
     /// <param name="operation">The async operation to execute. Receives a cancellation token and returns a result.</param>
     /// <param name="shouldRetry">Predicate that determines if retry is needed. Returns TRUE when the operation should be retried (operation failed), FALSE when operation succeeded and no retry is needed.</param>
-    /// <param name="maxRetries">Maximum number of retry attempts before giving up (default: 5)</param>
-    /// <param name="baseDelaySeconds">Base delay in seconds for exponential backoff calculation (default: 2). Actual delay doubles with each attempt.</param>
+    /// <param name="maxRetries">Maximum number of retry attempts. Defaults to the value set in the constructor.</param>
+    /// <param name="baseDelaySeconds">Base delay in seconds for exponential backoff. Defaults to the value set in the constructor.</param>
     /// <param name="cancellationToken">Cancellation token to cancel the operation</param>
     /// <returns>Result of the operation when shouldRetry returns false (success), or the last result after all retries are exhausted (may be null/default(T) if operation never succeeded)</returns>
     /// <exception cref="HttpRequestException">Thrown when HTTP request fails on the last retry attempt</exception>
@@ -33,15 +37,17 @@ public class RetryHelper
     public async Task<T> ExecuteWithRetryAsync<T>(
         Func<CancellationToken, Task<T>> operation,
         Func<T, bool> shouldRetry,
-        int maxRetries = 5,
-        int baseDelaySeconds = 2,
+        int? maxRetries = null,
+        int? baseDelaySeconds = null,
         CancellationToken cancellationToken = default)
     {
+        var retries = maxRetries ?? _maxRetries;
+        var delay = baseDelaySeconds ?? _baseDelaySeconds;
         int attempt = 0;
         Exception? lastException = null;
         T? lastResult = default;
 
-        while (attempt < maxRetries)
+        while (attempt < retries)
         {
             try
             {
@@ -52,14 +58,14 @@ public class RetryHelper
                     return lastResult;
                 }
 
-                if (attempt < maxRetries - 1)
+                if (attempt < retries - 1)
                 {
-                    var delay = CalculateDelay(attempt, baseDelaySeconds);
-                    _logger.LogInformation(
+                    var delaySpan = CalculateDelay(attempt, delay);
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
-                        attempt + 1, maxRetries, (int)delay.TotalSeconds);
+                        attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
-                    await Task.Delay(delay, cancellationToken);
+                    await Task.Delay(delaySpan, cancellationToken);
                 }
 
                 attempt++;
@@ -72,14 +78,14 @@ public class RetryHelper
                 lastException = ex;
                 _logger.LogWarning("Exception: {Message}", ex.Message);
 
-                if (attempt < maxRetries - 1)
+                if (attempt < retries - 1)
                 {
-                    var delay = CalculateDelay(attempt, baseDelaySeconds);
-                    _logger.LogInformation(
+                    var delaySpan = CalculateDelay(attempt, delay);
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
-                        attempt + 1, maxRetries, (int)delay.TotalSeconds);
+                        attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
-                    await Task.Delay(delay, cancellationToken);
+                    await Task.Delay(delaySpan, cancellationToken);
                 }
 
                 attempt++;
@@ -97,7 +103,7 @@ public class RetryHelper
         {
             throw new RetryExhaustedException(
                 "Async operation with retry",
-                maxRetries,
+                retries,
                 "Operation did not return a value and no exception was thrown");
         }
 
@@ -109,14 +115,14 @@ public class RetryHelper
     /// </summary>
     /// <typeparam name="T">Return type of the operation</typeparam>
     /// <param name="operation">The operation to execute</param>
-    /// <param name="maxRetries">Maximum number of retry attempts (default: 5)</param>
-    /// <param name="baseDelaySeconds">Base delay in seconds for exponential backoff (default: 2)</param>
+    /// <param name="maxRetries">Maximum number of retry attempts. Defaults to the value set in the constructor.</param>
+    /// <param name="baseDelaySeconds">Base delay in seconds for exponential backoff. Defaults to the value set in the constructor.</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result of the operation</returns>
     public async Task<T> ExecuteWithRetryAsync<T>(
         Func<CancellationToken, Task<T>> operation,
-        int maxRetries = 5,
-        int baseDelaySeconds = 2,
+        int? maxRetries = null,
+        int? baseDelaySeconds = null,
         CancellationToken cancellationToken = default)
     {
         return await ExecuteWithRetryAsync(
@@ -135,22 +141,24 @@ public class RetryHelper
     /// <typeparam name="T">Return type of the operation</typeparam>
     /// <param name="operation">The async operation to execute. Receives a cancellation token and returns a result.</param>
     /// <param name="shouldRetryAsync">Async predicate that determines if retry is needed. Returns TRUE when the operation should be retried, FALSE when done.</param>
-    /// <param name="maxRetries">Maximum number of retry attempts before giving up (default: 5)</param>
-    /// <param name="baseDelaySeconds">Base delay in seconds for exponential backoff calculation (default: 2).</param>
+    /// <param name="maxRetries">Maximum number of retry attempts. Defaults to the value set in the constructor.</param>
+    /// <param name="baseDelaySeconds">Base delay in seconds for exponential backoff. Defaults to the value set in the constructor.</param>
     /// <param name="cancellationToken">Cancellation token to cancel the operation</param>
     /// <returns>Result of the operation when shouldRetryAsync returns false (success), or the last result after all retries are exhausted.</returns>
     public async Task<T> ExecuteWithRetryAsync<T>(
         Func<CancellationToken, Task<T>> operation,
         Func<T, CancellationToken, Task<bool>> shouldRetryAsync,
-        int maxRetries = 5,
-        int baseDelaySeconds = 2,
+        int? maxRetries = null,
+        int? baseDelaySeconds = null,
         CancellationToken cancellationToken = default)
     {
+        var retries = maxRetries ?? _maxRetries;
+        var delay = baseDelaySeconds ?? _baseDelaySeconds;
         int attempt = 0;
         Exception? lastException = null;
         T? lastResult = default;
 
-        while (attempt < maxRetries)
+        while (attempt < retries)
         {
             try
             {
@@ -161,14 +169,14 @@ public class RetryHelper
                     return lastResult;
                 }
 
-                if (attempt < maxRetries - 1)
+                if (attempt < retries - 1)
                 {
-                    var delay = CalculateDelay(attempt, baseDelaySeconds);
-                    _logger.LogInformation(
+                    var delaySpan = CalculateDelay(attempt, delay);
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
-                        attempt + 1, maxRetries, (int)delay.TotalSeconds);
+                        attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
-                    await Task.Delay(delay, cancellationToken);
+                    await Task.Delay(delaySpan, cancellationToken);
                 }
 
                 attempt++;
@@ -181,14 +189,14 @@ public class RetryHelper
                 lastException = ex;
                 _logger.LogWarning("Exception: {Message}", ex.Message);
 
-                if (attempt < maxRetries - 1)
+                if (attempt < retries - 1)
                 {
-                    var delay = CalculateDelay(attempt, baseDelaySeconds);
-                    _logger.LogInformation(
+                    var delaySpan = CalculateDelay(attempt, delay);
+                    _logger.LogDebug(
                         "Retry attempt {AttemptNumber} of {MaxRetries}. Waiting {DelaySeconds} seconds...",
-                        attempt + 1, maxRetries, (int)delay.TotalSeconds);
+                        attempt + 1, retries, (int)delaySpan.TotalSeconds);
 
-                    await Task.Delay(delay, cancellationToken);
+                    await Task.Delay(delaySpan, cancellationToken);
                 }
 
                 attempt++;
@@ -204,7 +212,7 @@ public class RetryHelper
         {
             throw new RetryExhaustedException(
                 "Async operation with retry",
-                maxRetries,
+                retries,
                 "Operation did not return a value and no exception was thrown");
         }
 

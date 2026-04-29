@@ -40,7 +40,7 @@ public sealed class ClientAppValidationException : Agent365Exception
             mitigationSteps: new List<string>
             {
                 "Verify 'clientAppId' in a365.config.json is the Application (client) ID, not Object ID.",
-                "Run 'a365 config init' to create a new app, or check the app exists in Azure Portal.",
+                "Run 'a365 setup all --agent-name <name>' to set up from scratch, or check the app exists in Azure Portal.",
                 "Ensure you are logged in with the correct tenant using 'az login'.",
                 $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
@@ -81,29 +81,51 @@ public sealed class ClientAppValidationException : Agent365Exception
 
     /// <summary>
     /// Creates exception for missing admin consent.
+    /// Includes a direct admin consent URL that a Global Administrator can open to grant consent.
     /// </summary>
-    public static ClientAppValidationException MissingAdminConsent(string clientAppId)
+    public static ClientAppValidationException MissingAdminConsent(string clientAppId, string? tenantId = null)
     {
+        var consentUrl = BuildAdminConsentUrl(clientAppId, tenantId);
+        var consentInstruction = consentUrl != null
+            ? $"Share this URL with a Global Administrator to grant consent:\n  {consentUrl}"
+            : "Grant admin consent at: Azure Portal > App registrations > Your app > API permissions.";
+
         return new ClientAppValidationException(
             issueDescription: "Admin consent not granted for client app",
             errorDetails: new List<string>
             {
-                "The required permissions are configured but admin consent is missing",
-                "Admin consent must be granted by a Global Administrator"
+                "The required permissions are configured but admin consent (AllPrincipals) is missing.",
+                "A per-user consent grant is not sufficient — all users in the tenant need access.",
+                "Admin consent must be granted by a Global Administrator."
             },
             mitigationSteps: new List<string>
             {
-                "Grant admin consent at: Azure Portal > App registrations > Your app > API permissions.",
-                "Click 'Grant admin consent for [Your Tenant]' and wait for propagation.",
-                "Confirm the consent dialog when prompted.",
-                "Verify the status shows 'Granted for [Your Tenant]' with a green checkmark.",
-                "Wait a few minutes for consent to propagate through Azure AD.",
+                consentInstruction,
+                "Alternatively: Azure Portal > App registrations > Your app > API permissions > Grant admin consent.",
+                "After consent is granted, re-run 'a365 setup requirements' to verify.",
                 $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },
             context: new Dictionary<string, string>
             {
-                ["clientAppId"] = clientAppId
+                ["clientAppId"] = clientAppId,
+                ["adminConsentUrl"] = consentUrl ?? string.Empty
             });
+    }
+
+    /// <summary>
+    /// Builds the admin consent URL for the given client app and tenant.
+    /// A Global Administrator can open this URL to grant tenant-wide (AllPrincipals) consent.
+    /// </summary>
+    public static string? BuildAdminConsentUrl(string clientAppId, string? tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
+            return null;
+
+        // Standard native-app redirect URI accepted by Entra ID for admin consent flows
+        const string redirectUri = "https://login.microsoftonline.com/common/oauth2/nativeclient";
+        var clientIdEncoded = Uri.EscapeDataString(clientAppId);
+        var redirectUriEncoded = Uri.EscapeDataString(redirectUri);
+        return $"https://login.microsoftonline.com/{tenantId}/adminconsent?client_id={clientIdEncoded}&redirect_uri={redirectUriEncoded}";
     }
 
     /// <summary>
