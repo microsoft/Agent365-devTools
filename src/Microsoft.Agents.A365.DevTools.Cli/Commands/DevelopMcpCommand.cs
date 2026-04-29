@@ -42,7 +42,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
-        developMcpCommand.AddCommand(CreateDeleteExternalMcpServerSubcommand(logger, toolingService, graphApiService));
+        developMcpCommand.AddCommand(CreateCleanupExternalMcpServerResourcesSubcommand(logger, toolingService, graphApiService));
 
         return developMcpCommand;
     }
@@ -1840,16 +1840,16 @@ public static class DevelopMcpCommand
     }
 
     /// <summary>
-    /// Creates the delete-external-mcp-server subcommand
+    /// Creates the cleanup-external-mcp-server-resources subcommand
     /// </summary>
-    private static Command CreateDeleteExternalMcpServerSubcommand(
+    private static Command CreateCleanupExternalMcpServerResourcesSubcommand(
         ILogger logger,
         IAgent365ToolingService toolingService,
         GraphApiService? graphApiService)
     {
-        var command = new Command("delete-external-mcp-server", "Delete a registered external MCP server");
+        var command = new Command("cleanup-external-mcp-server-resources", "Delete a registered external MCP server and clean up all associated Entra app registrations");
 
-        var serverNameOption = new Option<string>(["-s", "--server-name"], description: "Name of the MCP server to delete") { IsRequired = true };
+        var serverNameOption = new Option<string>(["-s", "--server-name"], description: "Name of the MCP server to clean up") { IsRequired = true };
         command.AddOption(serverNameOption);
 
         var tenantIdOption = new Option<string?>(["-t", "--tenant-id"], description: "Azure AD tenant ID (auto-detected from az CLI if not specified)");
@@ -1883,8 +1883,9 @@ public static class DevelopMcpCommand
                 return;
             }
 
-            Console.WriteLine($"Deleting MCP server '{serverName}'...");
+            Console.WriteLine($"Cleaning up MCP server '{serverName}' and associated resources...");
 
+            // Step 1: Delete server record via backend (also deletes connectors, PPMI, MOS title)
             var deleteResponse = await toolingService.DeleteMcpServerAsync(serverName, force);
             if (deleteResponse == null)
             {
@@ -1900,37 +1901,6 @@ public static class DevelopMcpCommand
                 return;
             }
 
-            // Delete Entra apps returned by the backend
-            var appIds = deleteResponse.AppIds;
-            if (graphApiService != null && appIds != null && appIds.Count > 0)
-            {
-                Console.WriteLine($"Cleaning up {appIds.Count} Entra app(s)...");
-                foreach (var app in appIds)
-                {
-                    if (string.IsNullOrWhiteSpace(app.AppId))
-                        continue;
-
-                    try
-                    {
-                        var objectId = await graphApiService.GetAppObjectIdByClientIdAsync(tenantId, app.AppId);
-                        if (!string.IsNullOrWhiteSpace(objectId))
-                        {
-                            logger.LogDebug("Deleting Entra app '{AppName}' (clientId: {AppId}, objectId: {ObjectId})", app.AppName, app.AppId, objectId);
-                            await graphApiService.DeleteEntraAppAsync(tenantId, objectId);
-                            Console.WriteLine($"  Deleted: {app.AppName} ({app.AppId})");
-                        }
-                        else
-                        {
-                            logger.LogDebug("Entra app '{AppName}' (clientId: {AppId}) not found - may have been already deleted", app.AppName, app.AppId);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning("Failed to delete Entra app '{AppName}' ({AppId}): {Error}", app.AppName, app.AppId, ex.Message);
-                    }
-                }
-            }
-
             if (!string.IsNullOrWhiteSpace(deleteResponse.MosTitleId))
             {
                 Console.WriteLine(deleteResponse.MosTitleDeleted
@@ -1938,7 +1908,55 @@ public static class DevelopMcpCommand
                     : $"WARNING: MOS title '{deleteResponse.MosTitleId}' was NOT deleted. Manual cleanup may be required.");
             }
 
-            Console.WriteLine($"MCP server '{serverName}' has been deleted successfully.");
+            Console.WriteLine($"MCP server '{serverName}' deleted from backend.");
+
+            // Step 2: Clean up Entra app registrations by display name pattern
+            // Registration creates up to 4 apps: {name}-A365Proxy, {name}-RemoteProxy, {name}-PublicClients, {name} - BYO
+            if (graphApiService == null)
+            {
+                logger.LogWarning("Graph API service not available. Entra app cleanup skipped.");
+                return;
+            }
+
+            var appSuffixes = new[]
+            {
+                ("-A365Proxy", $"{serverName}-A365Proxy"),
+                ("-RemoteProxy", $"{serverName}-RemoteProxy"),
+                ("-PublicClients", $"{serverName}-PublicClients"),
+                (" - BYO", $"{serverName} - BYO"),
+            };
+
+            Console.WriteLine("Cleaning up Entra app registrations...");
+            var deletedCount = 0;
+
+            foreach (var (suffix, displayName) in appSuffixes)
+            {
+                try
+                {
+                    var objectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, displayName);
+                    if (!string.IsNullOrWhiteSpace(objectId))
+                    {
+                        logger.LogDebug("Deleting Entra app '{DisplayName}' (objectId: {ObjectId})", displayName, objectId);
+                        await graphApiService.DeleteEntraAppAsync(tenantId, objectId);
+                        Console.WriteLine($"  Deleted: {displayName}");
+                        deletedCount++;
+                    }
+                    else
+                    {
+                        logger.LogDebug("Entra app '{DisplayName}' not found - may not exist or already deleted", displayName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning("Failed to delete Entra app '{DisplayName}': {Error}", displayName, ex.Message);
+                }
+            }
+
+            Console.WriteLine(deletedCount > 0
+                ? $"Cleaned up {deletedCount} Entra app(s)."
+                : "No Entra apps found to clean up.");
+
+            Console.WriteLine($"MCP server '{serverName}' and associated resources have been cleaned up successfully.");
         });
 
         return command;

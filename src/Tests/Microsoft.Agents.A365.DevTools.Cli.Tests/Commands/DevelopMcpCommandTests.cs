@@ -54,7 +54,7 @@ public class DevelopMcpCommandTests
             "block",
             "package-mcp-server",
             "register-external-mcp-server",
-            "delete-external-mcp-server"
+            "cleanup-external-mcp-server-resources"
         });
     }
 
@@ -261,9 +261,9 @@ public class DevelopMcpCommandTests
         // Act
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
-        // delete-external-mcp-server does not support --dry-run by design
+        // cleanup-external-mcp-server-resources does not support --dry-run by design
         var subcommandsWithDryRun = command.Subcommands
-            .Where(sc => sc.Name != "delete-external-mcp-server");
+            .Where(sc => sc.Name != "cleanup-external-mcp-server-resources");
 
         // Assert - All applicable subcommands should have dry-run option for safety
         foreach (var subcommand in subcommandsWithDryRun)
