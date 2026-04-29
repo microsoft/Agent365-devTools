@@ -454,7 +454,7 @@ internal static class BatchPermissionsOrchestrator
     /// <summary>
     /// Grants S2S app role assignments for all specs that carry <see cref="ResourcePermissionSpec.AppRoleScopes"/>.
     /// Idempotent: skips roles already assigned. Sets <see cref="SetupResults.S2SAppRoleGranted"/> on completion.
-    /// Requires Application Administrator or Global Administrator and <see cref="AuthenticationConstants.RequiredS2SGrantScopes"/>.
+    /// Requires Application Administrator, Global Administrator, or Agent ID Administrator and <see cref="AuthenticationConstants.RequiredS2SGrantScopes"/>.
     /// </summary>
     private static async Task PerformS2SGrantsAsync(
         AgentBlueprintService blueprintService,
@@ -496,7 +496,7 @@ internal static class BatchPermissionsOrchestrator
             else
             {
                 logger.LogWarning("   - Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
-                setupResults?.Warnings.Add($"S2S app role assignment failed for {spec.ResourceName}. Re-run 'a365 setup all' as Global Administrator to retry.");
+                setupResults?.Warnings.Add($"S2S app role assignment failed for {spec.ResourceName}. Re-run 'a365 setup all' as {AuthenticationConstants.S2SGrantRequiredRoles} to retry.");
                 allS2SOk = false;
             }
         }

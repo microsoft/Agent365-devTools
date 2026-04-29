@@ -131,11 +131,11 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // 5. Permission Grants — per authMode, applied to the agent identity SP
         if (effectiveMode is "obo")
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants — attempted programmatically (Application Administrator required if 403)");
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)");
         else if (effectiveMode is "s2s")
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "S2S app roles — attempted programmatically; Application Administrator or Global Administrator required if 403");
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "S2S app roles — attempted programmatically ({Roles} required if 403)", AuthenticationConstants.S2SGrantRequiredRoles);
         else if (effectiveMode is "both")
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants + S2S app roles — attempted programmatically; Application Administrator required for S2S if 403");
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {Roles} required for S2S if 403", AuthenticationConstants.S2SGrantRequiredRoles);
 
         // 6. Agent Registration
         if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
@@ -663,7 +663,7 @@ internal static class NonDwBlueprintSetupOrchestrator
 
     /// <summary>
     /// Attempts to grant app role assignments on the agent identity SP for S2S access.
-    /// Requires Application Administrator or Global Administrator. When the signed-in user lacks
+    /// Requires Application Administrator, Global Administrator, or Agent ID Administrator. When the signed-in user lacks
     /// that role, prints PowerShell instructions covering only the app permission section.
     /// </summary>
     internal static async Task GrantOrInstructAgentIdentityAppPermissionsAsync(
@@ -720,7 +720,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Non-admin fallback: print PowerShell instructions for only the failed resources.
         ctx.Results.S2SAppRoleGranted = false;
         ctx.Logger.LogInformation("");
-        ctx.Logger.LogInformation("S2S app role assignments require Application Administrator or Global Administrator. Run the following PowerShell as an admin:");
+        ctx.Logger.LogInformation("S2S app role assignments require {Roles}. Run the following PowerShell:", AuthenticationConstants.S2SGrantRequiredRoles);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  # Connect to Microsoft Graph");
         ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All', 'Directory.Read.All'", ctx.Config.TenantId);
@@ -741,6 +741,6 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         ctx.Logger.LogInformation("");
         ctx.Results.Warnings.Add(
-            "S2S app role assignments require Application Administrator or Global Administrator. PowerShell instructions have been printed above.");
+            $"S2S app role assignments require {AuthenticationConstants.S2SGrantRequiredRoles}. PowerShell instructions have been printed above.");
     }
 }

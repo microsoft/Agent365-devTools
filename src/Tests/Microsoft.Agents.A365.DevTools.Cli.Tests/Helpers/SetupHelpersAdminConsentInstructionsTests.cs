@@ -15,7 +15,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Helpers;
 public class SetupHelpersAdminConsentInstructionsTests
 {
     private const string BlueprintId = "bp-app-id-123";
-    private const string AgentIdentityId = "ai-app-id-456";
     private const string TenantId = "tenant-id-789";
 
     private sealed class CapturingLogger : ILogger
@@ -67,7 +66,7 @@ public class SetupHelpersAdminConsentInstructionsTests
     {
         var logger = new CapturingLogger();
 
-        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, AgentIdentityId);
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
 
         logger.AllOutput.Should().NotContain("Option B",
             because: "OBO mode needs only Entra portal consent — no PowerShell required");

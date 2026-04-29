@@ -135,9 +135,9 @@ az account show --query "{user:user.name, tenantId:tenantId}" -o json
 
 ### Microsoft Entra ID (Azure AD) roles
 
-The user account you authenticate with must have the **Agent ID Developer** role at minimum. This is sufficient for the standard (non-AI Teammate) path: the CLI will interactively request delegated permissions for the agent identity app if Graph-based grants fail, so Application Administrator is not required.
+The user account you authenticate with must have the **Agent ID Developer** role at minimum. This is sufficient for the standard (non-AI Teammate) path: the CLI first attempts the required delegated permission grants programmatically through Microsoft Graph for the agent identity service principal. If those Graph-based grants cannot be created, the CLI surfaces PowerShell fallback instructions in the setup summary — no Application Administrator is required for the normal path. Any interactive consent prompt at runtime applies to the tenant's **"Agent 365 CLI"** client app, not to the agent identity app.
 
-For the AI Teammate path (infrastructure provisioning), **Azure Contributor** is also required. S2S app role assignments require **Application Administrator or Global Administrator** — the CLI prints PowerShell fallback instructions if the current user lacks this role.
+For the AI Teammate path (infrastructure provisioning), **Azure Contributor** is also required. S2S app role assignments require **Agent ID Administrator, Application Administrator, or Global Administrator** — the CLI prints PowerShell fallback instructions if the current user lacks one of these roles.
 
 ### Custom client app
 

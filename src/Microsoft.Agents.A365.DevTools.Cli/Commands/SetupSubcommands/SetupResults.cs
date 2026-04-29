@@ -135,10 +135,13 @@ public class SetupResults
     public bool AgentIdentityPermissionsGranted { get; set; }
 
     /// <summary>
-    /// True when principal-scoped delegated grants failed for the agent identity because the signed-in
-    /// user lacks the required admin role. When set, <see cref="SetupHelpers"/> surfaces PowerShell
-    /// instructions in the Action Required section using <see cref="AgentIdentityId"/> and
-    /// <see cref="TenantId"/>. Drives the delegated consent action item in the setup summary.
+    /// True when principal-scoped delegated grants for the agent identity were not completed during
+    /// the non-DW setup flow and manual follow-up may be required. This can occur when the signed-in
+    /// user lacks the required admin role, or when prerequisite directory objects such as the target
+    /// resource service principal are not yet resolvable due to creation or propagation timing. When
+    /// set, <see cref="SetupHelpers"/> surfaces PowerShell instructions in the Action Required section
+    /// using <see cref="AgentIdentityId"/> and <see cref="TenantId"/> as the suggested remediation
+    /// path. Drives the delegated consent action item in the setup summary.
     /// </summary>
     public bool AgentIdentityDelegatedGrantPending { get; set; }
 

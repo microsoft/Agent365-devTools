@@ -265,6 +265,18 @@ public static class AuthenticationConstants
     };
 
     /// <summary>
+    /// Entra roles that can perform S2S app role assignments programmatically.
+    /// All three roles have been verified to work with <see cref="RequiredS2SGrantScopes"/>.
+    /// Listed in order of least privilege: Agent ID Administrator, Application Administrator, Global Administrator.
+    /// </summary>
+    public const string S2SGrantRequiredRoles = "Agent ID Administrator, Application Administrator, or Global Administrator";
+
+    /// <summary>
+    /// Entra roles that can create principal-scoped delegated permission grants programmatically.
+    /// </summary>
+    public const string DelegatedGrantRequiredRoles = "Application Administrator or Global Administrator";
+
+    /// <summary>
     /// Scopes requested when acquiring an interactive Graph token for blueprint creation
     /// and inheritable permissions configuration (used by InteractiveGraphAuthService).
     /// Expressed as fully-qualified URIs as required by the Graph SDK credential constructor.

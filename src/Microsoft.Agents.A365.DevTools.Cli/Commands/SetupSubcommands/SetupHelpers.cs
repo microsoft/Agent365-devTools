@@ -364,8 +364,6 @@ internal static class SetupHelpers
     internal static void LogNonDwAdminConsentInstructions(
         ILogger logger,
         string blueprintId,
-        string? agentIdentitySpObjectId = null,
-        string? agentIdentityDisplayName = null,
         IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null,
         string? tenantId = null)
     {
@@ -653,14 +651,18 @@ internal static class SetupHelpers
                 else
                 {
                     logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
-                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId, results.AgentIdentityDisplayName, tenantId: results.TenantId);
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, tenantId: results.TenantId);
                 }
             }
             if (pendingS2SAction)
             {
                 actionCount++;
-                logger.LogInformation("  {N}. Observability API S2S app role — run as Application Administrator or Global Administrator (PowerShell):", actionCount);
-                logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All'");
+                logger.LogInformation("  {N}. Observability API S2S app role (PowerShell):", actionCount);
+                logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
+                if (!string.IsNullOrWhiteSpace(results.TenantId))
+                    logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'", results.TenantId);
+                else
+                    logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'");
                 if (isNonDw)
                 {
                     // Non-DW: grant targets the agent identity SP directly (SP object ID, not an app ID).
@@ -692,7 +694,8 @@ internal static class SetupHelpers
             if (pendingDelegatedAction)
             {
                 actionCount++;
-                logger.LogInformation("  {N}. Agent identity delegated permissions — run the following PowerShell as Application Administrator or Global Administrator:", actionCount);
+                logger.LogInformation("  {N}. Agent identity delegated permissions (PowerShell):", actionCount);
+                logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.DelegatedGrantRequiredRoles);
                 logger.LogInformation("");
                 logger.LogInformation("     Connect-MgGraph -TenantId '{TenantId}' -Scopes 'DelegatedPermissionGrant.ReadWrite.All', 'Directory.Read.All'", results.TenantId ?? "<tenant-id>");
                 logger.LogInformation("");
