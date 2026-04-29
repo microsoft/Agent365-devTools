@@ -1411,7 +1411,7 @@ public static class DevelopMcpCommand
                 var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{copilotAppClientId}";
                 try
                 {
-                    await graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, copilotAppObjectId, new[] { copilotRedirectUri });
+                    await graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, copilotAppObjectId, new[] { copilotRedirectUri, "http://localhost:8080/callback" });
                     logger.LogDebug("Set redirect URI on '{AppName}' ({ObjectId}): {Uri}", publicClientsAppName, copilotAppObjectId, copilotRedirectUri);
                 }
                 catch (Exception ex)
