@@ -27,11 +27,6 @@ internal static class GetTokenSubcommand
             "Retrieve bearer tokens for MCP server authentication\n" +
             "Scopes are read from ToolingManifest.json or specified via command line");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var appIdOption = new Option<string?>(
             ["--app-id"],
             description: "Application (client) ID to get token for. If not specified, uses the client app ID from config")
@@ -79,7 +74,6 @@ internal static class GetTokenSubcommand
             IsRequired = false
         };
 
-        command.AddOption(configOption);
         command.AddOption(appIdOption);
         command.AddOption(manifestOption);
         command.AddOption(scopesOption);
@@ -92,7 +86,7 @@ internal static class GetTokenSubcommand
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
             // Extract option values from context
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var appId = context.ParseResult.GetValueForOption(appIdOption);
             var manifest = context.ParseResult.GetValueForOption(manifestOption);
             var scopes = context.ParseResult.GetValueForOption(scopesOption);
@@ -108,7 +102,7 @@ internal static class GetTokenSubcommand
                 if (!string.IsNullOrWhiteSpace(resource) && !string.IsNullOrWhiteSpace(resourceId))
                 {
                     logger.LogError("Cannot specify both --resource and --resource-id. Use one or the other.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -131,11 +125,11 @@ internal static class GetTokenSubcommand
                     logger.LogError("Configuration file not found: {ConfigPath}", config.FullName);
                     logger.LogInformation("");
                     logger.LogInformation("To retrieve bearer tokens, you must either:");
-                    logger.LogInformation("  1. Create a config file using: a365 config init");
+                    logger.LogInformation("  1. Run 'a365 setup all --agent-name <name>' to create a config file.");
                     logger.LogInformation("  2. Specify the application ID using: a365 develop gettoken --app-id <your-app-id>");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop gettoken --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -154,7 +148,7 @@ internal static class GetTokenSubcommand
                         logger.LogError("Invalid resource application ID: {ResourceId}. Expected a valid GUID.", resourceId);
                         logger.LogInformation("");
                         logger.LogInformation("Example: a365 develop get-token --resource-id 12345678-1234-1234-1234-123456789abc --scopes .default");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -170,7 +164,7 @@ internal static class GetTokenSubcommand
                     if (resolved == null)
                     {
                         logger.LogError("Unknown resource keyword '{Resource}'. Valid options: mcp, powerplatform", resource);
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -202,7 +196,7 @@ internal static class GetTokenSubcommand
                     logger.LogInformation("Please omit the --resource and --resource-id options if you'd like to use manifest-based scopes.");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop get-token --resource powerplatform --scopes .default");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
                 else
@@ -219,7 +213,7 @@ internal static class GetTokenSubcommand
                         logger.LogInformation("or specify scopes explicitly with --scopes option.");
                         logger.LogInformation("");
                         logger.LogInformation("Example: a365 develop get-token --scopes McpServers.Mail.All McpServers.Calendar.All");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -230,10 +224,16 @@ internal static class GetTokenSubcommand
                         outputFormat, verbose, forceRefresh, authService, logger);
                 }
             }
+            catch (Exceptions.CleanExitException)
+            {
+                // Propagated from helper methods (e.g., AcquireAndDisplayTokenAsync) — already logged.
+                // Let the top-level exception handler set the exit code.
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to retrieve bearer token: {Message}", ex.Message);
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
         });
 
@@ -349,8 +349,7 @@ internal static class GetTokenSubcommand
 
         if (!result.Success)
         {
-            Environment.Exit(1);
-            return;
+            throw new Exceptions.CleanExitException(1);
         }
 
         DisplayResults(new List<McpServerTokenResult> { result }, outputFormat, verbose, logger);
@@ -429,7 +428,7 @@ internal static class GetTokenSubcommand
         if (anySaved)
             logger.LogInformation("Token acquisition complete!");
         else
-            Environment.Exit(1);
+            throw new Exceptions.CleanExitException(1);
     }
 
     private static string ResolveClientAppId(string? appId, Agent365Config? setupConfig)

@@ -864,6 +864,92 @@ public class GraphApiServiceTests
     }
 
     #endregion
+
+    #region CreateCliClientAppAsync
+
+    [Fact]
+    public async Task CreateCliClientAppAsync_OnSuccess_ReturnsAppIdAndSpId()
+    {
+        // Arrange — substitute the virtual GraphPostAsync and EnsureServicePrincipalForAppIdAsync
+        // so we don't need to wire up an HTTP handler. ForPartsOf returns a real instance with
+        // virtual members substitutable.
+        var graph = Substitute.ForPartsOf<GraphApiService>();
+
+        const string expectedAppId = "11111111-2222-3333-4444-555555555555";
+        const string expectedSpId = "sp-object-id-123";
+
+        var appResponseJson = JsonDocument.Parse($"{{\"id\":\"app-object-id\",\"appId\":\"{expectedAppId}\"}}");
+
+        graph.GraphPostAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p == "/v1.0/applications"),
+            Arg.Any<object>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>())
+            .Returns(Task.FromResult<JsonDocument?>(appResponseJson));
+
+        // Stub GraphPatchAsync — called to add the WAM broker redirect URI after creation.
+        // Without this stub the real implementation spawns 'az account get-access-token'.
+        graph.GraphPatchAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("/v1.0/applications/")),
+            Arg.Any<object>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
+
+        graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(id => id == expectedAppId),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>(expectedSpId));
+
+        // Act
+        var (appId, spId) = await graph.CreateCliClientAppAsync(
+            "tenant-123", "Test CLI App", CancellationToken.None);
+
+        // Assert
+        appId.Should().Be(expectedAppId,
+            because: "the appId returned by Graph POST /v1.0/applications must be surfaced to the caller");
+        spId.Should().Be(expectedSpId,
+            because: "EnsureServicePrincipalForAppIdAsync result must be returned as the spId");
+    }
+
+    [Fact]
+    public async Task CreateCliClientAppAsync_WhenPostFails_ReturnsNullNull()
+    {
+        // Arrange — POST /v1.0/applications returns null (e.g. 4xx/5xx with logged failure)
+        var graph = Substitute.ForPartsOf<GraphApiService>();
+
+        graph.GraphPostAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p == "/v1.0/applications"),
+            Arg.Any<object>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>())
+            .Returns(Task.FromResult<JsonDocument?>(null));
+
+        // Act
+        var (appId, spId) = await graph.CreateCliClientAppAsync(
+            "tenant-123", "Test CLI App", CancellationToken.None);
+
+        // Assert
+        appId.Should().BeNull(
+            because: "a failed app creation must surface (null, null) so the caller does not proceed");
+        spId.Should().BeNull(
+            because: "spId is meaningless when the app itself was not created");
+
+        // SP creation must NOT be attempted when the app POST failed.
+        await graph.DidNotReceive().EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>());
+    }
+
+    #endregion
 }
 
 // Simple test handler that returns queued responses sequentially

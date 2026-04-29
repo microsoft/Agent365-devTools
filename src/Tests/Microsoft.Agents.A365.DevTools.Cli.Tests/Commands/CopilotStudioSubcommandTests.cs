@@ -57,25 +57,6 @@ public class CopilotStudioSubcommandTests
     }
 
     [Fact]
-    public void CreateCommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = CopilotStudioSubcommand.CreateCommand(
-            _mockLogger,
-            _mockAuthValidator,
-            _mockConfigService,
-            _mockExecutor,
-            _mockGraphApiService,
-            _mockBlueprintService);
-
-        // Assert
-        var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
-    }
-
-    [Fact]
     public void CreateCommand_ShouldHaveVerboseOption()
     {
         // Act

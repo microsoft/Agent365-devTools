@@ -198,8 +198,9 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Delegated scope for full read/write access to Entra ID applications.
-    /// No longer in RequiredClientAppPermissions — replaced by AgentIdentityBlueprintPrincipal.Create
-    /// for blueprint SP creation per Agent ID team guidance.
+    /// Not required for blueprint SP creation — the correct endpoint is
+    /// POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal which accepts
+    /// AgentIdentityBlueprintPrincipal.Create alone (confirmed by Kyle Marsh, Agent ID team).
     /// Retained as a named constant for reference and potential future use.
     /// </summary>
     public const string ApplicationReadWriteAllScope = "Application.ReadWrite.All";
@@ -214,7 +215,7 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] RequiredClientAppPermissions = new[]
     {
-        "AgentIdentityBlueprintPrincipal.Create",  // Required for POST /v1.0/servicePrincipals (blueprint SP creation) — per Agent ID team (Kyle Marsh)
+        "AgentIdentityBlueprintPrincipal.Create",  // Required for POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal (blueprint SP creation)
         "AgentIdentityBlueprint.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
@@ -222,7 +223,7 @@ public static class AuthenticationConstants
         "Directory.Read.All",
         "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (AdminSubcommand, PublishCommand)
         // AgentRegistration.ReadWrite.All (resource: 00000003-0000-0000-c000-000000000000, ID: 20f263bf-7d50-4e66-912c-16b4b4194fd4)
-        // is required for POST/DELETE /stagingbeta/copilot/agentRegistrations. It is acquired via .default
+        // is required for POST/DELETE /beta/copilot/agentRegistrations. It is acquired via .default
         // on the custom app token provider (not enumerated explicitly) to avoid AADSTS650053.
         // This permission must be configured on the custom app via the portal but is not validated here
         // because ClientAppValidator queries /v1.0/oauth2PermissionGrants which only returns consented
@@ -232,6 +233,7 @@ public static class AuthenticationConstants
         // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
         // (POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity). Requires Agent ID Developer role.
         "AgentIdentityBlueprint.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Blueprint application
+        "AgentIdentity.Read.All",       // Required for GET /beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId (idempotency check)
         "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
         "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment
         "User.ReadWrite.All",  // Required for agent user creation, usage location update, and license assignment
@@ -274,6 +276,13 @@ public static class AuthenticationConstants
         $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprint.UpdateAuthProperties.All",
         $"{MicrosoftGraphResourceUri}/User.Read"
     };
+
+    /// <summary>
+    /// Delegated scope for reading Agent Identities as another client (portal, CLI, management tool).
+    /// Required for GET /beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '...'
+    /// Per the Agent ID permissions reference (other-client read row): AgentIdentity.Read.All.
+    /// </summary>
+    public const string AgentIdentityReadAllScope = "AgentIdentity.Read.All";
 
     /// <summary>
     /// Delegated scope for creating an Agent Identity (service principal) from a blueprint.

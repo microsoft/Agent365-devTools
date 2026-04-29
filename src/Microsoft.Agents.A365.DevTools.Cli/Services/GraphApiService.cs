@@ -46,8 +46,7 @@ public class GraphApiService
 
     // Graph path for the copilot agent registrations endpoint.
     // Both RegisterAgentInstanceAsyncV2 and DeleteAgentRegistrationAsync use this path.
-    // TODO: change from stagingbeta to beta before merging to main.
-    private const string AgentRegistrationsPath = "/stagingbeta/copilot/agentRegistrations";
+    private const string AgentRegistrationsPath = "/beta/copilot/agentRegistrations";
 
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
@@ -139,7 +138,7 @@ public class GraphApiService
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var loginHint = await _loginHintResolver();
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, userId: loginHint);
+            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, userId: loginHint, ct: ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -628,7 +627,56 @@ public class GraphApiService
         return idProp.GetString();
     }
 
-    public async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
+    /// <summary>
+    /// Creates a new Entra app registration (public client) and its service principal for the CLI client app.
+    /// Used by setup requirements when the well-known CLI client app is not found in a new tenant.
+    /// Returns (appId, spObjectId), or (null, null) on failure.
+    /// </summary>
+    public virtual async Task<(string? appId, string? spId)> CreateCliClientAppAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
+    {
+        var body = new
+        {
+            displayName,
+            signInAudience = "AzureADMyOrg",
+            isFallbackPublicClient = true,
+            publicClient = new { redirectUris = AuthenticationConstants.RequiredRedirectUris }
+        };
+
+        using var appDoc = await GraphPostAsync(tenantId, "/v1.0/applications", body, ct);
+        if (appDoc == null
+            || !appDoc.RootElement.TryGetProperty("appId", out var appIdProp)
+            || !appDoc.RootElement.TryGetProperty("id", out var objIdProp))
+        {
+            _logger.LogError("Failed to create app registration in tenant {TenantId}.", tenantId);
+            return (null, null);
+        }
+
+        var appId = appIdProp.GetString();
+        var objectId = objIdProp.GetString();
+        if (string.IsNullOrWhiteSpace(appId)) return (null, null);
+
+        // Patch in the WAM broker redirect URI — requires the appId to be known first.
+        if (!string.IsNullOrWhiteSpace(objectId))
+        {
+            var allUris = AuthenticationConstants.GetRequiredRedirectUris(appId);
+            var redirectUrisPatched = await GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}",
+                new { publicClient = new { redirectUris = allUris } }, ct);
+            if (!redirectUrisPatched)
+                _logger.LogError(
+                    "App created ({AppId}) in tenant {TenantId}, but patching redirect URIs failed for application object {ObjectId}. " +
+                    "The app registration may be missing required redirect URIs and authentication may fail until they are added.",
+                    appId, tenantId, objectId);
+        }
+
+        var spId = await EnsureServicePrincipalForAppIdAsync(tenantId, appId, ct);
+        if (string.IsNullOrWhiteSpace(spId))
+            _logger.LogWarning("App created ({AppId}) but service principal creation failed — admin consent may fail until the SP exists.", appId);
+
+        return (appId, spId);
+    }
+
+    public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
         string tenantId,
         string clientSpObjectId,
         string resourceSpObjectId,
@@ -770,6 +818,15 @@ public class GraphApiService
 
                 if (grantResponse.IsSuccess)
                     return true;
+
+                // "Permission entry already exists" means the grant is already in place — treat as success.
+                if (grantResponse.Body.Contains("Permission entry already exists", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug(
+                        "OAuth2 permission grant already exists for resource {ResourceSpId} — treating as success (idempotent).",
+                        resourceSpObjectId);
+                    return true;
+                }
 
                 if (!grantResponse.Body.Contains("Directory_ObjectNotFound", StringComparison.OrdinalIgnoreCase))
                 {

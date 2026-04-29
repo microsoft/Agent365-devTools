@@ -112,7 +112,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             cancellationToken: CancellationToken.None,
             configService: configService,
             executor: mockExecutor,
-            botConfigurator: Substitute.For<IBotConfigurator>(),
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
             authValidator: authValidator,
             platformDetector: Substitute.ForPartsOf<PlatformDetector>(
                 Substitute.For<ILogger<PlatformDetector>>()),
@@ -253,7 +253,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             cancellationToken: CancellationToken.None,
             configService: configService,
             executor: mockExecutor,
-            botConfigurator: Substitute.For<IBotConfigurator>(),
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
             authValidator: Substitute.For<AzureAuthValidator>(
                 NullLogger<AzureAuthValidator>.Instance, mockExecutor),
             platformDetector: Substitute.ForPartsOf<PlatformDetector>(
@@ -414,7 +414,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             cancellationToken: CancellationToken.None,
             configService: configService,
             executor: mockExecutor,
-            botConfigurator: Substitute.For<IBotConfigurator>(),
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
             authValidator: Substitute.For<AzureAuthValidator>(
                 NullLogger<AzureAuthValidator>.Instance, mockExecutor),
             platformDetector: Substitute.ForPartsOf<PlatformDetector>(
@@ -784,5 +784,169 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    // -------------------------------------------------------------------------
+    // GrantOrInstructAgentIdentityAppPermissionsAsync tests
+    // -------------------------------------------------------------------------
+
+    private static (SetupContext ctx, GraphApiService graph, AgentBlueprintService blueprintService)
+        BuildS2SGrantTestContext()
+    {
+        var graph = Substitute.ForPartsOf<GraphApiService>();
+
+        graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns((System.Text.Json.JsonDocument?)null);
+
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentIdentityDisplayName = "Test Agent",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+            AuthMode = "s2s",
+        };
+
+        var mockExecutor = BuildMockExecutor();
+        var configService = Substitute.For<IConfigService>();
+        configService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+            .Returns(Task.CompletedTask);
+
+        var blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
+            Substitute.For<ILogger<AgentBlueprintService>>(), graph);
+
+        var ctx = new SetupContext(
+            config: config,
+            results: new SetupResults(),
+            logger: Substitute.For<ILogger>(),
+            configFile: new FileInfo("a365.config.json"),
+            generatedConfigPath: "a365.generated.config.json",
+            correlationId: "test-correlation-id",
+            skipInfrastructure: true,
+            skipRequirements: true,
+            cancellationToken: CancellationToken.None,
+            configService: configService,
+            executor: mockExecutor,
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
+            authValidator: Substitute.For<AzureAuthValidator>(
+                NullLogger<AzureAuthValidator>.Instance, mockExecutor),
+            platformDetector: Substitute.ForPartsOf<PlatformDetector>(
+                Substitute.For<ILogger<PlatformDetector>>()),
+            graphApiService: graph,
+            blueprintService: blueprintService,
+            blueprintLookupService: Substitute.ForPartsOf<BlueprintLookupService>(
+                Substitute.For<ILogger<BlueprintLookupService>>(), graph),
+            federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
+                Substitute.For<ILogger<FederatedCredentialService>>(), graph),
+            clientAppValidator: Substitute.For<IClientAppValidator>(),
+            authMode: "s2s",
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        return (ctx, graph, blueprintService);
+    }
+
+    private static List<ResourcePermissionSpec> OneS2SSpec() =>
+        [new ResourcePermissionSpec("resource-app-id", "Test Resource", [], false, AppRoleScopes: ["TestRole.ReadWrite"])];
+
+    /// <summary>
+    /// When no spec has AppRoleScopes, the method exits immediately — no SP lookup or grant calls made.
+    /// </summary>
+    [Fact]
+    public async Task GrantOrInstructAgentIdentityAppPermissions_NoS2SSpecs_NoCallsMade()
+    {
+        var (ctx, graph, blueprintService) = BuildS2SGrantTestContext();
+        var specsWithNoAppRoles = new List<ResourcePermissionSpec>
+        {
+            new("resource-app-id", "Test Resource", ["user_impersonation"], false)
+        };
+
+        await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, specsWithNoAppRoles);
+
+        await graph.DidNotReceive().EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>());
+        await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// When AgenticAppId is missing (the SP object ID was never stored), S2SAppRoleGranted
+    /// is set to false and no grant calls are made — the SP ID is required as the grant target.
+    /// AgenticAppId holds the SP object ID directly (not an app ID); no lookup is performed.
+    /// </summary>
+    [Fact]
+    public async Task GrantOrInstructAgentIdentityAppPermissions_AgentSpIdMissing_SetsGrantedFalse_NoGrantCalls()
+    {
+        var (ctx, _, blueprintService) = BuildS2SGrantTestContext();
+        ctx.Config.AgenticAppId = null;
+
+        await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
+
+        ctx.Results.S2SAppRoleGranted.Should().Be(false,
+            because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the result must be false");
+        await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// When all GrantAppRoleAssignmentAsync calls return true, S2SAppRoleGranted is true
+    /// and no warning is added — this is the Global Admin success path.
+    /// </summary>
+    [Fact]
+    public async Task GrantOrInstructAgentIdentityAppPermissions_AllGrantsSucceed_SetsGrantedTrue_NoWarnings()
+    {
+        var (ctx, graph, blueprintService) = BuildS2SGrantTestContext();
+
+        graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns("agent-sp-object-id");
+
+        blueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
+
+        ctx.Results.S2SAppRoleGranted.Should().Be(true,
+            because: "when all app role assignments succeed, S2SAppRoleGranted must be true");
+        ctx.Results.HasWarnings.Should().BeFalse(
+            because: "a successful S2S grant must not add any warnings to setup results");
+    }
+
+    /// <summary>
+    /// When GrantAppRoleAssignmentAsync returns false (caller lacks Global Admin),
+    /// S2SAppRoleGranted is false, a warning is added, and PowerShell instructions are logged.
+    /// </summary>
+    [Fact]
+    public async Task GrantOrInstructAgentIdentityAppPermissions_GrantFails_SetsGrantedFalse_AddsWarning()
+    {
+        var (ctx, graph, blueprintService) = BuildS2SGrantTestContext();
+
+        graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns("agent-sp-object-id");
+
+        blueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(false));
+
+        await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
+
+        ctx.Results.S2SAppRoleGranted.Should().Be(false,
+            because: "when app role assignments fail (non-admin path), S2SAppRoleGranted must be false");
+        ctx.Results.HasWarnings.Should().BeTrue(
+            because: "a failed S2S grant must add a warning so the setup summary shows Action Required");
+        ctx.Results.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("PowerShell",
+                because: "the warning must reference the printed PowerShell instructions so the user knows where to look");
     }
 }

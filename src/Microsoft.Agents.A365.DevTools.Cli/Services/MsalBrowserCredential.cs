@@ -49,12 +49,6 @@ public sealed class MsalBrowserCredential : TokenCredential
     private static MsalCacheHelper? _cacheHelper;
     private static readonly object _cacheHelperLock = new();
 
-    // Linux-only: shared in-memory token cache, serialized as MSAL V3 format.
-    // Shared across all MsalBrowserCredential instances in the same CLI process so that
-    // a second auth call (e.g., client secret creation) can reuse the token from the first
-    // interactive sign-in without triggering another device code prompt.
-    private static byte[] _linuxInMemoryCacheBytes = Array.Empty<byte>();
-    private static readonly object _linuxCacheLock = new();
     private static readonly string CacheFileName = "msal-token-cache";
     private static readonly string CacheDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -177,21 +171,37 @@ public sealed class MsalBrowserCredential : TokenCredential
     /// Security: Uses platform-appropriate storage:
     ///   - Windows: DPAPI-encrypted file, persisted across CLI invocations
     ///   - macOS: Keychain-backed file, persisted across CLI invocations
-    ///   - Linux: In-memory only (shared in-process via static bytes), not persisted to disk
+    ///   - Linux: Unprotected plaintext file (0600 permissions, owner-only), persisted across CLI invocations.
+    ///             Same approach used by Azure CLI (~/.azure/msal_token_cache.json).
     /// </summary>
     private static void RegisterPersistentCache(IPublicClientApplication app, ILogger? logger)
     {
         try
         {
-            // Linux: no secure file storage available, but share tokens across all instances
-            // within this CLI process using a static in-memory serialized cache.
-            // This eliminates repeated device code prompts during multi-step operations
-            // (e.g., blueprint creation followed by client secret creation in 'setup blueprint').
-            // Tokens are never written to disk on Linux.
+            // Linux: no DPAPI/Keychain equivalent, but persist tokens to disk using an unprotected
+            // plaintext file (0600 permissions — owner-only). This is the same approach used by
+            // Azure CLI (~/.azure/msal_token_cache.json) and eliminates repeated login prompts
+            // across CLI invocations. Tokens remain protected by filesystem permissions.
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
                 !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                RegisterSharedInMemoryCache(app, logger);
+                if (_cacheHelper == null)
+                {
+                    lock (_cacheHelperLock)
+                    {
+                        if (_cacheHelper == null)
+                        {
+                            Directory.CreateDirectory(CacheDirectory);
+                            var storageProperties = new StorageCreationPropertiesBuilder(CacheFileName, CacheDirectory)
+                                .WithLinuxUnprotectedFile()
+                                .Build();
+                            _cacheHelper = MsalCacheHelper.CreateAsync(storageProperties).GetAwaiter().GetResult();
+                            _cacheHelper.VerifyPersistence();
+                            logger?.LogDebug("Persistent MSAL token cache initialized at: {Path} (unprotected file)", CacheDirectory);
+                        }
+                    }
+                }
+                _cacheHelper.RegisterCache(app.UserTokenCache);
                 return;
             }
 
@@ -254,35 +264,6 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
     }
 
-    /// <summary>
-    /// Registers a shared in-memory token cache for Linux platforms.
-    /// Tokens are not persisted to disk, but are shared across all MsalBrowserCredential
-    /// instances within the current CLI process, eliminating repeated auth prompts within
-    /// a single command invocation (e.g., blueprint creation + client secret creation).
-    /// </summary>
-    private static void RegisterSharedInMemoryCache(IPublicClientApplication app, ILogger? logger)
-    {
-        app.UserTokenCache.SetBeforeAccess(args =>
-        {
-            lock (_linuxCacheLock)
-            {
-                args.TokenCache.DeserializeMsalV3(_linuxInMemoryCacheBytes);
-            }
-        });
-
-        app.UserTokenCache.SetAfterAccess(args =>
-        {
-            if (args.HasStateChanged)
-            {
-                lock (_linuxCacheLock)
-                {
-                    _linuxInMemoryCacheBytes = args.TokenCache.SerializeMsalV3();
-                }
-            }
-        });
-
-        logger?.LogDebug("Registered shared in-memory token cache for Linux (in-process only, not persisted to disk).");
-    }
 
     /// <inheritdoc/>
     public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)

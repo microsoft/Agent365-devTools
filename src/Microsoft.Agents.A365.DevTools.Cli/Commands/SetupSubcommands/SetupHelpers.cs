@@ -43,7 +43,7 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Returns the fixed-scope ResourcePermissionSpecs for the three platform APIs that every
-    /// DW (AI Teammate) agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
+    /// AI Teammate agent blueprint requires: Messaging Bot API, Observability API, and Power Platform API.
     /// Callers control whether the specs set inheritable permissions on the blueprint.
     /// </summary>
     internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable) =>
@@ -188,7 +188,122 @@ internal static class SetupHelpers
                 ct);
         }
 
+        if (string.IsNullOrWhiteSpace(clientAppId))
+        {
+            if (graphApiService == null)
+                return null;
+
+            logger.LogInformation("App \"{AppName}\" was not found in tenant {TenantId}.",
+                AuthenticationConstants.WellKnownClientAppDisplayName, tenantId);
+
+            logger.LogInformation("Checking tenant permissions...");
+            var adminCheck = await graphApiService.IsCurrentUserAdminAsync(tenantId, ct);
+            var isAdmin = adminCheck == Models.RoleCheckResult.HasRole;
+
+            string? entered;
+            if (isAdmin)
+            {
+                Console.Write("Enter a client app ID, or [C] to create one: ");
+                entered = Console.ReadLine()?.Trim();
+
+                if (string.Equals(entered, "C", StringComparison.OrdinalIgnoreCase))
+                    return await CreateAndConsentClientAppAsync(tenantId, graphApiService, logger, ct);
+            }
+            else
+            {
+                Console.Write("Enter the client app ID: ");
+                entered = Console.ReadLine()?.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(entered))
+            {
+                logger.LogInformation("Client app ID entry cancelled.");
+                return null;
+            }
+
+            logger.LogInformation("Verifying client app ID...");
+            if (!await graphApiService.ApplicationExistsByAppIdAsync(tenantId, entered, ct))
+            {
+                logger.LogError("App ID '{AppId}' was not found in tenant '{TenantId}'. Check the ID and try again.",
+                    entered, tenantId);
+                return null;
+            }
+
+            clientAppId = entered;
+        }
+
         return clientAppId;
+    }
+
+    private static async Task<string?> CreateAndConsentClientAppAsync(
+        string tenantId,
+        GraphApiService graphApiService,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        logger.LogInformation("Creating app registration '{Name}'...",
+            AuthenticationConstants.WellKnownClientAppDisplayName);
+
+        var (appId, spId) = await graphApiService.CreateCliClientAppAsync(
+            tenantId, AuthenticationConstants.WellKnownClientAppDisplayName, ct);
+
+        if (string.IsNullOrWhiteSpace(appId))
+        {
+            logger.LogError("App creation failed. Check errors above.");
+            return null;
+        }
+
+        logger.LogInformation("App created: {AppId}", appId);
+
+        // Show all required permissions and ask for consent confirmation.
+        // AgentRegistration.ReadWrite.All is excluded from RequiredClientAppPermissions because
+        // ClientAppValidator acquires it via .default to avoid AADSTS650053; here we grant it explicitly.
+        var consentScopes = AuthenticationConstants.RequiredClientAppPermissions
+            .Append("AgentRegistration.ReadWrite.All")
+            .ToArray();
+
+        logger.LogInformation("The following permissions will be granted on behalf of all users:");
+        logger.LogInformation("  Microsoft Graph / Agent 365 API:");
+        foreach (var scope in consentScopes)
+            logger.LogInformation("    - {Scope}", scope);
+
+        Console.Write("Grant admin consent for these permissions? [y/N]: ");
+        var consentChoice = Console.ReadLine()?.Trim().ToUpperInvariant();
+
+        if (consentChoice != "Y")
+        {
+            logger.LogInformation("Admin consent skipped. Grant consent manually in the Entra portal and run 'a365 setup requirements' again.");
+            return appId;
+        }
+
+        if (string.IsNullOrWhiteSpace(spId))
+        {
+            logger.LogWarning("Service principal not found for the new app — cannot grant admin consent automatically.");
+            logger.LogWarning("Grant consent manually in the Entra portal after the SP propagates.");
+            return appId;
+        }
+
+        logger.LogInformation("Granting admin consent...");
+        var graphSpId = await graphApiService.LookupServicePrincipalByAppIdAsync(
+            tenantId, AuthenticationConstants.MicrosoftGraphResourceAppId, ct,
+            AuthenticationConstants.RequiredPermissionGrantScopes);
+
+        if (string.IsNullOrWhiteSpace(graphSpId))
+        {
+            logger.LogWarning("Microsoft Graph service principal not found in tenant {TenantId} — admin consent could not be granted.", tenantId);
+            return appId;
+        }
+
+        var granted = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+            tenantId, spId, graphSpId, consentScopes, ct,
+            AuthenticationConstants.RequiredPermissionGrantScopes);
+
+        if (granted)
+            logger.LogInformation("Admin consent granted. Run 'a365 setup requirements' again to verify.");
+        else
+            logger.LogWarning("Admin consent could not be granted. Grant consent manually in the Entra portal and run 'a365 setup requirements' again.");
+
+        return appId;
     }
 
     private static async Task<string?> TryGetLocalClientAppIdAsync(
@@ -249,38 +364,29 @@ internal static class SetupHelpers
     internal static void LogNonDwAdminConsentInstructions(
         ILogger logger,
         string blueprintId,
-        string? agentIdentityAppId = null,
+        string? agentIdentitySpObjectId = null,
+        string? agentIdentityDisplayName = null,
         IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null)
     {
         specs ??= NonDwAdminConsentSpecs;
 
         var appSpecs = specs.Where(s => s.PermissionType == "Application").ToList();
         var delegatedSpecs = specs.Where(s => s.PermissionType == "Delegated").ToList();
-        var hasAgentIdentity = !string.IsNullOrWhiteSpace(agentIdentityAppId);
+        var hasAgentIdentity = !string.IsNullOrWhiteSpace(agentIdentitySpObjectId);
 
-        // Option A — Entra portal
+        // Option A — Entra portal (Delegated permissions on blueprint only)
         logger.LogInformation("     Option A — Entra portal:");
-        logger.LogInformation("       1. Open https://entra.microsoft.com");
-        logger.LogInformation("       2. Navigate to: Identity > Applications > App registrations");
-        logger.LogInformation("       3. Search for the blueprint app by ID: {BlueprintId}", blueprintId);
-        logger.LogInformation("          (switch to 'All applications' tab if not shown under 'Owned applications')");
-        logger.LogInformation("       4. Open the app, go to: API permissions");
-        logger.LogInformation("       5. Confirm the following permissions are listed:");
-        foreach (var group in specs.GroupBy(s => (s.ResourceName, s.Scope)))
-        {
-            var types = string.Join(", ", group.Select(s => s.PermissionType));
-            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermTypes})", group.Key.ResourceName, group.Key.Scope, types);
-        }
+        logger.LogInformation("       1. Open https://entra.microsoft.com and sign in as a Global Administrator");
+        logger.LogInformation("       2. Use the search bar at the top of the portal, search for: {BlueprintId}", blueprintId);
+        logger.LogInformation("       3. Select the blueprint app under 'App registrations'");
+        logger.LogInformation("       4. Go to: API permissions");
+        logger.LogInformation("       5. Add the following permissions (click 'Add a permission' for each):");
+        foreach (var group in delegatedSpecs.GroupBy(s => (s.ResourceName, s.Scope)))
+            logger.LogInformation("            - {ResourceName,-20}: {Scope} (Delegated)", group.Key.ResourceName, group.Key.Scope);
         logger.LogInformation("       6. Click 'Grant admin consent for your organization' and confirm");
         if (hasAgentIdentity && appSpecs.Count > 0)
         {
-            logger.LogInformation("       7. Grant Application permissions to the agent identity (required for S2S token acquisition):");
-            logger.LogInformation("          - Search for the agent identity app by ID: {AgentIdentityAppId}", agentIdentityAppId);
-            logger.LogInformation("          - Open the app, go to: API permissions");
-            logger.LogInformation("          - Confirm the following Application permissions are listed:");
-            foreach (var (resourceName, _, scope, _) in appSpecs)
-                logger.LogInformation("               - {ResourceName,-20}: {Scope} (Application)", resourceName, scope);
-            logger.LogInformation("          - Click 'Grant admin consent for your organization' and confirm");
+            logger.LogInformation("       Note: Application permissions for the agent identity (step 7) must be granted via PowerShell (Option B below).");
         }
 
         // Option B — PowerShell (Microsoft Graph SDK)
@@ -296,11 +402,16 @@ internal static class SetupHelpers
         logger.LogInformation("       Connect-MgGraph -Scopes {Scopes}", string.Join(", ", mgScopes));
         logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\"", blueprintId);
         if (hasAgentIdentity)
-            logger.LogInformation("       $ai = Get-MgServicePrincipal -Filter \"appId eq '{AgentIdentityAppId}'\"", agentIdentityAppId);
-
-        if (appSpecs.Count > 0)
         {
-            logger.LogInformation("       # Application permissions (app role assignments — blueprint and agent identity)");
+            if (!string.IsNullOrWhiteSpace(agentIdentityDisplayName))
+                logger.LogInformation("       $ai = Get-MgServicePrincipal -ServicePrincipalId '{AgentIdentitySpObjectId}'  # {DisplayName}", agentIdentitySpObjectId, agentIdentityDisplayName);
+            else
+                logger.LogInformation("       $ai = Get-MgServicePrincipal -ServicePrincipalId '{AgentIdentitySpObjectId}'", agentIdentitySpObjectId);
+        }
+
+        if (hasAgentIdentity && appSpecs.Count > 0)
+        {
+            logger.LogInformation("       # Application permissions (app role assignments — agent identity only for non-AI teammate)");
             foreach (var (resourceName, resourceAppId, scope, _) in appSpecs)
             {
                 var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
@@ -308,11 +419,8 @@ internal static class SetupHelpers
                     varName, resourceAppId, resourceName);
                 logger.LogInformation("       $rid = ({Var}.AppRoles | Where-Object {{ $_.Value -eq '{Scope}' }}).Id",
                     varName, scope);
-                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ai.Id -PrincipalId $ai.Id -ResourceId {Var}.Id -AppRoleId $rid",
                     varName);
-                if (hasAgentIdentity)
-                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ai.Id -PrincipalId $ai.Id -ResourceId {Var}.Id -AppRoleId $rid",
-                        varName);
             }
         }
 
@@ -395,8 +503,22 @@ internal static class SetupHelpers
         logger.LogInformation("Setup Summary");
         logger.LogInformation("");
 
-        var pendingAdminAction = !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
-        var pendingS2SAction = results.S2SAppRoleGranted == false;
+        // Derive per-grant-type completion so "both" mode surfaces partial results correctly.
+        // isS2SFlow: S2S was attempted (S2SAppRoleGranted is non-null).
+        // isBothMode: both S2S and delegated grants were attempted — must check each independently.
+        var isS2SFlow = results.S2SAppRoleGranted.HasValue;
+        var isBothMode = string.Equals(results.EffectiveAuthMode, "both", StringComparison.OrdinalIgnoreCase);
+        var s2sOk = isS2SFlow && results.S2SAppRoleGranted == true;
+        var delegatedOk = results.AdminConsentGranted || results.AgentIdentityPermissionsGranted;
+
+        var permissionGrantsCompleted = isS2SFlow
+            ? s2sOk && (!isBothMode || delegatedOk)
+            : delegatedOk;
+        var permissionGrantsPending = isS2SFlow
+            ? results.S2SAppRoleGranted == false
+            : !permissionGrantsCompleted && results.BatchPermissionsPhase2Completed;
+        var pendingAdminAction = permissionGrantsPending && !isS2SFlow;
+        var pendingS2SAction = permissionGrantsPending && isS2SFlow;
 
         // ── Numbered step rows — mirrors the dry-run step list ─────────────────
         // Non-DW omits the Azure hosting step, so all steps after 1 are shifted down by 1.
@@ -434,35 +556,46 @@ internal static class SetupHelpers
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + notRun);
         else if (results.BatchPermissionsPhase1Completed)
-            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + "configured");
+            logger.LogInformation(DryRunRow(3 + s, "Inheritable Permissions") + (isNonDw ? "skipped (permissions set directly on agent identity)" : "configured"));
 
-        // Permission Grants: step 4 (non-DW) or step 5 (DW)
-        if (results.BlueprintFailed)
-            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + notRun);
-        else if (results.AgentIdentityPermissionsGranted)
-            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + "ok (developer-scoped)");
-        else if (results.BatchPermissionsPhase2Completed)
-            logger.LogInformation(DryRunRow(4 + s, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
-
-        // Non-DW only: Agent identity (5) and Agent Registration (6)
+        // Non-DW only: Agent identity — step 4 (before Permission Grants, matching dry-run order)
         if (isNonDw)
         {
             if (results.BlueprintFailed)
+                logger.LogInformation(DryRunRow(4, "Agent identity") + notRun);
+            else if (results.AgentIdentityCreated)
             {
-                logger.LogInformation(DryRunRow(5, "Agent identity") + notRun);
-                logger.LogInformation(DryRunRow(6, "Agent Registration") + notRun);
+                var identityVerb = (results.AgentIdentityAlreadyExisted ? "reused" : "created").PadRight(9);
+                logger.LogInformation(DryRunRow(4, "Agent identity") + identityVerb + " '{Name}' (ID: {Id})",
+                    results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
             }
+            else if (results.AgentIdentityFailed)
+                logger.LogWarning(DryRunRow(4, "Agent identity") + "failed — see warnings");
+        }
+
+        // Permission Grants: step 5 (non-DW: 5, DW: 4+s=5 — same step for both)
+        var permGrantStep = isNonDw ? 5 : 4 + s;
+        if (results.BlueprintFailed)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + notRun);
+        else if (isS2SFlow && s2sOk)
+        {
+            if (isBothMode && !delegatedOk)
+                logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "partial (S2S ok; delegated — see warnings)");
+            else
+                logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "ok (S2S app roles)");
+        }
+        else if (results.AgentIdentityPermissionsGranted)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "ok (developer-scoped)");
+        else if (results.BatchPermissionsPhase2Completed)
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + (results.AdminConsentGranted ? "ok" : "PENDING"));
+
+        // Non-DW only: Agent Registration — step 6
+        if (isNonDw)
+        {
+            if (results.BlueprintFailed)
+                logger.LogInformation(DryRunRow(6, "Agent Registration") + notRun);
             else
             {
-                if (results.AgentIdentityCreated)
-                {
-                    var identityVerb = (results.AgentIdentityAlreadyExisted ? "reused" : "created").PadRight(9);
-                    logger.LogInformation(DryRunRow(5, "Agent identity") + identityVerb + " '{Name}' (ID: {Id})",
-                        results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
-                }
-                else if (results.AgentIdentityFailed)
-                    logger.LogWarning(DryRunRow(5, "Agent identity") + "failed — see warnings");
-
                 if (results.AgentInstanceRegistered)
                 {
                     var registrationVerb = (results.AgentRegistrationAlreadyExisted ? "reused" : "registered").PadRight(12);
@@ -474,15 +607,65 @@ internal static class SetupHelpers
             }
         }
 
-        // Project settings: step 7 for non-DW, step 6 for DW
-        var settingsStep = isNonDw ? 7 : 6;
+        // Messaging endpoint: step 6 for DW (after Permission Grants at 5),
+        // step 7 for non-DW (after Agent Registration at 6).
+        var endpointStep = isNonDw ? 7 : 6;
+        if (results.BlueprintFailed)
+        {
+            logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + notRun);
+        }
+        else
+        {
+            switch (results.MessagingEndpointResult)
+            {
+                case null:
+                    logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "skipped (non-M365 agent)");
+                    break;
+                case Models.EndpointRegistrationResult.Created:
+                    logger.LogInformation(
+                        DryRunRow(endpointStep, "Messaging endpoint") + "registered   '{Endpoint}'",
+                        results.MessagingEndpoint ?? "unknown");
+                    break;
+                case Models.EndpointRegistrationResult.AlreadyExists:
+                    logger.LogInformation(
+                        DryRunRow(endpointStep, "Messaging endpoint") + "reused       '{Endpoint}'",
+                        results.MessagingEndpoint ?? "unknown");
+                    break;
+                case Models.EndpointRegistrationResult.SkippedContractMismatch:
+                    logger.LogWarning(
+                        DryRunRow(endpointStep, "Messaging endpoint") + "manual config required — see Action Required");
+                    break;
+                case Models.EndpointRegistrationResult.Failed:
+                default:
+                    if (string.Equals(results.MessagingEndpointFailureReason, "NotOwner", StringComparison.Ordinal))
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed (not blueprint owner) — see Action Required");
+                    }
+                    else if (string.Equals(results.MessagingEndpointFailureReason, "BlueprintMissing", StringComparison.Ordinal))
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not attempted (blueprint creation failed) — see Action Required");
+                    }
+                    else
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed — see Action Required");
+                    }
+                    break;
+            }
+        }
+
+        // Project settings: step 8 for non-DW, step 7 for DW (pushed down by the messaging endpoint row).
+        var settingsStep = isNonDw ? 8 : 7;
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
         else if (results.ProjectSettingsWritten)
             logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
 
         // ── Action Required ────────────────────────────────────────────────────
-        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction;
+        var messagingEndpointManualRequired =
+            results.MessagingEndpointResult == Models.EndpointRegistrationResult.SkippedContractMismatch;
+        var messagingEndpointFailureRequired =
+            results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed;
+        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction || messagingEndpointManualRequired || messagingEndpointFailureRequired;
         if (hasActionRequired)
         {
             var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
@@ -515,7 +698,7 @@ internal static class SetupHelpers
                 else
                 {
                     logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
-                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId);
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId, results.AgentIdentityDisplayName);
                 }
             }
             if (pendingS2SAction)
@@ -527,6 +710,46 @@ internal static class SetupHelpers
                 logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
                 logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $obs.Id -AppRoleId $rid");
+            }
+            if (messagingEndpointManualRequired)
+            {
+                actionCount++;
+                logger.LogInformation("  {N}. Messaging endpoint — automated registration is not available for this tenant yet.", actionCount);
+                logger.LogInformation("     Register it manually in the Teams Developer Portal:");
+                logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+            }
+            if (messagingEndpointFailureRequired)
+            {
+                actionCount++;
+                if (string.Equals(results.MessagingEndpointFailureReason, "NotOwner", StringComparison.Ordinal))
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — you are not an owner of the blueprint, so automated", actionCount);
+                    logger.LogInformation("     registration was refused by the server. To complete this step, either:");
+                    logger.LogInformation("");
+                    logger.LogInformation("     A. Ask the blueprint owner to register the endpoint manually in the Teams");
+                    logger.LogInformation("        Developer Portal:");
+                    logger.LogInformation("          {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+                    logger.LogInformation("");
+                    logger.LogInformation("     B. Ask the blueprint owner to add you as a co-owner, then re-run just");
+                    logger.LogInformation("        the endpoint step (no need to re-run the full setup):");
+                    logger.LogInformation("          a365 setup blueprint --endpoint-only --m365");
+                }
+                else if (string.Equals(results.MessagingEndpointFailureReason, "BlueprintMissing", StringComparison.Ordinal))
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — not attempted because agent blueprint creation did not", actionCount);
+                    logger.LogInformation("     complete. Resolve the blueprint step (see errors above), then re-run just");
+                    logger.LogInformation("     the endpoint step:");
+                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                }
+                else
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — registration failed; see the error above for details.", actionCount);
+                    logger.LogInformation("     To retry after addressing the issue, re-run just the endpoint step:");
+                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                    logger.LogInformation("");
+                    logger.LogInformation("     Or configure the endpoint manually in the Teams Developer Portal:");
+                    logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+                }
             }
         }
 
@@ -562,13 +785,14 @@ internal static class SetupHelpers
         // Next steps
         var hasNextSteps = results.HasErrors
             || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
-            || !string.IsNullOrEmpty(results.FederatedCredentialError);
+            || !string.IsNullOrEmpty(results.FederatedCredentialError)
+            || results.AgentRegistrationFailed;
 
         if (hasNextSteps)
         {
             var nextStepLines = new List<Action>();
 
-            if ((!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
+            if (results.BatchPermissionsPhase1Completed && (!results.BatchPermissionsPhase2Completed || (!results.AdminConsentGranted && !pendingAdminAction)) && results.HasErrors)
                 nextStepLines.Add(() => logger.LogInformation("  To retry permissions: a365 setup all"));
 
             if (!string.IsNullOrEmpty(results.GraphInheritablePermissionsError))
@@ -582,6 +806,9 @@ internal static class SetupHelpers
                     logger.LogInformation("    a365 setup blueprint");
                 });
             }
+
+            if (results.AgentRegistrationFailed)
+                nextStepLines.Add(() => logger.LogInformation("  To retry agent registration: a365 setup all --agent-registration-only"));
 
             if (nextStepLines.Count > 0)
             {
@@ -810,14 +1037,15 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Prints the dry-run plan for the Digital Worker (--aiteammate true) path of setup all.
+    /// Prints the dry-run plan for the AI Teammate agent (--aiteammate true) path of setup all.
     /// </summary>
     internal static void PrintDwSetupAllDryRunPlan(
         ILogger logger,
         bool skipInfrastructure,
         bool skipRequirements,
         string[] rawArgs,
-        Agent365Config? config = null)
+        Agent365Config? config = null,
+        bool isM365 = false)
     {
         var sub = new string(' ', DryRunValCol);
 
@@ -856,8 +1084,22 @@ internal static class SetupHelpers
         // 5. Permission Grants
         logger.LogInformation(DryRunRow(5, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id <blueprint-id>");
 
-        // 6. Project settings (DW has no Agent identity or Agent Registration steps)
-        logger.LogInformation(DryRunRow(6, "Project settings") + "write to appsettings.json");
+        // 6. Messaging endpoint (M365 opt-in)
+        if (isM365)
+        {
+            var endpointForDisplay = config?.MessagingEndpoint;
+            var endpointDetail = string.IsNullOrWhiteSpace(endpointForDisplay)
+                ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
+                : $"register via Teams Graph: {endpointForDisplay}";
+            logger.LogInformation(DryRunRow(6, "Messaging endpoint") + endpointDetail);
+        }
+        else
+        {
+            logger.LogInformation(DryRunRow(6, "Messaging endpoint") + "skipped (non-M365 agent)");
+        }
+
+        // 7. Project settings (DW has no Agent identity or Agent Registration steps)
+        logger.LogInformation(DryRunRow(7, "Project settings") + "write to appsettings.json");
 
         logger.LogInformation("");
         logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
@@ -1117,22 +1359,26 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Register blueprint messaging endpoint
-    /// Returns (success, alreadyExisted)
+    /// Registers the Teams Graph backend configuration (messaging endpoint) for the agent blueprint.
     /// </summary>
-    /// <param name="setupConfig">Agent365 configuration</param>
-    /// <param name="logger">Logger instance</param>
-    /// <param name="botConfigurator">Bot configurator service</param>
-    /// <param name="overrideEndpointUrl">Optional endpoint URL override (used by --update-endpoint to specify a new URL)</param>
-    /// <param name="correlationId">Optional correlation ID for tracing</param>
-    public static async Task<(bool success, bool alreadyExisted)> RegisterBlueprintMessagingEndpointAsync(
+    /// <param name="setupConfig">Agent365 configuration.</param>
+    /// <param name="logger">Logger instance.</param>
+    /// <param name="backendConfigurator">Blueprint backend configurator service.</param>
+    /// <param name="overrideEndpointUrl">Optional endpoint URL override (used by --update-endpoint).</param>
+    /// <param name="correlationId">Optional correlation ID for tracing.</param>
+    /// <returns>
+    /// A tuple of (Result, FailureReason) from the Teams Graph call. Callers are expected to
+    /// check for <see cref="Models.EndpointRegistrationResult.SkippedContractMismatch"/> to surface
+    /// the rollout-in-progress fallback messaging in their summary. FailureReason is "NotOwner"
+    /// or "Other" when Result is Failed, null otherwise.
+    /// </returns>
+    public static async Task<(Models.EndpointRegistrationResult Result, string? FailureReason)> RegisterBlueprintMessagingEndpointAsync(
         Agent365Config setupConfig,
         ILogger logger,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         string? overrideEndpointUrl = null,
         string? correlationId = null)
     {
-        // Validate required configuration
         if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
         {
             logger.LogError("Agent Blueprint ID not found. Blueprint creation may have failed.");
@@ -1154,9 +1400,7 @@ internal static class SetupHelpers
         }
 
         string messagingEndpoint;
-        string endpointName;
 
-        // If override endpoint URL is provided (from --update-endpoint), use it
         if (!string.IsNullOrWhiteSpace(overrideEndpointUrl))
         {
             if (!Uri.TryCreate(overrideEndpointUrl, UriKind.Absolute, out var overrideUri) ||
@@ -1167,22 +1411,19 @@ internal static class SetupHelpers
             }
 
             messagingEndpoint = overrideEndpointUrl;
-            endpointName = EndpointHelper.GetEndpointNameFromHost(overrideUri.Host, setupConfig.AgentBlueprintId);
-
             logger.LogInformation("   - Using override endpoint URL");
         }
         else
         {
-            // No deployment - use the provided MessagingEndpoint
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogWarning("MessagingEndpoint not configured. Skipping endpoint registration.");
                 logger.LogWarning("Configure 'messagingEndpoint' in a365.config.json and re-run 'a365 setup blueprint' to register the endpoint.");
-                return (false, false);
+                return (Models.EndpointRegistrationResult.Failed, "Other");
             }
 
-            if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var uri) ||
-                uri.Scheme != Uri.UriSchemeHttps)
+            if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var messagingEndpointUri) ||
+                messagingEndpointUri.Scheme != Uri.UriSchemeHttps)
             {
                 logger.LogError("MessagingEndpoint must be a valid HTTPS URL. Current value: {Endpoint}",
                     setupConfig.MessagingEndpoint);
@@ -1190,45 +1431,26 @@ internal static class SetupHelpers
             }
 
             messagingEndpoint = setupConfig.MessagingEndpoint;
-
-            // Derive endpoint name from host + blueprint ID suffix for uniqueness.
-            // Host alone is not sufficient — multiple users on the same webhook platform
-            // (e.g. n8n, Zapier) share the same hostname but have different webhook paths.
-            endpointName = EndpointHelper.GetEndpointNameFromHost(uri.Host, setupConfig.AgentBlueprintId);
-        }
-
-        if (endpointName.Length < 4)
-        {
-            logger.LogError("Bot endpoint name '{EndpointName}' is too short (must be at least 4 characters)", endpointName);
-            throw new SetupValidationException($"Bot endpoint name '{endpointName}' is too short (must be at least 4 characters)");
         }
 
         logger.LogInformation("   - Registering blueprint messaging endpoint");
-        logger.LogInformation("     * Endpoint Name: {EndpointName}", endpointName);
         logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
-        logger.LogInformation("     * Using Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
+        logger.LogInformation("     * Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
-        var endpointResult = await botConfigurator.CreateEndpointWithAgentBlueprintAsync(
-            endpointName: endpointName,
-            location: string.Empty,
-            messagingEndpoint: messagingEndpoint,
-            agentDescription: "Agent 365 messaging endpoint for automated interactions",
+        var (result, failureReason) = await backendConfigurator.SetBackendConfigurationAsync(
             agentBlueprintId: setupConfig.AgentBlueprintId,
+            messagingEndpoint: messagingEndpoint,
             correlationId: correlationId);
 
-        if (endpointResult == Models.EndpointRegistrationResult.Failed)
+        if (result == Models.EndpointRegistrationResult.Created ||
+            result == Models.EndpointRegistrationResult.AlreadyExists)
         {
-            logger.LogError("Failed to register blueprint messaging endpoint");
-            throw new SetupValidationException("Blueprint messaging endpoint registration failed");
+            setupConfig.BotId = setupConfig.AgentBlueprintId;
+            setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
+            setupConfig.BotMessagingEndpoint = messagingEndpoint;
         }
 
-        // Update Agent365Config state properties
-        setupConfig.BotId = setupConfig.AgentBlueprintId;
-        setupConfig.BotMsaAppId = setupConfig.AgentBlueprintId;
-        setupConfig.BotMessagingEndpoint = messagingEndpoint;
-
-        bool alreadyExisted = endpointResult == Models.EndpointRegistrationResult.AlreadyExists;
-        return (true, alreadyExisted);
+        return (result, failureReason);
     }
 
 }

@@ -144,14 +144,68 @@ For each changed file, analyze:
    - Path separators
    - OS-specific code
 
-7. **CHANGELOG.md Check** (for user-facing changes)
-   - If the PR adds features, fixes bugs, or changes observable behavior, verify `CHANGELOG.md` has an entry in the `[Unreleased]` section
-   - Internal refactors, test-only changes, and tooling/CI-only changes do not require a CHANGELOG entry
-   - Flag as `low` severity if missing from a user-facing PR
+7. **Documentation Completeness Check** (for user-visible surface changes)
+
+   This is a first-class review axis. Do NOT rely on the diff showing you a CHANGELOG entry — you must actively *detect* the need for one and then *verify* it is present in the staged/PR diff.
+
+   **Step 7a — Detect user-visible surface changes.** Scan the diff for any of these signals:
+   - New `new Option<...>(` declaration in a command — indicates a new CLI flag
+   - Change to an existing `Option<...>` description, or to a command's help text / `.Description` string
+   - New `public` method, class, interface, enum value, or constant on a non-test type
+   - Rename of a `public` class or interface (old type removed + new type added in Services/, Models/, Commands/)
+   - Change to an observable log message the user has been observed to grep for (e.g., `"Messaging endpoint registered"` → different wording)
+   - New or changed HTTP request payload shape, endpoint URL, or wire contract
+   - Change to a command's validation rules (new required field, new error message)
+   - Deletion of a `public` API
+   - Bug fix that changes observable behavior
+
+   **Step 7b — Verify the corresponding docs are updated.** For every signal found in 7a, check that the PR staged file set includes:
+
+   - `CHANGELOG.md` — under `[Unreleased]`, in the appropriate subsection:
+     - `### Added` for new flags/methods/classes
+     - `### Changed` for renames, behavior changes, payload shape changes
+     - `### Removed` for deletions
+     - `### Fixed` for bug fixes with user-visible impact
+   - The nearest `README.md` — if the command surface changed, the README in the command's folder must reflect it:
+     - New flag on `a365 setup blueprint` → update `Commands/SetupSubcommands/README.md`
+     - Rename of a service → update `Services/README.md` table and `design.md` structure tree
+   - **For renames specifically**: run `grep -rn "<OldTypeName>" --include="*.md"` across the repo. Any surviving hits are stale and must be updated in the same PR.
+
+   **Step 7c — Severity calibration.**
+   - Missing CHANGELOG entry for a user-visible change → **HIGH** (not low). User-visible changes without a changelog entry silently accumulate and get lost when the release goes out.
+   - Stale type/method name in README or design.md after a rename → **HIGH**. These mislead future readers and the grep check is trivial.
+   - Missing README update for a new flag → **MEDIUM**. The flag is self-documenting via `--help`, but discoverability suffers.
+   - Internal refactors, test-only changes, dependency bumps, and CI/tooling-only changes do not require CHANGELOG or README updates.
+
+   **Step 7d — What does NOT count as an excuse.**
+   - "The flag is opt-in / preview / temporary" — still needs CHANGELOG and README. Opt-in/preview status goes *in* the CHANGELOG entry.
+   - "Microsoft Learn docs will cover it" — that's a separate pipeline; the repo's CHANGELOG and READMEs are the source of truth for what shipped in a given version.
+   - "The reviewer can see it in the diff" — yes, *you* can; future readers of CHANGELOG.md cannot.
 
 8. **Test Coverage Gaps**
    - Based on the conditional logic, what specific test scenarios are needed?
    - Generate concrete test code examples
+
+9. **Holistic Related-File Expansion** (for patterns that span unstaged files)
+
+   Do not limit analysis to staged/diff lines. For the following patterns, actively fetch and read related unstaged files before generating findings:
+
+   **A. New property on a model class → check validators (even if not staged)**
+   When the diff adds a new `public` property to any class in `Models/` or `SetupSubcommands/` (e.g., `Agent365Config`, `SetupContext`, `SetupResults`):
+   - Read the full `Validate()` and `ValidateNonDwMinimal()` methods of that class — they may not be in the diff
+   - Also `Grep` for `ValidateAsync` methods in `ConfigService.cs` that take the same model type (see Anti-Pattern #25)
+   - If the new property represents a discrete set of values (e.g., `"obo|s2s|both"`) and no validation exists in any of these methods, flag HIGH (see Anti-Pattern #27)
+
+   **B. New CLI `Option<...>` → read the directory README (even if not staged)**
+   When the diff adds `new Option<...>(` to a command file under `Commands/`:
+   - Read `README.md` in that same directory
+   - If the new option is not documented, flag MEDIUM (missing README update)
+   - Also verify the README does not claim the option is available on commands where it is not wired — check the command class to confirm scope
+
+   **C. Changed observable log message → grep tests for old string**
+   When the diff changes a quoted string in a `LogInformation`/`LogWarning`/`LogError` call:
+   - Run `Grep` for the old string in `src/Tests/**/*.cs`
+   - If test files assert `Contains("old string")` and the old string is gone, the test will silently pass with the wrong message — flag HIGH
 
 ### Step 3: Generate Findings
 
@@ -786,6 +840,45 @@ When a required-field check is added, removed, or relaxed in a model's `Validate
       ValidateGuid(config.TenantId, nameof(config.TenantId), errors);
   ```
 - **Real example**: Removing `"messagingEndpoint is required when needDeployment is 'no'."` from `Agent365Config.Validate()` without removing the parallel `ValidateRequired(config.MessagingEndpoint, ...)` call in `ConfigService.ValidateAsync`. The fix appeared in `Agent365ConfigTests.cs` and `Agent365Config.cs` but not in `ConfigService.cs`, so `a365 cleanup` still failed with `MessagingEndpoint is required` on bootstrap-path projects.
+
+### 27. New Nullable Config Property Without Validation in `Validate()`
+
+When a new nullable string property is added to a config model class (`Agent365Config`, `SetupContext`, or similar) to represent a discrete set of allowed values (e.g., `obo|s2s|both`), and no validation is added to `Validate()` / `ValidateNonDwMinimal()` / `ValidateAsync()`, the property becomes a silent misconfiguration path: a typo in `a365.config.json` passes through unnoticed and silently disables the feature or skips grant branches.
+
+- **Pattern to catch**:
+  - `[JsonPropertyName("someMode")] public string? SomeMode { get; init; }` added to a model class
+  - No corresponding discrete-value check in `Validate()` / `ValidateNonDwMinimal()` for that property name
+  - Often paired with Anti-Pattern #28 (assignment without whitespace normalization)
+- **Severity**: `high` — incorrect config values silently skip grant/permission branches; user gets no error
+- **Check**: For every new property in a model class diff, read the `Validate()` method of that class (even if not staged) and search for the property name. If absent, flag it.
+- **Fix**: Add a private helper and call it from all `Validate()` overloads:
+  ```csharp
+  private static void ValidateSomeMode(string? value, List<string> errors)
+  {
+      if (value is not null && value is not ("a" or "b" or "c"))
+          errors.Add($"someMode must be 'a', 'b', or 'c' when set (got '{value}').");
+  }
+  ```
+- **Real example (PR #391, Comments 4 & 5)**: `Agent365Config.AuthMode` was added without validation. `a365.config.json` could contain `"authMode": "typo"` and the run would proceed, silently skipping all grant branches.
+
+### 28. Mode/Enum-Like String Property Normalized With `?.ToLowerInvariant()` Instead of `IsNullOrWhiteSpace`
+
+When a string property represents a discrete set of values (e.g., `"obo"`, `"s2s"`, `"both"`), the assignment `AuthMode = authMode?.ToLowerInvariant()` looks correct but lets empty string through: `""?.ToLowerInvariant()` returns `""`, not `null`. An empty string from `a365.config.json` then makes `IsOboMode`/`IsS2sMode`/`IsBothMode` all return `false` — silently skipping all grant branches with no error.
+
+- **Pattern to catch**:
+  - `SomeMode = someMode?.ToLowerInvariant();` where `SomeMode` is a nullable string used in discrete-value comparisons (e.g., `== "obo"`)
+  - Appears in `SetupContext` constructors, settings classes, or model property setters
+- **Severity**: `high` — empty-string config value silently disables all mode-dependent branches
+- **Check**: For every `?.ToLowerInvariant()` assignment in the diff where the left-hand side is compared against a finite set of literals elsewhere, verify the `IsNullOrWhiteSpace` guard is present.
+- **Fix**:
+  ```csharp
+  // Wrong — empty string passes through as a real mode
+  AuthMode = authMode?.ToLowerInvariant();
+
+  // Correct — empty/whitespace becomes null (= use documented default)
+  AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.Trim().ToLowerInvariant();
+  ```
+- **Real example (PR #391, Comments 7 & 8)**: `SetupContext.AuthMode` and `NonDwBlueprintSetupOrchestrator.effectiveMode` both used `?.ToLowerInvariant()`, allowing `""` to disable OBO without any visible error.
 
 ## Example Invocation
 

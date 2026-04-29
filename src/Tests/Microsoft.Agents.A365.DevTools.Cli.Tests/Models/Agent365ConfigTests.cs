@@ -887,17 +887,17 @@ public class Agent365ConfigTests
 
     #endregion
 
-    #region AiTeammate and IsNonAiTeammate Tests
+    #region AiTeammate and IsBlueprintAgent Tests
 
     [Theory]
-    [InlineData(false, true)]   // aiTeammate=false → non-AI Teammate agent
-    [InlineData(true, false)]   // aiTeammate=true  → AI Teammate (digital worker)
-    [InlineData(null, false)]   // not set → AI Teammate (default)
-    public void IsNonAiTeammate_ReturnsCorrectValue(bool? aiTeammate, bool expected)
+    [InlineData(false, true)]   // aiTeammate=false → blueprint agent
+    [InlineData(true, false)]   // aiTeammate=true  → AI Teammate agent
+    [InlineData(null, false)]   // not set → AI Teammate agent (default)
+    public void IsBlueprintAgent_ReturnsCorrectValue(bool? aiTeammate, bool expected)
     {
         var config = new Agent365Config { AiTeammate = aiTeammate };
 
-        config.IsNonAiTeammate.Should().Be(expected);
+        config.IsBlueprintAgent.Should().Be(expected);
     }
 
     [Fact]
@@ -920,7 +920,7 @@ public class Agent365ConfigTests
 
         config.Should().NotBeNull();
         config!.AiTeammate.Should().BeFalse();
-        config.IsNonAiTeammate.Should().BeTrue();
+        config.IsBlueprintAgent.Should().BeTrue();
     }
 
     [Fact]
@@ -929,7 +929,7 @@ public class Agent365ConfigTests
         var config = new Agent365Config();
 
         config.AiTeammate.Should().BeNull();
-        config.IsNonAiTeammate.Should().BeFalse();
+        config.IsBlueprintAgent.Should().BeFalse();
     }
 
     [Fact]

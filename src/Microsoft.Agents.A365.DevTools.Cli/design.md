@@ -30,7 +30,7 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   ├── DotNetBuilder.cs          # .NET project builder
 │   ├── NodeBuilder.cs            # Node.js project builder
 │   ├── PythonBuilder.cs          # Python project builder
-│   ├── BotConfigurator.cs        # Messaging endpoint registration
+│   ├── TeamsGraphBackendConfigurator.cs  # Messaging endpoint (Teams Graph backend config)
 │   ├── GraphApiService.cs        # Graph API interactions
 │   ├── AuthenticationService.cs  # MSAL.NET authentication
 │   ├── AzureAuthValidator.cs     # Azure CLI auth + App Service token validation
@@ -97,7 +97,7 @@ flowchart LR
 
 | File | Content | Editing |
 |------|---------|---------|
-| `a365.config.json` | Tenant ID, subscription, resource names, project path | User edits |
+| `a365.config.json` | Tenant ID, subscription, resource names, project path, `authMode` | User edits |
 | `a365.generated.config.json` | Agent blueprint ID, identity ID, consent status | CLI generates |
 
 ### Configuration File Storage and Portability
@@ -128,6 +128,7 @@ public class Agent365Config
     public string ResourceGroup { get; init; } = string.Empty;
     public string WebAppName { get; init; } = string.Empty;
     public string DeploymentProjectPath { get; init; } = string.Empty;
+    public string? AuthMode { get; init; }   // "obo" | "s2s" | "both"; default obo when null
 
     // DYNAMIC PROPERTIES (get/set) - from a365.generated.config.json
     // Modified at runtime by CLI operations
@@ -182,7 +183,7 @@ All token acquisition goes through **MSAL.NET via `AuthenticationService`**. No 
 ### Token Acquisition Flow
 
 ```
-All callers (GraphApiService, ArmApiService, BotConfigurator, ...)
+All callers (GraphApiService, ArmApiService, TeamsGraphBackendConfigurator, ...)
         |
         v
 AuthenticationService.GetAccessTokenAsync(resource, tenantId)
@@ -484,8 +485,8 @@ return await new CommandLineBuilder(rootCommand)
 
 | Agent Type | Flag | What it creates |
 |---|---|---|
-| **Digital Worker** (default) | `--aiteammate true` or omit | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
-| **Custom Engine Agent / Blueprint** | `--aiteammate false` | Agent Blueprint + batch permissions (Graph + A365 Tools only) + Agent Instance (Graph API) |
+| **AI Teammate agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
+| **Custom Engine Agent / Blueprint** (default) | omit `--aiteammate` | Agent Blueprint + batch permissions (Graph + A365 Tools only) + Agent Instance (Graph API) |
 
 Non-DW blueprint agents do not use Azure Bot Service, so there is no infrastructure step, no manifest zip, and no messaging endpoint registration. The final step is `POST /beta/agentRegistry/agentInstances` instead.
 

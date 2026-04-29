@@ -53,19 +53,6 @@ public class AddPermissionsSubcommandTests
     }
 
     [Fact]
-    public void CreateCommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
-
-        // Assert
-        var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
-    }
-
-    [Fact]
     public void CreateCommand_ShouldHaveManifestOption()
     {
         // Act
@@ -134,16 +121,15 @@ public class AddPermissionsSubcommandTests
         var command = AddPermissionsSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        command.Options.Should().HaveCount(6);
+        command.Options.Should().HaveCount(5);
         var optionNames = command.Options.Select(opt => opt.Name).ToList();
-        optionNames.Should().Contain(new[] 
-        { 
-            "config", 
-            "manifest", 
-            "app-id", 
-            "scopes", 
-            "verbose", 
-            "dry-run" 
+        optionNames.Should().Contain(new[]
+        {
+            "manifest",
+            "app-id",
+            "scopes",
+            "verbose",
+            "dry-run"
         });
     }
 

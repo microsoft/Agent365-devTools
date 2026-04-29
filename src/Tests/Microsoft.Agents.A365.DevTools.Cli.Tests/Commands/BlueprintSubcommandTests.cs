@@ -30,7 +30,7 @@ public class BlueprintSubcommandTests
     private readonly CommandExecutor _mockExecutor;
     private readonly AzureAuthValidator _mockAuthValidator;
     private readonly PlatformDetector _mockPlatformDetector;
-    private readonly IBotConfigurator _mockBotConfigurator;
+    private readonly ITeamsGraphBackendConfigurator _mockBackendConfigurator;
     private readonly GraphApiService _mockGraphApiService;
     private readonly AgentBlueprintService _mockBlueprintService;
     private readonly IClientAppValidator _mockClientAppValidator;
@@ -50,7 +50,7 @@ public class BlueprintSubcommandTests
         _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
         var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
         _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
-        _mockBotConfigurator = Substitute.For<IBotConfigurator>();
+        _mockBackendConfigurator = Substitute.For<ITeamsGraphBackendConfigurator>();
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
             Substitute.For<ILogger<GraphApiService>>(), _mockExecutor, (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
@@ -69,7 +69,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
@@ -86,32 +86,12 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         command.Description.Should().NotBeNullOrEmpty();
         command.Description.Should().Contain("agent blueprint");
-    }
-
-    [Fact]
-    public void CreateCommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert
-        var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
     }
 
     [Fact]
@@ -124,7 +104,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
@@ -144,7 +124,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
@@ -163,7 +143,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
@@ -191,7 +171,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
@@ -224,7 +204,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
@@ -236,11 +216,11 @@ public class BlueprintSubcommandTests
         // Assert
         result.Should().Be(0);
         
-        // Verify logger received appropriate calls about what would be done
+        // Verify logger received the dry-run header and blueprint details
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("DRY RUN")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Dry run:")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -272,7 +252,7 @@ public class BlueprintSubcommandTests
                 skipInfrastructure: false,
                 isSetupAll: false,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector,
                 _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
@@ -293,47 +273,11 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
         command.Description.Should().Contain("Agent ID Developer");
-    }
-
-    [Fact]
-    public async Task DryRun_WithCustomConfigPath_ShouldLoadCorrectFile()
-    {
-        // Arrange
-        var customPath = "custom-config.json";
-        var config = new Agent365Config
-        {
-            TenantId = "test-tenant",
-            AgentBlueprintDisplayName = "Test Blueprint"
-        };
-
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-            .Returns(Task.FromResult(config));
-
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        var parser = new CommandLineBuilder(command).Build();
-        var testConsole = new TestConsole();
-
-        // Act
-        var result = await parser.InvokeAsync($"--config {customPath} --dry-run", testConsole);
-
-        // Assert
-        result.Should().Be(0);
-        await _mockConfigService.Received(1).LoadAsync(
-            Arg.Is<string>(s => s.Contains(customPath)),
-            Arg.Any<string>());
     }
 
     [Fact]
@@ -355,7 +299,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
@@ -382,14 +326,13 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify all expected options are present
-        command.Options.Should().HaveCountGreaterOrEqualTo(3);
-        
+        command.Options.Should().HaveCountGreaterOrEqualTo(2);
+
         var optionNames = command.Options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("verbose");
         optionNames.Should().Contain("dry-run");
     }
@@ -397,7 +340,7 @@ public class BlueprintSubcommandTests
     [Fact]
     public async Task DryRun_WithMissingConfig_ShouldHandleGracefully()
     {
-        // Arrange
+        // Arrange — config load throws (no a365.config.json in test directory)
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns<Agent365Config>(_ => throw new FileNotFoundException("Config not found"));
 
@@ -407,35 +350,17 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
-        // Act & Assert
-        await Assert.ThrowsAsync<FileNotFoundException>(
-            async () => await parser.InvokeAsync("--dry-run", testConsole));
-    }
+        // Act — dry-run must not throw when config is missing; the flag must work in fresh directories
+        var result = await parser.InvokeAsync("--dry-run", testConsole);
 
-    [Fact]
-    public void CreateCommand_DefaultConfigPath_ShouldBeA365ConfigJson()
-    {
-        // Act
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBotConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert - Verify the config option exists and has expected aliases
-        var configOption = command.Options.First(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
+        // Assert — exits cleanly with generic dry-run preview
+        result.Should().Be(0, because: "--dry-run must succeed even without a config file");
     }
 
     [Fact]
@@ -460,7 +385,7 @@ public class BlueprintSubcommandTests
             skipInfrastructure: false,
             isSetupAll: false,
             _mockConfigService,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockPlatformDetector,
             _mockGraphApiService, _mockBlueprintService, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
@@ -488,7 +413,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify description provides context and guidance
@@ -515,7 +440,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
@@ -548,7 +473,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
@@ -579,7 +504,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify command can be added to a parser
@@ -632,8 +557,8 @@ public class BlueprintSubcommandTests
         loadedConfig.TenantId.Should().Be("test-tenant");
 
         // Verify no bot configuration was attempted
-        await _mockBotConfigurator.DidNotReceiveWithAnyArgs()
-            .CreateEndpointWithAgentBlueprintAsync(default!, default!, default!, default!, default!, default);
+        await _mockBackendConfigurator.DidNotReceiveWithAnyArgs()
+            .SetBackendConfigurationAsync(default!, default!);
     }
 
     [Fact]
@@ -695,26 +620,22 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
-            // Assert
-            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                config.AgentBlueprintId!,
-                Arg.Any<string?>());
+            // Assert — Teams Graph backend configuration receives the literal MessagingEndpoint
+            // from config (no more derivation from webAppName, which was an ABS-era behavior).
+            await _mockBackendConfigurator.Received(1).SetBackendConfigurationAsync(
+                config.AgentBlueprintId,
+                config.MessagingEndpoint);
 
             await _mockConfigService.Received(1).SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>());
         }
@@ -758,16 +679,15 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask)
                 .AndDoes(callInfo => savedConfig = callInfo.Arg<Agent365Config>());
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
             // Assert
@@ -814,16 +734,15 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
             // Assert
@@ -857,18 +776,20 @@ public class BlueprintSubcommandTests
     [Fact]
     public async Task RegisterEndpointAndSyncAsync_WhenSyncFails_ShouldLogWarningButContinue()
     {
-        // Arrange
+        // Arrange — use an isolated temp subdirectory so a365.generated.config.json doesn't exist
+        // there (the method derives the generated-config path from the config file's directory).
+        // This reliably triggers the FileNotFoundException → warning path regardless of what other
+        // files exist in the global Temp directory.
+        var testId = Guid.NewGuid().ToString();
+        var testDir = Path.Combine(Path.GetTempPath(), $"a365-sync-test-{testId}");
+        Directory.CreateDirectory(testDir);
+        var configPath = Path.Combine(testDir, "a365.config.json");
+
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            DeploymentProjectPath = "non-existent-path" // This will cause sync to skip with a warning
         };
-
-        var testId = Guid.NewGuid().ToString();
-        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
-        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
-        await File.WriteAllTextAsync(generatedPath, "{}");
 
         try
         {
@@ -878,19 +799,19 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
-            // Act - should not throw
+            // Act — a365.generated.config.json doesn't exist in testDir, so ProjectSettingsSyncHelper
+            // throws FileNotFoundException, which RegisterEndpointAndSyncAsync catches non-fatally.
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
-            // Assert - ProjectSettingsSyncHelper logs a warning when deploymentProjectPath doesn't exist
+            // Assert — warning logged, method did not throw
             _mockLogger.Received().Log(
                 LogLevel.Warning,
                 Arg.Any<EventId>(),
@@ -900,14 +821,10 @@ public class BlueprintSubcommandTests
         }
         finally
         {
-            if (File.Exists(generatedPath))
-            {
-                File.Delete(generatedPath);
-            }
             if (File.Exists(configPath))
-            {
                 File.Delete(configPath);
-            }
+            if (Directory.Exists(testDir))
+                Directory.Delete(testDir, recursive: true);
         }
     }
 
@@ -937,21 +854,19 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask);
 
             // Mock endpoint registration returning AlreadyExists status
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.AlreadyExists);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.AlreadyExists, (string?)null));
 
             // Act
-            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+            var result = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
             // Assert
-            success.Should().BeTrue();
-            alreadyExisted.Should().BeTrue();
+            result.Should().Be(EndpointRegistrationResult.AlreadyExists);
 
             // Verify the specific "already registered" message is logged
             _mockLogger.Received().Log(
@@ -962,13 +877,7 @@ public class BlueprintSubcommandTests
                 Arg.Any<Func<object, Exception?, string>>());
 
             // Verify endpoint registration was called
-            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                config.AgentBlueprintId!,
-                Arg.Any<string?>());
+            await _mockBackendConfigurator.Received(1).SetBackendConfigurationAsync(config.AgentBlueprintId, Arg.Any<string>());
         }
         finally
         {
@@ -1010,16 +919,15 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask)
                 .AndDoes(callInfo => savedConfig = callInfo.Arg<Agent365Config>());
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
             // Assert - Verify bot configuration was updated in config
@@ -1070,29 +978,21 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
-            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+            var result = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
             // Assert
-            success.Should().BeTrue();
-            alreadyExisted.Should().BeFalse();
-            
-            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                config.AgentBlueprintId!,
-                Arg.Any<string?>());
+            result.Should().Be(EndpointRegistrationResult.Created);
+
+            await _mockBackendConfigurator.Received(1).SetBackendConfigurationAsync(config.AgentBlueprintId, config.MessagingEndpoint);
 
             await _mockConfigService.Received(1).SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>());
         }
@@ -1136,24 +1036,18 @@ public class BlueprintSubcommandTests
                 .Returns(Task.CompletedTask);
 
             // Act
-            var (success, alreadyExisted) = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+            var result = await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
-            // Assert - should return (false, false) since endpoint registration was skipped
-            success.Should().BeFalse();
-            alreadyExisted.Should().BeFalse();
+            // Assert - endpoint registration was skipped (configurator never called)
+            result.Should().Be(EndpointRegistrationResult.Failed);
             
             // Should NOT call bot configurator
-            await _mockBotConfigurator.DidNotReceive().CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>());
+            await _mockBackendConfigurator.DidNotReceive().SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>());
 
             // Should still save state with completed flag
             await _mockConfigService.Received(1).SaveStateAsync(
@@ -1228,7 +1122,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert
@@ -1265,13 +1159,11 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
-            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+            _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
                 .Returns(true);
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.UpdateEndpointAsync(
@@ -1279,22 +1171,13 @@ public class BlueprintSubcommandTests
                 newEndpointUrl,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
             // Assert - Should call delete then create
-            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                config.AgentBlueprintId,
-                Arg.Any<string?>());
+            await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId, Arg.Any<string?>());
 
-            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                newEndpointUrl,
-                Arg.Any<string>(),
-                config.AgentBlueprintId);
+            await _mockBackendConfigurator.Received(1).SetBackendConfigurationAsync(config.AgentBlueprintId, newEndpointUrl);
         }
         finally
         {
@@ -1328,16 +1211,17 @@ public class BlueprintSubcommandTests
                 invalidUrl,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector));
 
         exception.Message.Should().Contain("HTTPS");
     }
 
     [Fact]
-    public async Task UpdateEndpointAsync_WhenDeleteFails_ShouldThrowAndNotRegister()
+    public async Task UpdateEndpointAsync_WhenClearFails_ShouldProceedWithRegister()
     {
-        // Arrange — config must have a MessagingEndpoint so the existing-endpoint delete step (Step 1) executes
+        // Clear failure is non-fatal — the Teams Graph clear is idempotent, so we proceed to
+        // register the new endpoint even if clear could not be confirmed.
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
@@ -1349,33 +1233,43 @@ public class BlueprintSubcommandTests
         var newEndpointUrl = "https://newhost.example.com/api/messages";
         var testId = Guid.NewGuid().ToString();
         var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
+        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
+        await File.WriteAllTextAsync(generatedPath, "{}");
 
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-            .Returns(Task.FromResult(config));
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
 
-        _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
-            .Returns(false); // Delete fails
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
 
-        // Act & Assert
-        var exception = await Assert.ThrowsAsync<Cli.Exceptions.SetupValidationException>(async () =>
+            _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+                .Returns(false);
+
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
+
+            // Act
             await BlueprintSubcommand.UpdateEndpointAsync(
                 configPath,
                 newEndpointUrl,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
-                _mockPlatformDetector));
+                _mockBackendConfigurator,
+                _mockPlatformDetector);
 
-        exception.Message.Should().Contain("delete");
-
-        // Should NOT attempt to register new endpoint
-        await _mockBotConfigurator.DidNotReceive().CreateEndpointWithAgentBlueprintAsync(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<string>());
+            // Assert — we called Clear, then proceeded to Set despite clear returning false.
+            await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(
+                config.AgentBlueprintId, Arg.Any<string?>());
+            await _mockBackendConfigurator.Received(1).SetBackendConfigurationAsync(
+                config.AgentBlueprintId, newEndpointUrl);
+        }
+        finally
+        {
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+            if (File.Exists(configPath)) File.Delete(configPath);
+        }
     }
 
     [Fact]
@@ -1405,13 +1299,11 @@ public class BlueprintSubcommandTests
             _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
                 .Returns(Task.CompletedTask);
 
-            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
+            _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>())
                 .Returns(Task.FromResult(true)); // NotFound = success for pre-create cleanup
 
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
 
             // Act
             await BlueprintSubcommand.UpdateEndpointAsync(
@@ -1419,25 +1311,17 @@ public class BlueprintSubcommandTests
                 newEndpointUrl,
                 _mockLogger,
                 _mockConfigService,
-                _mockBotConfigurator,
+                _mockBackendConfigurator,
                 _mockPlatformDetector);
 
             // Assert - Step 1 (delete old) is skipped — no existing endpoint to delete.
             // Step 1.5 (pre-create cleanup) still calls delete exactly once with the TARGET endpoint name,
             // so there is exactly one delete call total.
             var expectedTargetName = EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, config.AgentBlueprintId);
-            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                expectedTargetName,
-                string.Empty,
-                config.AgentBlueprintId);
+            await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId);
 
             // Should still register the new endpoint
-            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                newEndpointUrl,
-                Arg.Any<string>(),
-                config.AgentBlueprintId);
+            await _mockBackendConfigurator.Received(1).SetBackendConfigurationAsync(config.AgentBlueprintId, newEndpointUrl);
         }
         finally
         {
@@ -1446,94 +1330,18 @@ public class BlueprintSubcommandTests
         }
     }
 
-    [Fact]
-    public async Task UpdateEndpointAsync_WithExistingOldEndpointAndPartiallyProvisionedTarget_ShouldCallDeleteTwice()
-    {
-        // Regression: when a prior --update-endpoint failed during the create step, Azure may have
-        // partially provisioned the new endpoint. On the next run, BOTH Step 1 (delete old) and
-        // Step 1.5 (pre-create cleanup of target) must fire, targeting different endpoint names.
-        var currentlyRegisteredUrl = "https://currently-registered-3979.inc1.devtunnels.ms/api/messages";
-        var newEndpointUrl         = "https://newtunnel-3979.inc1.devtunnels.ms/api/messages";
-
-        var config = new Agent365Config
-        {
-            TenantId             = "00000000-0000-0000-0000-000000000000",
-            AgentBlueprintId     = "blueprint-123",
-            MessagingEndpoint    = currentlyRegisteredUrl, // static config (original tunnel)
-            BotMessagingEndpoint = currentlyRegisteredUrl, // generated config (last successful registration)
-            DeploymentProjectPath = Path.GetTempPath()
-        };
-
-        var testId        = Guid.NewGuid().ToString();
-        var configPath    = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
-        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
-
-        await File.WriteAllTextAsync(generatedPath, "{}");
-
-        try
-        {
-            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-                .Returns(Task.FromResult(config));
-
-            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
-                .Returns(Task.CompletedTask);
-
-            _mockBotConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(Task.FromResult(true));
-
-            _mockBotConfigurator.CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>())
-                .Returns(EndpointRegistrationResult.Created);
-
-            // Act
-            await BlueprintSubcommand.UpdateEndpointAsync(
-                configPath,
-                newEndpointUrl,
-                _mockLogger,
-                _mockConfigService,
-                _mockBotConfigurator,
-                _mockPlatformDetector);
-
-            // Assert — exactly two delete calls with distinct endpoint names
-            var oldEndpointName    = EndpointHelper.GetEndpointNameFromUrl(currentlyRegisteredUrl, config.AgentBlueprintId);
-            var targetEndpointName = EndpointHelper.GetEndpointNameFromUrl(newEndpointUrl, config.AgentBlueprintId);
-
-            oldEndpointName.Should().NotBe(targetEndpointName, "Step 1 and Step 1.5 must target different endpoints");
-
-            // Step 1: delete the currently-registered (old) endpoint
-            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                oldEndpointName, string.Empty, config.AgentBlueprintId);
-
-            // Step 1.5: pre-create cleanup of the partially-provisioned target endpoint
-            await _mockBotConfigurator.Received(1).DeleteEndpointWithAgentBlueprintAsync(
-                targetEndpointName, string.Empty, config.AgentBlueprintId);
-
-            // Total: exactly two delete calls
-            await _mockBotConfigurator.Received(2).DeleteEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
-
-            // Step 2: register the new endpoint
-            await _mockBotConfigurator.Received(1).CreateEndpointWithAgentBlueprintAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                newEndpointUrl,
-                Arg.Any<string>(),
-                config.AgentBlueprintId);
-        }
-        finally
-        {
-            if (File.Exists(generatedPath)) File.Delete(generatedPath);
-            if (File.Exists(configPath)) File.Delete(configPath);
-        }
-    }
+    // Obsolete regression: the old Azure Bot Service flow had a "Step 1 / Step 1.5" delete pattern
+    // (delete old endpoint by name, then pre-create cleanup of target endpoint by name) driven by
+    // endpoint-name derivation from URLs. The Teams Graph backend configuration is keyed purely by
+    // agent blueprint ID, so there is exactly one clear call per update regardless of URLs. The
+    // equivalent positive-path test is UpdateEndpointAsync_WhenClearFails_ShouldProceedWithRegister.
 
     #endregion
 
     #region CustomClientAppId Configuration Tests
 
     [Fact]
-    public async Task SetHandler_WithClientAppId_ShouldConfigureGraphApiService()
+    public async Task SetHandler_WithClientAppId_DryRun_ShouldExitCleanly()
     {
         // Arrange
         var config = new Agent365Config
@@ -1552,18 +1360,19 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
-        // Act
-        await parser.InvokeAsync("--dry-run", testConsole);
+        // Act — dry-run exits before Graph API operations; CustomClientAppId is not set in this path
+        // (no Graph calls are made in dry-run, so configuration of graphApiService is not relevant).
+        var result = await parser.InvokeAsync("--dry-run", testConsole);
 
-        // Assert - Verify CustomClientAppId was set on GraphApiService
-        _mockGraphApiService.CustomClientAppId.Should().Be(config.ClientAppId,
-            "CustomClientAppId must be set to ensure inheritable permissions use the correct client app");
+        // Assert — command succeeds and config was loaded to enrich the dry-run preview
+        result.Should().Be(0, because: "--dry-run should exit cleanly even when ClientAppId is present");
+        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]
@@ -1586,7 +1395,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();
@@ -1620,7 +1429,7 @@ public class BlueprintSubcommandTests
             _mockExecutor,
             _mockAuthValidator,
             _mockPlatformDetector,
-            _mockBotConfigurator,
+            _mockBackendConfigurator,
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         var parser = new CommandLineBuilder(command).Build();

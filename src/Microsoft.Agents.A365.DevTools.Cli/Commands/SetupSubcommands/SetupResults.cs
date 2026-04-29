@@ -15,6 +15,26 @@ public class SetupResults
     public bool McpPermissionsConfigured { get; set; }
     public bool BotApiPermissionsConfigured { get; set; }
     public bool MessagingEndpointRegistered { get; set; }
+
+    /// <summary>
+    /// The raw <see cref="Models.EndpointRegistrationResult"/> returned by the messaging endpoint
+    /// registration step. Null means the step was not attempted (e.g. non-M365 flow without
+    /// --m365). Drives the messaging endpoint row in the setup summary.
+    /// </summary>
+    public Models.EndpointRegistrationResult? MessagingEndpointResult { get; set; }
+
+    /// <summary>
+    /// The URL that was registered (or attempted) as the messaging endpoint. Populated alongside
+    /// <see cref="MessagingEndpointResult"/> so the setup summary is self-contained.
+    /// </summary>
+    public string? MessagingEndpoint { get; set; }
+
+    /// <summary>
+    /// When <see cref="MessagingEndpointResult"/> is Failed, classifies the server's reason:
+    /// "NotOwner" for ownership failures (403 from Teams Graph wrapped as 400 by MCP Platform),
+    /// "Other" for other failures. Null when the step did not fail.
+    /// </summary>
+    public string? MessagingEndpointFailureReason { get; set; }
     public bool InheritablePermissionsConfigured { get; set; }
     public bool BotInheritablePermissionsConfigured { get; set; }
     public bool GraphPermissionsConfigured { get; set; }
@@ -103,7 +123,7 @@ public class SetupResults
     public string? CombinedConsentUrl { get; set; }
 
     /// <summary>
-    /// Whether this is a non-DW blueprint setup flow (--aiteammate false).
+    /// Whether this is a blueprint agent setup flow (--aiteammate false).
     /// Used in the summary display to show the correct recovery actions.
     /// </summary>
     public bool IsNonDwBlueprintFlow { get; set; }
@@ -113,6 +133,13 @@ public class SetupResults
     /// Set in the non-DW non-admin path as an alternative to tenant-wide AllPrincipals consent.
     /// </summary>
     public bool AgentIdentityPermissionsGranted { get; set; }
+
+    /// <summary>
+    /// The effective --authmode value used during the non-DW grant step ("obo", "s2s", or "both").
+    /// Null when the grant step was not reached (e.g. agent identity creation failed).
+    /// Used by DisplaySetupSummary to compute per-grant-type completion for the "both" mode.
+    /// </summary>
+    public string? EffectiveAuthMode { get; set; }
 
     /// <summary>
     /// Whether the Agent Identity was successfully created via the Agent Identity Graph API.

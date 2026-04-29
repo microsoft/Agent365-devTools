@@ -146,26 +146,6 @@ public class PermissionsSubcommandTests
     }
 
     [Fact]
-    public void McpSubcommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = PermissionsSubcommand.CreateCommand(
-            _mockLogger,
-            _mockAuthValidator,
-            _mockConfigService,
-            _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
-
-        var mcpSubcommand = command.Subcommands.First(s => s.Name == "mcp");
-
-        // Assert
-        var configOption = mcpSubcommand.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
-    }
-
-    [Fact]
     public void McpSubcommand_ShouldHaveVerboseOption()
     {
         // Act
@@ -241,26 +221,6 @@ public class PermissionsSubcommandTests
 
         // Assert
         botSubcommand.Name.Should().Be("bot");
-    }
-
-    [Fact]
-    public void BotSubcommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = PermissionsSubcommand.CreateCommand(
-            _mockLogger,
-            _mockAuthValidator,
-            _mockConfigService,
-            _mockExecutor,
-            _mockGraphApiService, _mockBlueprintService, _mockConfirmationProvider);
-
-        var botSubcommand = command.Subcommands.First(s => s.Name == "bot");
-
-        // Assert
-        var configOption = botSubcommand.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
     }
 
     [Fact]

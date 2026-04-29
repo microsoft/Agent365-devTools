@@ -69,7 +69,7 @@ internal static class AllSubcommand
         ILogger logger,
         IConfigService configService,
         CommandExecutor executor,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         AzureAuthValidator authValidator,
         PlatformDetector platformDetector,
         GraphApiService graphApiService,
@@ -78,7 +78,8 @@ internal static class AllSubcommand
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         ArmApiService? armApiService = null,
-        IConfirmationProvider? confirmationProvider = null)
+        IConfirmationProvider? confirmationProvider = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("all",
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -87,11 +88,6 @@ internal static class AllSubcommand
             "  - Azure Subscription Contributor (for infrastructure and endpoint)\n" +
             "  - Agent ID Developer role (for blueprint creation)\n" +
             "  - Global Administrator (for permission grants and admin consent)\n\n");
-
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -111,14 +107,16 @@ internal static class AllSubcommand
             description: "Skip requirements validation check\n" +
                         "Use with caution: setup may fail if prerequisites are not met");
 
-        var aiTeammateOption = new Option<bool?>(
+        var aiTeammateOption = new Option<bool>(
             "--aiteammate",
-            description: "true = AI Teammate / Digital Worker, false = non-AI Teammate agent (blueprint, default)\n" +
+            description: "AI Teammate agent: setup provisions blueprint and permissions only;\n" +
+                        "run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+                        "Omit for blueprint-only agent (default): setup auto-creates agent identity SP; no Entra user.\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
-        var agentInstanceOnlyOption = new Option<bool>(
-            "--agent-instance-only",
-            description: "Skip all setup steps and only run agent instance registration (--aiteammate false only)");
+        var agentRegistrationOnlyOption = new Option<bool>(
+            "--agent-registration-only",
+            description: "Skip all setup steps and only run agent registration (non-M365 agents only)");
 
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
@@ -131,34 +129,68 @@ internal static class AllSubcommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'.");
 
-        command.AddOption(configOption);
+        var m365Option = new Option<bool>(
+            "--m365",
+            description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint via MCP Platform. " +
+                        "Default is false (opt-in); omit this flag for non-M365 agents.");
+
+        var authModeOption = new Option<string?>(
+            "--authmode",
+            description: "Authentication pattern for the agent identity (blueprint agents only).\n" +
+                         "  obo  — on-behalf-of (default); principal-scoped delegated grants; no admin consent needed.\n" +
+                         "  s2s  — service-to-service; app permissions on agent identity; Global Admin needed or PowerShell fallback.\n" +
+                         "  both — delegated grants (OBO) and app permissions (S2S).\n" +
+                         "Not supported with --aiteammate true.");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
         command.AddOption(skipRequirementsOption);
         command.AddOption(aiTeammateOption);
-        command.AddOption(agentInstanceOnlyOption);
+        command.AddOption(agentRegistrationOnlyOption);
+        command.AddOption(m365Option);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(authModeOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
-            var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
-            var agentInstanceOnly = context.ParseResult.GetValueForOption(agentInstanceOnlyOption);
+            // Tri-state: null = not specified (respect config), true/false = explicit override.
+            // Option<bool> means bare --aiteammate sets it to true without requiring "true" as a value.
+            bool? aiTeammateFlag = context.ParseResult.CommandResult.FindResultFor(aiTeammateOption) != null
+                ? context.ParseResult.GetValueForOption(aiTeammateOption)
+                : null;
+            var agentRegistrationOnly = context.ParseResult.GetValueForOption(agentRegistrationOnlyOption);
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            bool isM365 = context.ParseResult.GetValueForOption(m365Option);
+            var authMode = context.ParseResult.GetValueForOption(authModeOption)?.ToLowerInvariant();
             var ct = context.GetCancellationToken();
+
+            // --authmode validation
+            if (authMode is not null && authMode is not ("obo" or "s2s" or "both"))
+            {
+                logger.LogError("Invalid --authmode value '{Value}'. Allowed values: obo, s2s, both.", authMode);
+                context.ExitCode = 1;
+                return;
+            }
+            if (authMode is not null && aiTeammateFlag == true)
+            {
+                logger.LogError("--authmode is not supported with --aiteammate — AI Teammate agents automatically use OBO via agent user identity.");
+                context.ExitCode = 1;
+                return;
+            }
 
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
 
             // --- Agent type resolution ---
-            // Non-DW (blueprint) is the default. DW requires --aiteammate true explicitly.
+            // Blueprint agent is the default. AI Teammate agent requires --aiteammate true explicitly.
             Agent365Config? nonDwConfig = null;
             bool isBootstrap = !string.IsNullOrWhiteSpace(agentName);
 
@@ -168,13 +200,11 @@ internal static class AllSubcommand
                 {
                     if (dryRun)
                     {
-                        // Dry-run: detect tenant only (no client app lookup needed for display)
-                        var dryRunTenantId = tenantIdFlag;
-                        if (string.IsNullOrWhiteSpace(dryRunTenantId))
-                            dryRunTenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(null, executor, logger);
+                        // Dry-run: build config from flags only — no az CLI subprocess needed.
+                        // TenantId is not shown in the plan so detection is skipped intentionally.
                         nonDwConfig = new Agent365Config
                         {
-                            TenantId = dryRunTenantId ?? "(unknown — run 'az login' or pass --tenant-id)",
+                            TenantId = tenantIdFlag ?? string.Empty,
                             ClientAppId = string.Empty,
                             AgentIdentityDisplayName = $"{agentName} Identity",
                             AgentBlueprintDisplayName = $"{agentName} Blueprint",
@@ -191,8 +221,9 @@ internal static class AllSubcommand
                         logger.LogInformation("");
 
                         // Real run: resolve client app ID from Entra
-                        nonDwConfig = await BuildBootstrapConfigAsync(
-                            agentName!, tenantIdFlag, executor, graphApiService, logger, ct);
+                        nonDwConfig = resolver != null
+                            ? await resolver.ResolveAsync(agentName!, tenantIdFlag, config, isCleanupMode: false, ct)
+                            : await BuildBootstrapConfigAsync(agentName!, tenantIdFlag, executor, graphApiService, logger, ct);
                         if (nonDwConfig is null)
                         {
                             context.ExitCode = 1;
@@ -213,34 +244,65 @@ internal static class AllSubcommand
                         // If existing config files belong to a different tenant (e.g. the user ran
                         // 'az login' with a different account), back them up and remove them so this
                         // run starts with a clean state and does not inherit stale resource IDs.
-                        await BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!, logger);
+                        if (resolver != null)
+                            await resolver.BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!);
+                        else
+                            await BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!, logger);
 
                         // Write a365.config.json so the resolved bootstrap settings are persisted in the
                         // current working directory and reused consistently by later setup and cleanup steps.
                         if (!File.Exists(config.FullName))
-                            await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
+                        {
+                            if (resolver != null)
+                                await resolver.WriteBootstrapConfigAsync(nonDwConfig, config.FullName);
+                            else
+                                await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
+                        }
                     }
                 }
                 else
                 {
                     // Config file path: load from a365.config.json, merged with generated config when present.
                     var nonDwGenPath = Path.Combine(config.DirectoryName ?? Environment.CurrentDirectory, "a365.generated.config.json");
-                    nonDwConfig = File.Exists(nonDwGenPath)
-                        ? await configService.LoadAsync(config.FullName, nonDwGenPath)
-                        : await configService.LoadAsync(config.FullName);
-                    // If aiTeammate was not explicitly set, respect what the config says
-                    // (allows existing DW configs to keep working without --aiteammate true)
-                    if (!aiTeammateFlag.HasValue && !nonDwConfig.IsNonAiTeammate && !dryRun)
+                    try
+                    {
+                        nonDwConfig = File.Exists(nonDwGenPath)
+                            ? await configService.LoadAsync(config.FullName, nonDwGenPath)
+                            : await configService.LoadAsync(config.FullName);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
+                    // If aiteammate was not explicitly set, respect what the config says
+                    // (allows existing AI Teammate configs to keep working without --aiteammate true)
+                    if (nonDwConfig != null && !aiTeammateFlag.HasValue && !nonDwConfig.IsBlueprintAgent && !dryRun)
                         nonDwConfig = null; // fall through to DW path
                 }
             }
+
+            // Validate the effective authMode (flag OR config). The CLI flag was validated above;
+            // this re-check catches an invalid authMode persisted in a365.config.json that was not
+            // caught at load time (e.g. a user manually edited the file with a bad value).
+            var effectiveAuthModeForValidation = authMode ?? nonDwConfig?.AuthMode?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(effectiveAuthModeForValidation) &&
+                effectiveAuthModeForValidation is not ("obo" or "s2s" or "both"))
+            {
+                logger.LogError("Invalid authMode value '{Value}' (from --authmode flag or a365.config.json). Allowed values: obo, s2s, both.", effectiveAuthModeForValidation);
+                context.ExitCode = 1;
+                return;
+            }
+
+            // AI Teammate (DW) agents are M365 agents by design — auto-enable messaging endpoint.
+            // --m365 remains opt-in for blueprint agents (non-DW path).
+            if (nonDwConfig is null)
+                isM365 = true;
 
             if (nonDwConfig is not null)
             {
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements);
+                    var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode);
                     return;
                 }
 
@@ -264,7 +326,7 @@ internal static class AllSubcommand
                     cancellationToken: ct,
                     configService: configService,
                     executor: executor,
-                    botConfigurator: botConfigurator,
+                    backendConfigurator: backendConfigurator,
                     authValidator: authValidator,
                     platformDetector: platformDetector,
                     graphApiService: graphApiService,
@@ -272,15 +334,17 @@ internal static class AllSubcommand
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
-                    agentInstanceOnly: agentInstanceOnly,
+                    agentInstanceOnly: agentRegistrationOnly,
                     isBootstrap: isBootstrap,
+                    isM365: isM365,
+                    authMode: authMode ?? nonDwConfig.AuthMode,
                     confirmationProvider: confirmationProvider);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
             }
 
-            // --- Digital Worker (default) path ---
+            // --- AI Teammate agent (default) path ---
             if (dryRun)
             {
                 var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
@@ -292,8 +356,9 @@ internal static class AllSubcommand
                         ? await configService.LoadAsync(config.FullName, dwGenPath)
                         : await configService.LoadAsync(config.FullName);
                 }
+                catch (OperationCanceledException) { throw; }
                 catch { /* config is optional for dry-run display */ }
-                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig);
+                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365);
                 return;
             }
 
@@ -302,7 +367,40 @@ internal static class AllSubcommand
             try
             {
                 // Load configuration
-                var setupConfig = await configService.LoadAsync(config.FullName);
+                Agent365Config setupConfig;
+                if (isBootstrap)
+                {
+                    var banner = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
+                    logger.LogInformation("Running \"a365 {Args}\"...", string.Join(" ", banner));
+                    logger.LogInformation("");
+                    var btTenantId = tenantIdFlag;
+                    if (string.IsNullOrWhiteSpace(btTenantId))
+                        btTenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(null, executor, logger);
+                    if (string.IsNullOrWhiteSpace(btTenantId)) { context.ExitCode = 1; return; }
+                    var btClientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(btTenantId, graphApiService, logger, ct);
+                    if (string.IsNullOrWhiteSpace(btClientAppId)) { context.ExitCode = 1; return; }
+                    graphApiService.CustomClientAppId = btClientAppId;
+                    var dwBootstrap = new Agent365Config
+                    {
+                        TenantId = btTenantId,
+                        ClientAppId = btClientAppId,
+                        AgentIdentityDisplayName = $"{agentName} Identity",
+                        AgentBlueprintDisplayName = $"{agentName} Blueprint",
+                        AgentDescription = agentName!,
+                        AiTeammate = true,
+                    };
+                    if (resolver != null)
+                    {
+                        await resolver.BackupAndClearStaleConfigAsync(config.FullName, dwBootstrap.TenantId!);
+                        if (!File.Exists(config.FullName))
+                            await resolver.WriteBootstrapConfigAsync(dwBootstrap, config.FullName);
+                    }
+                    setupConfig = dwBootstrap;
+                }
+                else
+                {
+                    setupConfig = await configService.LoadAsync(config.FullName);
+                }
 
                 // Configure GraphApiService with custom client app ID if available
                 // This ensures inheritable permissions operations use the validated custom app
@@ -352,19 +450,20 @@ internal static class AllSubcommand
                     configFile: config,
                     generatedConfigPath: generatedConfigPath,
                     correlationId: correlationId,
-                    skipInfrastructure: skipInfrastructure,
+                    skipInfrastructure: skipInfrastructure || isBootstrap,
                     skipRequirements: skipRequirements,
                     cancellationToken: ct,
                     configService: configService,
                     executor: executor,
-                    botConfigurator: botConfigurator,
+                    backendConfigurator: backendConfigurator,
                     authValidator: authValidator,
                     platformDetector: platformDetector,
                     graphApiService: graphApiService,
                     blueprintService: blueprintService,
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
-                    clientAppValidator: clientAppValidator);
+                    clientAppValidator: clientAppValidator,
+                    isM365: isM365);
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -383,11 +482,13 @@ internal static class AllSubcommand
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
 
+                // Step 4: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
+                await ExecuteMessagingEndpointStepAsync(ctx);
+
                 // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
-                await ProjectSettingsSyncHelper.ExecuteAsync(
+                setupResults.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
                     ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
                     ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
-                setupResults.ProjectSettingsWritten = true;
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
@@ -450,7 +551,7 @@ internal static class AllSubcommand
                 ctx.SkipInfrastructure,
                 isSetupAll: true,
                 ctx.ConfigService,
-                ctx.BotConfigurator,
+                ctx.BackendConfigurator,
                 ctx.PlatformDetector,
                 ctx.GraphApiService,
                 ctx.BlueprintService,
@@ -605,6 +706,68 @@ internal static class AllSubcommand
     }
 
     /// <summary>
+    /// Step — Registers the messaging endpoint with Teams Graph via MCP Platform when
+    /// <see cref="SetupContext.IsM365"/> is true. No-op for non-M365 agents; those users
+    /// are expected to configure the endpoint manually in the Teams Developer Portal.
+    /// <para>
+    /// Non-fatal: <see cref="SetupValidationException"/> is caught, logged, and added to
+    /// <see cref="SetupResults.Warnings"/> so setup continues and the summary surfaces the failure.
+    /// </para>
+    /// </summary>
+    internal static async Task ExecuteMessagingEndpointStepAsync(SetupContext ctx)
+    {
+        // Not an M365 agent — leave MessagingEndpointResult null so the summary shows "skipped".
+        if (!ctx.IsM365)
+            return;
+
+        // Blueprint step failed; there is no blueprint to attach an endpoint to. Record this as
+        // a distinct Failed + "BlueprintMissing" so the summary doesn't mislead the user with the
+        // "non-M365 agent" wording reserved for null.
+        if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
+        {
+            ctx.Logger.LogWarning("Messaging endpoint registration skipped: agent blueprint ID is missing (the blueprint step likely failed).");
+            ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+            ctx.Results.MessagingEndpointFailureReason = "BlueprintMissing";
+            ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
+            ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only --m365'.");
+            return;
+        }
+
+        try
+        {
+            var (result, failureReason) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+                ctx.Config,
+                ctx.Logger,
+                ctx.BackendConfigurator,
+                correlationId: ctx.CorrelationId);
+
+            ctx.Results.MessagingEndpointResult = result;
+            ctx.Results.MessagingEndpoint = ctx.Config.BotMessagingEndpoint ?? ctx.Config.MessagingEndpoint;
+
+            if (result == Models.EndpointRegistrationResult.Created ||
+                result == Models.EndpointRegistrationResult.AlreadyExists)
+            {
+                ctx.Results.MessagingEndpointRegistered = true;
+                ctx.Results.EndpointAlreadyExisted = result == Models.EndpointRegistrationResult.AlreadyExists;
+            }
+            else if (result == Models.EndpointRegistrationResult.Failed)
+            {
+                ctx.Results.MessagingEndpointFailureReason = failureReason;
+            }
+        }
+        catch (SetupValidationException ex)
+        {
+            // Configuration problem (e.g. invalid HTTPS URL, missing endpoint). Don't rethrow —
+            // setup should continue; surface the failure in the summary as a warning.
+            ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
+            ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+            ctx.Results.MessagingEndpointFailureReason = "Other";
+            ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
+            ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Step 3 (pre) — Removes stale custom permissions and builds the full resource permission
     /// spec list from dynamic config values (AgentApplicationScopes, MCP manifest, CustomBlueprintPermissions).
     /// Shared by both DW and non-DW flows so permissions are always consistent.
@@ -686,18 +849,17 @@ internal static class AllSubcommand
             return null;
 
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
-            tenantId,
-            graphApiService,
-            logger,
-            ct);
-        if (!string.IsNullOrWhiteSpace(clientAppId))
-            graphApiService.CustomClientAppId = clientAppId;
+            tenantId, graphApiService, logger, ct);
+        if (string.IsNullOrWhiteSpace(clientAppId))
+            return null;
+
+        graphApiService.CustomClientAppId = clientAppId;
 
         // Build minimal config and validate
         var config = new Agent365Config
         {
             TenantId = tenantId,
-            ClientAppId = clientAppId ?? string.Empty,
+            ClientAppId = clientAppId,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,

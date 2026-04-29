@@ -12,6 +12,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -30,23 +31,16 @@ public class CleanupCommand
     public static Command CreateCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
         AzureAuthValidator authValidator,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var cleanupCommand = new Command("cleanup", "Clean up ALL resources (blueprint, instance, Azure) - use subcommands for granular cleanup");
-
-        // Add options for default cleanup behavior (when no subcommand is used)
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
 
         var agentNameOption = new Option<string?>(
             new[] { "--agent-name", "-n" },
@@ -65,7 +59,6 @@ public class CleanupCommand
             ["--verbose", "-v"],
             description: "Enable verbose logging");
 
-        cleanupCommand.AddOption(configOption);
         cleanupCommand.AddOption(agentNameOption);
         cleanupCommand.AddOption(tenantIdOption);
         cleanupCommand.AddOption(yesOption);
@@ -74,7 +67,7 @@ public class CleanupCommand
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var configFile = context.ParseResult.GetValueForOption(configOption);
+            var configFile = new FileInfo("a365.config.json");
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var yes = context.ParseResult.GetValueForOption(yesOption);
@@ -87,8 +80,20 @@ public class CleanupCommand
             Agent365Config? bootstrapConfig = null;
             if (!string.IsNullOrWhiteSpace(agentName))
             {
-                bootstrapConfig = await BuildBootstrapConfigForCleanupAsync(
-                    agentName, tenantIdFlag, executor, graphApiService, logger);
+                bootstrapConfig = resolver != null
+                    ? await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, context.GetCancellationToken())
+                    : await BuildBootstrapConfigForCleanupAsync(agentName, tenantIdFlag, executor, graphApiService, logger);
+                if (bootstrapConfig is null)
+                {
+                    context.ExitCode = 1;
+                    return;
+                }
+            }
+            else
+            {
+                // No --agent-name and no static config file — fail fast with a clear exit code
+                // so cleanup does not silently report success to scripts or CI.
+                bootstrapConfig = await LoadConfigAsync(configFile, logger, configService);
                 if (bootstrapConfig is null)
                 {
                     context.ExitCode = 1;
@@ -100,13 +105,13 @@ public class CleanupCommand
                 ? new NonInteractiveConfirmationProvider()
                 : confirmationProvider;
 
-            await ExecuteAllCleanupAsync(logger, configService, botConfigurator, executor, agentBlueprintService, effectiveConfirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig, ct: context.GetCancellationToken());
+            await ExecuteAllCleanupAsync(logger, configService, executor, agentBlueprintService, effectiveConfirmationProvider, federatedCredentialService, configFile, graphApiService, correlationId: correlationId, configOverride: bootstrapConfig, ct: context.GetCancellationToken());
         });
 
         // Add subcommands for granular control
-        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, botConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, graphApiService: graphApiService));
-        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator));
-        cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor));
+        cleanupCommand.AddCommand(CreateBlueprintCleanupCommand(logger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, graphApiService: graphApiService, resolver: resolver));
+        cleanupCommand.AddCommand(CreateAzureCleanupCommand(logger, configService, executor, authValidator, resolver: resolver));
+        cleanupCommand.AddCommand(CreateInstanceCleanupCommand(logger, configService, executor, resolver: resolver));
 
         return cleanupCommand;
     }
@@ -114,22 +119,24 @@ public class CleanupCommand
     private static Command CreateBlueprintCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
         FederatedCredentialService federatedCredentialService,
         string? correlationId = null,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("blueprint", "Remove Entra ID blueprint application and service principal");
-        
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
+
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             new[] { "--verbose", "-v" },
@@ -139,32 +146,104 @@ public class CleanupCommand
             new[] { "--endpoint-only" },
             description: "Delete only the messaging endpoint, keep the blueprint application");
 
-        command.AddOption(configOption);
-        command.AddOption(verboseOption);
-        command.AddOption(endpointOnlyOption);
+        var m365Option = new Option<bool>(
+            new[] { "--m365" },
+            description: "Only meaningful with --endpoint-only. When set, clears the messaging endpoint from " +
+                        "Teams Graph via MCP Platform. Default is false (opt-in). Ignored (with a warning) " +
+                        "for full blueprint cleanup, since deleting the blueprint application cascades to " +
+                        "the backend configuration on the server side.");
 
-        command.SetHandler(async (configFile, verbose, endpointOnly) =>
+        var dryRunOption = new Option<bool>("--dry-run", "Show what would be deleted without making any changes");
+
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
+        command.AddOption(verboseOption);
+        command.AddOption(dryRunOption);
+        command.AddOption(endpointOnlyOption);
+        command.AddOption(m365Option);
+
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
+            var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            var ct = context.GetCancellationToken();
+
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+
+                logger.LogInformation("Dry run: a365 cleanup blueprint --dry-run");
+                logger.LogInformation("");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgentBlueprintId))
+                {
+                    logger.LogInformation("  Will delete blueprint application: {Name} ({Id})",
+                        dryRunConfig.AgentBlueprintDisplayName, dryRunConfig.AgentBlueprintId);
+                    if (!string.IsNullOrWhiteSpace(dryRunConfig.AgenticAppId))
+                        logger.LogInformation("  Will delete agent identity SP: {SpId}", dryRunConfig.AgenticAppId);
+                    if (!string.IsNullOrWhiteSpace(dryRunConfig.AgentInstanceId))
+                        logger.LogInformation("  Will deregister agent instance: {InstanceId}", dryRunConfig.AgentInstanceId);
+                }
+                else
+                {
+                    logger.LogInformation("  Would delete: blueprint Entra ID application");
+                    logger.LogInformation("  Would delete: agent identity service principal (if present)");
+                    logger.LogInformation("  Would delete: agent instances linked to this blueprint (if any)");
+                    logger.LogInformation("");
+                    logger.LogInformation("  Pass --agent-name <name> to preview specific resource IDs.");
+                }
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
+
             try
             {
+                Agent365Config? config;
+                if (resolver != null)
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+                else
+                    config = await LoadConfigAsync(configFile, logger, configService);
+                if (config == null) { context.ExitCode = 1; return; }
+
                 // Generate correlation ID at workflow entry point
                 var correlationId = HttpClientFactory.GenerateCorrelationId();
                 logger.LogInformation("Starting blueprint cleanup (CorrelationId: {CorrelationId})", correlationId);
-                
-                var config = await LoadConfigAsync(configFile, logger, configService);
-                if (config == null) return;
-                
+
                 // Configure AgentBlueprintService with custom client app ID if available
                 if (!string.IsNullOrWhiteSpace(config.ClientAppId))
                 {
                     agentBlueprintService.CustomClientAppId = config.ClientAppId;
                 }
 
-                // If endpoint-only mode, only delete the messaging endpoint
+                // If endpoint-only mode, only delete the messaging endpoint — gated on --m365.
                 if (endpointOnly)
                 {
-                    await ExecuteEndpointOnlyCleanupAsync(logger, config, botConfigurator, correlationId: correlationId);
+                    if (!isM365)
+                    {
+                        SetupSubcommands.BlueprintSubcommand.LogNonM365EndpointGuidance(logger, "clear");
+                        return;
+                    }
+
+                    await ExecuteEndpointOnlyCleanupAsync(logger, config, backendConfigurator, correlationId: correlationId);
                     return;
+                }
+
+                // Full cleanup path — --m365 has no effect here because blueprint deletion cascades
+                // the backend configuration on the server side. Warn the user so they aren't misled.
+                if (isM365)
+                {
+                    logger.LogWarning(
+                        "--m365 has no effect on full blueprint cleanup. The Teams Graph backend " +
+                        "configuration is removed automatically when the blueprint is deleted. " +
+                        "Use 'a365 cleanup blueprint --endpoint-only --m365' to clear the endpoint " +
+                        "while preserving the blueprint.");
                 }
 
                 // Full blueprint cleanup with cascade instance deletion
@@ -259,7 +338,7 @@ public class CleanupCommand
                         var registrationDeleted = await graphApiService.DeleteAgentRegistrationAsync(
                             config.TenantId,
                             config.AgentRegistrationId,
-                            CancellationToken.None);
+                            ct);
 
                         if (registrationDeleted)
                         {
@@ -286,7 +365,7 @@ public class CleanupCommand
                         var instanceDeleted = await graphApiService.DeleteAgentInstanceAsync(
                             config.TenantId,
                             config.AgentInstanceId,
-                            CancellationToken.None);
+                            ct);
 
                         if (instanceDeleted)
                         {
@@ -393,6 +472,10 @@ public class CleanupCommand
 
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
+                // Teams Graph backend configuration is a child resource of the blueprint and is
+                // removed on the server side when the blueprint is deleted. No separate clear
+                // call is needed here. Use `a365 cleanup blueprint --endpoint-only --m365` to
+                // clear just the backend configuration while preserving the blueprint.
                 PrintOrphanSummary(logger, failedResources);
 
                 // Clear configuration after successful blueprint deletion
@@ -417,8 +500,9 @@ public class CleanupCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Blueprint cleanup failed");
+                context.ExitCode = 1;
             }
-        }, configOption, verboseOption, endpointOnlyOption);
+        });
 
         return command;
     }
@@ -433,16 +517,18 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
-        AzureAuthValidator authValidator)
+        AzureAuthValidator authValidator,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("azure", "Remove Azure resources (App Service, App Service Plan)");
 
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             new[] { "--verbose", "-v" },
@@ -450,25 +536,52 @@ public class CleanupCommand
 
         var dryRunOption = new Option<bool>("--dry-run", "Show resources that would be deleted without making any changes");
 
-        command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (configFile, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+
+                logger.LogInformation("Dry run: a365 cleanup azure --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("Azure Cleanup Preview:");
+                logger.LogInformation("=========================");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.BotId))
+                    logger.LogInformation("    Azure Bot: {BotId}", dryRunConfig!.BotId);
+                else
+                    logger.LogInformation("    Azure Bot (if present — pass --agent-name to preview)");
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
+
             try
             {
-                if (!dryRun)
-                    logger.LogInformation("Starting Azure cleanup...");
+                Agent365Config? config;
+                if (resolver != null)
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+                else
+                    config = await LoadConfigAsync(configFile, logger, configService);
+                if (config == null) { context.ExitCode = 1; return; }
 
-                var config = await LoadConfigAsync(configFile, logger, configService);
-                if (config == null) return;
+                logger.LogInformation("Starting Azure cleanup...");
 
-                if (!dryRun)
-                {
-                    var checks = GetAzureCleanupChecks(authValidator);
-                    await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, CancellationToken.None);
-                }
+                var checks = GetAzureCleanupChecks(authValidator);
+                await RequirementsSubcommand.RunChecksOrExitAsync(checks, config, logger, ct);
 
                 logger.LogInformation("");
                 logger.LogInformation("Azure Cleanup Preview:");
@@ -476,12 +589,6 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.BotId))
                     logger.LogInformation("    Azure Bot: {BotId}", config.BotId);
                 logger.LogInformation("");
-
-                if (dryRun)
-                {
-                    logger.LogInformation("DRY RUN: No changes made.");
-                    return;
-                }
 
                 Console.Write("Continue with Azure cleanup? (y/N): ");
                 var response = Console.ReadLine()?.Trim().ToLowerInvariant();
@@ -498,8 +605,9 @@ public class CleanupCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Azure cleanup failed with exception");
+                context.ExitCode = 1;
             }
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -507,38 +615,83 @@ public class CleanupCommand
     private static Command CreateInstanceCleanupCommand(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        CommandExecutor executor)
+        CommandExecutor executor,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("instance", "Remove agent instance identity and user from Entra ID");
-        
-        var configOption = new Option<FileInfo?>(
-            new[] { "--config", "-c" },
-            "Path to configuration file")
-        {
-            ArgumentHelpName = "file"
-        };
+
+        var agentNameOption = new Option<string?>(
+            new[] { "--agent-name", "-n" },
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             new[] { "--verbose", "-v" },
             description: "Enable verbose logging");
 
-        command.AddOption(configOption);
-        command.AddOption(verboseOption);
+        var dryRunOption = new Option<bool>("--dry-run", "Show what would be deleted without making any changes");
 
-        command.SetHandler(async (configFile, verbose) =>
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
+        command.AddOption(verboseOption);
+        command.AddOption(dryRunOption);
+
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+
+                logger.LogInformation("Dry run: a365 cleanup instance --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("  Would delete the following resources:");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgenticAppId))
+                    logger.LogInformation("    Agent Identity Service Principal: {SpId}", dryRunConfig.AgenticAppId);
+                else
+                    logger.LogInformation("    Agent Identity Service Principal (if present)");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgenticUserId))
+                    logger.LogInformation("    Agent User: {UserId}", dryRunConfig.AgenticUserId);
+                else
+                    logger.LogInformation("    Agent User (if present)");
+                logger.LogInformation("    Generated configuration file (instance fields)");
+                if (dryRunConfig == null)
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("  Pass --agent-name <name> to preview specific resource IDs.");
+                }
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
+
             try
             {
+                Agent365Config? config;
+                if (resolver != null)
+                    config = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+                else
+                    config = await LoadConfigAsync(configFile, logger, configService);
+                if (config == null) { context.ExitCode = 1; return; }
+
                 logger.LogInformation("Starting instance cleanup...");
-                
-                var config = await LoadConfigAsync(configFile, logger, configService);
-                if (config == null) return;
 
                 logger.LogInformation("");
                 logger.LogInformation("Instance Cleanup Preview:");
                 logger.LogInformation("============================");
                 logger.LogInformation("Will delete the following resources:");
-                
+
                 if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                     logger.LogInformation("    Agent Identity Service Principal: {SpId}", config.AgenticAppId);
                 if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
@@ -558,7 +711,7 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                 {
                     logger.LogInformation("Deleting agent identity service principal...");
-                    await executor.ExecuteAsync("az", $"ad app delete --id {config.AgenticAppId}", null, true, false, CancellationToken.None);
+                    await executor.ExecuteAsync("az", $"ad app delete --id {config.AgenticAppId}", null, true, false, ct);
                     logger.LogInformation("Agent identity service principal deleted");
                 }
 
@@ -566,7 +719,7 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
                 {
                     logger.LogInformation("Deleting agent user...");
-                    await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, CancellationToken.None);
+                    await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, ct);
                     logger.LogInformation("Agent user deleted");
                 }
 
@@ -616,8 +769,9 @@ public class CleanupCommand
             catch (Exception ex)
             {
                 logger.LogError(ex, "Instance cleanup failed: {Message}", ex.Message);
+                context.ExitCode = 1;
             }
-        }, configOption, verboseOption);
+        });
 
         return command;
     }
@@ -626,7 +780,6 @@ public class CleanupCommand
     private static async Task ExecuteAllCleanupAsync(
         ILogger<CleanupCommand> logger,
         IConfigService configService,
-        IBotConfigurator botConfigurator,
         CommandExecutor executor,
         AgentBlueprintService agentBlueprintService,
         IConfirmationProvider confirmationProvider,
@@ -865,7 +1018,7 @@ public class CleanupCommand
             if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
             {
                 logger.LogInformation("Deleting agent user...");
-                await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, CancellationToken.None);
+                await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, ct);
                 logger.LogInformation("Agent user deleted");
             }
 
@@ -917,19 +1070,33 @@ public class CleanupCommand
                     var globalGeneratedPath = Path.Combine(
                         ConfigService.GetGlobalConfigDirectory(),
                         "a365.generated.config.json");
-                    
+
                     if (File.Exists(globalGeneratedPath))
                     {
                         var globalBackupPath = Path.Combine(
                             ConfigService.GetGlobalConfigDirectory(),
                             $"a365.generated.config.backup-{timestamp}.json");
-                        
+
                         logger.LogInformation("Backing up global generated configuration to: {BackupPath}", globalBackupPath);
                         File.Copy(globalGeneratedPath, globalBackupPath);
-                        
+
                         logger.LogInformation("Deleting global generated configuration file...");
                         File.Delete(globalGeneratedPath);
                         logger.LogInformation("Global generated configuration deleted (backup saved)");
+                    }
+
+                    // Delete static config file
+                    var staticConfigPath = configFile?.FullName ?? "a365.config.json";
+                    if (File.Exists(staticConfigPath))
+                    {
+                        var staticBackupPath = Path.ChangeExtension(staticConfigPath, null) + $".backup-{timestamp}.json";
+
+                        logger.LogInformation("Backing up configuration to: {BackupPath}", staticBackupPath);
+                        File.Copy(staticConfigPath, staticBackupPath);
+
+                        logger.LogInformation("Deleting configuration file...");
+                        File.Delete(staticConfigPath);
+                        logger.LogInformation("Configuration file deleted (backup saved)");
                     }
                 }
                 catch (Exception ex)
@@ -946,69 +1113,49 @@ public class CleanupCommand
     /// </summary>
     /// <param name="logger">Logger instance for diagnostic messages</param>
     /// <param name="config">Configuration containing endpoint and blueprint information</param>
-    /// <param name="botConfigurator">Bot configurator service for endpoint operations</param>
+    /// <param name="backendConfigurator">Bot configurator service for endpoint operations</param>
     /// <param name="correlationId">Optional correlation ID for request tracing</param>
     /// <returns>True if endpoint was deleted successfully; false otherwise</returns>
     private static async Task<bool> DeleteMessagingEndpointAsync(
         ILogger<CleanupCommand> logger,
         Agent365Config config,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         string? correlationId = null)
     {
-        // Check if there's actually an endpoint to clean up
-        if (string.IsNullOrWhiteSpace(config.BotName))
-        {
-            logger.LogInformation("No messaging endpoint found in configuration");
-            return true; // No endpoint to delete = success
-        }
-
-        // Check if blueprint ID exists (required for endpoint deletion)
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
-            logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for deleting endpoint registration.");
+            logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for clearing the backend configuration.");
             return false;
         }
 
-        logger.LogInformation("Deleting messaging endpoint registration...");
-        var endpointName = ResolveEndpointName(config);
+        logger.LogInformation("Clearing backend configuration...");
 
-        var endpointDeleted = await botConfigurator.DeleteEndpointWithAgentBlueprintAsync(
-            endpointName,
-            string.Empty,
+        var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
             config.AgentBlueprintId,
             correlationId: correlationId);
 
-        if (endpointDeleted)
+        if (cleared)
         {
-            logger.LogInformation("Messaging endpoint deleted successfully");
+            logger.LogInformation("Backend configuration cleared successfully");
             return true;
         }
-        else
-        {
-            logger.LogWarning("Failed to delete messaging endpoint");
-            return false;
-        }
+
+        logger.LogWarning("Failed to clear backend configuration");
+        return false;
     }
 
     /// <summary>
-    /// Executes endpoint-only cleanup - deletes the messaging endpoint while preserving the blueprint application
+    /// Executes endpoint-only cleanup — clears the Teams Graph backend configuration while
+    /// preserving the blueprint application.
     /// </summary>
     private static async Task ExecuteEndpointOnlyCleanupAsync(
         ILogger<CleanupCommand> logger,
         Agent365Config config,
-        IBotConfigurator botConfigurator,
+        ITeamsGraphBackendConfigurator backendConfigurator,
         string? correlationId = null)
     {
         logger.LogInformation("Starting endpoint-only cleanup...");
-        
-        // Check if there's actually an endpoint to clean up
-        if (string.IsNullOrWhiteSpace(config.BotName))
-        {
-            logger.LogInformation("No messaging endpoint found to clean up");
-            return;
-        }
 
-        // Check if blueprint ID exists (required for endpoint deletion)
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
             logger.LogError("Agent Blueprint ID not found. Blueprint ID is required for endpoint deletion.");
@@ -1016,14 +1163,10 @@ public class CleanupCommand
             return;
         }
 
-        // Get the actual endpoint name that will be used for deletion (truncated to 42 chars).
-        var endpointName = ResolveEndpointName(config);
-
         logger.LogInformation("");
         logger.LogInformation("Endpoint Cleanup Preview:");
         logger.LogInformation("============================");
-        logger.LogInformation("Will delete messaging endpoint:");
-        logger.LogInformation("  Endpoint Name: {EndpointName}", endpointName);
+        logger.LogInformation("Will clear messaging endpoint for blueprint: {BlueprintId}", config.AgentBlueprintId);
         logger.LogInformation("");
 
         Console.Write("Continue with endpoint cleanup? (y/N): ");
@@ -1034,9 +1177,8 @@ public class CleanupCommand
             return;
         }
 
-        // Use shared helper to delete the endpoint
-        var deleted = await DeleteMessagingEndpointAsync(logger, config, botConfigurator, correlationId: correlationId);
-        
+        var deleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId);
+
         if (!deleted)
         {
             return;
@@ -1232,19 +1374,4 @@ public class CleanupCommand
         }
     }
 
-    /// <summary>
-    /// Resolves the Azure Bot Service endpoint name from config.
-    /// For needsDeployment=false, prefers BotMessagingEndpoint (updated after each registration)
-    /// over MessagingEndpoint (static) so that delete targets the currently registered endpoint.
-    /// </summary>
-    private static string ResolveEndpointName(Agent365Config config)
-    {
-        // Use BotMessagingEndpoint (updated by registration) over MessagingEndpoint (static).
-        var urlForName = !string.IsNullOrWhiteSpace(config.BotMessagingEndpoint)
-            ? config.BotMessagingEndpoint
-            : config.MessagingEndpoint;
-        if (!string.IsNullOrWhiteSpace(urlForName))
-            return EndpointHelper.GetEndpointNameFromUrl(urlForName, config.AgentBlueprintId);
-        return EndpointHelper.GetEndpointName(config.BotName);
-    }
 }

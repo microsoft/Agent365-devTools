@@ -134,10 +134,8 @@ a365 --version
 
 ### Configuration
 ```bash
-a365 config init                    # Interactive wizard
-a365 config init -c config.json     # Import from file
-a365 config init --global           # Global config
-a365 config display                 # Show current config
+a365 setup all --agent-name <agent-base-name>  # Bootstrap setup
+a365 query-entra blueprint-scopes              # Show blueprint permissions
 ```
 
 ### Setup
@@ -304,12 +302,12 @@ Solution:
 
 ### Issue: Configuration Invalid
 ```bash
-# Validate configuration
-a365 config display
+# Validate blueprint permissions
+a365 query-entra blueprint-scopes
 
 # Check for missing required fields
 # Reinitialize if needed
-a365 config init
+a365 setup all --agent-name <agent-base-name>
 ```
 
 ---
@@ -397,11 +395,8 @@ Issues: ___________________
 # Install
 dotnet tool install -g Microsoft.Agents.A365.DevTools.Cli --prerelease
 
-# Configure
-a365 config init
-
-# Setup everything
-a365 setup all
+# Configure and set up
+a365 setup all --agent-name <agent-base-name>
 
 # Create test app
 dotnet new webapi -n TestAgent
@@ -422,7 +417,7 @@ a365 cleanup
 ### Quick Sanity Check (5 min)
 ```bash
 a365 --version
-a365 config init
+a365 setup all --agent-name <agent-base-name>
 a365 setup requirements
 a365 deploy --dry-run
 a365 cleanup --dry-run
@@ -430,10 +425,8 @@ a365 cleanup --dry-run
 
 ### Configuration Only (5 min)
 ```bash
-a365 config init
-a365 config display
-a365 config init -c test-config.json
-a365 config init --global
+a365 setup all --agent-name <agent-base-name>
+a365 query-entra blueprint-scopes
 ```
 
 ---
