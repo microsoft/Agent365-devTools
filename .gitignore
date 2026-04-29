@@ -2,15 +2,7 @@
 docs/plans/
 docs/Permissions-Review.md
 docs/Testing.md
-docs/CLIimprovementRecommendations.docx
-docs/functional-spec-nondw.md
-docs/agent365-guided-setup/a365errors.md
 scripts/skills/
-
-# Local config and generated files
-a365.config.json
-a365.generated.config.json
-error-log.md
 
 # IDE launch profiles (developer-specific)
 **/Properties/launchSettings.json
