@@ -300,7 +300,6 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("config");
         optionNames.Should().Contain("publisher");
         optionNames.Should().Contain("description");
-        optionNames.Should().Contain("force");
         optionNames.Should().Contain("dry-run");
         optionNames.Should().Contain("verbose");
 

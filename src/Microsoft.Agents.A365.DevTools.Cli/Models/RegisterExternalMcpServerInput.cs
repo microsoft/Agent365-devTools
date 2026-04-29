@@ -11,7 +11,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Models;
 public class RegisterExternalMcpServerInput
 {
     /// <summary>
-    /// MCP server name (max 22 chars, must start with 'ext_', e.g. ext_MyServer).
+    /// MCP server name (max 20 chars, must start with 'ext_', e.g. ext_MyServer).
     /// </summary>
     [JsonPropertyName("serverName")]
     public string? ServerName { get; set; }
@@ -63,12 +63,6 @@ public class RegisterExternalMcpServerInput
     /// </summary>
     [JsonPropertyName("serviceTreeId")]
     public string? ServiceTreeId { get; set; }
-
-    /// <summary>
-    /// When true, force re-creation of Entra apps and connectors
-    /// </summary>
-    [JsonPropertyName("force")]
-    public bool Force { get; set; }
 
     /// <summary>
     /// External OAuth configuration (required when authType is ExternalOAuth)

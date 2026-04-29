@@ -143,9 +143,14 @@ public class Agent365ToolingService : IAgent365ToolingService
             var root = doc.RootElement;
 
             var details = root.TryGetProperty("details", out var d) ? d.GetString() : null;
-            var error = root.TryGetProperty("error", out var e)
-                ? (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("message", out var em) ? em.GetString() : e.GetString())
-                : null;
+            string? error = null;
+            if (root.TryGetProperty("error", out var e))
+            {
+                if (e.ValueKind == JsonValueKind.Object)
+                    error = e.TryGetProperty("message", out var em) ? em.GetString() : e.ToString();
+                else if (e.ValueKind == JsonValueKind.String)
+                    error = e.GetString();
+            }
             var message = root.TryGetProperty("message", out var m) ? m.GetString() : null;
 
             return details ?? error ?? message;

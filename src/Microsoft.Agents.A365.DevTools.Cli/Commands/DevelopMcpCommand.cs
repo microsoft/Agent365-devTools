@@ -861,9 +861,6 @@ public static class DevelopMcpCommand
         var descriptionOption = new Option<string?>("--description", description: "Server description (required, used in MOS package metadata)");
         command.AddOption(descriptionOption);
 
-        var forceOption = new Option<bool>("--force", description: "Force re-creation of Entra apps and connectors");
-        command.AddOption(forceOption);
-
         var dryRunOption = new Option<bool>("--dry-run", description: "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
@@ -889,7 +886,6 @@ public static class DevelopMcpCommand
             var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption);
             var publisherName = context.ParseResult.GetValueForOption(publisherOption);
             var serverDescription = context.ParseResult.GetValueForOption(descriptionOption);
-            var force = context.ParseResult.GetValueForOption(forceOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
 
             // Load input file if provided, and use file values as defaults for CLI options not explicitly set
@@ -926,7 +922,6 @@ public static class DevelopMcpCommand
                     serviceTreeId ??= inputFileData.ServiceTreeId;
                     publisherName ??= inputFileData.PublisherName;
                     serverDescription ??= inputFileData.Description;
-                    force = force || inputFileData.Force;
 
                     // ExternalOAuth fields
                     if (inputFileData.ExternalOAuth is not null)
@@ -1221,14 +1216,6 @@ public static class DevelopMcpCommand
                 WriteLabel("  API Key Name:     "); Console.WriteLine(apiKeyName);
             }
 
-            if (force)
-            {
-                prevColor = Console.ForegroundColor;
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine("  Force:          true");
-                Console.ForegroundColor = prevColor;
-            }
-
             Console.WriteLine();
 
             prevColor = Console.ForegroundColor;
@@ -1289,36 +1276,6 @@ public static class DevelopMcpCommand
             {
                 logger.LogError("Graph API service is not available. Cannot create Entra applications.");
                 return;
-            }
-
-            // Force mode: delete existing Entra apps before recreating
-            if (force)
-            {
-                logger.LogDebug("Force mode: looking up existing Entra apps to delete...");
-
-                var existingA365ObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, a365AppName);
-                if (!string.IsNullOrWhiteSpace(existingA365ObjectId))
-                {
-                    logger.LogDebug("Deleting existing A365 Proxy app: {ObjectId}", existingA365ObjectId);
-                    await graphApiService.DeleteEntraAppAsync(tenantId, existingA365ObjectId);
-                }
-
-                if (isEntra)
-                {
-                    var existingRemoteObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, remoteProxyAppName);
-                    if (!string.IsNullOrWhiteSpace(existingRemoteObjectId))
-                    {
-                        logger.LogDebug("Deleting existing Remote Proxy app: {ObjectId}", existingRemoteObjectId);
-                        await graphApiService.DeleteEntraAppAsync(tenantId, existingRemoteObjectId);
-                    }
-                }
-
-                var existingPpmiObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, $"{serverName} - BYO");
-                if (!string.IsNullOrWhiteSpace(existingPpmiObjectId))
-                {
-                    logger.LogDebug("Deleting existing PPMI (MCPServer) app: {ObjectId}", existingPpmiObjectId);
-                    await graphApiService.DeleteEntraAppAsync(tenantId, existingPpmiObjectId);
-                }
             }
 
             logger.LogDebug("Creating Entra application for A365 Proxy...");
@@ -1410,15 +1367,8 @@ public static class DevelopMcpCommand
             string? copilotAppClientId = null;
             string? copilotAppObjectId = null;
 
-            if (force)
-            {
-                var existingCopilotObjectId = await graphApiService.GetAppObjectIdByDisplayNameAsync(tenantId, publicClientsAppName);
-                if (!string.IsNullOrWhiteSpace(existingCopilotObjectId))
-                {
-                    logger.LogDebug("Deleting existing Copilot app: {ObjectId}", existingCopilotObjectId);
-                    await graphApiService.DeleteEntraAppAsync(tenantId, existingCopilotObjectId);
-                }
-            }
+            // Track warnings for non-fatal failures during registration
+            var warnings = new List<string>();
 
             logger.LogDebug("Creating Entra application for Public Clients...");
             var copilotApp = await graphApiService.CreateEntraAppAsync(tenantId, publicClientsAppName, serviceTreeId: serviceTreeId);
@@ -1436,16 +1386,17 @@ public static class DevelopMcpCommand
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning("Failed to set redirect URI on Copilot app: {Error}", ex.Message);
+                    var msg = $"Failed to set redirect URI on Public Clients app: {ex.Message}";
+                    logger.LogWarning(msg);
+                    warnings.Add(msg);
                 }
             }
             else
             {
-                logger.LogWarning("Failed to create Copilot Entra app. Continuing without it.");
+                var msg = "Failed to create Public Clients Entra app. Continuing without it.";
+                logger.LogWarning(msg);
+                warnings.Add(msg);
             }
-
-            // Track warnings for non-fatal failures during registration
-            var warnings = new List<string>();
 
             // Step 2: Call Add MCP server API
             logger.LogDebug("Adding MCP server {ServerName}...", serverName);
@@ -1472,7 +1423,6 @@ public static class DevelopMcpCommand
                 PublisherName = publisherName,
                 Description = serverDescription,
                 CopilotClientAppId = copilotAppClientId,
-                Force = force,
             };
 
             async Task RollbackEntraAppsAsync()
