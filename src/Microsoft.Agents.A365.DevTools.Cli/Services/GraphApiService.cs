@@ -1083,6 +1083,33 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Updates the publicClient redirect URIs on an Entra application registration.
+    /// </summary>
+    public async Task<bool> UpdateAppPublicClientRedirectUrisAsync(
+        string tenantId, string applicationObjectId, IEnumerable<string> redirectUris, CancellationToken ct = default)
+    {
+        var payload = new
+        {
+            publicClient = new
+            {
+                redirectUris,
+            },
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogDebug("Updated publicClient redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+        else
+        {
+            _logger.LogError("Failed to update publicClient redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Looks up an application by its appId (clientId) and returns the object ID.
     /// Retries up to 6 times with a 10-second delay to handle replication lag for newly created apps.
     /// </summary>

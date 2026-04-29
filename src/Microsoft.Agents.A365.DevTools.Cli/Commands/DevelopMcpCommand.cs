@@ -1408,10 +1408,10 @@ public static class DevelopMcpCommand
                 copilotAppObjectId = copilotApp.Value.ObjectId;
                 logger.LogDebug("Created Public Clients app: {ClientId}", copilotAppClientId);
 
-                var copilotRedirectUri = $"ms-appx-web://MicrosoftAAD.BrokerPlugin/{copilotAppClientId}";
+                var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{copilotAppClientId}";
                 try
                 {
-                    await graphApiService.UpdateAppRedirectUrisAsync(tenantId, copilotAppObjectId, new[] { copilotRedirectUri });
+                    await graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, copilotAppObjectId, new[] { copilotRedirectUri });
                     logger.LogDebug("Set redirect URI on '{AppName}' ({ObjectId}): {Uri}", publicClientsAppName, copilotAppObjectId, copilotRedirectUri);
                 }
                 catch (Exception ex)

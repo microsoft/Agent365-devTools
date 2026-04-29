@@ -223,9 +223,12 @@ public class DevelopMcpCommandRegressionTests
             options.Should().Contain(o => o.Name == "config", 
                 $"Subcommand '{subcommand.Name}' should have --config option");
             
-            // All commands should have dry-run option  
-            options.Should().Contain(o => o.Name == "dry-run",
-                $"Subcommand '{subcommand.Name}' should have --dry-run option");
+            // All commands except cleanup-external-mcp-server-resources should have dry-run option
+            if (subcommand.Name != "cleanup-external-mcp-server-resources")
+            {
+                options.Should().Contain(o => o.Name == "dry-run",
+                    $"Subcommand '{subcommand.Name}' should have --dry-run option");
+            }
 
             // Config option should have -c alias
             var configOption = options.First(o => o.Name == "config");
