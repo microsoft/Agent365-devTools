@@ -41,7 +41,7 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(9);
+        command.Subcommands.Should().HaveCount(8);
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         subcommandNames.Should().Contain(new[]
@@ -53,8 +53,7 @@ public class DevelopMcpCommandTests
             "approve",
             "block",
             "package-mcp-server",
-            "register-external-mcp-server",
-            "cleanup-external-mcp-server-resources"
+            "register-external-mcp-server"
         });
     }
 
@@ -242,12 +241,8 @@ public class DevelopMcpCommandTests
         // Act
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
-        // cleanup-external-mcp-server-resources does not support --dry-run by design
-        var subcommandsWithDryRun = command.Subcommands
-            .Where(sc => sc.Name != "cleanup-external-mcp-server-resources");
-
-        // Assert - All applicable subcommands should have dry-run option for safety
-        foreach (var subcommand in subcommandsWithDryRun)
+        // Assert - All subcommands should have dry-run option for safety
+        foreach (var subcommand in command.Subcommands)
         {
             var dryRunOption = subcommand.Options.FirstOrDefault(o => o.Name == "dry-run");
             dryRunOption.Should().NotBeNull($"Subcommand '{subcommand.Name}' should have --dry-run option");
@@ -256,7 +251,6 @@ public class DevelopMcpCommandTests
 
     [Theory]
     [InlineData("register-external-mcp-server")]
-    [InlineData("cleanup-external-mcp-server-resources")]
     public void ConfigDependentSubcommands_SupportConfigOption(string subcommandName)
     {
         // Act
@@ -327,42 +321,6 @@ public class DevelopMcpCommandTests
         verboseOption.Aliases.Should().Contain("-v");
     }
 
-    [Fact]
-    public void CleanupExternalMcpServerResourcesSubcommand_HasCorrectOptions()
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "cleanup-external-mcp-server-resources");
-
-        // Assert
-        subcommand.Description.Should().Be("Delete a registered external MCP server and clean up all associated Entra app registrations");
-
-        var options = subcommand.Options.ToList();
-        var optionNames = options.Select(o => o.Name).ToList();
-
-        optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("tenant-id");
-        optionNames.Should().Contain("force");
-        optionNames.Should().Contain("config");
-        optionNames.Should().Contain("verbose");
-
-        // Verify server-name is required
-        var serverNameOption = options.First(o => o.Name == "server-name");
-        serverNameOption.IsRequired.Should().BeTrue();
-
-        // Verify critical aliases
-        serverNameOption.Aliases.Should().Contain("-s");
-
-        var tenantIdOption = options.First(o => o.Name == "tenant-id");
-        tenantIdOption.Aliases.Should().Contain("-t");
-
-        var configOption = options.First(o => o.Name == "config");
-        configOption.Aliases.Should().Contain("-c");
-
-        var verboseOption = options.First(o => o.Name == "verbose");
-        verboseOption.Aliases.Should().Contain("-v");
-    }
-
 
     [Theory]
     [InlineData("list-servers", "environment-id", "-e")]
@@ -377,8 +335,6 @@ public class DevelopMcpCommandTests
     [InlineData("register-external-mcp-server", "auth-type", "-a")]
     [InlineData("register-external-mcp-server", "input-file", "-f")]
     [InlineData("register-external-mcp-server", "tenant-id", "-t")]
-    [InlineData("cleanup-external-mcp-server-resources", "server-name", "-s")]
-    [InlineData("cleanup-external-mcp-server-resources", "tenant-id", "-t")]
     public void CriticalOptions_HaveConsistentAliases(string subcommandName, string optionName, string expectedAlias)
     {
         // Act

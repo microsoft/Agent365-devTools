@@ -219,12 +219,8 @@ public class DevelopMcpCommandRegressionTests
         {
             var options = subcommand.Options.ToList();
 
-            // All commands except cleanup-external-mcp-server-resources should have dry-run option
-            if (subcommand.Name != "cleanup-external-mcp-server-resources")
-            {
-                options.Should().Contain(o => o.Name == "dry-run",
-                    $"Subcommand '{subcommand.Name}' should have --dry-run option");
-            }
+            options.Should().Contain(o => o.Name == "dry-run",
+                $"Subcommand '{subcommand.Name}' should have --dry-run option");
         }
     }
 }
