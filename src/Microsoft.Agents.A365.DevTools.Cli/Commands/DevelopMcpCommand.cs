@@ -1693,7 +1693,7 @@ public static class DevelopMcpCommand
         Console.ForegroundColor = prevColor;
     }
 
-    private static string? RemoveTcPrefix(string uri)
+    internal static string? RemoveTcPrefix(string uri)
     {
         var lastSlash = uri.LastIndexOf('/');
         if (lastSlash >= 0)
@@ -1708,7 +1708,7 @@ public static class DevelopMcpCommand
         return null;
     }
 
-    private static string? AddTcPrefix(string uri)
+    internal static string? AddTcPrefix(string uri)
     {
         var lastSlash = uri.LastIndexOf('/');
         if (lastSlash >= 0)
@@ -1723,7 +1723,7 @@ public static class DevelopMcpCommand
         return null;
     }
 
-    private static string[] BuildRedirectUriList(string original, string? tcVariant, string? nonTcVariant)
+    internal static string[] BuildRedirectUriList(string original, string? tcVariant, string? nonTcVariant)
     {
         var uris = new HashSet<string>(StringComparer.Ordinal) { original };
         if (tcVariant != null)

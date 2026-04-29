@@ -132,7 +132,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     /// <summary>
     /// Extracts a human-readable error message from a JSON error response body.
     /// </summary>
-    private static string? ExtractErrorMessage(string? responseContent)
+    internal static string? ExtractErrorMessage(string? responseContent)
     {
         if (string.IsNullOrWhiteSpace(responseContent))
             return null;
@@ -178,7 +178,7 @@ public class Agent365ToolingService : IAgent365ToolingService
         _logger.LogDebug("Making {Method} request to: {Url}", method, url);
     }
 
-    private static string RedactSecretsFromPayload(string payload)
+    internal static string RedactSecretsFromPayload(string payload)
     {
         try
         {
