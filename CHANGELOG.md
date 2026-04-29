@@ -20,11 +20,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 4. Repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 5. **Grant admin consent for \<tenant\>** > confirm
 
-**Option B — CLI** (requires `a365.config.json` and `a365.generated.config.json` in the config directory):
-
-```bash
-a365 setup admin --config-dir "<path-to-config-dir>"
-```
+**Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
 - `setup requirements` Global Administrator path: when the well-known CLI client app is not found in a new tenant, Global Admins are prompted to create the app and grant admin consent automatically (enter an app ID or type `C` to create).

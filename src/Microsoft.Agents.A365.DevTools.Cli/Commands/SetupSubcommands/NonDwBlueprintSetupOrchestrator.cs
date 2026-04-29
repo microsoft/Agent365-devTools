@@ -663,8 +663,8 @@ internal static class NonDwBlueprintSetupOrchestrator
 
     /// <summary>
     /// Attempts to grant app role assignments on the agent identity SP for S2S access.
-    /// Requires Application Administrator, Global Administrator, or Agent ID Administrator. When the signed-in user lacks
-    /// that role, prints PowerShell instructions covering only the app permission section.
+    /// Requires Agent ID Administrator, Application Administrator, or Global Administrator. When the signed-in user lacks
+    /// one of those roles, prints PowerShell instructions covering only the app permission section.
     /// </summary>
     internal static async Task GrantOrInstructAgentIdentityAppPermissionsAsync(
         SetupContext ctx,
@@ -704,7 +704,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity.", spec.ResourceName);
             else
             {
-                ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — likely not Global Admin.", spec.ResourceName);
+                ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — user likely lacks a required role ({Roles}).", spec.ResourceName, AuthenticationConstants.S2SGrantRequiredRoles);
                 failedSpecs.Add(spec);
             }
         }

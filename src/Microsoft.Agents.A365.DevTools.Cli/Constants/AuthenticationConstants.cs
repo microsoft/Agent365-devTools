@@ -272,7 +272,10 @@ public static class AuthenticationConstants
     public const string S2SGrantRequiredRoles = "Agent ID Administrator, Application Administrator, or Global Administrator";
 
     /// <summary>
-    /// Entra roles that can create principal-scoped delegated permission grants programmatically.
+    /// Roles required to create tenant-wide AllPrincipals oauth2PermissionGrants via the PowerShell
+    /// fallback path (when programmatic Principal-scoped grants fail). Note: the programmatic path
+    /// creates Principal-scoped grants and does not require an Entra admin role — only admin consent
+    /// on the client app for DelegatedPermissionGrant.ReadWrite.All.
     /// </summary>
     public const string DelegatedGrantRequiredRoles = "Application Administrator or Global Administrator";
 

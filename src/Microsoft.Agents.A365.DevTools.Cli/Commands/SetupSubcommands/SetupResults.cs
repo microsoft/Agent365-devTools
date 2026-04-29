@@ -136,9 +136,10 @@ public class SetupResults
 
     /// <summary>
     /// True when principal-scoped delegated grants for the agent identity were not completed during
-    /// the non-DW setup flow and manual follow-up may be required. This can occur when the signed-in
-    /// user lacks the required admin role, or when prerequisite directory objects such as the target
-    /// resource service principal are not yet resolvable due to creation or propagation timing. When
+    /// the non-DW setup flow and manual follow-up may be required. This can occur when the user or
+    /// application context does not have the Graph permissions needed to create the grant, or when
+    /// prerequisite directory objects such as the target resource service principal are not yet
+    /// resolvable due to creation or propagation timing. When
     /// set, <see cref="SetupHelpers"/> surfaces PowerShell instructions in the Action Required section
     /// using <see cref="AgentIdentityId"/> and <see cref="TenantId"/> as the suggested remediation
     /// path. Drives the delegated consent action item in the setup summary.
