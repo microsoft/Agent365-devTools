@@ -58,7 +58,7 @@ Present only the options that apply to the user's `agentType` **and** `authMode`
     2. Observability
     3. AI Teammate
 
-> **Note:** Work IQ requires delegated (OBO) permissions and is not available for S2S-only agents.
+> **Note:** Work IQ requires delegated (OBO) permissions and is not available for S2S-only agents. When `authMode = "both"`, Work IQ is available but applies only to the OBO (delegated) portion of your agent — it does not apply to S2S calls.
 
 Wait for the answer. Store as `capabilities`.
 
