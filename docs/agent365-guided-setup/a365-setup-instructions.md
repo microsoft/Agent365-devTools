@@ -49,12 +49,12 @@ Present only the options that apply to the user's `agentType` **and** `authMode`
     2. AI Teammate
 - **If `agentType = 2`** (All other agents):
   - `authMode = "obo"` or `"both"`:
-    1. Discoverability
+    1. Register
     2. Observability
     3. Work IQ
     4. AI Teammate
   - `authMode = "s2s"`:
-    1. Discoverability
+    1. Register
     2. Observability
     3. AI Teammate
 
