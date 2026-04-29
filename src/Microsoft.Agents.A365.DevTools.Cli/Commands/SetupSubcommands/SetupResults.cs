@@ -135,6 +135,13 @@ public class SetupResults
     public bool AgentIdentityPermissionsGranted { get; set; }
 
     /// <summary>
+    /// The effective --authmode value used during the non-DW grant step ("obo", "s2s", or "both").
+    /// Null when the grant step was not reached (e.g. agent identity creation failed).
+    /// Used by DisplaySetupSummary to compute per-grant-type completion for the "both" mode.
+    /// </summary>
+    public string? EffectiveAuthMode { get; set; }
+
+    /// <summary>
     /// Whether the Agent Identity was successfully created via the Agent Identity Graph API.
     /// Populated by the non-DW blueprint setup flow only.
     /// </summary>

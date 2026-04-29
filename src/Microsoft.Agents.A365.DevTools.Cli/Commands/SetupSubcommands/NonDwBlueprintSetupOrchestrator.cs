@@ -403,6 +403,8 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Step 5a: Grant permissions to the agent identity, gated by authMode.
         if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
         {
+            ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? "both" : ctx.IsS2sMode ? "s2s" : "obo";
+
             // OBO and Both: principal-scoped delegated grants (no admin required).
             if (ctx.IsOboMode || ctx.IsBothMode)
                 await GrantAgentIdentityPermissionsAsync(ctx, specs);
@@ -653,19 +655,12 @@ internal static class NonDwBlueprintSetupOrchestrator
             return;
         }
 
-        // Resolve the agent identity service principal object ID.
-        var agentIdentitySpObjectId = await ctx.GraphApiService.EnsureServicePrincipalForAppIdAsync(
-            ctx.Config.TenantId!,
-            ctx.Config.AgenticAppId!,
-            ctx.CancellationToken,
-            Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
-
+        // AgenticAppId is the SP object ID returned by CreateAgentIdentityDelegatedAsync /
+        // FindExistingAgentIdentityAsync — use it directly without an appId→SP lookup.
+        var agentIdentitySpObjectId = ctx.Config.AgenticAppId;
         if (string.IsNullOrWhiteSpace(agentIdentitySpObjectId))
         {
-            ctx.Logger.LogWarning(
-                "Could not resolve service principal for agent identity ({AgentId}). " +
-                "App role assignments must be granted manually.",
-                ctx.Config.AgenticAppId);
+            ctx.Logger.LogWarning("Agent identity SP object ID is missing. App role assignments must be granted manually.");
             ctx.Results.S2SAppRoleGranted = false;
             return;
         }
@@ -706,7 +701,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("S2S app role assignments require Global Administrator. Run the following PowerShell as an admin:");
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  # Connect to Microsoft Graph");
-        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All'", ctx.Config.TenantId);
+        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All', 'Directory.Read.All'", ctx.Config.TenantId);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  $agentSpId = '{AgentSpId}'", agentIdentitySpObjectId);
 

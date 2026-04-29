@@ -874,23 +874,20 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// When the agent identity SP cannot be resolved, S2SAppRoleGranted is set to false
-    /// and no grant calls are made — grants cannot proceed without a target SP.
+    /// When AgenticAppId is missing (the SP object ID was never stored), S2SAppRoleGranted
+    /// is set to false and no grant calls are made — the SP ID is required as the grant target.
+    /// AgenticAppId holds the SP object ID directly (not an app ID); no lookup is performed.
     /// </summary>
     [Fact]
-    public async Task GrantOrInstructAgentIdentityAppPermissions_AgentSpNotFound_SetsGrantedFalse_NoGrantCalls()
+    public async Task GrantOrInstructAgentIdentityAppPermissions_AgentSpIdMissing_SetsGrantedFalse_NoGrantCalls()
     {
-        var (ctx, graph, blueprintService) = BuildS2SGrantTestContext();
-
-        graph.EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
-            .Returns((string?)null);
+        var (ctx, _, blueprintService) = BuildS2SGrantTestContext();
+        ctx.Config.AgenticAppId = null;
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
         ctx.Results.S2SAppRoleGranted.Should().Be(false,
-            because: "when the agent identity SP cannot be resolved, grants cannot proceed and the result must be false");
+            because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the result must be false");
         await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());

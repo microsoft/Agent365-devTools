@@ -402,7 +402,12 @@ internal static class SetupHelpers
         logger.LogInformation("       Connect-MgGraph -Scopes {Scopes}", string.Join(", ", mgScopes));
         logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\"", blueprintId);
         if (hasAgentIdentity)
-            logger.LogInformation("       $ai = Get-MgServicePrincipal -ServicePrincipalId '{AgentIdentitySpObjectId}'", agentIdentitySpObjectId);
+        {
+            if (!string.IsNullOrWhiteSpace(agentIdentityDisplayName))
+                logger.LogInformation("       $ai = Get-MgServicePrincipal -ServicePrincipalId '{AgentIdentitySpObjectId}'  # {DisplayName}", agentIdentitySpObjectId, agentIdentityDisplayName);
+            else
+                logger.LogInformation("       $ai = Get-MgServicePrincipal -ServicePrincipalId '{AgentIdentitySpObjectId}'", agentIdentitySpObjectId);
+        }
 
         if (hasAgentIdentity && appSpecs.Count > 0)
         {
@@ -498,14 +503,17 @@ internal static class SetupHelpers
         logger.LogInformation("Setup Summary");
         logger.LogInformation("");
 
-        // In S2S flows, app role assignment is the relevant success signal for permission grants,
-        // so the summary must not fall back to AdminConsentGranted when determining whether that
-        // step is pending. pendingAdminAction remains reserved for the inheritable-permissions
-        // admin-consent path, while pendingS2SAction is reserved for the S2S app-role-assignment path.
+        // Derive per-grant-type completion so "both" mode surfaces partial results correctly.
+        // isS2SFlow: S2S was attempted (S2SAppRoleGranted is non-null).
+        // isBothMode: both S2S and delegated grants were attempted — must check each independently.
         var isS2SFlow = results.S2SAppRoleGranted.HasValue;
+        var isBothMode = string.Equals(results.EffectiveAuthMode, "both", StringComparison.OrdinalIgnoreCase);
+        var s2sOk = isS2SFlow && results.S2SAppRoleGranted == true;
+        var delegatedOk = results.AdminConsentGranted || results.AgentIdentityPermissionsGranted;
+
         var permissionGrantsCompleted = isS2SFlow
-            ? results.S2SAppRoleGranted == true
-            : results.AdminConsentGranted || results.AgentIdentityPermissionsGranted;
+            ? s2sOk && (!isBothMode || delegatedOk)
+            : delegatedOk;
         var permissionGrantsPending = isS2SFlow
             ? results.S2SAppRoleGranted == false
             : !permissionGrantsCompleted && results.BatchPermissionsPhase2Completed;
@@ -569,8 +577,13 @@ internal static class SetupHelpers
         var permGrantStep = isNonDw ? 5 : 4 + s;
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + notRun);
-        else if (isS2SFlow && results.S2SAppRoleGranted == true)
-            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "ok (S2S app roles)");
+        else if (isS2SFlow && s2sOk)
+        {
+            if (isBothMode && !delegatedOk)
+                logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "partial (S2S ok; delegated — see warnings)");
+            else
+                logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "ok (S2S app roles)");
+        }
         else if (results.AgentIdentityPermissionsGranted)
             logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "ok (developer-scoped)");
         else if (results.BatchPermissionsPhase2Completed)
