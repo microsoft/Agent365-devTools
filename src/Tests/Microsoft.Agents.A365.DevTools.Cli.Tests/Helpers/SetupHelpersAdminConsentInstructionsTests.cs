@@ -32,16 +32,18 @@ public class SetupHelpersAdminConsentInstructionsTests
     }
 
     [Fact]
-    public void LogNonDwAdminConsentInstructions_WithAgentIdentityAppId_EmitsOptionAStep7()
+    public void LogNonDwAdminConsentInstructions_WithAgentIdentitySpObjectId_OptionAOmitsStep7AndShowsNote()
     {
         var logger = new CapturingLogger();
 
         SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, AgentIdentityId);
 
-        logger.AllOutput.Should().Contain("7. Grant Application permissions to the agent identity",
-            because: "step 7 must appear when agentIdentityAppId is provided");
+        logger.AllOutput.Should().NotContain("7. Grant Application permissions",
+            because: "agent identity Application permissions are granted via PowerShell (Option B), not the Entra portal; step 7 was intentionally removed from Option A");
+        logger.AllOutput.Should().Contain("Application permissions for the agent identity",
+            because: "a note redirecting the admin to Option B PowerShell must appear when agent identity is provided");
         logger.AllOutput.Should().Contain(AgentIdentityId,
-            because: "agent identity app ID must appear in step 7");
+            because: "agent identity SP object ID must appear in the PowerShell $ai lookup in Option B");
     }
 
     [Fact]
@@ -82,14 +84,16 @@ public class SetupHelpersAdminConsentInstructionsTests
     }
 
     [Fact]
-    public void LogNonDwAdminConsentInstructions_AlwaysEmitsBlueprintAppRoleAssignmentInOptionB()
+    public void LogNonDwAdminConsentInstructions_WithAgentIdentity_EmitsAgentIdentityAppRoleAssignmentInOptionB()
     {
         var logger = new CapturingLogger();
 
-        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId, AgentIdentityId);
 
-        logger.AllOutput.Should().Contain("-ServicePrincipalId $bp.Id -PrincipalId $bp.Id",
-            because: "blueprint app role assignment must always be emitted regardless of agent identity");
+        logger.AllOutput.Should().Contain("-ServicePrincipalId $ai.Id -PrincipalId $ai.Id",
+            because: "non-AI teammate S2S app role must be assigned to the agent identity SP — the blueprint is not the token-acquiring principal in the non-DW flow");
+        logger.AllOutput.Should().NotContain("-ServicePrincipalId $bp.Id -PrincipalId $bp.Id",
+            because: "the blueprint must not receive the app role in the non-DW flow; only the agent identity acquires S2S tokens");
     }
 
     [Fact]
@@ -106,23 +110,24 @@ public class SetupHelpersAdminConsentInstructionsTests
     }
 
     [Fact]
-    public void LogNonDwAdminConsentInstructions_OptionAStep5_GroupsPermissionTypesForSameScope()
+    public void LogNonDwAdminConsentInstructions_OptionAStep5_ShowsDelegatedPermissionsOnly()
     {
         var logger = new CapturingLogger();
 
         SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
 
-        // Observability API has both Application and Delegated for the same scope.
-        // Step 5 must list it once, not twice.
+        // Step 5 covers the blueprint's delegated grants only. Application (S2S) permissions
+        // go to the agent identity SP via Option B PowerShell — they do not appear in the
+        // blueprint's "API permissions" pane in the Entra portal.
         var obsLines = logger.Messages
             .Where(m => m.Contains("Observability API") && m.Contains(ConfigConstants.ObservabilityApiOtelWriteScope))
             .ToList();
         obsLines.Should().HaveCount(1,
-            because: "Observability API scope must appear once in step 5, grouped for both permission types");
-        obsLines[0].Should().Contain("Application",
-            because: "Application permission type must be listed");
+            because: "Observability API delegated scope must appear exactly once in step 5");
         obsLines[0].Should().Contain("Delegated",
-            because: "Delegated permission type must be listed");
+            because: "step 5 shows only delegated grants for the blueprint");
+        obsLines[0].Should().NotContain("Application",
+            because: "Application permissions for the Observability API are granted to the agent identity, not the blueprint, and are handled by Option B PowerShell");
     }
 
     [Fact]

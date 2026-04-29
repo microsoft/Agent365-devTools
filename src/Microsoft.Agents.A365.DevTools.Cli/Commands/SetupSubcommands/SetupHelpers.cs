@@ -364,38 +364,29 @@ internal static class SetupHelpers
     internal static void LogNonDwAdminConsentInstructions(
         ILogger logger,
         string blueprintId,
-        string? agentIdentityAppId = null,
+        string? agentIdentitySpObjectId = null,
+        string? agentIdentityDisplayName = null,
         IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null)
     {
         specs ??= NonDwAdminConsentSpecs;
 
         var appSpecs = specs.Where(s => s.PermissionType == "Application").ToList();
         var delegatedSpecs = specs.Where(s => s.PermissionType == "Delegated").ToList();
-        var hasAgentIdentity = !string.IsNullOrWhiteSpace(agentIdentityAppId);
+        var hasAgentIdentity = !string.IsNullOrWhiteSpace(agentIdentitySpObjectId);
 
-        // Option A — Entra portal
+        // Option A — Entra portal (Delegated permissions on blueprint only)
         logger.LogInformation("     Option A — Entra portal:");
-        logger.LogInformation("       1. Open https://entra.microsoft.com");
-        logger.LogInformation("       2. Navigate to: Identity > Applications > App registrations");
-        logger.LogInformation("       3. Search for the blueprint app by ID: {BlueprintId}", blueprintId);
-        logger.LogInformation("          (switch to 'All applications' tab if not shown under 'Owned applications')");
-        logger.LogInformation("       4. Open the app, go to: API permissions");
-        logger.LogInformation("       5. Confirm the following permissions are listed:");
-        foreach (var group in specs.GroupBy(s => (s.ResourceName, s.Scope)))
-        {
-            var types = string.Join(", ", group.Select(s => s.PermissionType));
-            logger.LogInformation("            - {ResourceName,-20}: {Scope} ({PermTypes})", group.Key.ResourceName, group.Key.Scope, types);
-        }
+        logger.LogInformation("       1. Open https://entra.microsoft.com and sign in as a Global Administrator");
+        logger.LogInformation("       2. Use the search bar at the top of the portal, search for: {BlueprintId}", blueprintId);
+        logger.LogInformation("       3. Select the blueprint app under 'App registrations'");
+        logger.LogInformation("       4. Go to: API permissions");
+        logger.LogInformation("       5. Add the following permissions (click 'Add a permission' for each):");
+        foreach (var group in delegatedSpecs.GroupBy(s => (s.ResourceName, s.Scope)))
+            logger.LogInformation("            - {ResourceName,-20}: {Scope} (Delegated)", group.Key.ResourceName, group.Key.Scope);
         logger.LogInformation("       6. Click 'Grant admin consent for your organization' and confirm");
         if (hasAgentIdentity && appSpecs.Count > 0)
         {
-            logger.LogInformation("       7. Grant Application permissions to the agent identity (required for S2S token acquisition):");
-            logger.LogInformation("          - Search for the agent identity app by ID: {AgentIdentityAppId}", agentIdentityAppId);
-            logger.LogInformation("          - Open the app, go to: API permissions");
-            logger.LogInformation("          - Confirm the following Application permissions are listed:");
-            foreach (var (resourceName, _, scope, _) in appSpecs)
-                logger.LogInformation("               - {ResourceName,-20}: {Scope} (Application)", resourceName, scope);
-            logger.LogInformation("          - Click 'Grant admin consent for your organization' and confirm");
+            logger.LogInformation("       Note: Application permissions for the agent identity (step 7) must be granted via PowerShell (Option B below).");
         }
 
         // Option B — PowerShell (Microsoft Graph SDK)
@@ -411,11 +402,11 @@ internal static class SetupHelpers
         logger.LogInformation("       Connect-MgGraph -Scopes {Scopes}", string.Join(", ", mgScopes));
         logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintId}'\"", blueprintId);
         if (hasAgentIdentity)
-            logger.LogInformation("       $ai = Get-MgServicePrincipal -Filter \"appId eq '{AgentIdentityAppId}'\"", agentIdentityAppId);
+            logger.LogInformation("       $ai = Get-MgServicePrincipal -ServicePrincipalId '{AgentIdentitySpObjectId}'", agentIdentitySpObjectId);
 
-        if (appSpecs.Count > 0)
+        if (hasAgentIdentity && appSpecs.Count > 0)
         {
-            logger.LogInformation("       # Application permissions (app role assignments — blueprint and agent identity)");
+            logger.LogInformation("       # Application permissions (app role assignments — agent identity only for non-AI teammate)");
             foreach (var (resourceName, resourceAppId, scope, _) in appSpecs)
             {
                 var varName = "$" + resourceName.Replace(" ", "").Replace("API", "").ToLowerInvariant();
@@ -423,11 +414,8 @@ internal static class SetupHelpers
                     varName, resourceAppId, resourceName);
                 logger.LogInformation("       $rid = ({Var}.AppRoles | Where-Object {{ $_.Value -eq '{Scope}' }}).Id",
                     varName, scope);
-                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId {Var}.Id -AppRoleId $rid",
+                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ai.Id -PrincipalId $ai.Id -ResourceId {Var}.Id -AppRoleId $rid",
                     varName);
-                if (hasAgentIdentity)
-                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $ai.Id -PrincipalId $ai.Id -ResourceId {Var}.Id -AppRoleId $rid",
-                        varName);
             }
         }
 
@@ -697,7 +685,7 @@ internal static class SetupHelpers
                 else
                 {
                     logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
-                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId);
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, results.AgentIdentityId, results.AgentIdentityDisplayName);
                 }
             }
             if (pendingS2SAction)

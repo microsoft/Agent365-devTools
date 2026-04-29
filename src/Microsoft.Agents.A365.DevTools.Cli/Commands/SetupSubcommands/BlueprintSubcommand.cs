@@ -1215,7 +1215,7 @@ internal static class BlueprintSubcommand
         ILogger logger,
         CancellationToken ct)
     {
-        var createSpUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/servicePrincipals";
+        var createSpUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal";
         var spManifestJson = new JsonObject { ["appId"] = appId }.ToJsonString();
         int forbiddenRetries = 0;
         const int maxForbiddenRetries = 3;

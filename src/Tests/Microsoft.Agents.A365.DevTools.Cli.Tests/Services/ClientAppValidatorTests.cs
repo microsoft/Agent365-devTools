@@ -905,8 +905,8 @@ public class ClientAppValidatorTests
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(spJson)));
 
-        // Grants for ConsentSpObjId — contains all three no-GUID scopes so they are removed from missingPermissions.
-        var grantsJson = """{"value": [{"scope": "AgentIdentity.Create.All AgentIdentityBlueprint.DeleteRestore.All AgentIdentity.DeleteRestore.All"}]}""";
+        // Grants for ConsentSpObjId — contains all four no-GUID scopes so they are removed from missingPermissions.
+        var grantsJson = """{"value": [{"scope": "AgentIdentity.Create.All AgentIdentityBlueprint.DeleteRestore.All AgentIdentity.DeleteRestore.All AgentIdentity.Read.All"}]}""";
         _graphApiService.GraphGetAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),

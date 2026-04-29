@@ -46,8 +46,7 @@ public class GraphApiService
 
     // Graph path for the copilot agent registrations endpoint.
     // Both RegisterAgentInstanceAsyncV2 and DeleteAgentRegistrationAsync use this path.
-    // TODO: change from stagingbeta to beta before merging to main.
-    private const string AgentRegistrationsPath = "/stagingbeta/copilot/agentRegistrations";
+    private const string AgentRegistrationsPath = "/beta/copilot/agentRegistrations";
 
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
