@@ -2158,7 +2158,7 @@ public class GraphApiService
     /// <summary>
     /// Sets the identifierUris on an application.
     /// </summary>
-    public async Task<bool> SetIdentifierUriAsync(
+    public virtual async Task<bool> SetIdentifierUriAsync(
         string tenantId, string applicationObjectId, string identifierUri, CancellationToken ct = default)
     {
         var payload = new { identifierUris = new[] { identifierUri } };
@@ -2177,7 +2177,7 @@ public class GraphApiService
     /// <summary>
     /// Adds an oauth2PermissionScope to an application's api section.
     /// </summary>
-    public async Task<Guid?> AddOAuth2PermissionScopeAsync(
+    public virtual async Task<Guid?> AddOAuth2PermissionScopeAsync(
         string tenantId, string applicationObjectId, string scopeName, string scopeDescription, CancellationToken ct = default)
     {
         using var doc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}?$select=api", ct);

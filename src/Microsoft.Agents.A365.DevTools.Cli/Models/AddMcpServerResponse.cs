@@ -98,5 +98,5 @@ public class AddMcpServerDetails
     /// The MOS title ID returned from publishing to MOS3
     /// </summary>
     [JsonPropertyName("mosTitleId")]
-    public string? MOSTitleId { get; set; }
+    public string? MosTitleId { get; set; }
 }

@@ -843,7 +843,7 @@ public static class DevelopMcpCommand
         var inputFileOption = new Option<string?>(["--input-file", "-f"], description: "Path to JSON file with register parameters (see sample: register-external-mcp-server-sample.json)");
         command.AddOption(inputFileOption);
 
-        var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://myapp/.default')");
+        var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://{appId-guid}/{scopeName}' such as 'api://00000000-0000-0000-0000-000000000000/access_as_user')");
         command.AddOption(remoteScopesOption);
 
         var tenantIdOption = new Option<string?>(["--tenant-id", "-t"], description: "Entra tenant ID for app registration (defaults to current az login tenant)");
@@ -867,8 +867,8 @@ public static class DevelopMcpCommand
         var dryRunOption = new Option<bool>("--dry-run", description: "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
-        var verboseOption = new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging");
-        command.AddOption(verboseOption);
+        // Verbose is handled globally in Program.cs (sets LogLevel.Debug); declared here so the parser accepts -v.
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
 
         command.SetHandler(async (context) =>
         {
@@ -1919,8 +1919,8 @@ public static class DevelopMcpCommand
         var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
         command.AddOption(configOption);
 
-        var verboseOption = new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging");
-        command.AddOption(verboseOption);
+        // Verbose is handled globally in Program.cs (sets LogLevel.Debug); declared here so the parser accepts -v.
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
 
         command.SetHandler(async (context) =>
         {
@@ -1995,7 +1995,7 @@ public static class DevelopMcpCommand
             Console.WriteLine("Cleaning up Entra app registrations...");
             var deletedCount = 0;
 
-            foreach (var (suffix, displayName) in appSuffixes)
+            foreach (var (_, displayName) in appSuffixes)
             {
                 try
                 {
