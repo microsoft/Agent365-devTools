@@ -249,20 +249,6 @@ public class DevelopMcpCommandTests
         }
     }
 
-    [Theory]
-    [InlineData("register-external-mcp-server")]
-    public void ConfigDependentSubcommands_SupportConfigOption(string subcommandName)
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == subcommandName);
-
-        // Assert
-        var configOption = subcommand.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull($"Subcommand '{subcommandName}' should have --config option");
-        configOption!.Aliases.Should().Contain("-c", $"Config option should have -c alias in '{subcommandName}'");
-    }
-
     [Fact]
     public void RegisterExternalMcpServerSubcommand_HasAllExpectedOptions()
     {
@@ -291,7 +277,6 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("remote-scopes");
         optionNames.Should().Contain("tenant-id");
         optionNames.Should().Contain("service-tree-id");
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("publisher");
         optionNames.Should().Contain("description");
         optionNames.Should().Contain("dry-run");
@@ -313,9 +298,6 @@ public class DevelopMcpCommandTests
 
         var tenantIdOption = options.First(o => o.Name == "tenant-id");
         tenantIdOption.Aliases.Should().Contain("-t");
-
-        var configOption = options.First(o => o.Name == "config");
-        configOption.Aliases.Should().Contain("-c");
 
         var verboseOption = options.First(o => o.Name == "verbose");
         verboseOption.Aliases.Should().Contain("-v");

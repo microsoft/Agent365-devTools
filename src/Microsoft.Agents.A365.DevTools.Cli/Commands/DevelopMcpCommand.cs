@@ -850,9 +850,6 @@ public static class DevelopMcpCommand
         var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
         command.AddOption(serviceTreeIdOption);
 
-        var configOption = new Option<string>(["-c", "--config"], getDefaultValue: () => "a365.config.json", description: "Configuration file path");
-        command.AddOption(configOption);
-
         var publisherOption = new Option<string?>("--publisher", description: "Publisher name (required, used in MOS package metadata)");
         command.AddOption(publisherOption);
 
