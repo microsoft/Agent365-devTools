@@ -805,7 +805,7 @@ public static class DevelopMcpCommand
     {
         var command = new Command("register-external-mcp-server", "Register an external MCP server with Entra, ExternalIDP, or NoAuth authentication");
 
-        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name (max 22 chars, must start with 'ext_', e.g. ext_MyServer)");
+        var serverNameOption = new Option<string?>(["--server-name", "-s"], description: "MCP server name (max 20 chars, must start with 'ext_', e.g. ext_MyServer)");
         command.AddOption(serverNameOption);
 
         var serverUrlOption = new Option<string?>(["--server-url", "-u"], description: "Remote MCP server URL");
@@ -975,8 +975,8 @@ public static class DevelopMcpCommand
                     return;
                 }
 
-                // Validate server name length (max 22 chars including prefix)
-                const int maxServerNameLength = 22;
+                // Validate server name length (max 20 chars including prefix)
+                const int maxServerNameLength = 20;
                 if (serverName.Length > maxServerNameLength)
                 {
                     logger.LogError("Server name '{ServerName}' is {Length} characters, exceeding the maximum of {Max} characters (including prefix)", serverName, serverName.Length, maxServerNameLength);
@@ -1231,7 +1231,10 @@ public static class DevelopMcpCommand
 
             Console.WriteLine();
 
-            logger.LogWarning("Tool names must exactly match the names exposed by the remote MCP server. Mismatched names will cause tool invocations to fail at runtime.");
+            prevColor = Console.ForegroundColor;
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("WARNING: Tool names must exactly match the names exposed by the remote MCP server. Mismatched names will cause tool invocations to fail at runtime.");
+            Console.ForegroundColor = prevColor;
             Console.WriteLine();
 
             if (dryRun)
