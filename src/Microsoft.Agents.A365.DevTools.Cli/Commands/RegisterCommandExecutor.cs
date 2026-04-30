@@ -167,6 +167,7 @@ internal class RegisterCommandExecutor
                 _logger.LogError("Failed to add MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
             }
 
+            _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
             Console.WriteLine($"Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
             return;
         }
