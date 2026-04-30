@@ -105,6 +105,13 @@ class Program
                     startupLogger.LogWarning("To update, run: {Command}", result.UpdateCommand);
                     startupLogger.LogWarning("");
                 }
+                else if (result.NewerPreviewVersion is not null)
+                {
+                    startupLogger.LogInformation("");
+                    startupLogger.LogInformation("A preview release is also available: {Preview}", result.NewerPreviewVersion);
+                    startupLogger.LogInformation("To try it: {Command}", Services.Internal.VersionCheckHelper.GetUpdateCommand(result.NewerPreviewVersion));
+                    startupLogger.LogInformation("");
+                }
             }
             catch (OperationCanceledException)
             {

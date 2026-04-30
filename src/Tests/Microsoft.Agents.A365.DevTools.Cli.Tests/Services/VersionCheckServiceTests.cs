@@ -106,6 +106,28 @@ public class VersionCheckServiceTests
     }
 
     [Theory]
+    // Stable user — no preview above GA: latest stable is 1.2.0, preview is older → no nudge
+    [InlineData("1.2.0", new[] { "1.1.165-preview", "1.2.0" }, "1.2.0", null)]
+    // Stable user — newer preview above GA: 1.3.0-preview.1 exists → nudge with preview version
+    [InlineData("1.2.0", new[] { "1.2.0", "1.3.0-preview.1" }, "1.2.0", "1.3.0-preview.1")]
+    // Preview user — GA is above preview: pick GA, no secondary nudge
+    [InlineData("1.1.165-preview", new[] { "1.1.165-preview", "1.2.0" }, "1.2.0", null)]
+    // Preview user — newer preview above GA: pick highest preview, no secondary nudge
+    [InlineData("1.1.165-preview", new[] { "1.1.165-preview", "1.2.0", "1.3.0-preview.1" }, "1.3.0-preview.1", null)]
+    public void SelectLatestVersions_AppliesChannelAwareFiltering(
+        string currentVersion, string[] nugetVersions, string expectedPrimary, string? expectedNewerPreview)
+    {
+        // Act
+        var (primary, newerPreview) = VersionCheckHelper.SelectLatestVersions(nugetVersions, currentVersion);
+
+        // Assert
+        primary.Should().Be(expectedPrimary,
+            because: "the primary latest should respect the channel of the current version");
+        newerPreview.Should().Be(expectedNewerPreview,
+            because: "the informational preview nudge should only appear for stable users when a newer preview exists");
+    }
+
+    [Theory]
     [InlineData("CI")]
     [InlineData("TF_BUILD")]
     [InlineData("GITHUB_ACTIONS")]

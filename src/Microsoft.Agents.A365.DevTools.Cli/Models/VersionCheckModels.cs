@@ -15,9 +15,10 @@ public record VersionCheckResult(
     bool UpdateAvailable,
     string? CurrentVersion,
     string? LatestVersion,
-    string? UpdateCommand);
+    string? UpdateCommand,
+    string? NewerPreviewVersion = null);
 
 /// <summary>
 /// On-disk cache envelope for the version check result, keyed by fetch timestamp.
 /// </summary>
-public record VersionCheckCache(DateTimeOffset CachedAt, string? LatestVersion);
+public record VersionCheckCache(DateTimeOffset CachedAt, string? LatestVersion, string? NewerPreviewVersion = null);

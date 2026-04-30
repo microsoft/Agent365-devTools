@@ -43,12 +43,12 @@ public class VersionCheckService : IVersionCheckService
 
             _logger.LogDebug("Checking for updates...");
 
-            var latestVersion = GetCachedLatestVersion();
+            var (latestVersion, newerPreviewVersion) = GetCachedLatestVersion();
             if (latestVersion == null)
             {
-                latestVersion = await GetLatestVersionFromNuGetAsync(cancellationToken);
+                (latestVersion, newerPreviewVersion) = await GetLatestVersionFromNuGetAsync(cancellationToken);
                 if (latestVersion != null)
-                    SaveCache(new VersionCheckCache(DateTimeOffset.UtcNow, latestVersion));
+                    SaveCache(new VersionCheckCache(DateTimeOffset.UtcNow, latestVersion, newerPreviewVersion));
             }
 
             if (latestVersion == null)
@@ -65,7 +65,7 @@ public class VersionCheckService : IVersionCheckService
                 _logger.LogDebug("Running latest version: {Current}", _currentVersion);
 
             return new VersionCheckResult(updateAvailable, _currentVersion, latestVersion,
-                VersionCheckHelper.GetUpdateCommand(latestVersion));
+                VersionCheckHelper.GetUpdateCommand(latestVersion), newerPreviewVersion);
         }
         catch (OperationCanceledException)
         {
@@ -79,7 +79,7 @@ public class VersionCheckService : IVersionCheckService
         }
     }
 
-    private async Task<string?> GetLatestVersionFromNuGetAsync(CancellationToken cancellationToken)
+    private async Task<(string? Primary, string? NewerPreview)> GetLatestVersionFromNuGetAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -89,7 +89,7 @@ public class VersionCheckService : IVersionCheckService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogDebug("NuGet API returned {StatusCode}", response.StatusCode);
-                return null;
+                return (null, null);
             }
 
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -99,22 +99,15 @@ public class VersionCheckService : IVersionCheckService
             if (versionResponse?.Versions == null || versionResponse.Versions.Length == 0)
             {
                 _logger.LogDebug("No versions found in NuGet response");
-                return null;
+                return (null, null);
             }
 
-            // Sort semantically — NuGet returns chronological order, but we sort to be safe
-            var sorted = versionResponse.Versions
-                .Select(v => new { Original = v, Parsed = VersionCheckHelper.TryParseVersion(v) })
-                .Where(v => v.Parsed != null)
-                .OrderByDescending(v => v.Parsed)
-                .ToList();
-
-            return sorted.Count == 0 ? null : sorted[0].Original;
+            return VersionCheckHelper.SelectLatestVersions(versionResponse.Versions, _currentVersion);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Failed to query NuGet API");
-            return null;
+            return (null, null);
         }
     }
 
@@ -131,33 +124,33 @@ public class VersionCheckService : IVersionCheckService
         }
     }
 
-    private string? GetCachedLatestVersion()
+    private (string? Primary, string? NewerPreview) GetCachedLatestVersion()
     {
         try
         {
             var path = GetCacheFilePath();
             if (!File.Exists(path))
-                return null;
+                return (null, null);
 
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             var cache = JsonSerializer.Deserialize<VersionCheckCache>(File.ReadAllText(path), options);
 
             if (cache == null)
-                return null;
+                return (null, null);
 
             if (DateTimeOffset.UtcNow - cache.CachedAt >= TimeSpan.FromHours(CacheTtlHours))
             {
                 _logger.LogDebug("Version cache expired (cached at {CachedAt})", cache.CachedAt);
-                return null;
+                return (null, null);
             }
 
             _logger.LogDebug("Using cached version {Version} (cached at {CachedAt})", cache.LatestVersion, cache.CachedAt);
-            return cache.LatestVersion;
+            return (cache.LatestVersion, cache.NewerPreviewVersion);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not load version cache");
-            return null;
+            return (null, null);
         }
     }
 

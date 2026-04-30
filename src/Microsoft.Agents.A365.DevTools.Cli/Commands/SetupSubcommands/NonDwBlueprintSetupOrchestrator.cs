@@ -445,6 +445,17 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("Registering agent...");
 
+        if (string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
+        {
+            using (ctx.Logger.Indent())
+                ctx.Logger.LogWarning(
+                    "Agent registration skipped — agent identity ID is not available. " +
+                    "Ensure the agent identity was created successfully, then retry with: a365 setup all --agent-registration-only");
+            ctx.Results.AgentRegistrationFailed = true;
+        }
+        else
+        {
+
         // If a registration ID is already stored, verify it still exists before skipping creation.
         string? registrationId = null;
         bool registrationAlreadyExisted = false;
@@ -520,6 +531,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             ctx.Results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
             ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
         }
+
+        } // end else (AgenticAppId present)
 
         // Step 6.5: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
         await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);

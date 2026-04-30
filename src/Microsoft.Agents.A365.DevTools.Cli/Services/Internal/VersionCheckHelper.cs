@@ -115,4 +115,50 @@ internal static class VersionCheckHelper
             ? $"{baseCommand} --prerelease"
             : baseCommand;
     }
+
+    /// <summary>
+    /// Selects the primary latest version and an optional newer preview version from a list of
+    /// all NuGet versions, applying channel-aware filtering based on the current version.
+    /// <para>
+    /// Stable users see only stable versions as their primary update target. If a newer preview
+    /// exists above the latest stable, it is returned separately as an informational nudge.
+    /// Preview users see the globally highest version (preview or stable) with no secondary nudge.
+    /// </para>
+    /// </summary>
+    internal static (string? Primary, string? NewerPreview) SelectLatestVersions(
+        IEnumerable<string> allVersions, string currentVersion)
+    {
+        bool currentIsPreview = currentVersion.Contains("preview", StringComparison.OrdinalIgnoreCase);
+
+        var allParsed = allVersions
+            .Select(v => new { Original = v, Parsed = TryParseVersion(v) })
+            .Where(v => v.Parsed != null)
+            .OrderByDescending(v => v.Parsed)
+            .ToList();
+
+        // Primary: stable-only for stable users; unrestricted for preview users
+        var primary = allParsed
+            .Where(v => currentIsPreview || !v.Original.Contains("preview", StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault()?.Original;
+
+        // Informational nudge: surface the latest preview when a stable user is already on the
+        // latest stable but a newer preview exists above it
+        string? newerPreview = null;
+        if (!currentIsPreview && primary != null)
+        {
+            var latestPreview = allParsed
+                .Where(v => v.Original.Contains("preview", StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault()?.Original;
+
+            if (latestPreview != null)
+            {
+                var primaryParsed = TryParseVersion(primary);
+                var previewParsed = TryParseVersion(latestPreview);
+                if (primaryParsed != null && previewParsed != null && previewParsed > primaryParsed)
+                    newerPreview = latestPreview;
+            }
+        }
+
+        return (primary, newerPreview);
+    }
 }
