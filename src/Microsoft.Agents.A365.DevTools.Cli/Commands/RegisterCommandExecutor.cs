@@ -155,7 +155,10 @@ internal class RegisterCommandExecutor
                 || errorMsg.Contains("delete the existing record", StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine();
+                var prevColor = Console.ForegroundColor;
+                Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"ERROR: A server named '{input.ServerName}' already exists. Please choose a different name.");
+                Console.ForegroundColor = prevColor;
                 _logger.LogDebug("Raw server error: {Error}", errorMsg);
             }
             else
