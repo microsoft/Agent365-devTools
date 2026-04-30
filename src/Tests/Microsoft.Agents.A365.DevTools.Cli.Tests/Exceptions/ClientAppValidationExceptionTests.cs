@@ -133,7 +133,7 @@ public class ClientAppValidationExceptionTests
         exception.ErrorDetails[0].Should().Contain("permissions are configured");
         exception.ErrorDetails[1].Should().Contain("per-user consent");
         exception.ErrorDetails[2].Should().Contain("Global Administrator");
-        exception.MitigationSteps.Should().HaveCount(4, because: "MissingAdminConsent provides 4 mitigation steps: run setup requirements, run setup admin, share consent URL, and contact IT admin");
+        exception.MitigationSteps.Should().HaveCount(4, because: "MissingAdminConsent provides 4 mitigation steps: consent URL instruction, Azure Portal fallback, re-run setup requirements, and docs link");
         exception.Context.Should().ContainKey("clientAppId");
         exception.Context["clientAppId"].Should().Be(TestClientAppId);
     }

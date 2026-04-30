@@ -46,8 +46,7 @@ public class GraphApiService
 
     // Graph path for the copilot agent registrations endpoint.
     // Both RegisterAgentInstanceAsyncV2 and DeleteAgentRegistrationAsync use this path.
-    // TODO: change from stagingbeta to beta before merging to main.
-    private const string AgentRegistrationsPath = "/stagingbeta/copilot/agentRegistrations";
+    private const string AgentRegistrationsPath = "/beta/copilot/agentRegistrations";
 
     /// <summary>
     /// Optional custom client app ID to use for authentication with Microsoft Graph PowerShell.
@@ -139,7 +138,7 @@ public class GraphApiService
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var loginHint = await _loginHintResolver();
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, userId: loginHint);
+            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, userId: loginHint, ct: ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -628,7 +627,56 @@ public class GraphApiService
         return idProp.GetString();
     }
 
-    public async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
+    /// <summary>
+    /// Creates a new Entra app registration (public client) and its service principal for the CLI client app.
+    /// Used by setup requirements when the well-known CLI client app is not found in a new tenant.
+    /// Returns (appId, spObjectId), or (null, null) on failure.
+    /// </summary>
+    public virtual async Task<(string? appId, string? spId)> CreateCliClientAppAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
+    {
+        var body = new
+        {
+            displayName,
+            signInAudience = "AzureADMyOrg",
+            isFallbackPublicClient = true,
+            publicClient = new { redirectUris = AuthenticationConstants.RequiredRedirectUris }
+        };
+
+        using var appDoc = await GraphPostAsync(tenantId, "/v1.0/applications", body, ct);
+        if (appDoc == null
+            || !appDoc.RootElement.TryGetProperty("appId", out var appIdProp)
+            || !appDoc.RootElement.TryGetProperty("id", out var objIdProp))
+        {
+            _logger.LogError("Failed to create app registration in tenant {TenantId}.", tenantId);
+            return (null, null);
+        }
+
+        var appId = appIdProp.GetString();
+        var objectId = objIdProp.GetString();
+        if (string.IsNullOrWhiteSpace(appId)) return (null, null);
+
+        // Patch in the WAM broker redirect URI — requires the appId to be known first.
+        if (!string.IsNullOrWhiteSpace(objectId))
+        {
+            var allUris = AuthenticationConstants.GetRequiredRedirectUris(appId);
+            var redirectUrisPatched = await GraphPatchAsync(tenantId, $"/v1.0/applications/{objectId}",
+                new { publicClient = new { redirectUris = allUris } }, ct);
+            if (!redirectUrisPatched)
+                _logger.LogError(
+                    "App created ({AppId}) in tenant {TenantId}, but patching redirect URIs failed for application object {ObjectId}. " +
+                    "The app registration may be missing required redirect URIs and authentication may fail until they are added.",
+                    appId, tenantId, objectId);
+        }
+
+        var spId = await EnsureServicePrincipalForAppIdAsync(tenantId, appId, ct);
+        if (string.IsNullOrWhiteSpace(spId))
+            _logger.LogWarning("App created ({AppId}) but service principal creation failed — admin consent may fail until the SP exists.", appId);
+
+        return (appId, spId);
+    }
+
+    public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantAsync(
         string tenantId,
         string clientSpObjectId,
         string resourceSpObjectId,
@@ -770,6 +818,15 @@ public class GraphApiService
 
                 if (grantResponse.IsSuccess)
                     return true;
+
+                // "Permission entry already exists" means the grant is already in place — treat as success.
+                if (grantResponse.Body.Contains("Permission entry already exists", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug(
+                        "OAuth2 permission grant already exists for resource {ResourceSpId} — treating as success (idempotent).",
+                        resourceSpObjectId);
+                    return true;
+                }
 
                 if (!grantResponse.Body.Contains("Directory_ObjectNotFound", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1846,5 +1903,413 @@ public class GraphApiService
         {
             _logger.LogDebug("Could not decode JWT claims for {Label}: {Message}", label, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Looks up the GUID of an OAuth2 permission scope on a service principal by scope name.
+    /// </summary>
+    public virtual async Task<Guid?> GetOAuth2PermissionScopeIdAsync(
+        string tenantId, string resourceAppId, string scopeName, CancellationToken ct = default)
+    {
+        if (!Guid.TryParse(resourceAppId, out var validGuid))
+        {
+            _logger.LogWarning("Invalid resourceAppId format: {AppId}", resourceAppId);
+            return null;
+        }
+
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/servicePrincipals?$filter=appId eq '{validGuid:D}'&$select=oauth2PermissionScopes",
+            ct);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+
+        var sp = value[0];
+        if (!sp.TryGetProperty("oauth2PermissionScopes", out var scopes)) return null;
+
+        foreach (var scope in scopes.EnumerateArray())
+        {
+            if (scope.TryGetProperty("value", out var v) &&
+                string.Equals(v.GetString(), scopeName, StringComparison.OrdinalIgnoreCase) &&
+                scope.TryGetProperty("id", out var id))
+            {
+                if (!Guid.TryParse(id.GetString(), out var scopeId))
+                {
+                    _logger.LogWarning("Scope '{ScopeName}' on resource {ResourceAppId} has invalid ID: {ScopeIdValue}", scopeName, resourceAppId, id.GetString());
+                    return null;
+                }
+
+                _logger.LogDebug("Found scope '{ScopeName}' with ID {ScopeId} on resource {ResourceAppId}", scopeName, scopeId, resourceAppId);
+                return scopeId;
+            }
+        }
+
+        _logger.LogWarning("Scope '{ScopeName}' not found on resource {ResourceAppId}", scopeName, resourceAppId);
+        return null;
+    }
+
+    /// <summary>
+    /// Creates a new Entra application registration.
+    /// </summary>
+    public virtual async Task<(string ObjectId, string ClientId)?> CreateEntraAppAsync(
+        string tenantId, string displayName, string? serviceTreeId = null, CancellationToken ct = default)
+    {
+        object payload;
+        if (!string.IsNullOrWhiteSpace(serviceTreeId))
+        {
+            payload = new
+            {
+                displayName,
+                signInAudience = "AzureADMyOrg",
+                serviceManagementReference = serviceTreeId,
+            };
+        }
+        else
+        {
+            payload = new
+            {
+                displayName,
+                signInAudience = "AzureADMyOrg",
+            };
+        }
+
+        using var doc = await GraphPostAsync(tenantId, "/v1.0/applications", payload, ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to create Entra application {DisplayName}", displayName);
+            return null;
+        }
+
+        if (!doc.RootElement.TryGetProperty("id", out var objectIdElement) ||
+            !doc.RootElement.TryGetProperty("appId", out var clientIdElement))
+        {
+            _logger.LogError("Graph response for application {DisplayName} missing required fields (id or appId)", displayName);
+            return null;
+        }
+
+        var objectId = objectIdElement.GetString();
+        var clientId = clientIdElement.GetString();
+        if (string.IsNullOrEmpty(objectId) || string.IsNullOrEmpty(clientId))
+        {
+            _logger.LogError("Graph response for application {DisplayName} returned empty id or appId", displayName);
+            return null;
+        }
+
+        _logger.LogDebug("Created Entra application {DisplayName}: objectId={ObjectId}, clientId={ClientId}", displayName, objectId, clientId);
+        return (objectId, clientId);
+    }
+
+    /// <summary>
+    /// Adds a password (client secret) to an Entra application.
+    /// </summary>
+    public virtual async Task<string?> AddAppPasswordAsync(
+        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", CancellationToken ct = default)
+    {
+        var payload = new
+        {
+            passwordCredential = new
+            {
+                displayName,
+            },
+        };
+
+        using var doc = await GraphPostAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to add password to application {ObjectId}", applicationObjectId);
+            return null;
+        }
+
+        if (!doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
+        {
+            _logger.LogError("Graph response for application {ObjectId} did not contain secretText", applicationObjectId);
+            return null;
+        }
+
+        var secretText = secretTextElement.GetString();
+        _logger.LogDebug("Added password to application {ObjectId}", applicationObjectId);
+        return secretText;
+    }
+
+    /// <summary>
+    /// Updates the redirect URIs (web platform) on an Entra application.
+    /// </summary>
+    public virtual async Task<bool> UpdateAppRedirectUrisAsync(
+        string tenantId, string applicationObjectId, IEnumerable<string> redirectUris, CancellationToken ct = default)
+    {
+        var payload = new
+        {
+            web = new
+            {
+                redirectUris,
+            },
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogDebug("Updated redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+        else
+        {
+            _logger.LogError("Failed to update redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Updates the publicClient redirect URIs on an Entra application registration.
+    /// </summary>
+    public virtual async Task<bool> UpdateAppPublicClientRedirectUrisAsync(
+        string tenantId, string applicationObjectId, IEnumerable<string> redirectUris, CancellationToken ct = default)
+    {
+        var payload = new
+        {
+            publicClient = new
+            {
+                redirectUris,
+            },
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogDebug("Updated publicClient redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+        else
+        {
+            _logger.LogError("Failed to update publicClient redirect URIs for application {ObjectId}", applicationObjectId);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Looks up an application by its appId (clientId) and returns the object ID.
+    /// Retries up to 6 times with a 10-second delay to handle replication lag for newly created apps.
+    /// </summary>
+    public virtual async Task<string?> GetAppObjectIdByClientIdAsync(
+        string tenantId, string clientId, CancellationToken ct = default)
+    {
+        const int maxAttempts = 6;
+        const int delayMs = 10_000;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var response = await GraphGetWithResponseAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{clientId}'&$select=id", ct: ct);
+            if (response.IsSuccess && response.Json != null)
+            {
+                var values = response.Json.RootElement.GetProperty("value");
+                if (values.GetArrayLength() > 0)
+                {
+                    return values[0].GetProperty("id").GetString();
+                }
+            }
+            else
+            {
+                _logger.LogDebug("App {ClientId} query failed: {Code} {Reason} (attempt {Attempt}/{Max})", clientId, response.StatusCode, response.ReasonPhrase, attempt + 1, maxAttempts);
+            }
+
+            if (attempt < maxAttempts - 1)
+            {
+                _logger.LogDebug("App {ClientId} not found yet, retrying in {Delay}s (attempt {Attempt}/{Max})...", clientId, delayMs / 1000, attempt + 1, maxAttempts);
+                await Task.Delay(delayMs, ct);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Finds an application's object ID by its display name.
+    /// </summary>
+    public virtual async Task<string?> GetAppObjectIdByDisplayNameAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
+    {
+        var escapedDisplayName = displayName.Replace("'", "''", StringComparison.Ordinal);
+        var response = await GraphGetWithResponseAsync(
+            tenantId,
+            $"/v1.0/applications?$filter=displayName eq '{escapedDisplayName}'&$select=id",
+            ct: ct);
+
+        if (response.IsSuccess && response.Json != null)
+        {
+            var values = response.Json.RootElement.GetProperty("value");
+            if (values.GetArrayLength() > 0)
+            {
+                return values[0].GetProperty("id").GetString();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Deletes an Entra application by its object ID.
+    /// </summary>
+    public virtual async Task<bool> DeleteEntraAppAsync(
+        string tenantId, string applicationObjectId, CancellationToken ct = default)
+    {
+        _logger.LogDebug("Deleting Entra application {ObjectId}", applicationObjectId);
+        return await GraphDeleteAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", ct);
+    }
+
+    /// <summary>
+    /// Sets the identifierUris on an application.
+    /// </summary>
+    public virtual async Task<bool> SetIdentifierUriAsync(
+        string tenantId, string applicationObjectId, string identifierUri, CancellationToken ct = default)
+    {
+        var payload = new { identifierUris = new[] { identifierUri } };
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogDebug("Set identifierUri on application {ObjectId}: {Uri}", applicationObjectId, identifierUri);
+        }
+        else
+        {
+            _logger.LogError("Failed to set identifierUri on application {ObjectId}", applicationObjectId);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Adds an oauth2PermissionScope to an application's api section.
+    /// </summary>
+    public virtual async Task<Guid?> AddOAuth2PermissionScopeAsync(
+        string tenantId, string applicationObjectId, string scopeName, string scopeDescription, CancellationToken ct = default)
+    {
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}?$select=api", ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to read application {ObjectId} for adding scope", applicationObjectId);
+            return null;
+        }
+
+        var existingScopes = new List<object>();
+        if (doc.RootElement.TryGetProperty("api", out var api) &&
+            api.TryGetProperty("oauth2PermissionScopes", out var scopes))
+        {
+            foreach (var scope in scopes.EnumerateArray())
+            {
+                existingScopes.Add(JsonSerializer.Deserialize<object>(scope.GetRawText())!);
+            }
+        }
+
+        var newScopeId = Guid.NewGuid();
+        existingScopes.Add(new
+        {
+            id = newScopeId,
+            adminConsentDescription = scopeDescription,
+            adminConsentDisplayName = scopeName,
+            isEnabled = true,
+            type = "Admin",
+            value = scopeName,
+        });
+
+        var payload = new
+        {
+            api = new
+            {
+                oauth2PermissionScopes = existingScopes,
+            },
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogDebug("Added scope '{ScopeName}' (ID: {ScopeId}) to application {ObjectId}", scopeName, newScopeId, applicationObjectId);
+            return newScopeId;
+        }
+
+        _logger.LogError("Failed to add scope '{ScopeName}' to application {ObjectId}", scopeName, applicationObjectId);
+        return null;
+    }
+
+    /// <summary>
+    /// Adds a required resource access entry (API permission) to an application for a single scope.
+    /// </summary>
+    public virtual async Task<bool> AddRequiredResourceAccessAsync(
+        string tenantId, string applicationObjectId, string resourceAppId, Guid scopeId, CancellationToken ct = default)
+    {
+        return await AddRequiredResourceAccessAsync(tenantId, applicationObjectId, resourceAppId, new[] { scopeId }, ct);
+    }
+
+    /// <summary>
+    /// Adds a required resource access entry (API permission) to an application for one or more scopes.
+    /// </summary>
+    public virtual async Task<bool> AddRequiredResourceAccessAsync(
+        string tenantId, string applicationObjectId, string resourceAppId, IEnumerable<Guid> scopeIds, CancellationToken ct = default)
+    {
+        using var doc = await GraphGetAsync(tenantId, $"/v1.0/applications/{applicationObjectId}?$select=requiredResourceAccess", ct);
+        if (doc == null)
+        {
+            _logger.LogError("Failed to read application {ObjectId} for adding API permission", applicationObjectId);
+            return false;
+        }
+
+        var existingAccess = new System.Text.Json.Nodes.JsonArray();
+        bool merged = false;
+        if (doc.RootElement.TryGetProperty("requiredResourceAccess", out var rra))
+        {
+            foreach (var entry in rra.EnumerateArray())
+            {
+                var entryNode = System.Text.Json.Nodes.JsonNode.Parse(entry.GetRawText()) as System.Text.Json.Nodes.JsonObject;
+                if (entryNode != null &&
+                    entryNode["resourceAppId"]?.GetValue<string>() == resourceAppId)
+                {
+                    var existingScopes = entryNode["resourceAccess"] as System.Text.Json.Nodes.JsonArray ?? new System.Text.Json.Nodes.JsonArray();
+                    var existingScopeIds = new HashSet<string>();
+                    foreach (var scope in existingScopes)
+                    {
+                        var id = scope?["id"]?.GetValue<string>();
+                        if (id != null) existingScopeIds.Add(id);
+                    }
+
+                    foreach (var scopeId in scopeIds)
+                    {
+                        if (!existingScopeIds.Contains(scopeId.ToString()))
+                        {
+                            existingScopes.Add(System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new { id = scopeId, type = "Scope" })));
+                        }
+                    }
+
+                    entryNode["resourceAccess"] = existingScopes;
+                    existingAccess.Add(entryNode);
+                    merged = true;
+                }
+                else
+                {
+                    existingAccess.Add(entryNode);
+                }
+            }
+        }
+
+        if (!merged)
+        {
+            existingAccess.Add(System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new
+            {
+                resourceAppId,
+                resourceAccess = scopeIds.Select(id => new { id, type = "Scope" }).ToArray(),
+            })));
+        }
+
+        var payload = new
+        {
+            requiredResourceAccess = existingAccess,
+        };
+
+        var result = await GraphPatchAsync(tenantId, $"/v1.0/applications/{applicationObjectId}", payload, ct);
+        if (result)
+        {
+            _logger.LogDebug("Added API permissions for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
+        }
+        else
+        {
+            _logger.LogError("Failed to add API permissions for resource {ResourceAppId} on application {ObjectId}", resourceAppId, applicationObjectId);
+        }
+
+        return result;
     }
 }

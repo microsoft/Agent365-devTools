@@ -176,7 +176,7 @@ public class AgentBlueprintService
         string blueprintId,
         CancellationToken cancellationToken = default)
     {
-        var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope };
+        var requiredScopes = new[] { AuthenticationConstants.AgentIdentityReadAllScope };
         var encodedId = Uri.EscapeDataString(blueprintId);
 
         // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers

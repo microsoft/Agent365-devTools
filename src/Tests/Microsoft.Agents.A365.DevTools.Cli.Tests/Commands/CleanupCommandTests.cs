@@ -96,9 +96,9 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "azure", "--config", "test.json" };
+        var args = new[] { "cleanup", "azure" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -118,7 +118,7 @@ public class CleanupCommandTests
         _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(Task.FromResult(true));
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "instance", "--config", "test.json" };
+        var args = new[] { "cleanup", "instance" };
 
         var originalIn = Console.In;
         try
@@ -149,14 +149,14 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "--config", "test.json" };
+        var args = new[] { "cleanup" };
 
         // Act
         var result = await command.InvokeAsync(args);
 
         // Assert
         Assert.Equal(0, result); // Should succeed
-        
+
         // Test behavior: Default cleanup (without subcommand) performs complete cleanup
         // Verify blueprint deletion
         await _mockExecutor.Received().ExecuteAsync(
@@ -175,7 +175,7 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "azure", "--config", "test.json" };
+        var args = new[] { "cleanup", "azure" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -197,15 +197,15 @@ public class CleanupCommandTests
             .Returns(Task.FromResult(false));
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "azure", "--config", "invalid.json" };
+        var args = new[] { "cleanup", "azure" };
 
         // Act
         var result = await command.InvokeAsync(args);
 
         // Assert
-        // Note: Current implementation catches exceptions and returns 0, but logs error
-        // This tests the actual behavior, not ideal behavior
-        Assert.Equal(0, result); 
+        // Config load failure returns exit code 1: LoadConfigAsync catches the exception and
+        // returns null, then the azure cleanup handler explicitly exits with code 1 on null config.
+        Assert.Equal(1, result);
         
         // Verify no Azure CLI commands are executed when config loading fails
         await _mockExecutor.DidNotReceive().ExecuteAsync(
@@ -237,9 +237,8 @@ public class CleanupCommandTests
         // Arrange & Act
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
 
-        // Assert - Verify parent command has options for default handler
+        // Assert - Verify parent command does not expose removed options
         var optionNames = command.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         // Force option has been removed to enforce interactive confirmation
         Assert.DoesNotContain("force", optionNames);
     }
@@ -253,7 +252,6 @@ public class CleanupCommandTests
 
         // Assert - Verify user-facing options
         var optionNames = blueprintCommand.Options.Select(opt => opt.Name).ToList();
-        Assert.Contains("config", optionNames);
         // Force option has been removed to enforce interactive confirmation
         Assert.DoesNotContain("force", optionNames);
     }
@@ -270,7 +268,7 @@ public class CleanupCommandTests
 
         var stubbedBlueprintService = CreateStubbedBlueprintService();
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -329,7 +327,7 @@ public class CleanupCommandTests
         var command = CleanupCommand.CreateCommand(
             _mockLogger, _mockConfigService, _mockBackendConfigurator,
             _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -370,7 +368,7 @@ public class CleanupCommandTests
         var command = CleanupCommand.CreateCommand(
             _mockLogger, _mockConfigService, _mockBackendConfigurator,
             _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -423,7 +421,7 @@ public class CleanupCommandTests
         var command = CleanupCommand.CreateCommand(
             _mockLogger, _mockConfigService, _mockBackendConfigurator,
             _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -481,7 +479,7 @@ public class CleanupCommandTests
         var command = CleanupCommand.CreateCommand(
             _mockLogger, _mockConfigService, _mockBackendConfigurator,
             _mockExecutor, spyService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -551,9 +549,9 @@ public class CleanupCommandTests
         
         // User declines the initial "Are you sure?" confirmation
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(false);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "--config", "test.json" };
+        var args = new[] { "cleanup" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -579,9 +577,9 @@ public class CleanupCommandTests
         // User confirms first prompt but declines the "Type DELETE" confirmation
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
         _mockConfirmationProvider.ConfirmWithTypedResponseAsync(Arg.Any<string>(), "DELETE").Returns(false);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "--config", "test.json" };
+        var args = new[] { "cleanup" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -611,7 +609,7 @@ public class CleanupCommandTests
         _mockConfirmationProvider.ConfirmWithTypedResponseAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "--config", "test.json" };
+        var args = new[] { "cleanup" };
 
         // Act
         await command.InvokeAsync(args);
@@ -673,10 +671,10 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
         // --m365 is required to opt in to Teams Graph backend configuration clearing.
-        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365" };
 
         // Simulate user confirmation with y
         var originalIn = Console.In;
@@ -724,9 +722,9 @@ public class CleanupCommandTests
             // No AgentBlueprintId set
         };
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -757,10 +755,10 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(Task.FromException<bool>(new InvalidOperationException("API connection failed")));
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
         // --m365 is required to opt in to Teams Graph backend configuration clearing.
-        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365" };
 
         var originalIn = Console.In;
         try
@@ -772,8 +770,9 @@ public class CleanupCommandTests
             var result = await command.InvokeAsync(args);
 
             // Assert
-            // Command should complete even if API throws exception (exception should be caught)
-            Assert.Equal(0, result);
+            // Command completes (exception is caught) but must signal failure via non-zero exit code
+            // so scripts and CI can detect the error.
+            Assert.Equal(1, result);
 
             // Verify deletion was attempted
             await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId!, Arg.Any<string?>());
@@ -805,7 +804,7 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -829,9 +828,9 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365" };
 
         var originalIn = Console.In;
         try
@@ -867,9 +866,9 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365" };
 
         var originalIn = Console.In;
         try
@@ -922,7 +921,7 @@ public class CleanupCommandTests
             _mockLogger, _mockConfigService, _mockBackendConfigurator,
             _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService,
             _mockAuthValidator, graphApiService: _graphApiService);
-        var args = new[] { "cleanup", "--config", "test.json" };
+        var args = new[] { "cleanup" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -963,7 +962,7 @@ public class CleanupCommandTests
             _mockLogger, _mockConfigService, _mockBackendConfigurator,
             _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService,
             _mockAuthValidator, graphApiService: _graphApiService);
-        var args = new[] { "cleanup", "--config", "test.json" };
+        var args = new[] { "cleanup" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -1010,7 +1009,7 @@ public class CleanupCommandTests
             _mockLogger, _mockConfigService, _mockBackendConfigurator,
             _mockExecutor, stubbedBlueprintService, _mockConfirmationProvider, _federatedCredentialService,
             _mockAuthValidator, graphApiService: _graphApiService);
-        var args = new[] { "cleanup", "--config", "test.json" };
+        var args = new[] { "cleanup" };
 
         // Act
         var result = await command.InvokeAsync(args);
@@ -1034,9 +1033,9 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
         _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(true);
-        
+
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
-        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365", "--config", "test.json" };
+        var args = new[] { "cleanup", "blueprint", "--endpoint-only", "--m365" };
 
         var originalIn = Console.In;
         try

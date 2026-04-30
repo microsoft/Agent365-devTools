@@ -40,7 +40,7 @@ public sealed class ClientAppValidationException : Agent365Exception
             mitigationSteps: new List<string>
             {
                 "Verify 'clientAppId' in a365.config.json is the Application (client) ID, not Object ID.",
-                "Run 'a365 config init' to create a new app, or check the app exists in Azure Portal.",
+                "Run 'a365 setup all --agent-name <name>' to set up from scratch, or check the app exists in Azure Portal.",
                 "Ensure you are logged in with the correct tenant using 'az login'.",
                 $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
             },

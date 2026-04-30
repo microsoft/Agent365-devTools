@@ -58,19 +58,6 @@ public class GetTokenSubcommandTests
     }
 
     [Fact]
-    public void CreateCommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
-
-        // Assert
-        var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
-    }
-
-    [Fact]
     public void CreateCommand_ShouldHaveAppIdOption()
     {
         // Act
@@ -176,11 +163,10 @@ public class GetTokenSubcommandTests
         var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
 
         // Assert
-        command.Options.Should().HaveCount(9);
+        command.Options.Should().HaveCount(8);
         var optionNames = command.Options.Select(opt => opt.Name).ToList();
         optionNames.Should().Contain(new[]
         {
-            "config",
             "app-id",
             "manifest",
             "scopes",

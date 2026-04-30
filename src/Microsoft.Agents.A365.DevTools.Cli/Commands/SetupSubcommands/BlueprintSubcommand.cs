@@ -122,16 +122,21 @@ internal static class BlueprintSubcommand
         AgentBlueprintService blueprintService,
         IClientAppValidator clientAppValidator,
         BlueprintLookupService blueprintLookupService,
-        FederatedCredentialService federatedCredentialService)
+        FederatedCredentialService federatedCredentialService,
+        IBootstrapConfigResolver? resolver = null)
     {
-        var command = new Command("blueprint", 
+        var command = new Command("blueprint",
             "Create agent blueprint (Entra ID application registration)\n" +
             "Minimum required permissions: Agent ID Developer role\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.\n" +
+                         "TenantId is auto-detected from 'az account show' (override with --tenant-id).");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -161,10 +166,10 @@ internal static class BlueprintSubcommand
         var m365Option = new Option<bool>(
             "--m365",
             description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint " +
-                        "with Teams Graph via MCP Platform. Default is false (opt-in); non-M365 agents " +
-                        "should configure their endpoint in the Teams Developer Portal.");
+                        "via MCP Platform. Default is false (opt-in); omit this flag for non-M365 agents.");
 
-        command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
@@ -175,7 +180,9 @@ internal static class BlueprintSubcommand
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var config = context.ParseResult.GetValueForOption(configOption)!;
+            var config = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipEndpointRegistration = context.ParseResult.GetValueForOption(skipEndpointRegistrationOption);
@@ -196,10 +203,39 @@ internal static class BlueprintSubcommand
                 skipEndpointRegistration: skipEndpointRegistration,
                 logger: logger))
             {
-                Environment.Exit(1);
+                context.ExitCode = 1;
+                return;
             }
 
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            // Dry-run: attempt config resolution gracefully so the flag works without a config file.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, config, resolver, configService, isCleanupMode: false, ct);
+
+                logger.LogInformation("Dry run: a365 setup blueprint --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("Would create Entra ID application:");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgentBlueprintDisplayName))
+                    logger.LogInformation("  - Display Name: {DisplayName}", dryRunConfig!.AgentBlueprintDisplayName);
+                else
+                    logger.LogInformation("  - Display Name: (pass --agent-name to preview)");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.TenantId))
+                    logger.LogInformation("  - Tenant: {TenantId}", dryRunConfig!.TenantId);
+                logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
+                if (!skipEndpointRegistration)
+                    logger.LogInformation("  - Would register messaging endpoint");
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                return;
+            }
+
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, config, isCleanupMode: false, ct);
+            else
+                setupConfig = await configService.LoadAsync(config.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
 
             // Configure GraphApiService with custom client app ID if available
             // This ensures inheritable permissions operations use the validated custom app
@@ -235,9 +271,7 @@ internal static class BlueprintSubcommand
             // Run all requirements checks: system checks (PowerShell modules, Frontier Preview)
             // and config checks (Location, ClientApp — includes isFallbackPublicClient auto-fix
             // required for device code auth on macOS/Linux/WSL).
-            // Skip when dryRun is true: ClientAppRequirementCheck can mutate the app registration
-            // (e.g., set isFallbackPublicClient), which violates dry-run semantics.
-            if (!skipRequirements && !dryRun)
+            if (!skipRequirements)
             {
                 try
                 {
@@ -252,20 +286,6 @@ internal static class BlueprintSubcommand
                     logger.LogInformation("To bypass requirement validation, rerun with --skip-requirements.");
                     ExceptionHandler.ExitWithCleanup(1);
                 }
-            }
-
-            if (dryRun)
-            {
-                logger.LogInformation("DRY RUN: Create Agent Blueprint");
-                logger.LogInformation("Would create Entra ID application:");
-                logger.LogInformation("  - Display Name: {DisplayName}", setupConfig.AgentBlueprintDisplayName);
-                logger.LogInformation("  - Tenant: {TenantId}", setupConfig.TenantId);
-                logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
-                if (!skipEndpointRegistration)
-                {
-                    logger.LogInformation("  - Would register messaging endpoint");
-                }
-                return;
             }
 
             logger.LogInformation("Starting blueprint setup... (TraceId: {TraceId})", correlationId);
@@ -1195,7 +1215,7 @@ internal static class BlueprintSubcommand
         ILogger logger,
         CancellationToken ct)
     {
-        var createSpUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/servicePrincipals";
+        var createSpUrl = $"{Constants.GraphApiConstants.BaseUrl}/v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal";
         var spManifestJson = new JsonObject { ["appId"] = appId }.ToJsonString();
         int forbiddenRetries = 0;
         const int maxForbiddenRetries = 3;
@@ -2162,7 +2182,7 @@ internal static class BlueprintSubcommand
         if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
         {
             logger.LogError("Blueprint ID not found. Please confirm agent blueprint id is in config file.");
-            Environment.Exit(1);
+            throw new Exceptions.SetupValidationException("Agent Blueprint ID is required for endpoint registration.");
         }
 
 

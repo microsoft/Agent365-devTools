@@ -26,7 +26,10 @@ public static class HttpClientFactory
         string userAgentPrefix = DefaultUserAgentPrefix,
         string? correlationId = null)
     {
-        var client = new HttpClient();
+        var client = new HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(2),
+        };
 
         if (!string.IsNullOrWhiteSpace(authToken))
         {

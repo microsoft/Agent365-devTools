@@ -37,6 +37,7 @@ public class Agent365Config
         }
 
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+        ValidateAuthMode(AuthMode, errors);
 
         // Validate custom blueprint permissions
         if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
@@ -81,6 +82,7 @@ public class Agent365Config
         else
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
+        ValidateAuthMode(AuthMode, errors);
 
         return errors;
     }
@@ -93,6 +95,19 @@ public class Agent365Config
         if (!Guid.TryParse(value, out _))
         {
             errors.Add($"{fieldName} must be a valid GUID format.");
+        }
+    }
+
+    /// <summary>
+    /// Validates AuthMode is either unset (null/whitespace) or one of "obo", "s2s", "both" (case-insensitive).
+    /// </summary>
+    private static void ValidateAuthMode(string? value, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var normalised = value.Trim().ToLowerInvariant();
+        if (normalised is not ("obo" or "s2s" or "both"))
+        {
+            errors.Add($"authMode '{value}' is invalid. Allowed values: obo, s2s, both.");
         }
     }
 
@@ -150,12 +165,23 @@ public class Agent365Config
     [JsonPropertyName("clientAppId")]
     public string ClientAppId { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Authentication pattern for the agent identity (blueprint agents only).
+    /// Accepted values: "obo" (default), "s2s", "both".
+    ///   obo  — on-behalf-of; principal-scoped delegated grants; no admin consent needed.
+    ///   s2s  — service-to-service; app role assignments on agent identity; Global Admin needed or PowerShell fallback.
+    ///   both — delegated grants (OBO) and app permissions (S2S).
+    /// Persisted to a365.config.json. Not written to a365.generated.config.json.
+    /// </summary>
+    [JsonPropertyName("authMode")]
+    public string? AuthMode { get; init; }
+
     #endregion
 
     #region Azure OpenAI Configuration
 
     /// <summary>
-    /// Name of the Azure OpenAI resource to create (non-AI Teammate agents only).
+    /// Name of the Azure OpenAI resource to create (blueprint agents only).
     /// If set and NeedAzureOpenAI is true, setup will provision this resource.
     /// </summary>
     [JsonPropertyName("azureOpenAIName")]
@@ -176,7 +202,7 @@ public class Agent365Config
 
     /// <summary>
     /// When true, setup will provision an Azure OpenAI resource.
-    /// Only relevant for non-AI Teammate agent deployments.
+    /// Only relevant for blueprint agent deployments.
     /// </summary>
     [JsonPropertyName("needAzureOpenAI")]
     public bool NeedAzureOpenAI { get; init; }
@@ -187,10 +213,11 @@ public class Agent365Config
 
     /// <summary>
     /// Controls which setup and publish flow is used.
-    /// true (default) = Digital Worker (Agent Identity Blueprint pattern).
-    /// false = non-AI Teammate agent. Two variants are available when false:
+    /// true (default) = AI Teammate agent: setup all provisions blueprint and permissions only;
+    ///   agent identity SP and Entra user are created separately via 'a365 create-instance'.
+    /// false = blueprint-only agent: setup all auto-creates agent identity SP; no Entra user. Two variants:
     ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
-    ///   - UseBlueprint = true:  Blueprint-based non-DW flow (Agent Identity Blueprint + Agent Instance).
+    ///   - UseBlueprint = true:  Blueprint-only non-DW flow (Agent Identity Blueprint + Agent Instance).
     /// Can be overridden per-command with the --aiteammate flag.
     /// </summary>
     [JsonPropertyName("aiTeammate")]
@@ -205,10 +232,10 @@ public class Agent365Config
     public bool? UseBlueprint { get; init; }
 
     /// <summary>
-    /// Returns true when this config represents a non-AI Teammate agent deployment.
+    /// Returns true when this config represents a blueprint agent deployment.
     /// </summary>
     [JsonIgnore]
-    public bool IsNonAiTeammate => AiTeammate == false;
+    public bool IsBlueprintAgent => AiTeammate == false;
 
     /// <summary>
     /// Returns true when this config uses the blueprint-based non-DW flow.
@@ -661,6 +688,7 @@ public class Agent365Config
             Environment = this.Environment,
             MessagingEndpoint = this.MessagingEndpoint,
             ClientAppId = this.ClientAppId,
+            AuthMode = this.AuthMode,
             AiTeammate = this.AiTeammate,
             UseBlueprint = this.UseBlueprint,
             AzureOpenAIName = this.AzureOpenAIName,

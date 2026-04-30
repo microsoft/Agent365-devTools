@@ -26,7 +26,8 @@ public interface IAuthenticationService
         string? clientId = null,
         IEnumerable<string>? scopes = null,
         bool useInteractiveBrowser = true,
-        string? userId = null);
+        string? userId = null,
+        CancellationToken ct = default);
 
     Task<string?> ResolveLoginHintFromCacheAsync();
 }
@@ -85,7 +86,8 @@ public class AuthenticationService : IAuthenticationService
         string? clientId = null,
         IEnumerable<string>? scopes = null,
         bool useInteractiveBrowser = true,
-        string? userId = null)
+        string? userId = null,
+        CancellationToken ct = default)
     {
         // Build cache key based on resource, tenant, and user identity.
         // Including userId ensures that cached tokens are not shared across different users
@@ -125,7 +127,6 @@ public class AuthenticationService : IAuthenticationService
                         else
                         {
                             // Validate UPN: cached token must be for the same user identity as the cache key.
-                            // Prevents returning a guest/cross-app token stored under a member UPN key.
                             if (!string.IsNullOrWhiteSpace(userId))
                             {
                                 var tokenUpn = TryExtractUpnFromJwt(cachedToken.AccessToken);
@@ -166,8 +167,8 @@ public class AuthenticationService : IAuthenticationService
         }
 
         // Authenticate interactively with specific tenant and scopes
-        _logger.LogDebug("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId);
+        _logger.LogInformation("Authentication required for Agent 365 Tools");
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, ct: ct);
 
         // Validate the token identity before caching: if a userId was requested,
         // ensure the returned token is actually for that user. WAM may return a
@@ -209,7 +210,8 @@ public class AuthenticationService : IAuthenticationService
         string? clientId = null,
         IEnumerable<string>? explicitScopes = null,
         bool useInteractiveBrowser = false,
-        string? loginHint = null)
+        string? loginHint = null,
+        CancellationToken ct = default)
     {
         // Declare variables outside try block so they're available in catch for logging
         string effectiveTenantId = tenantId ?? "unknown";
@@ -240,7 +242,7 @@ public class AuthenticationService : IAuthenticationService
                 if (resourceUrl == McpConstants.WorkIQToolsProdAppId)
                 {
                     scope = $"{resourceUrl}/.default";
-                    _logger.LogInformation("Authenticating to Agent 365 Tools");
+                    _logger.LogDebug("Authenticating to Agent 365 Tools");
                 }
                 // Check for Agent 365 endpoint URLs (legacy support)
                 else if (resourceUrl.Contains("agent365", StringComparison.OrdinalIgnoreCase))
@@ -252,11 +254,11 @@ public class AuthenticationService : IAuthenticationService
 
                     if (appId != McpConstants.WorkIQToolsProdAppId)
                     {
-                        _logger.LogInformation("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
+                        _logger.LogDebug("Using custom Agent 365 Tools App ID from A365_MCP_APP_ID environment variable");
                     }
                     else
                     {
-                        _logger.LogInformation("Authenticating to Agent 365 Tools");
+                        _logger.LogDebug("Authenticating to Agent 365 Tools");
                     }
 
                     scope = $"{appId}/.default";
@@ -293,8 +295,8 @@ public class AuthenticationService : IAuthenticationService
             else
             {
                 // Device code flow - works in all environments including SSH/remote sessions
-                _logger.LogInformation("Using device code authentication...");
-                _logger.LogInformation("Please sign in with your Microsoft account");
+                _logger.LogDebug("Using device code authentication...");
+                _logger.LogDebug("Please sign in with your Microsoft account");
                 credential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
             }
 
@@ -302,17 +304,17 @@ public class AuthenticationService : IAuthenticationService
             AccessToken tokenResult;
             try
             {
-                tokenResult = await credential.GetTokenAsync(tokenRequestContext, default);
+                tokenResult = await credential.GetTokenAsync(tokenRequestContext, ct);
             }
             catch (MsalAuthenticationFailedException ex) when (useInteractiveBrowser && ex.InnerException is PlatformNotSupportedException)
             {
                 _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
-                _logger.LogInformation("Using device code authentication...");
-                _logger.LogInformation("Please sign in with your Microsoft account");
+                _logger.LogDebug("Using device code authentication...");
+                _logger.LogDebug("Please sign in with your Microsoft account");
                 var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
-                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, default);
+                tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, ct);
             }
-            _logger.LogInformation("Authentication successful!");
+            _logger.LogDebug("Authentication successful!");
 
             return new TokenInfo
             {
@@ -429,7 +431,7 @@ public class AuthenticationService : IAuthenticationService
         if (scopes == null || !scopes.Any())
             throw new ArgumentException("At least one scope must be specified", nameof(scopes));
 
-        _logger.LogInformation("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}",
+        _logger.LogDebug("Requesting token for resource {ResourceAppId} with explicit scopes: {Scopes}",
             resourceAppId, string.Join(", ", scopes));
 
         // Delegate to the consolidated GetAccessTokenAsync method
@@ -450,7 +452,7 @@ public class AuthenticationService : IAuthenticationService
         var scopes = ResolveScopesForResource(resourceUrl, manifestPath);
 
         // For now, continue using the same authentication pattern but log the resolved scopes
-        _logger.LogInformation("Resolved scopes for resource {ResourceUrl}: {Scopes}", resourceUrl, string.Join(", ", scopes));
+        _logger.LogDebug("Resolved scopes for resource {ResourceUrl}: {Scopes}", resourceUrl, string.Join(", ", scopes));
 
         // Use the existing method for backward compatibility
         // For explicit scope control, callers should use GetAccessTokenWithScopesAsync
@@ -537,7 +539,7 @@ public class AuthenticationService : IAuthenticationService
             if (relevantScopes.Count > 0)
             {
                 var uniqueScopes = relevantScopes.Distinct().ToArray();
-                _logger.LogInformation("Using MCP-specific scopes for {ResourceUrl}: {Scopes}",
+                _logger.LogDebug("Using MCP-specific scopes for {ResourceUrl}: {Scopes}",
                     resourceUrl, string.Join(", ", uniqueScopes));
                 return uniqueScopes;
             }
@@ -566,7 +568,7 @@ public class AuthenticationService : IAuthenticationService
 
             // For now, this is a basic validation - in a full implementation,
             // we would decode the JWT token and check the scopes claim
-            _logger.LogInformation("Validation check - Required scopes for {ResourceUrl}: {Scopes}",
+            _logger.LogDebug("Validation check - Required scopes for {ResourceUrl}: {Scopes}",
                 resourceUrl, string.Join(", ", requiredScopes));
 
             // Return true for now since we're using the Power Platform API scope pattern
@@ -680,7 +682,7 @@ public class AuthenticationService : IAuthenticationService
         if (File.Exists(_tokenCachePath))
         {
             File.Delete(_tokenCachePath);
-            _logger.LogInformation("Authentication cache cleared");
+            _logger.LogDebug("Authentication cache cleared");
         }
     }
 

@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
 using System.CommandLine.Builder;
+using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.Reflection;
 
@@ -142,32 +143,35 @@ class Program
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
             var processService = serviceProvider.GetRequiredService<IProcessService>();
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
+            var bootstrapResolver = serviceProvider.GetRequiredService<IBootstrapConfigResolver>();
 
             var evaluationPipelineService = serviceProvider.GetRequiredService<IEvaluationPipelineService>();
 
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService, graphApiService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
-                backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService));
+                backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
             rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
-                graphApiService));
+                graphApiService, resolver: bootstrapResolver));
 
-            // Register ConfigCommand
-            var configLoggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            var configLogger = configLoggerFactory.CreateLogger("ConfigCommand");
-            var wizardService = serviceProvider.GetRequiredService<IConfigurationWizardService>();
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
-            rootCommand.AddCommand(ConfigCommand.CreateCommand(configLogger, wizardService: wizardService, clientAppValidator: clientAppValidator));
-            rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService));
-            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService));
+            rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService, resolver: bootstrapResolver));
+            rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService, resolver: bootstrapResolver));
 
-            // Wrap all command handlers with exception handling
-            // Build with middleware for global exception handling
+            // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
+            // and UseParseErrorReporting() (full help dump on any parse error), replacing both
+            // with a single clean error line — matching az CLI behaviour.
             var builder = new CommandLineBuilder(rootCommand)
-                .UseDefaults()
+                .UseVersionOption()
+                .UseHelp()
+                .UseEnvironmentVariableDirective()
+                .UseParseDirective()
+                .UseSuggestDirective()
+                .RegisterWithDotnetSuggest()
+                .CancelOnProcessTermination()
                 .UseExceptionHandler((exception, context) =>
                 {
                     if (exception is CleanExitException cleanExit)
@@ -197,7 +201,22 @@ class Program
                         }
                         context.ExitCode = 1;
                     }
-                });
+                })
+                .AddMiddleware(async (context, next) =>
+                {
+                    if (context.ParseResult.Errors.Count > 0)
+                    {
+                        context.ExitCode = 1;
+                        var error = context.ParseResult.Errors
+                            .FirstOrDefault(e => e.Message.Contains("Unrecognized", StringComparison.Ordinal))
+                            ?? context.ParseResult.Errors[0];
+                        Console.Error.WriteLine(error.Message);
+                        Console.Error.WriteLine();
+                        Console.Error.WriteLine("Run 'a365 --help' to see available commands.");
+                        return;
+                    }
+                    await next(context);
+                }, MiddlewareOrder.ErrorReporting);
 
             // Validate the configured clientAppId still exists in the tenant before any command runs.
             // If not found, falls back to the well-known display name and patches a365.config.json.
@@ -282,24 +301,38 @@ class Program
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
 
-            // Determine environment: try to load from config if --config option is provided, otherwise default to prod
-            string environment = "prod"; // Default
+            // Default to "prod". Override with A365_ENVIRONMENT env var or --config file.
+            string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
 
-            // Check if --config argument was provided (for internal developers)
             var args = Environment.GetCommandLineArgs();
             var configIndex = Array.FindIndex(args, arg => arg == "--config" || arg == "-c");
             if (configIndex >= 0 && configIndex < args.Length - 1)
             {
                 try
                 {
-                    // Try to load config file to get environment
-                    var config = configService.LoadAsync(args[configIndex + 1]).Result;
-                    environment = config.Environment;
+                    var configFilePath = args[configIndex + 1];
+                    if (!Path.IsPathRooted(configFilePath))
+                        configFilePath = Path.Combine(System.Environment.CurrentDirectory, configFilePath);
+
+                    if (File.Exists(configFilePath))
+                    {
+                        var json = File.ReadAllText(configFilePath);
+                        using var doc = System.Text.Json.JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("environment", out var envProp))
+                        {
+                            var envValue = envProp.GetString();
+                            if (!string.IsNullOrWhiteSpace(envValue))
+                            {
+                                environment = envValue;
+                            }
+                        }
+                    }
+
+                    logger.LogDebug("Resolved environment from config: {Environment}", environment);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // If config loading fails, stick with default "prod"
-                    // This is fine - the service will work with default environment
+                    logger.LogDebug("Failed to read environment from config: {Error}", ex.Message);
                 }
             }
 
@@ -331,9 +364,8 @@ class Program
         // Register ProcessService for cross-platform process launching
         services.AddSingleton<IProcessService, ProcessService>();
 
-        // Register Azure CLI service and Configuration Wizard
+        // Register Azure CLI service
         services.AddSingleton<IAzureCliService, AzureCliService>();
-        services.AddSingleton<IConfigurationWizardService, ConfigurationWizardService>();
         
         // Register confirmation provider for user prompts
         services.AddSingleton<IConfirmationProvider, ConsoleConfirmationProvider>();
@@ -346,6 +378,10 @@ class Program
         services.AddSingleton<IEvaluationAnalyzer, EvaluationAnalyzer>();
         services.AddSingleton<IReportGenerator, ReportGenerator>();
         services.AddSingleton<IEvaluationPipelineService, EvaluationPipelineService>();
+
+        // Register bootstrap config resolver — centralizes the three-mode config resolution
+        // used by all subcommands that can run without a365.config.json.
+        services.AddSingleton<IBootstrapConfigResolver, BootstrapConfigResolver>();
     }
 
     public static string GetDisplayVersion()

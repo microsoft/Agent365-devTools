@@ -43,16 +43,15 @@ public static class ExceptionHandler
             }
         }
 
-        // Include log file path for troubleshooting
-        if (!string.IsNullOrEmpty(logFilePath))
-        {
-            Console.Error.WriteLine();
-            Console.Error.WriteLine($"For more details, see the log file at: {logFilePath}");
-        }
-        
-        // For system errors (not user errors), suggest reporting as bug
+        // For system errors (not user errors), show log file path and suggest reporting as bug.
+        // User errors (e.g. missing config) have self-explanatory messages — log path adds no value.
         if (!ex.IsUserError)
         {
+            if (!string.IsNullOrEmpty(logFilePath))
+            {
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"For more details, see the log file at: {logFilePath}");
+            }
             Console.Error.WriteLine("If this error persists, please report it at:");
             Console.Error.WriteLine("https://github.com/microsoft/Agent365-devTools/issues");
             Console.Error.WriteLine();

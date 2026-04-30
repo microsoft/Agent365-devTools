@@ -17,6 +17,35 @@ public static class McpConstants
     /// </summary>
     public const string Agent365ToolsIdentifierUri = "https://agent365.svc.cloud.microsoft";
 
+    // Agent 365 base domains per environment (used for Application ID URIs)
+    public const string Agent365ProdDomain = "agent365.svc.cloud.microsoft";
+    public const string Agent365PreProdDomain = "preprod.agent365.svc.cloud.dev.microsoft";
+    public const string Agent365TestDomain = "test.agent365.svc.cloud.dev.microsoft";
+
+    /// <summary>
+    /// Gets the Agent 365 base domain for the given environment.
+    /// </summary>
+    public static string GetAgent365Domain(string environment)
+    {
+        return environment?.ToLowerInvariant() switch
+        {
+            "prod" or "prd" => Agent365ProdDomain,
+            "preprod" or "ppe" => Agent365PreProdDomain,
+            "test" => Agent365TestDomain,
+            _ => Agent365ProdDomain
+        };
+    }
+
+    /// <summary>
+    /// Builds the Application ID URI for a PPMI app.
+    /// Format: https://{domain}/agents/tenants/{tenantId}/servers/{serverName}
+    /// </summary>
+    public static string BuildPpmiIdentifierUri(string environment, string tenantId, string serverName)
+    {
+        var domain = GetAgent365Domain(environment);
+        return $"https://{domain}/agents/tenants/{tenantId}/servers/{serverName}";
+    }
+
     /// <summary>
     /// Name of the tooling manifest file
     /// </summary>

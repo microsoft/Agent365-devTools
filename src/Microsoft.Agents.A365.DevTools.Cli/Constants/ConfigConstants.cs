@@ -176,15 +176,10 @@ public static class ConfigConstants
 public static string GetAgent365ToolsResourceAppId(string environment)
 {
     // Check for custom app ID in environment variable first
-    var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpper()}");
+    var customAppId = Environment.GetEnvironmentVariable($"A365_MCP_APP_ID_{environment?.ToUpperInvariant()}");
     if (!string.IsNullOrEmpty(customAppId))
         return customAppId;
 
-    // Default to production app ID
-    return environment?.ToLower() switch
-    {
-        "prod" => McpConstants.WorkIQToolsProdAppId,
-        _ => McpConstants.WorkIQToolsProdAppId
-    };
+    return McpConstants.WorkIQToolsProdAppId;
 }
 }

@@ -20,6 +20,8 @@ This folder contains the workflow components for the `a365 setup` command. The s
 | **RequirementsSubcommand** | `RequirementsSubcommand.cs` | Validates prerequisites (Azure CLI, permissions) |
 | **SetupHelpers** | `SetupHelpers.cs` | Shared helper methods; `EnsureResourcePermissionsAsync` used by standalone callers and `CopilotStudioSubcommand` |
 | **SetupResults** | `SetupResults.cs` | Result models for setup operations |
+| **SetupContext** | `SetupContext.cs` | Context bundle threaded through orchestrator steps; exposes `AuthMode`, `IsOboMode`, `IsS2sMode`, `IsBothMode` |
+| **NonDwBlueprintSetupOrchestrator** | `NonDwBlueprintSetupOrchestrator.cs` | Blueprint-based non-DW setup flow; skips Phase 2a/2b (inheritable permissions); gates agent identity grants by `authMode` |
 
 ---
 
@@ -64,6 +66,33 @@ a365 setup blueprint       # Create blueprint only
 a365 setup infrastructure  # Provision Azure only
 a365 setup permissions     # Configure permissions only
 ```
+
+### Authentication mode (`--authmode`)
+
+The `--authmode` option controls how the agent identity service principal is granted permissions. It is available on `setup all` only.
+
+| Value | Behaviour |
+|-------|-----------|
+| `obo` (default) | Principal-scoped delegated grants (`consentType: "Principal"`) on the agent identity SP — no Global Admin required |
+| `s2s` | Application role assignments on the agent identity SP — attempted programmatically; PowerShell instructions printed as fallback if the caller lacks Global Admin |
+| `both` | Both OBO delegated grants and S2S app role assignments |
+
+`authMode` may also be persisted in `a365.config.json` so it takes effect on every run without the flag.
+
+Phase 2a (inheritable permissions on the blueprint) and Phase 2b (AllPrincipals grants) are **always skipped** for non-DW agents regardless of `authMode`, to avoid requiring a Global Admin role.
+
+```bash
+# Use OBO grants (default)
+a365 setup all
+
+# Use S2S app-role assignments
+a365 setup all --authmode s2s
+
+# Use both
+a365 setup all --authmode both
+```
+
+---
 
 ### Messaging endpoint (M365 agents)
 

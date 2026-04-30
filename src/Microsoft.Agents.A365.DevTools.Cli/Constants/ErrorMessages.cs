@@ -22,7 +22,7 @@ public static class ErrorMessages
     #region Configuration Messages
 
     public const string ConfigFileNotFound =
-        "Configuration file not found. Run 'a365 config init' to create one";
+        "Configuration file not found. Run 'a365 setup all --agent-name <name>' to set up from scratch.";
 
     public const string InvalidConfigFormat =
         "Configuration file has invalid JSON format";

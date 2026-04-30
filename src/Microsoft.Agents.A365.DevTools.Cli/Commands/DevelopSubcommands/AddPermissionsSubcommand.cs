@@ -24,11 +24,6 @@ internal static class AddPermissionsSubcommand
             "add-permissions",
             "Add MCP server API permissions to a custom application");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
-
         var manifestOption = new Option<FileInfo?>(
             ["--manifest", "-m"],
             description: "Path to ToolingManifest.json (defaults to current directory)");
@@ -55,35 +50,41 @@ internal static class AddPermissionsSubcommand
             ["--dry-run"],
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
         command.AddOption(manifestOption);
         command.AddOption(appIdOption);
         command.AddOption(scopesOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, manifest, appId, scopes, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var manifest = context.ParseResult.GetValueForOption(manifestOption);
+            var appId = context.ParseResult.GetValueForOption(appIdOption);
+            var scopes = context.ParseResult.GetValueForOption(scopesOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+
             try
             {
+                var configFile = new FileInfo("a365.config.json");
                 logger.LogInformation("Adding MCP server permissions to application...");
                 logger.LogInformation("");
 
                 // Check if config file exists or if --app-id was provided
-                var setupConfig = File.Exists(config.FullName) 
-                    ? await configService.LoadAsync(config.FullName) 
+                var setupConfig = File.Exists(configFile.FullName)
+                    ? await configService.LoadAsync(configFile.FullName)
                     : null;
 
                 if (setupConfig == null && string.IsNullOrWhiteSpace(appId))
                 {
-                    logger.LogError("Configuration file not found: {ConfigPath}", config.FullName);
+                    logger.LogError("Configuration file not found: {ConfigPath}", configFile.FullName);
                     logger.LogInformation("");
                     logger.LogInformation("To add MCP server permissions, you must either:");
-                    logger.LogInformation("  1. Create a config file using: a365 config init");
+                    logger.LogInformation("  1. Run 'a365 setup all --agent-name <name>' to create a config file.");
                     logger.LogInformation("  2. Specify the application ID using: a365 develop addpermissions --app-id <your-app-id>");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop addpermissions --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
@@ -104,12 +105,12 @@ internal static class AddPermissionsSubcommand
                     logger.LogError("No application ID specified. Use --app-id or ensure ClientAppId is set in config.");
                     logger.LogInformation("");
                     logger.LogInformation("Example: a365 develop addpermissions --app-id <your-app-id>");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                     return;
                 }
 
                 // Determine manifest path
-                var manifestPath = manifest?.FullName 
+                var manifestPath = manifest?.FullName
                     ?? Path.Combine(setupConfig?.DeploymentProjectPath ?? Environment.CurrentDirectory, McpConstants.ToolingManifestFileName);
 
                 var environment = setupConfig?.Environment ?? "prod";
@@ -137,7 +138,7 @@ internal static class AddPermissionsSubcommand
                         logger.LogInformation("or specify scopes explicitly with --scopes option.");
                         logger.LogInformation("");
                         logger.LogInformation("Example: a365 develop addpermissions --scopes McpServers.Mail.All McpServers.Calendar.All");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -149,7 +150,7 @@ internal static class AddPermissionsSubcommand
                     {
                         logger.LogError("No scopes found in ToolingManifest.json");
                         logger.LogInformation("You can specify scopes explicitly with --scopes option.");
-                        Environment.Exit(1);
+                        context.ExitCode = 1;
                         return;
                     }
 
@@ -233,7 +234,7 @@ internal static class AddPermissionsSubcommand
                         success = false;
                     }
                 }
-                
+
                 logger.LogInformation("");
 
                 // Summary
@@ -248,15 +249,15 @@ internal static class AddPermissionsSubcommand
                 else
                 {
                     logger.LogWarning("Permission addition failed. Review the errors above.");
-                    Environment.Exit(1);
+                    context.ExitCode = 1;
                 }
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to add MCP server permissions: {Message}", ex.Message);
-                Environment.Exit(1);
+                context.ExitCode = 1;
             }
-        }, configOption, manifestOption, appIdOption, scopesOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }

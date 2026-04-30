@@ -64,6 +64,7 @@ public class Agent365Config
     public string TenantId { get; init; } = string.Empty;
     public string SubscriptionId { get; init; } = string.Empty;
     public string ResourceGroup { get; init; } = string.Empty;
+    public string? AuthMode { get; init; }   // "obo" | "s2s" | "both" (default: obo)
 
     // DYNAMIC PROPERTIES (get/set) - from a365.generated.config.json
     public string? AgentBlueprintId { get; set; }

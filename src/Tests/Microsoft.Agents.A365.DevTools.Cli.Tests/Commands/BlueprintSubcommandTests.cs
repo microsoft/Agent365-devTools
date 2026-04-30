@@ -95,26 +95,6 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public void CreateCommand_ShouldHaveConfigOption()
-    {
-        // Act
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBackendConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert
-        var configOption = command.Options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
-    }
-
-    [Fact]
     public void CreateCommand_ShouldHaveVerboseOption()
     {
         // Act
@@ -236,11 +216,11 @@ public class BlueprintSubcommandTests
         // Assert
         result.Should().Be(0);
         
-        // Verify logger received appropriate calls about what would be done
+        // Verify logger received the dry-run header and blueprint details
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("DRY RUN")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Dry run:")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -301,42 +281,6 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
-    public async Task DryRun_WithCustomConfigPath_ShouldLoadCorrectFile()
-    {
-        // Arrange
-        var customPath = "custom-config.json";
-        var config = new Agent365Config
-        {
-            TenantId = "test-tenant",
-            AgentBlueprintDisplayName = "Test Blueprint"
-        };
-
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-            .Returns(Task.FromResult(config));
-
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBackendConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        var parser = new CommandLineBuilder(command).Build();
-        var testConsole = new TestConsole();
-
-        // Act
-        var result = await parser.InvokeAsync($"--config {customPath} --dry-run", testConsole);
-
-        // Assert
-        result.Should().Be(0);
-        await _mockConfigService.Received(1).LoadAsync(
-            Arg.Is<string>(s => s.Contains(customPath)),
-            Arg.Any<string>());
-    }
-
-    [Fact]
     public async Task DryRun_ShouldNotCreateServicePrincipal()
     {
         // Arrange
@@ -386,10 +330,9 @@ public class BlueprintSubcommandTests
             _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
 
         // Assert - Verify all expected options are present
-        command.Options.Should().HaveCountGreaterOrEqualTo(3);
-        
+        command.Options.Should().HaveCountGreaterOrEqualTo(2);
+
         var optionNames = command.Options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("verbose");
         optionNames.Should().Contain("dry-run");
     }
@@ -397,7 +340,7 @@ public class BlueprintSubcommandTests
     [Fact]
     public async Task DryRun_WithMissingConfig_ShouldHandleGracefully()
     {
-        // Arrange
+        // Arrange — config load throws (no a365.config.json in test directory)
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns<Agent365Config>(_ => throw new FileNotFoundException("Config not found"));
 
@@ -413,29 +356,11 @@ public class BlueprintSubcommandTests
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
-        // Act & Assert
-        await Assert.ThrowsAsync<FileNotFoundException>(
-            async () => await parser.InvokeAsync("--dry-run", testConsole));
-    }
+        // Act — dry-run must not throw when config is missing; the flag must work in fresh directories
+        var result = await parser.InvokeAsync("--dry-run", testConsole);
 
-    [Fact]
-    public void CreateCommand_DefaultConfigPath_ShouldBeA365ConfigJson()
-    {
-        // Act
-        var command = BlueprintSubcommand.CreateCommand(
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            _mockAuthValidator,
-            _mockPlatformDetector,
-            _mockBackendConfigurator,
-            _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
-
-        // Assert - Verify the config option exists and has expected aliases
-        var configOption = command.Options.First(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption.Aliases.Should().Contain("--config");
-        configOption.Aliases.Should().Contain("-c");
+        // Assert — exits cleanly with generic dry-run preview
+        result.Should().Be(0, because: "--dry-run must succeed even without a config file");
     }
 
     [Fact]
@@ -851,18 +776,20 @@ public class BlueprintSubcommandTests
     [Fact]
     public async Task RegisterEndpointAndSyncAsync_WhenSyncFails_ShouldLogWarningButContinue()
     {
-        // Arrange
+        // Arrange — use an isolated temp subdirectory so a365.generated.config.json doesn't exist
+        // there (the method derives the generated-config path from the config file's directory).
+        // This reliably triggers the FileNotFoundException → warning path regardless of what other
+        // files exist in the global Temp directory.
+        var testId = Guid.NewGuid().ToString();
+        var testDir = Path.Combine(Path.GetTempPath(), $"a365-sync-test-{testId}");
+        Directory.CreateDirectory(testDir);
+        var configPath = Path.Combine(testDir, "a365.config.json");
+
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
             AgentBlueprintId = "blueprint-123",
-            DeploymentProjectPath = "non-existent-path" // This will cause sync to skip with a warning
         };
-
-        var testId = Guid.NewGuid().ToString();
-        var configPath = Path.Combine(Path.GetTempPath(), $"test-config-{testId}.json");
-        var generatedPath = Path.Combine(Path.GetTempPath(), $"a365.generated.config-{testId}.json");
-        await File.WriteAllTextAsync(generatedPath, "{}");
 
         try
         {
@@ -875,7 +802,8 @@ public class BlueprintSubcommandTests
             _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
                 .Returns((EndpointRegistrationResult.Created, (string?)null));
 
-            // Act - should not throw
+            // Act — a365.generated.config.json doesn't exist in testDir, so ProjectSettingsSyncHelper
+            // throws FileNotFoundException, which RegisterEndpointAndSyncAsync catches non-fatally.
             await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
                 configPath,
                 _mockLogger,
@@ -883,7 +811,7 @@ public class BlueprintSubcommandTests
                 _mockBackendConfigurator,
                 _mockPlatformDetector);
 
-            // Assert - ProjectSettingsSyncHelper logs a warning when deploymentProjectPath doesn't exist
+            // Assert — warning logged, method did not throw
             _mockLogger.Received().Log(
                 LogLevel.Warning,
                 Arg.Any<EventId>(),
@@ -893,14 +821,10 @@ public class BlueprintSubcommandTests
         }
         finally
         {
-            if (File.Exists(generatedPath))
-            {
-                File.Delete(generatedPath);
-            }
             if (File.Exists(configPath))
-            {
                 File.Delete(configPath);
-            }
+            if (Directory.Exists(testDir))
+                Directory.Delete(testDir, recursive: true);
         }
     }
 
@@ -1417,7 +1341,7 @@ public class BlueprintSubcommandTests
     #region CustomClientAppId Configuration Tests
 
     [Fact]
-    public async Task SetHandler_WithClientAppId_ShouldConfigureGraphApiService()
+    public async Task SetHandler_WithClientAppId_DryRun_ShouldExitCleanly()
     {
         // Arrange
         var config = new Agent365Config
@@ -1442,12 +1366,13 @@ public class BlueprintSubcommandTests
         var parser = new CommandLineBuilder(command).Build();
         var testConsole = new TestConsole();
 
-        // Act
-        await parser.InvokeAsync("--dry-run", testConsole);
+        // Act — dry-run exits before Graph API operations; CustomClientAppId is not set in this path
+        // (no Graph calls are made in dry-run, so configuration of graphApiService is not relevant).
+        var result = await parser.InvokeAsync("--dry-run", testConsole);
 
-        // Assert - Verify CustomClientAppId was set on GraphApiService
-        _mockGraphApiService.CustomClientAppId.Should().Be(config.ClientAppId,
-            "CustomClientAppId must be set to ensure inheritable permissions use the correct client app");
+        // Assert — command succeeds and config was loaded to enrich the dry-run preview
+        result.Should().Be(0, because: "--dry-run should exit cleanly even when ClientAppId is present");
+        await _mockConfigService.Received(1).LoadAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]

@@ -42,18 +42,19 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(7);
-        
+        command.Subcommands.Should().HaveCount(8);
+
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
-        subcommandNames.Should().Contain(new[] 
-        { 
-            "list-environments", 
-            "list-servers", 
-            "publish", 
-            "unpublish", 
-            "approve", 
+        subcommandNames.Should().Contain(new[]
+        {
+            "list-environments",
+            "list-servers",
+            "publish",
+            "unpublish",
+            "approve",
             "block",
-            "package-mcp-server"
+            "package-mcp-server",
+            "register-external-mcp-server"
         });
     }
 
@@ -66,15 +67,9 @@ public class DevelopMcpCommandTests
 
         // Assert
         subcommand.Description.Should().Be("List all Dataverse environments available for MCP server management");
-        
-        var options = subcommand.Options.ToList();
-        options.Should().HaveCount(3); // config, dry-run, verbose (plus help automatically)
 
-        // Verify config option
-        var configOption = options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("-c");
-        configOption.Aliases.Should().Contain("--config");
+        var options = subcommand.Options.ToList();
+        options.Should().HaveCount(2); // dry-run, verbose (plus help automatically)
 
         // Verify dry-run option
         var dryRunOption = options.FirstOrDefault(o => o.Name == "dry-run");
@@ -97,9 +92,9 @@ public class DevelopMcpCommandTests
 
         // Assert
         subcommand.Description.Should().Be("List MCP servers in a specific Dataverse environment");
-        
+
         var options = subcommand.Options.ToList();
-        options.Should().HaveCount(4); // environment-id, config, dry-run, verbose
+        options.Should().HaveCount(3); // environment-id, dry-run, verbose
 
         // Verify environment-id option with short alias
         var envOption = options.FirstOrDefault(o => o.Name == "environment-id");
@@ -107,11 +102,6 @@ public class DevelopMcpCommandTests
         envOption!.Aliases.Should().Contain("-e");
         envOption.Aliases.Should().Contain("--environment-id");
 
-        // Verify config option
-        var configOption = options.FirstOrDefault(o => o.Name == "config");
-        configOption.Should().NotBeNull();
-        configOption!.Aliases.Should().Contain("-c");
-        
         // Verify verbose option
         var verboseOption = options.FirstOrDefault(o => o.Name == "verbose");
         verboseOption.Should().NotBeNull();
@@ -137,7 +127,6 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("server-name");
         optionNames.Should().Contain("alias");
         optionNames.Should().Contain("display-name");
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("dry-run");
 
         // Verify critical aliases for Azure CLI compliance
@@ -170,7 +159,6 @@ public class DevelopMcpCommandTests
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("environment-id");
         optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("dry-run");
 
         // Verify Azure CLI style aliases
@@ -192,7 +180,7 @@ public class DevelopMcpCommandTests
         subcommand.Description.Should().Be("Generate MCP server package for submission on Microsoft admin center");
 
         var options = subcommand.Options.ToList();
-        options.Should().HaveCount(6); // serverName, developerName, iconUrl, outputPath, dry-run, config
+        options.Should().HaveCount(6); // serverName, developerName, iconUrl, outputPath, dry-run, verbose
 
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("server-name");
@@ -200,16 +188,12 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("icon-url");
         optionNames.Should().Contain("output-path");
         optionNames.Should().Contain("dry-run");
-        optionNames.Should().Contain("config");
+        optionNames.Should().Contain("verbose");
 
         options.First(o => o.Name == "server-name").IsRequired.Should().BeTrue();
         options.First(o => o.Name == "developer-name").IsRequired.Should().BeTrue();
         options.First(o => o.Name == "icon-url").IsRequired.Should().BeTrue();
         options.First(o => o.Name == "output-path").IsRequired.Should().BeTrue();
-
-        // Config option keeps Azure CLI style short alias
-        var configOption = options.First(o => o.Name == "config");
-        configOption.Aliases.Should().Contain("-c");
     }
 
     [Fact]
@@ -221,11 +205,10 @@ public class DevelopMcpCommandTests
 
         // Assert
         subcommand.Description.Should().Be("Approve an MCP server");
-        
+
         var options = subcommand.Options.ToList();
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("dry-run");
 
         // Verify server-name has short alias
@@ -242,11 +225,10 @@ public class DevelopMcpCommandTests
 
         // Assert
         subcommand.Description.Should().Be("Block an MCP server");
-        
+
         var options = subcommand.Options.ToList();
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("config");
         optionNames.Should().Contain("dry-run");
 
         // Verify server-name has short alias
@@ -269,19 +251,60 @@ public class DevelopMcpCommandTests
     }
 
     [Fact]
-    public void AllSubcommands_SupportConfigOption()
+    public void RegisterExternalMcpServerSubcommand_HasAllExpectedOptions()
     {
         // Act
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "register-external-mcp-server");
 
-        // Assert - All subcommands should have config option for consistency
-        foreach (var subcommand in command.Subcommands)
-        {
-            var configOption = subcommand.Options.FirstOrDefault(o => o.Name == "config");
-            configOption.Should().NotBeNull($"Subcommand '{subcommand.Name}' should have --config option");
-            configOption!.Aliases.Should().Contain("-c", $"Config option should have -c alias in '{subcommand.Name}'");
-        }
+        // Assert
+        subcommand.Description.Should().Be("Register an external MCP server with Entra, ExternalIDP, or NoAuth authentication");
+
+        var options = subcommand.Options.ToList();
+        var optionNames = options.Select(o => o.Name).ToList();
+
+        optionNames.Should().Contain("server-name");
+        optionNames.Should().Contain("server-url");
+        optionNames.Should().Contain("auth-type");
+        optionNames.Should().Contain("idp-authorization-url");
+        optionNames.Should().Contain("idp-token-url");
+        optionNames.Should().Contain("idp-scopes");
+        optionNames.Should().Contain("idp-client-id");
+        optionNames.Should().Contain("idp-client-secret");
+        optionNames.Should().Contain("api-key-location");
+        optionNames.Should().Contain("api-key-name");
+        optionNames.Should().Contain("tools");
+        optionNames.Should().Contain("input-file");
+        optionNames.Should().Contain("remote-scopes");
+        optionNames.Should().Contain("tenant-id");
+        optionNames.Should().Contain("service-tree-id");
+        optionNames.Should().Contain("publisher");
+        optionNames.Should().Contain("description");
+        optionNames.Should().Contain("dry-run");
+        optionNames.Should().Contain("verbose");
+        optionNames.Should().NotContain("config");
+
+        // Verify critical aliases
+        var serverNameOption = options.First(o => o.Name == "server-name");
+        serverNameOption.Aliases.Should().Contain("-s");
+        serverNameOption.Aliases.Should().Contain("--server-name");
+
+        var serverUrlOption = options.First(o => o.Name == "server-url");
+        serverUrlOption.Aliases.Should().Contain("-u");
+
+        var authTypeOption = options.First(o => o.Name == "auth-type");
+        authTypeOption.Aliases.Should().Contain("-a");
+
+        var inputFileOption = options.First(o => o.Name == "input-file");
+        inputFileOption.Aliases.Should().Contain("-f");
+
+        var tenantIdOption = options.First(o => o.Name == "tenant-id");
+        tenantIdOption.Aliases.Should().Contain("-t");
+
+        var verboseOption = options.First(o => o.Name == "verbose");
+        verboseOption.Aliases.Should().Contain("-v");
     }
+
 
     [Theory]
     [InlineData("list-servers", "environment-id", "-e")]
@@ -291,6 +314,11 @@ public class DevelopMcpCommandTests
     [InlineData("unpublish", "server-name", "-s")]
     [InlineData("approve", "server-name", "-s")]
     [InlineData("block", "server-name", "-s")]
+    [InlineData("register-external-mcp-server", "server-name", "-s")]
+    [InlineData("register-external-mcp-server", "server-url", "-u")]
+    [InlineData("register-external-mcp-server", "auth-type", "-a")]
+    [InlineData("register-external-mcp-server", "input-file", "-f")]
+    [InlineData("register-external-mcp-server", "tenant-id", "-t")]
     public void CriticalOptions_HaveConsistentAliases(string subcommandName, string optionName, string expectedAlias)
     {
         // Act

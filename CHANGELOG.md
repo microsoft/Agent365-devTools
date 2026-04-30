@@ -20,17 +20,35 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 4. Repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 5. **Grant admin consent for \<tenant\>** > confirm
 
-**Option B — CLI** (requires `a365.config.json` and `a365.generated.config.json` in the config directory):
-
-```bash
-a365 setup admin --config-dir "<path-to-config-dir>"
-```
+**Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
 - `a365 develop-mcp evaluate` command for evaluating MCP server tool schema quality — runs deterministic and semantic checks (via GitHub Copilot or Claude Code CLIs), computes maturity scoring, and generates an interactive HTML report
+- `setup requirements` Global Administrator path: when the well-known CLI client app is not found in a new tenant, Global Admins are prompted to create the app and grant admin consent automatically (enter an app ID or type `C` to create).
+- `--authmode obo|s2s|both` option on `setup all` — controls how the agent identity service principal receives permissions:
+  - `obo` (default): principal-scoped delegated grants (`consentType: "Principal"`); no Global Administrator required.
+  - `s2s`: application role assignments on the agent identity SP; attempted programmatically, falls back to printed PowerShell instructions if the caller lacks Global Administrator.
+  - `both`: applies both OBO delegated grants and S2S app role assignments.
+  - Inheritable permissions (Phase 2a) and AllPrincipals grants (Phase 2b) are always skipped for non-DW agents regardless of `authMode`, to avoid requiring a Global Administrator role.
+  - `authMode` can be persisted in `a365.config.json` to apply on every run without the flag.
+- `--project-path <path>` option on `develop list-configured`, `develop add-mcp-servers`, and `develop remove-mcp-servers` — specify the manifest location without requiring `a365.config.json`.
+- `setup requirements` runs without `a365.config.json` — system checks (PowerShell modules, Frontier enrollment) always run; client app checks run when a config file or Azure CLI session is available.
+- `--agent-name` and `--tenant-id` options added to `setup blueprint`, `setup permissions` (all subcommands), `create-instance`, `publish`, and `query-entra` — all commands can now resolve configuration from Entra ID without requiring `a365.config.json`.
+- `setup permissions custom --resource-app-id <guid> --scopes <scopes>` — apply inline custom API permissions to the agent blueprint without editing `a365.config.json`.
 - `--m365` opt-in flag on `a365 setup blueprint`, `a365 cleanup blueprint`, and `a365 setup all` — when set, the CLI registers or clears the agent blueprint's messaging endpoint via the Teams Graph backend configuration endpoint on MCP Platform. Default is **off**: without `--m365`, endpoint registration is skipped and the CLI points users at the Teams Developer Portal (https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) for manual configuration. Intended for M365 agents; opt-in because the Teams Graph rollout on MCP Platform is ongoing.
 - Messaging endpoint row added to `a365 setup all` summary output, with "registered"/"reused"/"skipped (non-M365)"/"manual config required"/"failed" states. When registration can't complete, the summary surfaces an "Action Required" entry with the Teams Developer Portal URL so the user knows exactly what to do next.
 - Defensive fallback when the server rejects the new request with a known contract-mismatch signature — the CLI logs `"Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually."` and directs the user to the Teams Developer Portal. Same user-facing path is reused when registration fails because the signed-in user is not a blueprint owner.
+
+### Removed
+- `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name` and `a365 setup permissions custom`.
+
+### Breaking Changes
+- **`a365 config init` removed** — replace with `a365 setup all --agent-name <name>`. This creates the agent blueprint, configures permissions, and registers the messaging endpoint in one step without requiring a pre-existing config file.
+- **`a365 config display` removed** — use `a365 query-entra blueprint-scopes` to inspect live blueprint permissions and consent state.
+- **`a365 config permissions` removed** — replace with `a365 setup permissions custom --resource-app-id <guid> --scopes <scopes>`.
+- **`--config`/`-c` option removed from all commands** — config file is now always resolved from the current directory (`a365.config.json`). Scripts passing `--config <path>` will receive a parse error; change directory before running the CLI instead.
+- **`--agent-instance-only` renamed to `--agent-registration-only`** on `a365 setup all` — update any scripts using the old flag name.
+- **`setup permissions custom --resource-app-id --scopes` applies permissions directly to Entra ID** — unlike the former `a365 config permissions` which only wrote to `a365.config.json`, this inline mode immediately mutates the live blueprint in Entra and cannot be undone by editing a config file.
 - `a365 setup` now writes the `Agent365Observability` placeholder section (`AgentId`, `AgentBlueprintId`, `TenantId`, `AgentName`, `AgentDescription`) and `EnableAgent365Exporter: false` to `appsettings.json` (.NET) and `ENABLE_A365_OBSERVABILITY_EXPORTER=false` to `.env` (Python/Node.js), so observability configuration is pre-populated for all three platforms after running setup
 - Re-enabled `a365 create-instance` command (previously deprecated) — creates agent identity, agent user, and assigns licenses in a single command. The custom client app now requires the `User.ReadWrite.All` delegated permission for user creation and license assignment; existing users may need to update admin consent on their client app.
 - `Agent365.Observability.OtelWrite` granted to all provisioned agent identities on the Observability API as both a **delegated** permission (OAuth2 grant) and an **application** permission (S2S app role assignment), enabling agents to write OpenTelemetry data to the Agent 365 observability service
@@ -54,15 +72,19 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 - Blueprint messaging endpoint registration migrated from Azure Bot Service (ABS) to Teams Graph backend configuration. The CLI now sends `{ agentIdentityBlueprintId, callbackUri, tenantId }` to MCP Platform instead of the ABS-shaped payload. `BotConfigurator` / `IBotConfigurator` are replaced by `TeamsGraphBackendConfigurator` / `ITeamsGraphBackendConfigurator`. Callers must pass `--m365` to opt in; see Added notes above.
 - `setup all --dry-run` output is now column-aligned for readability
 - `setup infrastructure` now defaults `deploymentProjectPath` to the current directory when not specified in config
-- `setup all` now defaults to the non-AI Teammate (blueprint) flow. Use `--aiteammate true` to run the Digital Worker (AI Teammate) setup flow.
+- `setup all` now defaults to the blueprint agent flow. Use `--aiteammate` (no value required) to run the AI Teammate agent setup flow.
 - `a365 setup blueprint` now sets `managerApplications` on the blueprint application to enable platform manageability. After May 1, blueprints without `managerApplications` will no longer be accepted, and must be recreated (delete and re-run `a365 setup blueprint`) or manually patched via Graph API to include this value.
 - `New-Agent365ToolsServicePrincipalProdPublic.ps1` updated to support MCP V1 and V2 provisioning — adds `-Mode` (`V1`/`V2`/`All`, default `All`), `-ManifestPath` (auto-extracts V2 per-server AppIds from `ToolingManifest.json`), and `-V2AppIds` (explicit list) parameters; script is now idempotent across all AppIds (re-run safe) and covers the migration period where V1 and V2 servers coexist in the same tenant
 - `a365 publish` updates manifest IDs, creates `manifest.zip`, and prints concise upload instructions for Microsoft 365 Admin Center (Agents > All agents > Upload custom agent). Interactive prompts only occur in interactive terminals; redirect stdin to suppress them in scripts.
 - `a365 develop list-available` resolves MCP server catalog from the live V2 discover endpoint; `--version` column in `a365 develop list-configured` shows `V1` or `V2` based on scope pattern
+- `develop list-available` no longer requires `a365.config.json`; reads environment from the `A365_ENVIRONMENT` env var (defaults to `prod`).
 - `ToolingManifest.json` duplicate server detection now falls back to `mcpServerName` when `mcpServerUniqueName` is absent, preventing false duplicate errors for older manifest entries
 
 ### Fixed
+- `setup all` dry-run with `--agent-name` no longer runs az CLI tenant detection — tenant ID is not shown in the plan, so the subprocess was unnecessary
+- `setup all` live summary incorrectly showed `Inheritable Permissions: configured` for non-AI Teammate agents — now shows `skipped (permissions set directly on agent identity)`
 - `AgentBlueprintService.SetInheritablePermissionsAsync` no longer crashes when the Graph PATCH call throws a transient exception (#366) — the exception is caught, logged, and surfaced as a structured error result
+- `cleanup` now returns exit code 1 when no config file and no `--agent-name` are provided, instead of silently reporting success.
 - `AgentBlueprintService.SetInheritablePermissionsAsync` now correctly propagates `OperationCanceledException` when the user cancels (Ctrl+C), instead of masking cancellation as a generic error
 - `A365CreateInstanceRunner` sponsor handling: sponsor is now required (Graph API rejects requests without one) — removed fallback that silently stripped the sponsor on retry, which caused `BadRequest` errors
 - Intermittent `ConnectionResetError (10054)` failures on corporate networks with TLS inspection proxies (Zscaler, Netskope) — Graph and ARM API calls now use direct MSAL.NET token acquisition instead of `az account get-access-token` subprocesses, bypassing the Python HTTP stack that triggered proxy resets (#321)
@@ -81,6 +103,9 @@ a365 setup admin --config-dir "<path-to-config-dir>"
 - `a365 develop add-mcp-servers` no longer writes the literal string `"null"` as a scope value in `ToolingManifest.json` when the V2 catalog returns `"scope": "null"` — the field is omitted, allowing correct fallback to name-based scope mapping
 - `a365 develop get-token` no longer requests a token with scope `"null"` when a manifest entry has a null scope from the V2 catalog
 - `a365 setup permissions mcp` no longer passes a literal `"default"` string as an AAD resourceAppId — Dataverse custom servers (`McpServers.DataverseCustom.All`, `McpServers.Dataverse.All`) with `"audience": "default"` are now bucketed under the shared ATG AppId, the same as missing or `api://` legacy audiences
+- `a365 setup blueprint` (non-DW) blueprint service principal creation no longer returns 403 — the CLI now uses `POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal` (Agent ID-specific endpoint) instead of the generic `/v1.0/servicePrincipals`, which required `Application.ReadWrite.All`
+- `a365 setup all` (non-DW) agent identity idempotency pre-check no longer returns 403 — uses `AgentIdentity.Read.All` scope for `GET /beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '...'`
+- Agent registration endpoint promoted from `/stagingbeta/copilot/agentRegistrations` to `/beta/copilot/agentRegistrations`
 
 ### Removed
 - `a365 deploy` command (`deploy app`, `deploy mcp`) — Azure App Service hosting is no longer managed by the CLI. Provide a `messagingEndpoint` in `a365.config.json` pointing to your externally hosted agent.

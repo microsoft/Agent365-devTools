@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft Corporation.  
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
@@ -10,6 +11,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// </summary>
 public interface IAgent365ToolingService
 {
+    /// <summary>
+    /// The target environment (test, preprod, prod)
+    /// </summary>
+    string Environment { get; }
     /// <summary>
     /// Lists all available Dataverse environments
     /// </summary>
@@ -81,6 +86,48 @@ public interface IAgent365ToolingService
     /// <returns>ServerInfo</returns>
     public Task<ServerInfo> GetServerInfoAsync(
         string serverName,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Logs telemetry for register-external-mcp-server usage before processing begins.
+    /// </summary>
+    Task LogRegisterUsageAsync(
+        string serverName,
+        string authType,
+        int toolCount,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Adds a BYO (Bring Your Own) MCP server
+    /// </summary>
+    /// <param name="request">Add MCP server request</param>
+    /// <param name="environmentId">Dataverse environment ID to set as x-ms-environment-id header</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing server details</returns>
+    Task<AddMcpServerResponse?> AddMcpServerAsync(
+        AddMcpServerRequest request,
+        string? environmentId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Provisions an identity for an external MCP server
+    /// </summary>
+    /// <param name="serverName">MCP server name</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing the provisioned application ID</returns>
+    Task<ProvisionIdentityResponse?> ProvisionIdentityAsync(
+        string serverName,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a BYO (Bring Your Own) MCP server and returns the associated app IDs for cleanup
+    /// </summary>
+    /// <param name="serverName">MCP server name to delete</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing app IDs to clean up, or null on failure</returns>
+    Task<CleanupMcpServerResponse?> DeleteMcpServerAsync(
+        string serverName,
+        bool force = false,
         CancellationToken cancellationToken = default);
 }
 

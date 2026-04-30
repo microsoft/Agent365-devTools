@@ -10,6 +10,9 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+[CollectionDefinition("ConfigTests", DisableParallelization = true)]
+public class ConfigTestCollection { }
+
 /// <summary>
 /// Unit tests for ConfigService class with the new Agent365Config two-file model.
 /// Tests LoadAsync (merge), SaveStateAsync (split), validation, and file operations.

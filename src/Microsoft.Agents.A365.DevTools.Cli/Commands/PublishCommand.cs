@@ -55,15 +55,26 @@ public class PublishCommand
         ILogger<PublishCommand> logger,
         IConfigService configService,
         ManifestTemplateService manifestTemplateService,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
+
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var dryRunOption = new Option<bool>("--dry-run", "Show changes without writing files or creating the zip");
 
         var aiTeammateOption = new Option<bool?>(
             "--aiteammate",
-            description: "true = AI Teammate / Digital Worker (default), false = non-AI Teammate agent\n" +
+            description: "true = AI Teammate agent: setup provisions blueprint and permissions only;\n" +
+                        "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+                        "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
         var useBlueprintOption = new Option<bool>(
@@ -71,30 +82,76 @@ public class PublishCommand
             description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
                         "Only meaningful with --aiteammate false");
 
+        var verboseOption = new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging");
+
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(dryRunOption);
         command.AddOption(aiTeammateOption);
         command.AddOption(useBlueprintOption);
+        command.AddOption(verboseOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var aiTeammateFlag = context.ParseResult.GetValueForOption(aiTeammateOption);
             var useBlueprintFlag = context.ParseResult.GetValueForOption(useBlueprintOption);
+            _ = context.ParseResult.GetValueForOption(verboseOption);
+            var ct = context.GetCancellationToken();
 
             var isNormalExit = false;
 
+            // Dry-run gate: when no config can be resolved (no --agent-name, no config file),
+            // show a generic preview instead of letting the resolver log a spurious ERROR.
+            // When config CAN be resolved (gracefully via DryRunHelper), fall through to the
+            // try block which has per-path inline dry-run logic with specific details.
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: false, ct);
+
+                if (dryRunConfig is null)
+                {
+                    logger.LogInformation("Dry run: a365 publish --dry-run");
+                    logger.LogInformation("");
+                    logger.LogInformation("Would update manifest.json with blueprint and instance IDs");
+                    logger.LogInformation("Would create manifest package zip");
+                    logger.LogInformation("");
+                    logger.LogInformation("Pass --agent-name <name> or provide a365.config.json to preview specific IDs.");
+                    logger.LogInformation("No changes made. Run without --dry-run to proceed.");
+                    isNormalExit = true;
+                    return;
+                }
+                // Config resolved — fall through to the try block for per-path dry-run output.
+            }
+
             try
             {
-                var config = await configService.LoadAsync();
-
-                // Effective agent type: CLI flag > config value > default (digital-worker)
-                var isNonAiTeammate =
-                    aiTeammateFlag == false ||
-                    (!aiTeammateFlag.HasValue && config.IsNonAiTeammate);
-
-                if (isNonAiTeammate)
+                Agent365Config config;
+                if (resolver != null)
                 {
-                    var isBlueprint = useBlueprintFlag || (isNonAiTeammate && config.UseBlueprint == true);
+                    var resolved = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+                    if (resolved is null) { context.ExitCode = 1; return; }
+                    config = resolved;
+                }
+                else
+                {
+                    config = await configService.LoadAsync(configFile.FullName);
+                }
+
+                // Effective agent type: CLI flag > config value > default (AI Teammate agent)
+                var isBlueprintAgent =
+                    aiTeammateFlag == false ||
+                    (!aiTeammateFlag.HasValue && config.IsBlueprintAgent);
+
+                if (isBlueprintAgent)
+                {
+                    var isBlueprint = useBlueprintFlag || (isBlueprintAgent && config.UseBlueprint == true);
 
                     if (dryRun)
                     {
@@ -120,7 +177,7 @@ public class PublishCommand
                     return;
                 }
 
-                // --- Digital Worker (default) path ---
+                // --- AI Teammate agent (default) path ---
                 var blueprintId = config.AgentBlueprintId;
                 var displayName = config.AgentBlueprintDisplayName;
 

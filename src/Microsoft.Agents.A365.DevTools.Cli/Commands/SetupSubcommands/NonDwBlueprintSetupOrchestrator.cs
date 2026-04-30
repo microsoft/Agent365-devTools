@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 /// <summary>
-/// Orchestrates setup for blueprint-based non-AI Teammate agent deployments.
+/// Orchestrates setup for blueprint-based agent deployments.
 /// Runs the same steps as DW (infrastructure, blueprint, permissions) then appends
 /// two non-DW-only steps: Agent Identity creation and agent registration.
 ///
@@ -30,7 +30,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
 
@@ -41,6 +41,50 @@ internal static class NonDwBlueprintSetupOrchestrator
             : "setup all";
         logger.LogInformation("Dry run: a365 {Args} --dry-run", cmdArgs);
         logger.LogInformation("");
+
+        if (agentRegistrationOnly)
+        {
+            logger.LogInformation("The following steps would be performed (--agent-registration-only).");
+            logger.LogInformation("");
+            logger.LogInformation("  Steps 1-3 (Prerequisites, Blueprint, Inheritable Permissions) are skipped.");
+            logger.LogInformation("");
+
+            var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
+            var registrationDisplayName = identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
+                ? identityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
+                : identityDisplayName;
+
+            if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
+                logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
+            else
+                logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "create: {DisplayName}", identityDisplayName);
+
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "skipped (re-run without --agent-registration-only to update grants)");
+
+            if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
+                logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", registrationDisplayName, config.AgentRegistrationId);
+            else
+                logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
+
+            if (isM365)
+            {
+                var endpointDetail = string.IsNullOrWhiteSpace(config.MessagingEndpoint)
+                    ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
+                    : $"register via Teams Graph: {config.MessagingEndpoint}";
+                logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
+            }
+            else
+            {
+                logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + "skipped (non-M365 agent)");
+            }
+
+            logger.LogInformation(SetupHelpers.DryRunRow(8, "Project settings") + "write to appsettings.json");
+
+            logger.LogInformation("");
+            logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
+            return;
+        }
+
         logger.LogInformation("The following steps would be performed.");
         logger.LogInformation("");
 
@@ -68,32 +112,36 @@ internal static class NonDwBlueprintSetupOrchestrator
             logger.LogInformation(sub + "create managed identity");
         }
 
-        // 3. Inheritable Permissions
-        var permsList = new List<string> { "Observability API", "Power Platform API" };
-        if (config.CustomBlueprintPermissions?.Count > 0)
-            foreach (var custom in config.CustomBlueprintPermissions)
-                permsList.Add(custom.ResourceName ?? custom.ResourceAppId);
-        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Permissions}", string.Join(", ", permsList));
+        // 3. Inheritable Permissions — only applicable to AI Teammate (DW) agents; always skipped here.
+        var selectedAuthMode = authMode ?? config.AuthMode;
+        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
+            ? "obo"
+            : selectedAuthMode.Trim().ToLowerInvariant();
+        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "skipped (permissions set directly on agent identity)");
 
-        // 4. Permission Grants
-        var blueprintIdForCmd = config.AgentBlueprintId ?? "<blueprint-id>";
-        logger.LogInformation(SetupHelpers.DryRunRow(4, "Permission Grants") + "admin approval required — a365 setup admin --blueprint-id {BlueprintId}", blueprintIdForCmd);
-
-        // 5. Agent identity
-        var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
-        var registrationDisplayName = identityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
-            ? identityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
-            : identityDisplayName;
+        // 4. Agent identity (created before grants so the SP exists to receive them)
+        var agentIdentityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
+        var agentRegistrationDisplayName = agentIdentityDisplayName.EndsWith(" Identity", StringComparison.OrdinalIgnoreCase)
+            ? agentIdentityDisplayName[..^" Identity".Length].TrimEnd() + " Agent"
+            : agentIdentityDisplayName;
         if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", agentIdentityDisplayName, config.AgenticAppId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "create: {DisplayName}", identityDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "create: {DisplayName}", agentIdentityDisplayName);
+
+        // 5. Permission Grants — per authMode, applied to the agent identity SP
+        if (effectiveMode is "obo")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)");
+        else if (effectiveMode is "s2s")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "S2S app roles — attempted programmatically ({Roles} required if 403)", AuthenticationConstants.S2SGrantRequiredRoles);
+        else if (effectiveMode is "both")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {Roles} required for S2S if 403", AuthenticationConstants.S2SGrantRequiredRoles);
 
         // 6. Agent Registration
         if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
-            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", registrationDisplayName, config.AgentRegistrationId);
+            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", agentRegistrationDisplayName, config.AgentRegistrationId);
         else
-            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
+            logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", agentRegistrationDisplayName);
 
         // 7. Messaging endpoint (M365 opt-in)
         if (isM365)
@@ -106,7 +154,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
         else
         {
-            logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + "skip (non-M365 agent; pass --m365 to enable)");
+            logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + "skipped (non-M365 agent)");
         }
 
         // 8. Project settings
@@ -183,6 +231,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
+        ctx.Results.TenantId = ctx.Config.TenantId;
         // Bootstrap already printed the "Running..." banner before auth steps; skip here to avoid duplication.
         if (!ctx.IsBootstrap)
         {
@@ -197,7 +246,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             if (ctx.AgentInstanceOnly)
             {
-                ctx.Logger.LogInformation("NOTE: --agent-instance-only flag set. Skipping requirements, blueprint, and permissions steps.");
+                ctx.Logger.LogInformation("NOTE: --agent-registration-only flag set. Skipping requirements, blueprint, and permissions steps.");
                 ctx.Logger.LogInformation("");
                 // Populate results so the summary shows previous steps as already completed
                 ctx.Results.BlueprintCreated = true;
@@ -246,18 +295,20 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Step 3: Blueprint creation (shared with DW)
                 await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
 
-                // Step 4: Batch permissions — non-DW path stamps only Observability API and Power Platform API.
+                // Step 4: Build permission specs — non-DW path stamps only Observability API and Power Platform API.
                 // Microsoft Graph, Agent 365 Tools (MCP), and Messaging Bot API are excluded.
                 var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx, isDw: false);
                 specs = buildResult.specs;
-                var mcpResourceAppId = buildResult.mcpResourceAppId;
 
-                await AllSubcommand.ExecuteBatchPermissionsStepAsync(ctx, specs);
+                // Phase 2a (inheritable perms) and Phase 2b (AllPrincipals grants + admin consent)
+                // are skipped for all authMode values — admin involvement is avoided by design.
+                // Delegated and/or app grants are applied to the agent identity SP below, gated by mode.
+                ctx.Results.BatchPermissionsPhase1Completed = true;
+                ctx.Results.BatchPermissionsPhase2Completed = true;
+                ctx.Results.AdminConsentGranted = false;
+                ctx.Logger.LogInformation("Inheritable perms and AllPrincipals grants skipped (permissions set directly on agent identity).");
 
-                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, graphScopes: [], mcpScopes: [], isDw: false);
-
-                // Save state after permissions (before agent identity creation, so progress
-                // is not lost if subsequent steps fail).
+                // Save state before agent identity steps so progress is not lost on failure.
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
 
                 // Steps 5-8: Agent identity creation, permission grants, registration, project settings.
@@ -296,7 +347,7 @@ internal static class NonDwBlueprintSetupOrchestrator
 
     /// <summary>
     /// Executes Steps 5-8: agent identity creation, permission grants, agent registration,
-    /// and project settings sync. Called from both the normal path and the --agent-instance-only
+    /// and project settings sync. Called from both the normal path and the --agent-registration-only
     /// shortcut path.
     /// </summary>
     private static async Task ExecuteAgentIdentityAndRegistrationAsync(
@@ -368,11 +419,18 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
         }
 
-        // Step 5a: Grant permissions to the agent identity (non-admin path only).
-        // If the batch permissions step already granted AllPrincipals admin consent, skip this.
-        if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId) && !ctx.Results.AdminConsentGranted)
+        // Step 5a: Grant permissions to the agent identity, gated by authMode.
+        if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
         {
-            await GrantAgentIdentityPermissionsAsync(ctx, specs);
+            ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? "both" : ctx.IsS2sMode ? "s2s" : "obo";
+
+            // OBO and Both: principal-scoped delegated grants (no admin required).
+            if (ctx.IsOboMode || ctx.IsBothMode)
+                await GrantAgentIdentityPermissionsAsync(ctx, specs);
+
+            // S2S and Both: app role assignments (requires Global Admin; falls back to PowerShell instructions).
+            if (ctx.IsS2sMode || ctx.IsBothMode)
+                await GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, specs);
         }
 
         // Step 6: Register agent via Graph API (copilot/agentRegistrations).
@@ -472,10 +530,9 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             // Pass ctx.Config directly so AgentDescription and AgentIdentityDisplayName
             // derived from --agent-name are written rather than stale values from disk.
-            await ProjectSettingsSyncHelper.ExecuteAsync(
+            ctx.Results.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
                 ctx.ConfigFile.FullName, ctx.Config,
                 ctx.PlatformDetector, ctx.Logger);
-            ctx.Results.ProjectSettingsWritten = true;
         }
     }
 
@@ -589,9 +646,12 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
 
         if (anyFailed)
+        {
+            ctx.Results.AgentIdentityDelegatedGrantPending = true;
             ctx.Results.Warnings.Add(
-                "One or more permissions could not be granted to the agent identity. " +
-                "Check the log output and grant them manually in the Entra portal.");
+                "Delegated permissions for the agent identity could not be granted automatically. " +
+                "See the Action Required section for PowerShell instructions.");
+        }
         else
         {
             var grantedNames = string.Join(", ", specs.Where(s => s.Scopes.Length > 0).Select(s => s.ResourceName));
@@ -599,5 +659,88 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Logger.LogInformation("Developer-scoped permissions granted ({Resources}).", grantedNames);
             ctx.Results.AgentIdentityPermissionsGranted = true;
         }
+    }
+
+    /// <summary>
+    /// Attempts to grant app role assignments on the agent identity SP for S2S access.
+    /// Requires Agent ID Administrator, Application Administrator, or Global Administrator. When the signed-in user lacks
+    /// one of those roles, prints PowerShell instructions covering only the app permission section.
+    /// </summary>
+    internal static async Task GrantOrInstructAgentIdentityAppPermissionsAsync(
+        SetupContext ctx,
+        List<ResourcePermissionSpec> specs)
+    {
+        var s2sSpecs = specs.Where(s => s.AppRoleScopes is { Length: > 0 }).ToList();
+        if (s2sSpecs.Count == 0)
+        {
+            ctx.Logger.LogDebug("No app role specs for agent identity S2S grants; skipping.");
+            return;
+        }
+
+        // AgenticAppId is the SP object ID returned by CreateAgentIdentityDelegatedAsync /
+        // FindExistingAgentIdentityAsync — use it directly without an appId→SP lookup.
+        var agentIdentitySpObjectId = ctx.Config.AgenticAppId;
+        if (string.IsNullOrWhiteSpace(agentIdentitySpObjectId))
+        {
+            ctx.Logger.LogWarning("Agent identity SP object ID is missing. App role assignments must be granted manually.");
+            ctx.Results.S2SAppRoleGranted = false;
+            return;
+        }
+
+        ctx.Logger.LogDebug("Attempting S2S app role assignments on agent identity ({SpId})...", agentIdentitySpObjectId);
+
+        var failedSpecs = new List<ResourcePermissionSpec>();
+        foreach (var spec in s2sSpecs)
+        {
+            var granted = await ctx.BlueprintService.GrantAppRoleAssignmentAsync(
+                ctx.Config.TenantId!,
+                agentIdentitySpObjectId,
+                spec.ResourceAppId,
+                spec.AppRoleScopes!,
+                Constants.AuthenticationConstants.RequiredPermissionGrantScopes,
+                ctx.CancellationToken);
+
+            if (granted)
+                ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity.", spec.ResourceName);
+            else
+            {
+                ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — user likely lacks a required role ({Roles}).", spec.ResourceName, AuthenticationConstants.S2SGrantRequiredRoles);
+                failedSpecs.Add(spec);
+            }
+        }
+
+        if (failedSpecs.Count == 0)
+        {
+            using (ctx.Logger.Indent())
+                ctx.Logger.LogInformation("S2S app role assignments granted to agent identity.");
+            ctx.Results.S2SAppRoleGranted = true;
+            return;
+        }
+
+        // Non-admin fallback: print PowerShell instructions for only the failed resources.
+        ctx.Results.S2SAppRoleGranted = false;
+        ctx.Logger.LogInformation("");
+        ctx.Logger.LogInformation("S2S app role assignments require {Roles}. Run the following PowerShell:", AuthenticationConstants.S2SGrantRequiredRoles);
+        ctx.Logger.LogInformation("");
+        ctx.Logger.LogInformation("  # Connect to Microsoft Graph");
+        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All', 'Directory.Read.All'", ctx.Config.TenantId);
+        ctx.Logger.LogInformation("");
+        ctx.Logger.LogInformation("  $agentSpId = '{AgentSpId}'", agentIdentitySpObjectId);
+
+        foreach (var spec in failedSpecs)
+        {
+            ctx.Logger.LogInformation("");
+            ctx.Logger.LogInformation("  # {ResourceName}", spec.ResourceName);
+            ctx.Logger.LogInformation("  $resourceSp = Get-MgServicePrincipal -Filter \"appId eq '{ResourceAppId}'\"", spec.ResourceAppId);
+            foreach (var role in spec.AppRoleScopes!)
+            {
+                ctx.Logger.LogInformation("  $roleId = ($resourceSp.AppRoles | Where-Object {{ $_.Value -eq '{Role}' }}).Id", role);
+                ctx.Logger.LogInformation("  New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $agentSpId -PrincipalId $agentSpId -ResourceId $resourceSp.Id -AppRoleId $roleId");
+            }
+        }
+
+        ctx.Logger.LogInformation("");
+        ctx.Results.Warnings.Add(
+            $"S2S app role assignments require {AuthenticationConstants.S2SGrantRequiredRoles}. PowerShell instructions have been printed above.");
     }
 }

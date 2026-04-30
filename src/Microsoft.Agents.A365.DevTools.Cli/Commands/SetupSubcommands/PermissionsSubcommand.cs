@@ -47,17 +47,18 @@ internal static class PermissionsSubcommand
         CommandExecutor executor,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
-        IConfirmationProvider confirmationProvider)
+        IConfirmationProvider confirmationProvider,
+        IBootstrapConfigResolver? resolver = null)
     {
         var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n");
 
         // Add subcommands
-        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider));
-        permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
-        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
-        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService));
+        permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver));
+        permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
+        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
+        permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
 
         return permissionsCommand;
     }
@@ -72,16 +73,20 @@ internal static class PermissionsSubcommand
         CommandExecutor executor,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
-        IConfirmationProvider confirmationProvider)
+        IConfirmationProvider confirmationProvider,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -96,64 +101,41 @@ internal static class PermissionsSubcommand
             description: "Remove shared ATG audience scopes from the blueprint.\n" +
                          "Only use after V2 SDK is confirmed live — agents on V1 SDK will lose tool access.");
 
-        command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(removeLegacyScopesOption);
 
-        command.SetHandler(async (config, verbose, dryRun, removeLegacyScopes) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var setupConfig = await configService.LoadAsync(config.FullName);
-
-            if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
-            {
-                logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                ExceptionHandler.ExitWithCleanup(1);
-            }
-
-            // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
-
-            // Verify system requirements (PowerShell modules are required for Graph operations).
-            // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
-            // which would be a side effect in a mode that is supposed to be non-mutating.
-            if (!dryRun)
-            {
-                var mcpChecks = GetMcpChecks(authValidator);
-                await RequirementsSubcommand.RunChecksOrExitAsync(mcpChecks, setupConfig, logger, CancellationToken.None);
-            }
-
-            // Confirmation gate for --remove-legacy-scopes — requires explicit opt-in
-            if (removeLegacyScopes && !dryRun)
-            {
-                logger.LogWarning(
-                    "WARNING: --remove-legacy-scopes will permanently remove the shared ATG audience ({AtgAppId}) " +
-                    "from the agent blueprint. Any agent instances still using the old SDK will immediately lose " +
-                    "access to MCP tools. Ensure all agent instances have been upgraded to the new SDK before proceeding.",
-                    McpConstants.WorkIQToolsProdAppId);
-
-                var confirmed = await confirmationProvider.ConfirmAsync("Continue? [y/N]: ");
-                if (!confirmed)
-                {
-                    logger.LogInformation("Aborted.");
-                    return;
-                }
-            }
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var removeLegacyScopes = context.ParseResult.GetValueForOption(removeLegacyScopesOption);
+            var ct = context.GetCancellationToken();
 
             if (dryRun)
             {
-                var manifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+                if (dryRunConfig is null)
+                {
+                    logger.LogInformation("Dry run: a365 setup permissions mcp --dry-run");
+                    logger.LogInformation("  Would configure MCP server OAuth2 grants and inheritable permissions.");
+                    logger.LogInformation("No changes made. Run without --dry-run to execute.");
+                    return;
+                }
 
-                logger.LogInformation("DRY RUN: Configure MCP Permissions");
-                logger.LogInformation("  Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
+                var manifestPath = Path.Combine(dryRunConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
 
-                var dryRunAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                logger.LogInformation("Dry run: Configure MCP Permissions");
+                logger.LogInformation("  Blueprint: {BlueprintId}", dryRunConfig.AgentBlueprintId);
+
+                var dryRunAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(dryRunConfig.Environment);
                 if (removeLegacyScopes)
                 {
-                    // Parse once, then split into removed (ATG) vs remaining (non-ATG) in memory.
                     var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false, resolvedAtgAppId: dryRunAtgAppId);
                     var remainingScopes = allScopes
                         .Where(kvp => !string.Equals(kvp.Key, dryRunAtgAppId, StringComparison.OrdinalIgnoreCase))
@@ -184,11 +166,55 @@ internal static class PermissionsSubcommand
                             audience, string.Join(", ", scopes));
                 }
 
+                logger.LogInformation("No changes made. Run without --dry-run to execute.");
                 return;
             }
 
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+            else
+                setupConfig = await configService.LoadAsync(configFile.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
+
+            if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
+            {
+                logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            // Configure GraphApiService with custom client app ID if available
+            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
+            {
+                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
+            }
+
+            // Verify system requirements (PowerShell modules are required for Graph operations).
+            // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
+            // which would be a side effect in a mode that is supposed to be non-mutating.
+            var mcpChecks = GetMcpChecks(authValidator);
+            await RequirementsSubcommand.RunChecksOrExitAsync(mcpChecks, setupConfig, logger, ct);
+
+            // Confirmation gate for --remove-legacy-scopes — requires explicit opt-in
+            if (removeLegacyScopes)
+            {
+                logger.LogWarning(
+                    "WARNING: --remove-legacy-scopes will permanently remove the shared ATG audience ({AtgAppId}) " +
+                    "from the agent blueprint. Any agent instances still using the old SDK will immediately lose " +
+                    "access to MCP tools. Ensure all agent instances have been upgraded to the new SDK before proceeding.",
+                    McpConstants.WorkIQToolsProdAppId);
+
+                var confirmed = await confirmationProvider.ConfirmAsync("Continue? [y/N]: ");
+                if (!confirmed)
+                {
+                    logger.LogInformation("Aborted.");
+                    return;
+                }
+            }
+
             await ConfigureMcpPermissionsAsync(
-                config.FullName,
+                configFile.FullName,
                 logger,
                 configService,
                 executor,
@@ -198,7 +224,7 @@ internal static class PermissionsSubcommand
                 false,
                 removeLegacyAtgScopes: removeLegacyScopes);
 
-        }, configOption, verboseOption, dryRunOption, removeLegacyScopesOption);
+        });
 
         return command;
     }
@@ -212,7 +238,8 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("bot",
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
@@ -220,10 +247,13 @@ internal static class PermissionsSubcommand
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
             "Next step: Deploy your agent (run 'a365 deploy' if hosting on Azure)");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -233,18 +263,53 @@ internal static class PermissionsSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+                if (dryRunConfig is null)
+                {
+                    logger.LogInformation("Dry run: a365 setup permissions bot --dry-run");
+                    logger.LogInformation("  Would configure Messaging Bot API OAuth2 grants and inheritable permissions.");
+                    logger.LogInformation("No changes made. Run without --dry-run to execute.");
+                    return;
+                }
+
+                logger.LogInformation("Dry run: Configure Bot API Permissions");
+                logger.LogInformation("Would configure Bot API permissions:");
+                logger.LogInformation("  - Blueprint: {BlueprintId}", dryRunConfig.AgentBlueprintId);
+                logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
+                logger.LogInformation("No changes made. Run without --dry-run to execute.");
+                return;
+            }
+
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+            else
+                setupConfig = await configService.LoadAsync(configFile.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                ExceptionHandler.ExitWithCleanup(1);
+                context.ExitCode = 1;
+                return;
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -256,25 +321,11 @@ internal static class PermissionsSubcommand
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
             // which would be a side effect in a mode that is supposed to be non-mutating.
-            if (!dryRun)
-            {
-                var botChecks = GetBotChecks(authValidator);
-                await RequirementsSubcommand.RunChecksOrExitAsync(botChecks, setupConfig, logger, CancellationToken.None);
-            }
-
-            if (dryRun)
-            {
-                logger.LogInformation("DRY RUN: Configure Bot API Permissions");
-                logger.LogInformation("Would configure Bot API permissions:");
-                logger.LogInformation("  - Blueprint: {BlueprintId}", setupConfig.AgentBlueprintId);
-                logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
-                logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
-                logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
-                return;
-            }
+            var botChecks = GetBotChecks(authValidator);
+            await RequirementsSubcommand.RunChecksOrExitAsync(botChecks, setupConfig, logger, ct);
 
             await ConfigureBotPermissionsAsync(
-                config.FullName,
+                configFile.FullName,
                 logger,
                 configService,
                 executor,
@@ -283,7 +334,7 @@ internal static class PermissionsSubcommand
                 blueprintService,
                 false);
 
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
@@ -297,17 +348,21 @@ internal static class PermissionsSubcommand
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService graphApiService,
-        AgentBlueprintService blueprintService)
+        AgentBlueprintService blueprintService,
+        IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("custom",
             "Configure custom resource OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n" +
             "Prerequisites: Blueprint created (run 'a365 setup blueprint' first)\n");
 
-        var configOption = new Option<FileInfo>(
-            ["--config", "-c"],
-            getDefaultValue: () => new FileInfo("a365.config.json"),
-            description: "Configuration file path");
+        var agentNameOption = new Option<string?>(
+            ["--agent-name", "-n"],
+            description: "Agent base name. When provided, no config file is required.");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -317,18 +372,99 @@ internal static class PermissionsSubcommand
             "--dry-run",
             description: "Show what would be done without executing");
 
-        command.AddOption(configOption);
+        var resourceAppIdOption = new Option<string?>(
+            "--resource-app-id",
+            description: "Resource application ID (GUID) for an inline custom permission. Use with --scopes.");
+
+        var scopesOption = new Option<string?>(
+            "--scopes",
+            description: "Comma-separated delegated scopes for the inline custom permission. Use with --resource-app-id.");
+
+        command.AddOption(agentNameOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
+        command.AddOption(resourceAppIdOption);
+        command.AddOption(scopesOption);
 
-        command.SetHandler(async (config, verbose, dryRun) =>
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
-            var setupConfig = await configService.LoadAsync(config.FullName);
+            var configFile = new FileInfo("a365.config.json");
+            var agentName = context.ParseResult.GetValueForOption(agentNameOption);
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var resourceAppId = context.ParseResult.GetValueForOption(resourceAppIdOption);
+            var scopesRaw = context.ParseResult.GetValueForOption(scopesOption);
+            var ct = context.GetCancellationToken();
+
+            // Inline mode: --resource-app-id + --scopes bypass the config-file permission list.
+            bool isInlineMode = !string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(scopesRaw);
+            if (!string.IsNullOrWhiteSpace(resourceAppId) && !isInlineMode)
+            {
+                logger.LogError("--resource-app-id requires --scopes.");
+                context.ExitCode = 1;
+                return;
+            }
+            if (!string.IsNullOrWhiteSpace(scopesRaw) && !isInlineMode)
+            {
+                logger.LogError("--scopes requires --resource-app-id.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, ct);
+                if (isInlineMode)
+                {
+                    logger.LogInformation("Dry run: Configure inline custom permission");
+                    logger.LogInformation("  Resource app ID : {ResourceAppId}", resourceAppId);
+                    logger.LogInformation("  Scopes          : {Scopes}", scopesRaw);
+                }
+                else if (dryRunConfig is null)
+                {
+                    logger.LogInformation("Dry run: a365 setup permissions custom --dry-run");
+                    logger.LogInformation("  Would configure custom blueprint OAuth2 grants and inheritable permissions.");
+                }
+                else
+                {
+                    logger.LogInformation("Dry run: Configure Custom Blueprint Permissions");
+                    if (dryRunConfig.CustomBlueprintPermissions == null || dryRunConfig.CustomBlueprintPermissions.Count == 0)
+                    {
+                        logger.LogInformation("No custom permissions in config. Any stale permissions in Azure AD would be removed.");
+                    }
+                    else
+                    {
+                        logger.LogInformation("Would configure the following custom permissions:");
+                        foreach (var customPerm in dryRunConfig.CustomBlueprintPermissions)
+                        {
+                            var resourceDisplayName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
+                                ? customPerm.ResourceAppId
+                                : customPerm.ResourceName;
+                            logger.LogInformation("  - {ResourceName} ({ResourceAppId})",
+                                resourceDisplayName, customPerm.ResourceAppId);
+                            logger.LogInformation("    Scopes: {Scopes}",
+                                string.Join(", ", customPerm.Scopes));
+                        }
+                    }
+                }
+                logger.LogInformation("No changes made. Run without --dry-run to execute.");
+                return;
+            }
+
+            Agent365Config? setupConfig;
+            if (resolver != null)
+                setupConfig = await resolver.ResolveAsync(agentName, tenantIdFlag, configFile, isCleanupMode: true, ct);
+            else
+                setupConfig = await configService.LoadAsync(configFile.FullName);
+            if (setupConfig is null) { context.ExitCode = 1; return; }
 
             if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
             {
                 logger.LogError("Blueprint ID not found. Run 'a365 setup blueprint' first.");
-                ExceptionHandler.ExitWithCleanup(1);
+                context.ExitCode = 1;
+                return;
             }
 
             // Configure GraphApiService with custom client app ID if available
@@ -340,47 +476,63 @@ internal static class PermissionsSubcommand
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
             // which would be a side effect in a mode that is supposed to be non-mutating.
-            if (!dryRun)
+            var customChecks = GetCustomChecks(authValidator);
+            await RequirementsSubcommand.RunChecksOrExitAsync(customChecks, setupConfig, logger, ct);
+
+            if (isInlineMode)
             {
-                var customChecks = GetCustomChecks(authValidator);
-                await RequirementsSubcommand.RunChecksOrExitAsync(customChecks, setupConfig, logger, CancellationToken.None);
+                if (!Guid.TryParse(resourceAppId, out _))
+                {
+                    logger.LogError("--resource-app-id must be a valid GUID. Got: {Value}", resourceAppId);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var scopes = scopesRaw!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Distinct()
+                    .ToArray();
+                if (scopes.Length == 0)
+                {
+                    logger.LogError("--scopes must contain at least one non-empty scope value.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                string resourceName;
+                try
+                {
+                    resourceName = await graphApiService.GetServicePrincipalDisplayNameAsync(
+                        setupConfig.TenantId, resourceAppId!, ct)
+                        ?? CreateFallbackResourceName(resourceAppId);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    resourceName = CreateFallbackResourceName(resourceAppId);
+                }
+
+                await SetupHelpers.EnsureResourcePermissionsAsync(
+                    graphApiService, blueprintService, setupConfig,
+                    resourceAppId!, resourceName,
+                    scopes, logger, ct: ct);
+            }
+            else
+            {
+                await ConfigureCustomPermissionsAsync(
+                    configFile.FullName,
+                    logger,
+                    configService,
+                    executor,
+                    graphApiService,
+                    blueprintService,
+                    setupConfig,
+                    false);
             }
 
-            if (dryRun)
-            {
-                logger.LogInformation("DRY RUN: Configure Custom Blueprint Permissions");
-                if (setupConfig.CustomBlueprintPermissions == null || setupConfig.CustomBlueprintPermissions.Count == 0)
-                {
-                    logger.LogInformation("No custom permissions in config. Any stale permissions in Azure AD would be removed.");
-                }
-                else
-                {
-                    logger.LogInformation("Would configure the following custom permissions:");
-                    foreach (var customPerm in setupConfig.CustomBlueprintPermissions)
-                    {
-                        var resourceDisplayName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                            ? customPerm.ResourceAppId
-                            : customPerm.ResourceName;
-                        logger.LogInformation("  - {ResourceName} ({ResourceAppId})",
-                            resourceDisplayName, customPerm.ResourceAppId);
-                        logger.LogInformation("    Scopes: {Scopes}",
-                            string.Join(", ", customPerm.Scopes));
-                    }
-                }
-                return;
-            }
-
-            await ConfigureCustomPermissionsAsync(
-                config.FullName,
-                logger,
-                configService,
-                executor,
-                graphApiService,
-                blueprintService,
-                setupConfig,
-                false);
-
-        }, configOption, verboseOption, dryRunOption);
+        });
 
         return command;
     }
