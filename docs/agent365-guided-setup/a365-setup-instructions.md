@@ -4,11 +4,11 @@
 
 ---
 
-> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the two path-determination questions below. Do NOT create todos, run commands, or read further until the user has answered both questions. After both answers are received, create all todos for the determined path and mark Todo 1 in-progress.
+> **YOUR FIRST AND ONLY ACTION RIGHT NOW:** Ask the user the three path-determination questions below. Do NOT create todos, run commands, or read further until the user has answered all three questions. After all answers are received, create all todos for the determined path and mark Todo 1 in-progress.
 
-**RULE 1 — ASK TWO QUESTIONS FIRST, THEN CREATE ALL TODOS.**
+**RULE 1 — ASK THREE QUESTIONS FIRST, THEN CREATE ALL TODOS.**
 
-Before creating any todos or running any commands, ask the user these two questions (one at a time, wait for each response):
+Before creating any todos or running any commands, ask the user these three questions (one at a time, wait for each response):
 
 **Question 1: Is your agent already available in Teams or Copilot?**
 
@@ -19,25 +19,41 @@ Wait for the answer. Store as `agentType`:
 - If **Yes**: `agentType = 1` (M365 custom engine agent)
 - If **No**: `agentType = 2` (All other agents)
 
-**Question 2: What capabilities do you want to enable?**
+**Question 2: How will your agent authenticate when calling downstream APIs?**
 
-Present only the options that apply to the user's `agentType`:
+1. On-behalf-of (OBO) — the agent acts as the signed-in user (delegated permissions)
+2. Service-to-service (S2S) — the agent acts as its own identity (application permissions)
+3. Both (OBO and S2S)
 
-- **If `agentType = 1`** (M365 — Discoverability is already included):
-  1. Observability
-  2. Work IQ
-  3. AI Teammate
+Provide this context to help the developer choose:
+- **OBO**: Choose this when your agent needs to access resources on behalf of a specific user — for example, reading the user's calendar or sending mail as them.
+- **S2S**: Choose this when your agent runs unattended or needs to access tenant-wide resources independently of any signed-in user — for example, reading all mailboxes or managing SharePoint sites.
+- **Both**: Choose this when your agent needs to support both modes.
+
+Wait for the answer. Store as `authMode`:
+- If **1 (OBO)**: `authMode = "obo"`
+- If **2 (S2S)**: `authMode = "s2s"`
+- If **3 (Both)**: `authMode = "both"`
+
+**Question 3: What Agent 365 capabilities do you want to enable?**
+
+Present only the options that apply to the user's `agentType` **and** `authMode`.
+
+- **If `agentType = 1`**:
+  - `authMode = "obo"` or `"both"` or `"s2s"`:
+    1. Observability
+    2. AI Teammate
 - **If `agentType = 2`** (All other agents):
-  1. Discoverability
-  2. Observability
-  3. Work IQ
-  4. AI Teammate
+  - `authMode = "obo"` or `"both"` or `"s2s"`:
+    1. Register
+    2. Observability
+    3. AI Teammate
 
 Wait for the answer. Store as `capabilities`.
 
 > **Note:** The setup automatically includes all prerequisite capabilities for your selection.
 
-After both questions are answered, set `isAiTeammate = true` if `capabilities = AI Teammate`, else `isAiTeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
+After all three questions are answered, set `isAiTeammate = true` if `capabilities = AI Teammate`, else `isAiTeammate = false`. Then create all todos for the path and mark Todo 1 in-progress:
 
 **AI Teammate agent path** — `isAiTeammate = true` (5 todos total):
 - Todo 1: `Step 1: Verify and Install/Update the Agent 365 CLI`
@@ -55,7 +71,7 @@ After both questions are answered, set `isAiTeammate = true` if `capabilities = 
 
 **RULE 3 — SUB-SECTIONS ARE NOT SEPARATE TODOS.** Each `## Step` has internal sub-sections — these are tasks WITHIN that step, NOT separate todos.
 
-**RULE 4 — ONE STEP AT A TIME.** Complete each step fully. Mark its todo in-progress when starting, complete when done. Do NOT run `az account show`, ask about deployment type, or gather Azure values — those belong to Steps 3 and 2 respectively. The path determination questions (`agentType`, `capabilities`) were already answered before Step 1.
+**RULE 4 — ONE STEP AT A TIME.** Complete each step fully. Mark its todo in-progress when starting, complete when done. Do NOT run `az account show`, ask about deployment type, or gather Azure values — those belong to Steps 3 and 2 respectively. The path determination questions (`agentType`, `capabilities`, `authMode`) were already answered before Step 1.
 
 **RULE 6 — SILENT EXECUTION.** Work silently. Do NOT narrate what you are about to do, announce step transitions ("Proceeding to Step 2", "CLI installed, moving on"), print todo state, emoji checklists, or step completion summaries. Only speak to the user when you need input, have an error to report, or need confirmation before a destructive action.
 
@@ -135,7 +151,9 @@ az account show --query "{user:user.name, tenantId:tenantId}" -o json
 
 ### Microsoft Entra ID (Azure AD) roles
 
-The user account you authenticate with must have sufficient privileges to create the necessary resources. According to documentation, the account needs to be at least an **Agent ID Administrator** or **Agent ID Developer**, and certain commands (like the full environment setup) require **Global Administrator + Azure Contributor** roles. If you attempt an operation without adequate permissions, it will fail. Thus, before proceeding, confirm that the logged-in user has one of the required roles (Global Admin is the safest choice for preview setups). If not, prompt the user to either use an appropriate account or have an admin grant the needed roles.
+The user account you authenticate with must have the **Agent ID Developer** role at minimum. This is sufficient for the standard (non-AI Teammate) path: the CLI first attempts the required delegated permission grants programmatically through Microsoft Graph for the agent identity service principal. If those Graph-based grants cannot be created, the CLI surfaces PowerShell fallback instructions in the setup summary — no Application Administrator is required for the normal path. Any interactive consent prompt at runtime applies to the tenant's **"Agent 365 CLI"** client app, not to the agent identity app.
+
+For the AI Teammate path (infrastructure provisioning), **Azure Contributor** is also required. S2S app role assignments require **Agent ID Administrator, Application Administrator, or Global Administrator** — the CLI prints PowerShell fallback instructions if the current user lacks one of these roles. There is no separate `a365 setup admin` command in this flow; if grants cannot be applied automatically, the CLI surfaces the required PowerShell instructions in the setup summary instead.
 
 ### Custom client app
 
@@ -224,7 +242,7 @@ pip --version
 
 ## Step 3: Configure the Agent 365 CLI (Initialize Configuration)
 
-> **AI TEAMMATE AGENT PATH ONLY** (`capabilities = AI Teammate`, `isAiTeammate = true`).
+> **AI Teammate path ONLY** (`capabilities = AI Teammate`, `isAiTeammate = true`).
 >
 > If `isAiTeammate = false` (Standard path), you should NOT be here. Go back, mark Todo 3 (Step 4) in-progress, and jump directly to Step 4.
 >
@@ -387,6 +405,7 @@ This command may take several minutes. Monitor output carefully:
   - If the CLI is silent for more than 3 minutes after one of these messages: ask the user whether they completed the dialog/code. If yes, the CLI may have an issue — cancel and re-run `a365 setup all`. If no, remind them to complete it.
 
   Once the user completes auth once, the token is cached. Subsequent runs will be fully silent.
+
 - **Idempotency:** `a365 setup all` is safe to re-run after fixing an issue. It skips or reuses existing resources. Use `a365 cleanup` only as a last resort.
 
 ---
@@ -406,14 +425,14 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 4. After showing the CLI output sections above, output exactly one of these closing lines — choose based on what the CLI reported:
    - **If the CLI printed an admin consent action item** (i.e., you showed a PowerShell script in step 2 above):
      > "Your agent is provisioned. Have a Global Admin run the PowerShell script above to complete admin consent."
-   - **If Permission Grants row in the Summary shows `ok`** (no action item was printed):
+   - **If Permission Grants row in the Summary shows `granted`** (no action item was printed):
      > "Your agent is provisioned."
 
 ### Step 4 completion
 
 Mark all todos as completed, then check `capabilities`:
 
-> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Work IQ, or `agentType = 2` with Observability or Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
+> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability, or `agentType = 2` with Observability): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
 >
 > **Otherwise**: say to the user verbatim:
 > "Your agent is provisioned. Would you like to add observability so you can trace LLM calls, tool dispatches, and agent-to-agent calls?"
@@ -424,7 +443,7 @@ Mark all todos as completed, then check `capabilities`:
 
 ## Step 5: Publish and Deploy the Agent Application
 
-> **AI TEAMMATE AGENT PATH ONLY.** This step does not exist on the Standard path. If `isAiTeammate = false`, you should not be here.
+> **AI Teammate path ONLY.** This step does not exist on the Standard path. If `isAiTeammate = false`, you should not be here.
 
 At this stage, your agent is set up. You should be able to see your agent in Microsoft Admin Center Agent Registry. Observability will be added after this step completes.
 

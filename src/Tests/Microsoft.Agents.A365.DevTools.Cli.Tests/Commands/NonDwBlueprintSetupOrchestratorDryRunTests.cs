@@ -160,8 +160,8 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "s2s");
 
-        AnyLogContains("application permissions").Should().BeTrue(because: "S2S mode applies app role assignments");
-        AnyLogContains("Delegated").Should().BeFalse(because: "S2S mode must not show delegated grants — no user context");
+        AnyLogContains("S2S app roles").Should().BeTrue(because: "S2S mode applies app role assignments to the agent identity SP");
+        AnyLogContains("delegated").Should().BeFalse(because: "S2S mode must not show delegated grants — no user context");
         AnyLogContains("admin consent").Should().BeFalse(because: "S2S mode falls back to PowerShell instructions; no interactive admin consent prompt");
     }
 
@@ -174,7 +174,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "both");
 
         AnyLogContains("delegated").Should().BeTrue(because: "Both mode includes OBO delegated grants");
-        AnyLogContains("application permissions").Should().BeTrue(because: "Both mode includes S2S app permissions");
+        AnyLogContains("S2S app roles").Should().BeTrue(because: "Both mode includes S2S app role assignments on the agent identity SP");
         AnyLogContains("admin consent").Should().BeFalse(because: "Both mode must not require interactive admin consent");
     }
 
@@ -205,5 +205,49 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: authMode);
 
         AnyLogContains("permissions set directly on agent identity").Should().BeTrue(because: $"authmode '{authMode ?? "null (obo)"}' must skip inheritable permissions and explain permissions are set directly on the agent identity");
+    }
+
+    // ── --agent-registration-only dry-run ─────────────────────────────────────
+
+    [Fact]
+    public void PrintDryRunPlan_AgentRegistrationOnly_SkipMessageReferencesSteps1Through3()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, agentRegistrationOnly: true);
+
+        AnyLogContains("Steps 1-3").Should().BeTrue(
+            because: "--agent-registration-only skips Prerequisites, Blueprint, and Inheritable Permissions — exactly 3 steps");
+        AnyLogContains("Steps 1-4").Should().BeFalse(
+            because: "the old incorrect label 'Steps 1-4' must not reappear");
+    }
+
+    [Fact]
+    public void PrintDryRunPlan_AgentRegistrationOnly_ShowsAllRemainingSteps()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, agentRegistrationOnly: true);
+
+        AnyLogContains("Agent identity").Should().BeTrue(
+            because: "step 4 (agent identity) must appear when --agent-registration-only is set");
+        AnyLogContains("Permission Grants").Should().BeTrue(
+            because: "step 5 (permission grants) must be shown as skipped with a re-run hint");
+        AnyLogContains("Agent Registration").Should().BeTrue(
+            because: "step 6 (agent registration) is the primary purpose of the flag");
+        AnyLogContains("Messaging endpoint").Should().BeTrue(
+            because: "step 7 must appear even in agent-registration-only mode");
+        AnyLogContains("Project settings").Should().BeTrue(
+            because: "step 8 (project settings) must appear even in agent-registration-only mode");
+    }
+
+    [Fact]
+    public void PrintDryRunPlan_AgentRegistrationOnly_WithExistingAgentId_ShowsReuseAndId()
+    {
+        var config = BuildConfig();
+        config.AgenticAppId = "existing-agent-sp-id";
+
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(config, _logger, agentRegistrationOnly: true);
+
+        AnyLogContains("existing-agent-sp-id").Should().BeTrue(
+            because: "when AgenticAppId is set the existing agent identity ID must appear so the user can verify the correct SP is used");
+        AnyLogContains("reuse").Should().BeTrue(
+            because: "existing agent identity must be labelled 'reuse', not 'create'");
     }
 }

@@ -46,7 +46,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             logger.LogInformation("The following steps would be performed (--agent-registration-only).");
             logger.LogInformation("");
-            logger.LogInformation("  Steps 1-4 (Prerequisites, Blueprint, Permissions, Grants) are skipped.");
+            logger.LogInformation("  Steps 1-3 (Prerequisites, Blueprint, Inheritable Permissions) are skipped.");
             logger.LogInformation("");
 
             var identityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
@@ -55,14 +55,30 @@ internal static class NonDwBlueprintSetupOrchestrator
                 : identityDisplayName;
 
             if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
-                logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
+                logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "reuse: {DisplayName} (ID: {AgentId})", identityDisplayName, config.AgenticAppId);
             else
-                logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent identity") + "create: {DisplayName}", identityDisplayName);
+                logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "create: {DisplayName}", identityDisplayName);
+
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "skipped (re-run without --agent-registration-only to update grants)");
 
             if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
                 logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "reuse: {DisplayName} (ID: {RegistrationId})", registrationDisplayName, config.AgentRegistrationId);
             else
                 logger.LogInformation(SetupHelpers.DryRunRow(6, "Agent Registration") + "register: {DisplayName}", registrationDisplayName);
+
+            if (isM365)
+            {
+                var endpointDetail = string.IsNullOrWhiteSpace(config.MessagingEndpoint)
+                    ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
+                    : $"register via Teams Graph: {config.MessagingEndpoint}";
+                logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
+            }
+            else
+            {
+                logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + "skipped (non-M365 agent)");
+            }
+
+            logger.LogInformation(SetupHelpers.DryRunRow(8, "Project settings") + "write to appsettings.json");
 
             logger.LogInformation("");
             logger.LogInformation("No changes will be made. Run without --dry-run to apply.");
@@ -114,10 +130,12 @@ internal static class NonDwBlueprintSetupOrchestrator
             logger.LogInformation(SetupHelpers.DryRunRow(4, "Agent identity") + "create: {DisplayName}", agentIdentityDisplayName);
 
         // 5. Permission Grants — per authMode, applied to the agent identity SP
-        if (effectiveMode is "obo" or "both")
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent Identity Delegated") + "principal-scoped delegated grants (programmatic, no admin required)");
-        if (effectiveMode is "s2s" or "both")
-            logger.LogInformation(SetupHelpers.DryRunRow(5, "Agent Identity App Perms") + "application permissions — attempted programmatically; PowerShell fallback if not Global Admin");
+        if (effectiveMode is "obo")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)");
+        else if (effectiveMode is "s2s")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "S2S app roles — attempted programmatically ({Roles} required if 403)", AuthenticationConstants.S2SGrantRequiredRoles);
+        else if (effectiveMode is "both")
+            logger.LogInformation(SetupHelpers.DryRunRow(5, "Permission Grants") + "delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {Roles} required for S2S if 403", AuthenticationConstants.S2SGrantRequiredRoles);
 
         // 6. Agent Registration
         if (!string.IsNullOrWhiteSpace(config.AgentRegistrationId))
@@ -213,6 +231,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
+        ctx.Results.TenantId = ctx.Config.TenantId;
         // Bootstrap already printed the "Running..." banner before auth steps; skip here to avoid duplication.
         if (!ctx.IsBootstrap)
         {
@@ -627,9 +646,12 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
 
         if (anyFailed)
+        {
+            ctx.Results.AgentIdentityDelegatedGrantPending = true;
             ctx.Results.Warnings.Add(
-                "One or more permissions could not be granted to the agent identity. " +
-                "Check the log output and grant them manually in the Entra portal.");
+                "Delegated permissions for the agent identity could not be granted automatically. " +
+                "See the Action Required section for PowerShell instructions.");
+        }
         else
         {
             var grantedNames = string.Join(", ", specs.Where(s => s.Scopes.Length > 0).Select(s => s.ResourceName));
@@ -641,8 +663,8 @@ internal static class NonDwBlueprintSetupOrchestrator
 
     /// <summary>
     /// Attempts to grant app role assignments on the agent identity SP for S2S access.
-    /// Requires Global Administrator. When the signed-in user lacks that role, prints
-    /// PowerShell instructions covering only the app permission section (no delegated/OBO output).
+    /// Requires Agent ID Administrator, Application Administrator, or Global Administrator. When the signed-in user lacks
+    /// one of those roles, prints PowerShell instructions covering only the app permission section.
     /// </summary>
     internal static async Task GrantOrInstructAgentIdentityAppPermissionsAsync(
         SetupContext ctx,
@@ -682,7 +704,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity.", spec.ResourceName);
             else
             {
-                ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — likely not Global Admin.", spec.ResourceName);
+                ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — user likely lacks a required role ({Roles}).", spec.ResourceName, AuthenticationConstants.S2SGrantRequiredRoles);
                 failedSpecs.Add(spec);
             }
         }
@@ -698,7 +720,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Non-admin fallback: print PowerShell instructions for only the failed resources.
         ctx.Results.S2SAppRoleGranted = false;
         ctx.Logger.LogInformation("");
-        ctx.Logger.LogInformation("S2S app role assignments require Global Administrator. Run the following PowerShell as an admin:");
+        ctx.Logger.LogInformation("S2S app role assignments require {Roles}. Run the following PowerShell:", AuthenticationConstants.S2SGrantRequiredRoles);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  # Connect to Microsoft Graph");
         ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All', 'Directory.Read.All'", ctx.Config.TenantId);
@@ -719,6 +741,6 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         ctx.Logger.LogInformation("");
         ctx.Results.Warnings.Add(
-            "S2S app role assignments require Global Administrator. PowerShell instructions have been printed above.");
+            $"S2S app role assignments require {AuthenticationConstants.S2SGrantRequiredRoles}. PowerShell instructions have been printed above.");
     }
 }

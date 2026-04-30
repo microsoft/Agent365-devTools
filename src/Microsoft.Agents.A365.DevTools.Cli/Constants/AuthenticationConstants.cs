@@ -221,7 +221,7 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
-        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (AdminSubcommand, PublishCommand)
+        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (PublishCommand)
         // AgentRegistration.ReadWrite.All (resource: 00000003-0000-0000-c000-000000000000, ID: 20f263bf-7d50-4e66-912c-16b4b4194fd4)
         // is required for POST/DELETE /beta/copilot/agentRegistrations. It is acquired via .default
         // on the custom app token provider (not enumerated explicitly) to avoid AADSTS650053.
@@ -263,6 +263,21 @@ public static class AuthenticationConstants
     {
         "AppRoleAssignment.ReadWrite.All",
     };
+
+    /// <summary>
+    /// Entra roles that can perform S2S app role assignments programmatically.
+    /// All three roles have been verified to work with <see cref="RequiredS2SGrantScopes"/>.
+    /// Listed in order of least privilege: Agent ID Administrator, Application Administrator, Global Administrator.
+    /// </summary>
+    public const string S2SGrantRequiredRoles = "Agent ID Administrator, Application Administrator, or Global Administrator";
+
+    /// <summary>
+    /// Roles required to create tenant-wide AllPrincipals oauth2PermissionGrants via the PowerShell
+    /// fallback path (when programmatic Principal-scoped grants fail). Note: the programmatic path
+    /// creates Principal-scoped grants and does not require an Entra admin role — only admin consent
+    /// on the client app for DelegatedPermissionGrant.ReadWrite.All.
+    /// </summary>
+    public const string DelegatedGrantRequiredRoles = "Application Administrator or Global Administrator";
 
     /// <summary>
     /// Scopes requested when acquiring an interactive Graph token for blueprint creation

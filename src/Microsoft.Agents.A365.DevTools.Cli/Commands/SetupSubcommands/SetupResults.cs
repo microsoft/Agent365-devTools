@@ -135,6 +135,18 @@ public class SetupResults
     public bool AgentIdentityPermissionsGranted { get; set; }
 
     /// <summary>
+    /// True when principal-scoped delegated grants for the agent identity were not completed during
+    /// the non-DW setup flow and manual follow-up may be required. This can occur when the user or
+    /// application context does not have the Graph permissions needed to create the grant, or when
+    /// prerequisite directory objects such as the target resource service principal are not yet
+    /// resolvable due to creation or propagation timing. When
+    /// set, <see cref="SetupHelpers"/> surfaces PowerShell instructions in the Action Required section
+    /// using <see cref="AgentIdentityId"/> and <see cref="TenantId"/> as the suggested remediation
+    /// path. Drives the delegated consent action item in the setup summary.
+    /// </summary>
+    public bool AgentIdentityDelegatedGrantPending { get; set; }
+
+    /// <summary>
     /// The effective --authmode value used during the non-DW grant step ("obo", "s2s", or "both").
     /// Null when the grant step was not reached (e.g. agent identity creation failed).
     /// Used by DisplaySetupSummary to compute per-grant-type completion for the "both" mode.
@@ -189,6 +201,9 @@ public class SetupResults
     /// </summary>
     public string? AgentRegistrationDisplayName { get; set; }
 
+
+    /// <summary>Tenant ID used during setup. Populated so DisplaySetupSummary can include it in handoff output.</summary>
+    public string? TenantId { get; set; }
 
     /// <summary>Whether step 1 (Requirements validation) was skipped via --skip-requirements.</summary>
     public bool PrerequisitesSkipped { get; set; }

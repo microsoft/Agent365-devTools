@@ -433,14 +433,13 @@ Because the two permission layers require different roles, the CLI supports a tw
 
 | Step | Command | Who runs it | What it does |
 |------|---------|-------------|--------------|
-| 1 | `a365 setup all` | Agent ID Admin or Developer | All infra + blueprint + inheritable permissions. OAuth2 grants skipped (requires GA). Ends with instructions to hand off config folder to GA. |
-| 2 | `a365 setup admin --config-dir "<path>"` | Global Administrator | Reads both config files, resolves SPs, creates AllPrincipals OAuth2 grants for all resources. |
+| 1 | `a365 setup all` | Agent ID Developer | All infra + blueprint + permissions. If S2S grants or AllPrincipals consent fail, inline PowerShell instructions are printed in the setup summary. No separate admin command is required. |
 
 **Batch flow (`BatchPermissionsOrchestrator`):**
 - **Phase 1:** Token prewarm + SP resolution (blueprint + all resource SPs).
 - **Phase 2a:** Inheritable permissions — set via Blueprint API, read back to verify. Agent ID Admin and GA.
-- **Phase 2b:** OAuth2 grants — `AllPrincipals` via Graph API. GA only; skipped for non-admin with instruction to run `setup admin`.
-- **Phase 3:** For GA: skipped (Phase 2b satisfies consent). For non-admin: shows `setup admin` command and a Graph Explorer query to verify inheritable permissions.
+- **Phase 2b:** OAuth2 grants — `AllPrincipals` via Graph API. GA only; skipped for non-admin with inline PowerShell fallback instructions printed in the setup summary.
+- **Phase 3:** For GA: skipped (Phase 2b satisfies consent). For non-admin: inline PowerShell fallback instructions and a Graph Explorer query to verify inheritable permissions.
 
 **Standalone callers:** `SetupHelpers.EnsureResourcePermissionsAsync` handles a single resource with retry logic and is used by `CopilotStudioSubcommand` and direct callers.
 
