@@ -804,6 +804,7 @@ internal class RegisterCommandExecutor
                 ppmiScopeId = await _retryHelper.ExecuteWithRetryAsync(
                     async retryCt => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
                         tenantId, ppmiAppClientId, "Tools.ListInvoke.All", retryCt),
+                    result => !result.HasValue,
                     cancellationToken: ct);
             }
             catch (Exception ex)
@@ -935,6 +936,7 @@ internal class RegisterCommandExecutor
                 {
                     remoteScopeId = await _retryHelper.ExecuteWithRetryAsync(
                         async retryCt => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName, retryCt),
+                        result => !result.HasValue,
                         cancellationToken: ct);
                 }
                 catch (Exception ex)
