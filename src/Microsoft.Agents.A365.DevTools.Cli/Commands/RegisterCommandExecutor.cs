@@ -159,6 +159,7 @@ internal class RegisterCommandExecutor
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"ERROR: A server named '{input.ServerName}' already exists. Please choose a different name.");
                 Console.ForegroundColor = prevColor;
+                _logger.LogError("A server named '{ServerName}' already exists. Please choose a different name.", input.ServerName);
                 _logger.LogDebug("Raw server error: {Error}", errorMsg);
             }
             else

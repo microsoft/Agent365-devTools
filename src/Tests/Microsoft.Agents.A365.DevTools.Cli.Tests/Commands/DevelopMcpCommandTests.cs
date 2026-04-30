@@ -281,6 +281,7 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("description");
         optionNames.Should().Contain("dry-run");
         optionNames.Should().Contain("verbose");
+        optionNames.Should().NotContain("config");
 
         // Verify critical aliases
         var serverNameOption = options.First(o => o.Name == "server-name");

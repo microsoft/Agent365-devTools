@@ -100,7 +100,7 @@ public class Agent365ToolingService : IAgent365ToolingService
                     _logger.LogDebug("{Operation} failed: {Message}", operationName, errorMessage);
                     if (!string.IsNullOrWhiteSpace(serverCorrelationId))
                     {
-                        _logger.LogDebug("Server correlation ID (x-ms-correlation-id): {CorrelationId}", serverCorrelationId);
+                        _logger.LogWarning("Server correlation ID (x-ms-correlation-id): {CorrelationId}", serverCorrelationId);
                     }
                     return (false, responseContent);
                 }
