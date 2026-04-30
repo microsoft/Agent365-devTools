@@ -759,35 +759,7 @@ internal class RegisterCommandExecutor
 
         if (!string.IsNullOrWhiteSpace(a365RedirectUri))
         {
-            tasks.Add(Task.Run(async () =>
-            {
-                try
-                {
-                    var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
-                    var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
-                    var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
-                    _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
-                    var success = await _retryHelper.ExecuteWithRetryAsync(
-                        async ct => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, ct),
-                        result => !result);
-                    if (!success)
-                    {
-                        var msg = $"Failed to update redirect URIs on A365 Proxy app '{apps.A365AppName}' after retries.";
-                        _logger.LogError(msg);
-                        concurrentWarnings.Add(msg);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("Updated redirect URIs on '{AppName}'", apps.A365AppName);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var msg = $"Failed to update redirect URIs on A365 Proxy app: {ex.Message}";
-                    _logger.LogError(msg);
-                    concurrentWarnings.Add(msg);
-                }
-            }));
+            tasks.Add(UpdateA365RedirectUrisAsync(tenantId, apps, a365RedirectUri, concurrentWarnings));
         }
         else
         {
@@ -798,103 +770,24 @@ internal class RegisterCommandExecutor
 
         if (input.IsEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri) && apps.RemoteProxyObjectId != null)
         {
-            tasks.Add(Task.Run(async () =>
-            {
-                try
-                {
-                    var remoteTcUri = DevelopMcpCommand.AddTcPrefix(remoteRedirectUri);
-                    var remoteNonTcUri = DevelopMcpCommand.RemoveTcPrefix(remoteRedirectUri);
-                    var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
-                    _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
-                    var success = await _retryHelper.ExecuteWithRetryAsync(
-                        async ct => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId, remoteUris, ct),
-                        result => !result);
-                    if (!success)
-                    {
-                        var msg = $"Failed to update redirect URIs on Remote Proxy app '{apps.RemoteProxyAppName}' after retries.";
-                        _logger.LogError(msg);
-                        concurrentWarnings.Add(msg);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("Updated redirect URIs on '{AppName}'", apps.RemoteProxyAppName);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var msg = $"Failed to update redirect URIs on Remote Proxy app: {ex.Message}";
-                    _logger.LogError(msg);
-                    concurrentWarnings.Add(msg);
-                }
-            }));
+            tasks.Add(UpdateRemoteProxyRedirectUrisAsync(tenantId, apps, remoteRedirectUri, concurrentWarnings));
         }
-        else if (input.IsEntra)
+        else if (input.IsEntra && string.IsNullOrWhiteSpace(remoteRedirectUri))
         {
             var msg = "Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
+            _logger.LogWarning(msg);
+            concurrentWarnings.Add(msg);
+        }
+        else if (input.IsEntra && apps.RemoteProxyObjectId == null)
+        {
+            var msg = "Remote Proxy Entra app was not created. Redirect URI configuration skipped.";
             _logger.LogWarning(msg);
             concurrentWarnings.Add(msg);
         }
 
         if (input.IsEntra && apps.RemoteProxyObjectId != null && !string.IsNullOrWhiteSpace(input.RemoteScopes))
         {
-            tasks.Add(Task.Run(async () =>
-            {
-                try
-                {
-                    var scopeUri = input.RemoteScopes.Trim();
-                    string? resourceAppId = null;
-                    string? scopeName = null;
-
-                    if (scopeUri.StartsWith("api://", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var path = scopeUri.Substring("api://".Length);
-                        var slashIndex = path.IndexOf('/');
-                        if (slashIndex > 0)
-                        {
-                            resourceAppId = path.Substring(0, slashIndex);
-                            scopeName = path.Substring(slashIndex + 1);
-                        }
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(scopeName))
-                    {
-                        _logger.LogDebug("Looking up scope '{ScopeName}' on resource app {ResourceAppId}...", scopeName, resourceAppId);
-                        var remoteScopeId = await _graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName);
-                        if (remoteScopeId.HasValue)
-                        {
-                            _logger.LogDebug("Adding API permission '{ScopeName}' (resource: {ResourceAppId}) on '{AppName}' ({ObjectId})", scopeName, resourceAppId, apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
-                            var success = await _retryHelper.ExecuteWithRetryAsync(
-                                async ct => await _graphApiService.AddRequiredResourceAccessAsync(
-                                    tenantId, apps.RemoteProxyObjectId, resourceAppId, remoteScopeId.Value, ct),
-                                result => !result);
-                            if (!success)
-                            {
-                                var msg = $"Failed to add API permission '{scopeName}' from resource app {resourceAppId} on RemoteProxy app '{apps.RemoteProxyAppName}' after retries.";
-                                _logger.LogError(msg);
-                                concurrentWarnings.Add(msg);
-                            }
-                        }
-                        else
-                        {
-                            var msg = $"Could not find scope '{scopeName}' on resource app {resourceAppId}. API permission not added to RemoteProxy app.";
-                            _logger.LogError(msg);
-                            concurrentWarnings.Add(msg);
-                        }
-                    }
-                    else
-                    {
-                        var msg = $"Could not parse resource app ID and scope from '{input.RemoteScopes}'. Expected format: api://{{appId}}/{{scopeName}}";
-                        _logger.LogWarning(msg);
-                        concurrentWarnings.Add(msg);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var msg = $"Failed to add API permissions on RemoteProxy app: {ex.Message}";
-                    _logger.LogError(msg);
-                    concurrentWarnings.Add(msg);
-                }
-            }));
+            tasks.Add(AddRemoteProxyScopePermissionAsync(tenantId, input, apps, concurrentWarnings));
         }
 
         var ppmiAppClientId = response.Server?.PpmiAppClientId;
@@ -902,65 +795,19 @@ internal class RegisterCommandExecutor
         if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
         {
             _logger.LogDebug("PPMI app provisioned: {PpmiAppClientId}", ppmiAppClientId);
-            ppmiScopeId = await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
-                tenantId, ppmiAppClientId, "Tools.ListInvoke.All");
+            ppmiScopeId = await _retryHelper.ExecuteWithRetryAsync(
+                async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
+                    tenantId, ppmiAppClientId, "Tools.ListInvoke.All", ct),
+                result => !result.HasValue);
         }
 
         if (ppmiScopeId.HasValue)
         {
-            tasks.Add(Task.Run(async () =>
-            {
-                try
-                {
-                    _logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
-                    var success = await _retryHelper.ExecuteWithRetryAsync(
-                        async ct => await _graphApiService!.AddRequiredResourceAccessAsync(
-                            tenantId, apps.A365AppObjectId, ppmiAppClientId!, ppmiScopeId.Value, ct),
-                        result => !result);
-                    if (!success)
-                    {
-                        var msg = $"Failed to add PPMI permission on A365 Proxy app '{apps.A365AppName}' after retries.";
-                        _logger.LogError(msg);
-                        concurrentWarnings.Add(msg);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("Added API permission on '{AppName}'", apps.A365AppName);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    var msg = $"Failed to add PPMI permission on A365 Proxy app: {ex.Message}";
-                    _logger.LogError(msg);
-                    concurrentWarnings.Add(msg);
-                }
-            }));
+            tasks.Add(AddPpmiPermissionAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings));
 
             if (apps.PublicClientsObjectId != null)
             {
-                tasks.Add(Task.Run(async () =>
-                {
-                    try
-                    {
-                        _logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission on '{AppName}' ({ObjectId})", apps.PublicClientsAppName, apps.PublicClientsObjectId);
-                        var success = await _retryHelper.ExecuteWithRetryAsync(
-                            async ct => await _graphApiService!.AddRequiredResourceAccessAsync(
-                                tenantId, apps.PublicClientsObjectId, ppmiAppClientId!, ppmiScopeId.Value, ct),
-                            result => !result);
-                        if (!success)
-                        {
-                            var msg = $"Failed to add PPMI permission on Public Clients app '{apps.PublicClientsAppName}' after retries.";
-                            _logger.LogError(msg);
-                            concurrentWarnings.Add(msg);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        var msg = $"Failed to add PPMI permission on Public Clients app: {ex.Message}";
-                        _logger.LogError(msg);
-                        concurrentWarnings.Add(msg);
-                    }
-                }));
+                tasks.Add(AddPpmiPermissionAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings));
             }
         }
         else if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
@@ -976,6 +823,164 @@ internal class RegisterCommandExecutor
             warnings.Add(w);
     }
 
+
+    private async Task UpdateA365RedirectUrisAsync(
+        string tenantId, EntraAppSet apps, string a365RedirectUri,
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+    {
+        try
+        {
+            var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
+            var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
+            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
+            _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
+            var success = await _retryHelper.ExecuteWithRetryAsync(
+                async ct => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, ct),
+                result => !result);
+            if (!success)
+            {
+                var msg = $"Failed to update redirect URIs on A365 Proxy app '{apps.A365AppName}' after retries.";
+                _logger.LogError(msg);
+                concurrentWarnings.Add(msg);
+            }
+            else
+            {
+                _logger.LogInformation("Updated redirect URIs on '{AppName}'", apps.A365AppName);
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = $"Failed to update redirect URIs on A365 Proxy app: {ex.Message}";
+            _logger.LogError(msg);
+            concurrentWarnings.Add(msg);
+        }
+    }
+
+    private async Task UpdateRemoteProxyRedirectUrisAsync(
+        string tenantId, EntraAppSet apps, string remoteRedirectUri,
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+    {
+        try
+        {
+            var remoteTcUri = DevelopMcpCommand.AddTcPrefix(remoteRedirectUri);
+            var remoteNonTcUri = DevelopMcpCommand.RemoveTcPrefix(remoteRedirectUri);
+            var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
+            _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
+            var success = await _retryHelper.ExecuteWithRetryAsync(
+                async ct => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId!, remoteUris, ct),
+                result => !result);
+            if (!success)
+            {
+                var msg = $"Failed to update redirect URIs on Remote Proxy app '{apps.RemoteProxyAppName}' after retries.";
+                _logger.LogError(msg);
+                concurrentWarnings.Add(msg);
+            }
+            else
+            {
+                _logger.LogInformation("Updated redirect URIs on '{AppName}'", apps.RemoteProxyAppName);
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = $"Failed to update redirect URIs on Remote Proxy app: {ex.Message}";
+            _logger.LogError(msg);
+            concurrentWarnings.Add(msg);
+        }
+    }
+
+    private async Task AddRemoteProxyScopePermissionAsync(
+        string tenantId, ResolvedInput input, EntraAppSet apps,
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+    {
+        try
+        {
+            var scopeUri = input.RemoteScopes!.Trim();
+            string? resourceAppId = null;
+            string? scopeName = null;
+
+            if (scopeUri.StartsWith("api://", StringComparison.OrdinalIgnoreCase))
+            {
+                var path = scopeUri.Substring("api://".Length);
+                var slashIndex = path.IndexOf('/');
+                if (slashIndex > 0)
+                {
+                    resourceAppId = path.Substring(0, slashIndex);
+                    scopeName = path.Substring(slashIndex + 1);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(scopeName))
+            {
+                _logger.LogDebug("Looking up scope '{ScopeName}' on resource app {ResourceAppId}...", scopeName, resourceAppId);
+                var remoteScopeId = await _retryHelper.ExecuteWithRetryAsync(
+                    async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName, ct),
+                    result => !result.HasValue);
+                if (remoteScopeId.HasValue)
+                {
+                    _logger.LogDebug("Adding API permission '{ScopeName}' (resource: {ResourceAppId}) on '{AppName}' ({ObjectId})", scopeName, resourceAppId, apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
+                    var success = await _retryHelper.ExecuteWithRetryAsync(
+                        async ct => await _graphApiService!.AddRequiredResourceAccessAsync(
+                            tenantId, apps.RemoteProxyObjectId!, resourceAppId, remoteScopeId.Value, ct),
+                        result => !result);
+                    if (!success)
+                    {
+                        var msg = $"Failed to add API permission '{scopeName}' from resource app {resourceAppId} on RemoteProxy app '{apps.RemoteProxyAppName}' after retries.";
+                        _logger.LogError(msg);
+                        concurrentWarnings.Add(msg);
+                    }
+                }
+                else
+                {
+                    var msg = $"Could not find scope '{scopeName}' on resource app {resourceAppId}. API permission not added to RemoteProxy app.";
+                    _logger.LogError(msg);
+                    concurrentWarnings.Add(msg);
+                }
+            }
+            else
+            {
+                var msg = $"Could not parse resource app ID and scope from '{input.RemoteScopes}'. Expected format: api://{{appId}}/{{scopeName}}";
+                _logger.LogWarning(msg);
+                concurrentWarnings.Add(msg);
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = $"Failed to add API permissions on RemoteProxy app: {ex.Message}";
+            _logger.LogError(msg);
+            concurrentWarnings.Add(msg);
+        }
+    }
+
+    private async Task AddPpmiPermissionAsync(
+        string tenantId, string appObjectId, string appName,
+        string ppmiAppClientId, Guid ppmiScopeId,
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+    {
+        try
+        {
+            _logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission on '{AppName}' ({ObjectId})", appName, appObjectId);
+            var success = await _retryHelper.ExecuteWithRetryAsync(
+                async ct => await _graphApiService!.AddRequiredResourceAccessAsync(
+                    tenantId, appObjectId, ppmiAppClientId, ppmiScopeId, ct),
+                result => !result);
+            if (!success)
+            {
+                var msg = $"Failed to add PPMI permission on '{appName}' after retries.";
+                _logger.LogError(msg);
+                concurrentWarnings.Add(msg);
+            }
+            else
+            {
+                _logger.LogInformation("Added API permission on '{AppName}'", appName);
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = $"Failed to add PPMI permission on '{appName}': {ex.Message}";
+            _logger.LogError(msg);
+            concurrentWarnings.Add(msg);
+        }
+    }
 
     private void DisplayResults(
         ResolvedInput input, string? remoteRedirectUri, List<string> warnings)
