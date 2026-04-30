@@ -648,7 +648,12 @@ internal class RegisterCommandExecutor
                 }
                 else
                 {
-                    _logger.LogDebug("Set redirect URI on '{AppName}' ({ObjectId}): {Uri}", publicClientsAppName, publicClientsObjectId, copilotRedirectUri);
+                    _logger.LogDebug(
+                        "Set {RedirectUriCount} redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
+                        publicClientUris.Length,
+                        publicClientsAppName,
+                        publicClientsObjectId,
+                        string.Join(", ", publicClientUris));
                 }
             }
             catch (Exception ex)
@@ -864,7 +869,7 @@ internal class RegisterCommandExecutor
                                 result => !result);
                             if (!success)
                             {
-                                var msg = $"Failed to add API permission on RemoteProxy app '{apps.RemoteProxyAppName}' after retries.";
+                                var msg = $"Failed to add API permission '{scopeName}' from resource app {resourceAppId} on RemoteProxy app '{apps.RemoteProxyAppName}' after retries.";
                                 _logger.LogError(msg);
                                 concurrentWarnings.Add(msg);
                             }
