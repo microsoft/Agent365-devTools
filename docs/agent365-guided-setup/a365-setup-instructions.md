@@ -37,28 +37,17 @@ Wait for the answer. Store as `authMode`:
 
 **Question 3: What Agent 365 capabilities do you want to enable?**
 
-Present only the options that apply to the user's `agentType` **and** `authMode`. Work IQ is not supported for S2S — omit it when `authMode = "s2s"`.
+Present only the options that apply to the user's `agentType` **and** `authMode`.
 
 - **If `agentType = 1`**:
-  - `authMode = "obo"` or `"both"`:
-    1. Observability
-    2. Work IQ
-    3. AI Teammate
-  - `authMode = "s2s"`:
+  - `authMode = "obo"` or `"both"` or `"s2s"`:
     1. Observability
     2. AI Teammate
 - **If `agentType = 2`** (All other agents):
-  - `authMode = "obo"` or `"both"`:
-    1. Register
-    2. Observability
-    3. Work IQ
-    4. AI Teammate
-  - `authMode = "s2s"`:
+  - `authMode = "obo"` or `"both"` or `"s2s"`:
     1. Register
     2. Observability
     3. AI Teammate
-
-> **Note:** Work IQ requires delegated (OBO) permissions and is not available for S2S-only agents. When `authMode = "both"`, Work IQ is available but applies only to the OBO (delegated) portion of your agent — it does not apply to S2S calls.
 
 Wait for the answer. Store as `capabilities`.
 
@@ -440,7 +429,7 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 
 Mark all todos as completed, then check `capabilities`:
 
-> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability or Work IQ, or `agentType = 2` with Observability or Work IQ): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
+> **If `capabilities` includes "Observability"** (`agentType = 1` with Observability, or `agentType = 2` with Observability): immediately start following `#file:a365-observability-instructions.md`. The user already selected observability — do NOT ask again, just proceed.
 >
 > **Otherwise**: say to the user verbatim:
 > "Your agent is provisioned. Would you like to add observability so you can trace LLM calls, tool dispatches, and agent-to-agent calls?"
