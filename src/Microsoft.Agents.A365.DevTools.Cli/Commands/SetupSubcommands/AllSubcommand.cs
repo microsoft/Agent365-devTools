@@ -109,8 +109,7 @@ internal static class AllSubcommand
 
         var aiTeammateOption = new Option<bool>(
             "--aiteammate",
-            description: "AI Teammate agent: setup provisions blueprint and permissions only;\n" +
-                        "run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+            description: "AI Teammate agent: setup provisions blueprint and permissions only.\n" +
                         "Omit for blueprint-only agent (default): setup auto-creates agent identity SP; no Entra user.\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 

@@ -120,7 +120,6 @@ class Program
 
             // Get loggers and services
             var setupLogger = serviceProvider.GetRequiredService<ILogger<SetupCommand>>();
-            var createInstanceLogger = serviceProvider.GetRequiredService<ILogger<CreateInstanceCommand>>();
             var queryEntraLogger = serviceProvider.GetRequiredService<ILogger<QueryEntraCommand>>();
             var cleanupLogger = serviceProvider.GetRequiredService<ILogger<CleanupCommand>>();
             var publishLogger = serviceProvider.GetRequiredService<ILogger<PublishCommand>>();
@@ -150,9 +149,6 @@ class Program
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
-            rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
-                graphApiService, resolver: bootstrapResolver));
-
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService, resolver: bootstrapResolver));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));

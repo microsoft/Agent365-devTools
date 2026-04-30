@@ -72,8 +72,7 @@ public class PublishCommand
 
         var aiTeammateOption = new Option<bool?>(
             "--aiteammate",
-            description: "true = AI Teammate agent: setup provisions blueprint and permissions only;\n" +
-                        "      run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+            description: "true = AI Teammate agent: setup provisions blueprint and permissions only.\n" +
                         "false = blueprint-only agent: setup auto-creates agent identity SP; no Entra user (default)\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 

@@ -272,7 +272,7 @@ public class QueryEntraCommand
                 }
                 else
                 {
-                    logger.LogError("No agent identity found in configuration. Please run 'a365 create-instance' first.");
+                    logger.LogError("No agent identity found in configuration. Please create an agent instance first.");
                     logger.LogInformation("An agent identity must be created before you can query OAuth2 grants.");
                     context.ExitCode = 1;
                     return;
