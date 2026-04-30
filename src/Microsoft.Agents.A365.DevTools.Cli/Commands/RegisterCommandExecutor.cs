@@ -143,15 +143,27 @@ internal class RegisterCommandExecutor
         {
             _logger.LogError("Failed to register MCP server '{ServerName}': {Error}", input.ServerName, ex.Message);
             _logger.LogDebug("Exception details: {Exception}", ex.ToString());
-            _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
+            _logger.LogWarning("Entra app registrations were NOT rolled back. Use 'cleanup-external-mcp-server-resources' to remove them if needed.");
             return;
         }
 
         if (addResponse is null || !addResponse.IsSuccess)
         {
             var errorMsg = addResponse?.Message ?? "No response received";
-            _logger.LogError("Failed to add MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
-            _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
+
+            if (errorMsg.Contains("violates a database constraint", StringComparison.OrdinalIgnoreCase)
+                || errorMsg.Contains("delete the existing record", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine();
+                Console.WriteLine($"ERROR: A server named '{input.ServerName}' already exists. Please choose a different name.");
+                _logger.LogDebug("Raw server error: {Error}", errorMsg);
+            }
+            else
+            {
+                _logger.LogError("Failed to add MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
+            }
+
+            Console.WriteLine($"Entra app registrations were NOT rolled back. Use 'cleanup-external-mcp-server-resources' to remove them if needed.");
             return;
         }
 
