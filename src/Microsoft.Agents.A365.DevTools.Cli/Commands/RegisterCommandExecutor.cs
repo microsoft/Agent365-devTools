@@ -795,10 +795,18 @@ internal class RegisterCommandExecutor
         if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
         {
             _logger.LogDebug("PPMI app provisioned: {PpmiAppClientId}", ppmiAppClientId);
-            ppmiScopeId = await _retryHelper.ExecuteWithRetryAsync(
-                async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
-                    tenantId, ppmiAppClientId, "Tools.ListInvoke.All", ct),
-                result => !result.HasValue);
+            try
+            {
+                ppmiScopeId = await _retryHelper.ExecuteWithRetryAsync(
+                    async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
+                        tenantId, ppmiAppClientId, "Tools.ListInvoke.All", ct));
+            }
+            catch (Exception ex)
+            {
+                var msg = $"Could not find 'Tools.ListInvoke.All' scope on PPMI app {ppmiAppClientId} after retries: {ex.Message}. API permissions not added.";
+                _logger.LogError(msg);
+                concurrentWarnings.Add(msg);
+            }
         }
 
         if (ppmiScopeId.HasValue)
@@ -810,7 +818,7 @@ internal class RegisterCommandExecutor
                 tasks.Add(AddPpmiPermissionAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings));
             }
         }
-        else if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
+        else if (!string.IsNullOrWhiteSpace(ppmiAppClientId) && ppmiScopeId == null)
         {
             var msg = $"Could not find 'Tools.ListInvoke.All' scope on PPMI app {ppmiAppClientId}. API permissions not added.";
             _logger.LogError(msg);
@@ -912,9 +920,19 @@ internal class RegisterCommandExecutor
             if (!string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(scopeName))
             {
                 _logger.LogDebug("Looking up scope '{ScopeName}' on resource app {ResourceAppId}...", scopeName, resourceAppId);
-                var remoteScopeId = await _retryHelper.ExecuteWithRetryAsync(
-                    async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName, ct),
-                    result => !result.HasValue);
+                Guid? remoteScopeId = null;
+                try
+                {
+                    remoteScopeId = await _retryHelper.ExecuteWithRetryAsync(
+                        async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName, ct));
+                }
+                catch (Exception ex)
+                {
+                    var msg = $"Failed to look up scope '{scopeName}' on resource app {resourceAppId} after retries: {ex.Message}. API permission not added to RemoteProxy app.";
+                    _logger.LogError(msg);
+                    concurrentWarnings.Add(msg);
+                }
+
                 if (remoteScopeId.HasValue)
                 {
                     _logger.LogDebug("Adding API permission '{ScopeName}' (resource: {ResourceAppId}) on '{AppName}' ({ObjectId})", scopeName, resourceAppId, apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
