@@ -143,7 +143,7 @@ internal class RegisterCommandExecutor
         {
             _logger.LogError("Failed to register MCP server '{ServerName}': {Error}", input.ServerName, ex.Message);
             _logger.LogDebug("Exception details: {Exception}", ex.ToString());
-            _logger.LogWarning("Entra app registrations were NOT rolled back. Use 'cleanup-external-mcp-server-resources' to remove them if needed.");
+            _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
             return;
         }
 
@@ -166,7 +166,7 @@ internal class RegisterCommandExecutor
                 _logger.LogError("Failed to add MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
             }
 
-            Console.WriteLine($"Entra app registrations were NOT rolled back. Use 'cleanup-external-mcp-server-resources' to remove them if needed.");
+            Console.WriteLine($"Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
             return;
         }
 
