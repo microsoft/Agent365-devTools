@@ -93,7 +93,7 @@ internal class RegisterCommandExecutor
         string? PublicClientsObjectId,
         string PublicClientsAppName);
 
-    internal async Task ExecuteAsync(RawRegisterArgs args)
+    internal async Task ExecuteAsync(RawRegisterArgs args, CancellationToken ct = default)
     {
         var input = await ResolveInputsAsync(args);
         if (input is null) return;
@@ -119,6 +119,8 @@ internal class RegisterCommandExecutor
 
         Console.WriteLine();
 
+        ct.ThrowIfCancellationRequested();
+
         await _toolingService.LogRegisterUsageAsync(input.ServerName, input.AuthType, input.ToolList.Count);
         Console.WriteLine($"Registering MCP server '{input.ServerName}'...");
 
@@ -134,6 +136,8 @@ internal class RegisterCommandExecutor
         var warnings = new List<string>();
         var apps = await CreateEntraAppsAsync(input, tenantId, warnings);
         if (apps is null) return;
+
+        ct.ThrowIfCancellationRequested();
 
         var addRequest = BuildRequest(input, apps);
 
@@ -177,7 +181,7 @@ internal class RegisterCommandExecutor
 
         _logger.LogDebug("Successfully added MCP server {ServerName}", input.ServerName);
 
-        await ConfigureEntraAppsAsync(input, apps, addResponse, tenantId, warnings);
+        await ConfigureEntraAppsAsync(input, apps, addResponse, tenantId, warnings, ct);
 
         DisplayResults(input, addResponse.Server?.RemoteMCPServerProxyRedirectUri, warnings);
     }
@@ -749,7 +753,7 @@ internal class RegisterCommandExecutor
 
     private async Task ConfigureEntraAppsAsync(
         ResolvedInput input, EntraAppSet apps, AddMcpServerResponse response,
-        string tenantId, List<string> warnings)
+        string tenantId, List<string> warnings, CancellationToken ct = default)
     {
         var tasks = new List<Task>();
         var concurrentWarnings = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -759,7 +763,7 @@ internal class RegisterCommandExecutor
 
         if (!string.IsNullOrWhiteSpace(a365RedirectUri))
         {
-            tasks.Add(UpdateA365RedirectUrisAsync(tenantId, apps, a365RedirectUri, concurrentWarnings));
+            tasks.Add(UpdateA365RedirectUrisAsync(tenantId, apps, a365RedirectUri, concurrentWarnings, ct));
         }
         else
         {
@@ -770,7 +774,7 @@ internal class RegisterCommandExecutor
 
         if (input.IsEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri) && apps.RemoteProxyObjectId != null)
         {
-            tasks.Add(UpdateRemoteProxyRedirectUrisAsync(tenantId, apps, remoteRedirectUri, concurrentWarnings));
+            tasks.Add(UpdateRemoteProxyRedirectUrisAsync(tenantId, apps, remoteRedirectUri, concurrentWarnings, ct));
         }
         else if (input.IsEntra && string.IsNullOrWhiteSpace(remoteRedirectUri))
         {
@@ -787,7 +791,7 @@ internal class RegisterCommandExecutor
 
         if (input.IsEntra && apps.RemoteProxyObjectId != null && !string.IsNullOrWhiteSpace(input.RemoteScopes))
         {
-            tasks.Add(AddRemoteProxyScopePermissionAsync(tenantId, input, apps, concurrentWarnings));
+            tasks.Add(AddRemoteProxyScopePermissionAsync(tenantId, input, apps, concurrentWarnings, ct));
         }
 
         var ppmiAppClientId = response.Server?.PpmiAppClientId;
@@ -798,8 +802,9 @@ internal class RegisterCommandExecutor
             try
             {
                 ppmiScopeId = await _retryHelper.ExecuteWithRetryAsync(
-                    async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
-                        tenantId, ppmiAppClientId, "Tools.ListInvoke.All", ct));
+                    async retryCt => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
+                        tenantId, ppmiAppClientId, "Tools.ListInvoke.All", retryCt),
+                    cancellationToken: ct);
             }
             catch (Exception ex)
             {
@@ -811,11 +816,11 @@ internal class RegisterCommandExecutor
 
         if (ppmiScopeId.HasValue)
         {
-            tasks.Add(AddPpmiPermissionAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings));
+            tasks.Add(AddPpmiPermissionAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings, ct));
 
             if (apps.PublicClientsObjectId != null)
             {
-                tasks.Add(AddPpmiPermissionAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings));
+                tasks.Add(AddPpmiPermissionAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings, ct));
             }
         }
         else if (!string.IsNullOrWhiteSpace(ppmiAppClientId) && ppmiScopeId == null)
@@ -834,7 +839,8 @@ internal class RegisterCommandExecutor
 
     private async Task UpdateA365RedirectUrisAsync(
         string tenantId, EntraAppSet apps, string a365RedirectUri,
-        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
+        CancellationToken ct = default)
     {
         try
         {
@@ -843,8 +849,9 @@ internal class RegisterCommandExecutor
             var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
-                async ct => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, ct),
-                result => !result);
+                async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, retryCt),
+                result => !result,
+                cancellationToken: ct);
             if (!success)
             {
                 var msg = $"Failed to update redirect URIs on A365 Proxy app '{apps.A365AppName}' after retries.";
@@ -866,7 +873,8 @@ internal class RegisterCommandExecutor
 
     private async Task UpdateRemoteProxyRedirectUrisAsync(
         string tenantId, EntraAppSet apps, string remoteRedirectUri,
-        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
+        CancellationToken ct = default)
     {
         try
         {
@@ -875,8 +883,9 @@ internal class RegisterCommandExecutor
             var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
-                async ct => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId!, remoteUris, ct),
-                result => !result);
+                async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId!, remoteUris, retryCt),
+                result => !result,
+                cancellationToken: ct);
             if (!success)
             {
                 var msg = $"Failed to update redirect URIs on Remote Proxy app '{apps.RemoteProxyAppName}' after retries.";
@@ -898,7 +907,8 @@ internal class RegisterCommandExecutor
 
     private async Task AddRemoteProxyScopePermissionAsync(
         string tenantId, ResolvedInput input, EntraAppSet apps,
-        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
+        CancellationToken ct = default)
     {
         try
         {
@@ -924,7 +934,8 @@ internal class RegisterCommandExecutor
                 try
                 {
                     remoteScopeId = await _retryHelper.ExecuteWithRetryAsync(
-                        async ct => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName, ct));
+                        async retryCt => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(tenantId, resourceAppId, scopeName, retryCt),
+                        cancellationToken: ct);
                 }
                 catch (Exception ex)
                 {
@@ -937,9 +948,10 @@ internal class RegisterCommandExecutor
                 {
                     _logger.LogDebug("Adding API permission '{ScopeName}' (resource: {ResourceAppId}) on '{AppName}' ({ObjectId})", scopeName, resourceAppId, apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
                     var success = await _retryHelper.ExecuteWithRetryAsync(
-                        async ct => await _graphApiService!.AddRequiredResourceAccessAsync(
-                            tenantId, apps.RemoteProxyObjectId!, resourceAppId, remoteScopeId.Value, ct),
-                        result => !result);
+                        async retryCt => await _graphApiService!.AddRequiredResourceAccessAsync(
+                            tenantId, apps.RemoteProxyObjectId!, resourceAppId, remoteScopeId.Value, retryCt),
+                        result => !result,
+                        cancellationToken: ct);
                     if (!success)
                     {
                         var msg = $"Failed to add API permission '{scopeName}' from resource app {resourceAppId} on RemoteProxy app '{apps.RemoteProxyAppName}' after retries.";
@@ -972,15 +984,17 @@ internal class RegisterCommandExecutor
     private async Task AddPpmiPermissionAsync(
         string tenantId, string appObjectId, string appName,
         string ppmiAppClientId, Guid ppmiScopeId,
-        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings)
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
+        CancellationToken ct = default)
     {
         try
         {
             _logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission on '{AppName}' ({ObjectId})", appName, appObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
-                async ct => await _graphApiService!.AddRequiredResourceAccessAsync(
-                    tenantId, appObjectId, ppmiAppClientId, ppmiScopeId, ct),
-                result => !result);
+                async retryCt => await _graphApiService!.AddRequiredResourceAccessAsync(
+                    tenantId, appObjectId, ppmiAppClientId, ppmiScopeId, retryCt),
+                result => !result,
+                cancellationToken: ct);
             if (!success)
             {
                 var msg = $"Failed to add PPMI permission on '{appName}' after retries.";

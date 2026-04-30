@@ -885,7 +885,7 @@ public static class DevelopMcpCommand
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
             var executor = new RegisterCommandExecutor(logger, toolingService, graphApiService);
-            await executor.ExecuteAsync(args);
+            await executor.ExecuteAsync(args, context.GetCancellationToken());
         });
 
         return command;
