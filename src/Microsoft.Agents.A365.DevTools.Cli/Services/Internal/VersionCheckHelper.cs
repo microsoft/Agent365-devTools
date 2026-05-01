@@ -142,7 +142,9 @@ internal static class VersionCheckHelper
             .FirstOrDefault()?.Original;
 
         // Informational nudge: surface the latest preview when a stable user is already on the
-        // latest stable but a newer preview exists above it
+        // latest stable but a newer preview exists above it.
+        // Use base-version comparison (not TryParseVersion) so that a preview of the same base
+        // (e.g., "1.1.0-preview.50") is never treated as newer than its GA ("1.1.0").
         string? newerPreview = null;
         if (!currentIsPreview && primary != null)
         {
@@ -152,9 +154,11 @@ internal static class VersionCheckHelper
 
             if (latestPreview != null)
             {
-                var primaryParsed = TryParseVersion(primary);
-                var previewParsed = TryParseVersion(latestPreview);
-                if (primaryParsed != null && previewParsed != null && previewParsed > primaryParsed)
+                var primaryBase = TryParseVersion(primary.Split('-')[0]);
+                var previewBase = TryParseVersion(latestPreview.Split('-')[0]);
+                // Only nudge when the preview's base version is strictly higher than the GA base.
+                // This prevents "1.1.0-preview.50" from appearing as newer than "1.1.0".
+                if (primaryBase != null && previewBase != null && previewBase > primaryBase)
                     newerPreview = latestPreview;
             }
         }

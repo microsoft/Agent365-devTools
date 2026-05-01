@@ -447,10 +447,12 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         if (string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
         {
+            var registrationSkippedMessage =
+                "Agent registration failed: agent identity ID is not available. " +
+                "Ensure the agent identity was created successfully, then retry with: a365 setup all --agent-registration-only";
+            ctx.Results.Warnings.Add(registrationSkippedMessage);
             using (ctx.Logger.Indent())
-                ctx.Logger.LogWarning(
-                    "Agent registration skipped — agent identity ID is not available. " +
-                    "Ensure the agent identity was created successfully, then retry with: a365 setup all --agent-registration-only");
+                ctx.Logger.LogWarning(registrationSkippedMessage);
             ctx.Results.AgentRegistrationFailed = true;
         }
         else

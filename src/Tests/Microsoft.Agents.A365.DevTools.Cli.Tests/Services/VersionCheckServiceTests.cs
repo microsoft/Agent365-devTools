@@ -114,6 +114,11 @@ public class VersionCheckServiceTests
     [InlineData("1.1.165-preview", new[] { "1.1.165-preview", "1.2.0" }, "1.2.0", null)]
     // Preview user — newer preview above GA: pick highest preview, no secondary nudge
     [InlineData("1.1.165-preview", new[] { "1.1.165-preview", "1.2.0", "1.3.0-preview.1" }, "1.3.0-preview.1", null)]
+    // Stable user — preview of same base as GA exists (e.g., "1.1.0-preview.50" alongside "1.1.0")
+    // → GA is primary, no nudge (same-base preview must not sort above its own GA)
+    [InlineData("1.1.0", new[] { "1.1.0", "1.1.0-preview.50" }, "1.1.0", null)]
+    // Stable user on GA with both same-base preview and a higher-base preview → nudge the higher-base preview only
+    [InlineData("1.1.0", new[] { "1.1.0", "1.1.0-preview.50", "1.2.0-preview.1" }, "1.1.0", "1.2.0-preview.1")]
     public void SelectLatestVersions_AppliesChannelAwareFiltering(
         string currentVersion, string[] nugetVersions, string expectedPrimary, string? expectedNewerPreview)
     {
