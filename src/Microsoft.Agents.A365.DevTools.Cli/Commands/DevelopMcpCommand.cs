@@ -35,7 +35,7 @@ public static class DevelopMcpCommand
         // Add subcommands
         developMcpCommand.AddCommand(CreateListEnvironmentsSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateListServersSubcommand(logger, toolingService));
-        developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService, graphApiService));
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateApproveSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
@@ -279,180 +279,62 @@ public static class DevelopMcpCommand
     /// Creates the publish subcommand
     /// </summary>
     private static Command CreatePublishSubcommand(
-        ILogger logger, 
-        IAgent365ToolingService toolingService)
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService)
     {
-        var command = new Command("publish", "Publish an MCP server to a Dataverse environment");
+        var command = new Command("publish", "Publish an MCP server to a Dataverse environment. Creates the A365 Proxy + Public Clients Entra apps in your tenant, calls the platform publish endpoint, and back-fills redirect URIs and PPMI scope grants — same orchestration shape as register-external-mcp-server.");
 
         var envIdOption = new Option<string?>(
             ["--environment-id", "-e"],
-            description: "Dataverse environment ID"
-        );
-        envIdOption.IsRequired = false; // Allow null so we can prompt
+            description: "Dataverse environment ID");
         command.AddOption(envIdOption);
 
         var serverNameOption = new Option<string?>(
             ["--server-name", "-s"],
-            description: "MCP server name to publish"
-        );
-        serverNameOption.IsRequired = false; // Allow null so we can prompt
+            description: "MCP server name to publish");
         command.AddOption(serverNameOption);
 
         var aliasOption = new Option<string?>(
             ["--alias", "-a"],
-            description: "Alias for the MCP server"
-        );
+            description: "Alias for the MCP server (used as the MCC row name and the CMS connector id)");
         command.AddOption(aliasOption);
 
         var displayNameOption = new Option<string?>(
             ["--display-name", "-d"],
-            description: "Display name for the MCP server"
-        );
+            description: "Display name for the MCP server (max 30 chars)");
         command.AddOption(displayNameOption);
 
-        var dryRunOption = new Option<bool>(
-            name: "--dry-run",
-            description: "Show what would be done without executing"
-        );
+        var tenantIdOption = new Option<string?>(
+            ["--tenant-id", "-t"],
+            description: "Entra tenant ID for Entra app creation (defaults to current az login tenant)");
+        command.AddOption(tenantIdOption);
+
+        var serviceTreeIdOption = new Option<string?>(
+            "--service-tree-id",
+            description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
+        command.AddOption(serviceTreeIdOption);
+
+        var dryRunOption = new Option<bool>("--dry-run", "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            description: "Enable verbose logging"
-        );
-        command.AddOption(verboseOption);
+        // Verbose is handled globally in Program.cs (sets LogLevel.Debug); declared here so the parser accepts -v.
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
 
-        command.SetHandler(async (envId, serverName, alias, displayName, dryRun, verbose) =>
+        command.SetHandler(async (context) =>
         {
-            _ = verbose;
-            try
-            {
-                // Validate and prompt for missing required arguments with security checks
-                if (string.IsNullOrWhiteSpace(envId))
-                {
-                    envId = InputValidator.PromptAndValidateRequiredInput("Enter Dataverse environment ID: ", "Environment ID");
-                    if (string.IsNullOrWhiteSpace(envId))
-                    {
-                        logger.LogError("Environment ID is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided environment ID
-                    envId = InputValidator.ValidateInput(envId, "Environment ID");
-                    if (envId == null)
-                    {
-                        logger.LogError("Invalid environment ID format");
-                        return;
-                    }
-                }
+            var args = new RawPublishArgs(
+                EnvironmentId: context.ParseResult.GetValueForOption(envIdOption),
+                ServerName: context.ParseResult.GetValueForOption(serverNameOption),
+                Alias: context.ParseResult.GetValueForOption(aliasOption),
+                DisplayName: context.ParseResult.GetValueForOption(displayNameOption),
+                TenantId: context.ParseResult.GetValueForOption(tenantIdOption),
+                ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
+                DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
-                if (string.IsNullOrWhiteSpace(serverName))
-                {
-                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to publish: ", "Server name", 100);
-                    if (string.IsNullOrWhiteSpace(serverName))
-                    {
-                        logger.LogError("Server name is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided server name
-                    serverName = InputValidator.ValidateInput(serverName, "Server name");
-                    if (serverName == null)
-                    {
-                        logger.LogError("Invalid server name format");
-                        return;
-                    }
-                }
-
-                logger.LogInformation("Starting publish operation for server {ServerName} in environment {EnvId}...", serverName, envId);
-
-                if (dryRun)
-                {
-                    logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
-                    logger.LogInformation("[DRY RUN] Would publish MCP server {ServerName} to environment {EnvId}", serverName, envId);
-                    logger.LogInformation("[DRY RUN] Alias: {Alias}", alias ?? "[would prompt]");
-                    logger.LogInformation("[DRY RUN] Display Name: {DisplayName}", displayName ?? "[would prompt]");
-                    await Task.CompletedTask;
-                    return;
-                }
-
-                // Validate and prompt for missing optional values with security checks
-                if (string.IsNullOrWhiteSpace(alias))
-                {
-                    alias = InputValidator.PromptAndValidateRequiredInput("Enter alias for the MCP server: ", "Alias", 50);
-                    if (string.IsNullOrWhiteSpace(alias))
-                    {
-                        logger.LogError("Alias is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided alias
-                    alias = InputValidator.ValidateInput(alias, "Alias", maxLength: 50);
-                    if (alias == null)
-                    {
-                        logger.LogError("Invalid alias format");
-                        return;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(displayName))
-                {
-                    displayName = InputValidator.PromptAndValidateRequiredInput("Enter display name for the MCP server: ", "Display name", 100);
-                    if (string.IsNullOrWhiteSpace(displayName))
-                    {
-                        logger.LogError("Display name is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided display name
-                    displayName = InputValidator.ValidateInput(displayName, "Display name", maxLength: 100);
-                    if (displayName == null)
-                    {
-                        logger.LogError("Invalid display name format");
-                        return;
-                    }
-                }
-            }
-            catch (ArgumentException ex)
-            {
-                logger.LogError("Input validation failed: {Message}", ex.Message);
-                return;
-            }
-
-            // Create request
-            var request = new PublishMcpServerRequest
-            {
-                Alias = alias,
-                DisplayName = displayName
-            };
-
-            // Call service
-            var response = await toolingService.PublishServerAsync(envId, serverName, request);
-
-            if (response == null || !response.IsSuccess)
-            {
-                if (response?.Message != null)
-                {
-                    logger.LogError("Failed to publish MCP server {ServerName} to environment {EnvId}: {ErrorMessage}", serverName, envId, response.Message);
-                }
-                else
-                {
-                    logger.LogError("Failed to publish MCP server {ServerName} to environment {EnvId}: No response received", serverName, envId);
-                }
-                return;
-            }
-
-            logger.LogInformation("Successfully published MCP server {ServerName} to environment {EnvId}", serverName, envId);
-
-        }, envIdOption, serverNameOption, aliasOption, displayNameOption, dryRunOption, verboseOption);
+            var executor = new PublishCommandExecutor(logger, toolingService, graphApiService);
+            await executor.ExecuteAsync(args, context.GetCancellationToken());
+        });
 
         return command;
     }

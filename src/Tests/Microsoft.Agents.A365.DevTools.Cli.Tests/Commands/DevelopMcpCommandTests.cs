@@ -115,31 +115,39 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
         var subcommand = command.Subcommands.First(sc => sc.Name == "publish");
 
-        // Assert
-        subcommand.Description.Should().Be("Publish an MCP server to a Dataverse environment");
-        
+        // Assert — description copy was extended in the BYO-parity work to call out the Entra app +
+        // back-fill orchestration the executor now performs, so match on the Azure-CLI-style verb prefix
+        // rather than the full string.
+        subcommand.Description.Should().StartWith("Publish an MCP server to a Dataverse environment");
+
         var options = subcommand.Options.ToList();
-        
-        // Verify all expected options exist
+
+        // Verify all expected options exist (including tenant-id + service-tree-id added for the Entra
+        // app creation step that mirrors register-external-mcp-server).
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("environment-id");
         optionNames.Should().Contain("server-name");
         optionNames.Should().Contain("alias");
         optionNames.Should().Contain("display-name");
+        optionNames.Should().Contain("tenant-id");
+        optionNames.Should().Contain("service-tree-id");
         optionNames.Should().Contain("dry-run");
 
         // Verify critical aliases for Azure CLI compliance
         var envOption = options.FirstOrDefault(o => o.Name == "environment-id");
         envOption!.Aliases.Should().Contain("-e");
-        
+
         var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
         serverOption!.Aliases.Should().Contain("-s");
-        
+
         var aliasOption = options.FirstOrDefault(o => o.Name == "alias");
         aliasOption!.Aliases.Should().Contain("-a");
-        
+
         var displayNameOption = options.FirstOrDefault(o => o.Name == "display-name");
         displayNameOption!.Aliases.Should().Contain("-d");
+
+        var tenantOption = options.FirstOrDefault(o => o.Name == "tenant-id");
+        tenantOption!.Aliases.Should().Contain("-t");
     }
 
     [Fact]
