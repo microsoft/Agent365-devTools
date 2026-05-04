@@ -119,7 +119,10 @@ internal class PublishCommandExecutor
         PublishMcpServerResponse? publishResponse;
         try
         {
-            publishResponse = await _toolingService.PublishServerAsync(input.EnvironmentId, input.ServerName, request, ct);
+            // Hits the v2 publish endpoint, which performs the full elevation orchestration
+            // (lazy PPMI, MOS upload, A365 Proxy CMS connector creation). v1's PublishServerAsync
+            // is preserved on the platform for any callers relying on the original behavior.
+            publishResponse = await _toolingService.PublishServerV2Async(input.EnvironmentId, input.ServerName, request, ct);
         }
         catch (Exception ex)
         {
