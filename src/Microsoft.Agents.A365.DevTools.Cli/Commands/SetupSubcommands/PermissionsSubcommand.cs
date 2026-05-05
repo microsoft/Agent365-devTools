@@ -678,14 +678,22 @@ internal static class PermissionsSubcommand
 
             await configService.SaveStateAsync(setupConfig);
 
+            var s2sFailed = setupResults?.S2SAppRoleGranted == false;
+
             logger.LogInformation("");
-            logger.LogInformation("Bot API permissions configured successfully");
+            if (!s2sFailed)
+                logger.LogInformation("Bot API permissions configured successfully");
+            else
+                logger.LogWarning(
+                    "Bot API permissions configured, but S2S app role assignment failed. " +
+                    "Re-run 'a365 setup permissions bot' as {Roles} to retry.",
+                    AuthenticationConstants.S2SGrantRequiredRoles);
             logger.LogInformation("");
             if (!iSetupAll)
             {
                 logger.LogInformation("Next step: Deploy your agent (run 'a365 deploy' if hosting on Azure)");
             }
-            return consentGranted;
+            return consentGranted && !s2sFailed;
         }
         catch (Exception ex)
         {

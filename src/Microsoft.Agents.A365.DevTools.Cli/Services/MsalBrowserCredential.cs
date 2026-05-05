@@ -496,7 +496,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     {
         var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(_clientAppId, _tenantId);
         _logger?.LogWarning("Admin consent has not been granted for this application.");
-        _logger?.LogWarning("You are running as a non-admin user and cannot grant admin consent.");
+        _logger?.LogWarning("A Global Administrator must grant tenant-wide consent to proceed.");
         if (consentUrl != null)
         {
             _logger?.LogWarning("Share this URL with a Global Administrator to grant consent:");
