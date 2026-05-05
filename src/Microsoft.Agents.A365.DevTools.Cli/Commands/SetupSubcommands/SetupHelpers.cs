@@ -456,7 +456,7 @@ internal static class SetupHelpers
         var permissionGrantsPending = isS2SFlow
             ? results.S2SAppRoleGranted == false
             : !permissionGrantsCompleted && results.BatchPermissionsPhase2Completed;
-        var pendingAdminAction = permissionGrantsPending && !isS2SFlow && !isNonDw;
+        var pendingAdminAction = !isNonDw && !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
         var pendingS2SAction = permissionGrantsPending && isS2SFlow;
         var pendingDelegatedAction = results.AgentIdentityDelegatedGrantPending;
 
@@ -940,7 +940,7 @@ internal static class SetupHelpers
         }
 
         // Observability API is required for both DW and non-DW paths.
-        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
+        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
@@ -972,7 +972,7 @@ internal static class SetupHelpers
             foreach (var s in mcpScopes)
                 allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
             allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
-            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
+            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
         }
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);

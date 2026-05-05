@@ -91,8 +91,6 @@ public class CleanupCommand
             }
             else
             {
-                // No --agent-name and no static config file — fail fast with a clear exit code
-                // so cleanup does not silently report success to scripts or CI.
                 bootstrapConfig = await LoadConfigAsync(configFile, logger, configService);
                 if (bootstrapConfig is null)
                 {
@@ -1362,9 +1360,9 @@ public class CleanupCommand
             logger.LogInformation("Loaded configuration successfully from {ConfigFile}", configPath);
             return config;
         }
-        catch (ConfigFileNotFoundException ex)
+        catch (ConfigFileNotFoundException)
         {
-            logger.LogError("{Message}", ex.IssueDescription);
+            logger.LogError("Specify the agent to clean up: a365 cleanup --agent-name <name>");
             return null;
         }
         catch (Exception ex)

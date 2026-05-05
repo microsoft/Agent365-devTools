@@ -271,10 +271,9 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Entra roles that can perform S2S app role assignments programmatically.
-    /// All three roles have been verified to work with <see cref="RequiredS2SGrantScopes"/>.
-    /// Listed in order of least privilege: Agent ID Administrator, Application Administrator, Global Administrator.
+    /// Verified: Agent ID Administrator cannot create S2S app role assignments (403). Application Administrator and Global Administrator confirmed working.
     /// </summary>
-    public const string S2SGrantRequiredRoles = "Agent ID Administrator, Application Administrator, or Global Administrator";
+    public const string S2SGrantRequiredRoles = "Application Administrator or Global Administrator";
 
     /// <summary>
     /// Roles required to create tenant-wide AllPrincipals oauth2PermissionGrants via the PowerShell
