@@ -832,9 +832,9 @@ public class PermissionsSubcommandTests
     }
 
     [Fact]
-    public async Task ConfigureBotPermissionsAsync_WhenConsentPending_DoesNotLogSuccessMessage()
+    public async Task ConfigureBotPermissionsAsync_WhenGraphAuthFails_DoesNotLogSuccessMessage()
     {
-        // Arrange — Graph returns null → consentGranted=false; S2S not attempted.
+        // Arrange — all Graph calls return null → phase1Result=null (auth failed); consentGranted=false; S2S not attempted.
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
@@ -862,7 +862,7 @@ public class PermissionsSubcommandTests
             setupResults: null);
 
         // Assert
-        result.Should().BeFalse(because: "consentGranted=false when no admin user consents");
+        result.Should().BeFalse(because: "consentGranted=false when Graph auth fails");
         _mockLogger.DidNotReceive().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
@@ -872,9 +872,9 @@ public class PermissionsSubcommandTests
     }
 
     [Fact]
-    public async Task ConfigureBotPermissionsAsync_WhenConsentPending_LogsConsentRequiredMessage()
+    public async Task ConfigureBotPermissionsAsync_WhenGraphAuthFails_LogsConsentRequiredMessage()
     {
-        // Arrange — same as above: Graph returns null → consentGranted=false, S2S not attempted.
+        // Arrange — all Graph calls return null → phase1Result=null (auth failed); consentGranted=false, S2S not attempted.
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000000",
@@ -902,7 +902,7 @@ public class PermissionsSubcommandTests
             setupResults: null);
 
         // Assert
-        result.Should().BeFalse(because: "consentGranted=false when no admin user consents");
+        result.Should().BeFalse(because: "consentGranted=false when Graph auth fails");
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
