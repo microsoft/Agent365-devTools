@@ -219,16 +219,15 @@ public class NonDwPublishCommandDryRunTests : IDisposable
     }
 
     [Fact]
-    public async Task Publish_BlueprintNonDwDryRun_LogsBlueprintId()
+    public async Task Publish_BlueprintNonDw_LogsDirectsToSetupAll()
     {
-        const string blueprintId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
         var config = new Agent365Config
         {
             AiTeammate = false,
             UseBlueprint = true,
             TenantId = "tenant-id",
             ClientAppId = "client-app-id",
-            AgentBlueprintId = blueprintId,
+            AgentBlueprintId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
             AgentIdentityDisplayName = "My Agent"
         };
         _configService.LoadAsync().Returns(config);
@@ -237,12 +236,13 @@ public class NonDwPublishCommandDryRunTests : IDisposable
         var root = new RootCommand();
         root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService));
 
-        await root.InvokeAsync("publish --dry-run");
+        await root.InvokeAsync("publish");
 
+        // blueprint-based agents should be directed to 'a365 setup all' instead of registering via publish
         _logger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains(blueprintId)),
+            Arg.Is<object>(o => o.ToString()!.Contains("setup all")),
             null,
             Arg.Any<Func<object, Exception?, string>>());
     }

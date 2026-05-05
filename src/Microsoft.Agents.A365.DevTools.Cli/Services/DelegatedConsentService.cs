@@ -116,8 +116,7 @@ public sealed class DelegatedConsentService
                     if (!updated)
                     {
                         var scopeUri = Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{TargetScope}");
-                        var redirectUri = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
-                        var consentUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={callingAppId}&scope={scopeUri}&redirect_uri={redirectUri}";
+                        var consentUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={callingAppId}&scope={scopeUri}";
                         _logger.LogError(
                             "The existing permission grant could not be updated to include '{Scope}'. " +
                             "An administrator ({Roles}) must grant admin consent. " +
@@ -473,9 +472,9 @@ public sealed class DelegatedConsentService
                     _logger.LogError("Failed to update permission grant {GrantId} (HTTP {Status}): {Error}", grantId, (int)updateResponse.StatusCode, error);
                     return false;
                 }
-                // Transient server-side error — caller may retry.
-                _logger.LogDebug("Grant update returned transient error (HTTP {Status}): {Error}", (int)updateResponse.StatusCode, error);
-                return true;
+                // Transient server-side error — return false so the caller surfaces an actionable error rather than silently skipping the update.
+                _logger.LogWarning("Transient error updating permission grant {GrantId} (HTTP {Status}): {Error}", grantId, (int)updateResponse.StatusCode, error);
+                return false;
             }
 
             _logger.LogDebug("    Grant updated successfully");

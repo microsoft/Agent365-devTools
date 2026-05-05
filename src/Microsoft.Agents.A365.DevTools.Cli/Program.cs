@@ -159,7 +159,7 @@ class Program
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService, resolver: bootstrapResolver));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService, resolver: bootstrapResolver));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, resolver: bootstrapResolver));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both

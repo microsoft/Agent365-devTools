@@ -164,6 +164,58 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the Connect-MgGraph call must include -TenantId so the admin targets the correct tenant");
     }
 
+    // ── pendingAdminAction (DW path) ──────────────────────────────────────────
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdminConsentPending_ShowsActionRequired()
+    {
+        var logger = new CapturingLogger();
+        const string consentUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?client_id=bp-id";
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            AdminConsentGranted = false,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            CombinedConsentUrl = consentUrl,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger, isDw: true);
+
+        logger.AllOutput.Should().Contain("Action Required",
+            because: "when DW admin consent is pending the summary must show an action item");
+        logger.AllOutput.Should().Contain(consentUrl,
+            because: "the consent URL must appear in the action block so the admin can grant consent");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdminConsentPending_WithS2SAlsoPending_ShowsConsentUrl()
+    {
+        var logger = new CapturingLogger();
+        const string consentUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?client_id=bp-id";
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            AdminConsentGranted = false,
+            S2SAppRoleGranted = false,
+            EffectiveAuthMode = "both",
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            CombinedConsentUrl = consentUrl,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger, isDw: true);
+
+        logger.AllOutput.Should().Contain(consentUrl,
+            because: "consent URL must appear even when S2S grants are also pending — regression guard for pendingAdminAction condition");
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private static SetupResults BuildDelegatedPendingResults() => new()
