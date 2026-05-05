@@ -324,7 +324,7 @@ internal static class PermissionsSubcommand
             var botChecks = GetBotChecks(authValidator);
             await RequirementsSubcommand.RunChecksOrExitAsync(botChecks, setupConfig, logger, ct);
 
-            await ConfigureBotPermissionsAsync(
+            var success = await ConfigureBotPermissionsAsync(
                 configFile.FullName,
                 logger,
                 configService,
@@ -333,6 +333,8 @@ internal static class PermissionsSubcommand
                 graphApiService,
                 blueprintService,
                 false);
+            if (!success)
+                context.ExitCode = 1;
 
         });
 
@@ -670,19 +672,22 @@ internal static class PermissionsSubcommand
         {
             var specs = new List<ResourcePermissionSpec>(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
 
+            var localResults = setupResults ?? new SetupResults();
             var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 graphService, blueprintService, setupConfig,
                 setupConfig.AgentBlueprintId!, setupConfig.TenantId,
-                specs, logger, setupResults, cancellationToken,
+                specs, logger, localResults, cancellationToken,
                 knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
 
             await configService.SaveStateAsync(setupConfig);
 
-            var s2sFailed = setupResults?.S2SAppRoleGranted == false;
+            var s2sFailed = localResults.S2SAppRoleGranted == false;
 
             logger.LogInformation("");
-            if (!s2sFailed)
+            if (!s2sFailed && consentGranted)
                 logger.LogInformation("Bot API permissions configured successfully");
+            else if (!s2sFailed)
+                logger.LogInformation("Bot API permissions configured; admin consent required");
             else
                 logger.LogWarning(
                     "Bot API permissions configured, but S2S app role assignment failed. " +
