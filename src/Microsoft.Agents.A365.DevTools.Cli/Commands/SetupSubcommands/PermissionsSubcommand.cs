@@ -681,12 +681,15 @@ internal static class PermissionsSubcommand
 
             await configService.SaveStateAsync(setupConfig);
 
-            var s2sFailed = localResults.S2SAppRoleGranted == false;
+            // != true treats both explicit failure (false) and skipped-due-to-error (null) as failure.
+            // Consent state is checked before S2S so the non-admin path still shows "consent required"
+            // rather than the S2S warning (S2S is never attempted when consent isn't granted).
+            var s2sFailed = localResults.S2SAppRoleGranted != true;
 
             logger.LogInformation("");
             if (!s2sFailed && consentGranted)
                 logger.LogInformation("Bot API permissions configured successfully");
-            else if (!s2sFailed)
+            else if (!consentGranted)
                 logger.LogInformation("Bot API permissions configured; admin consent required");
             else
                 logger.LogWarning(
