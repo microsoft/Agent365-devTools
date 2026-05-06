@@ -110,6 +110,24 @@ public class DelegatedConsentServiceTests
         result.Should().BeTrue(because: "when the required scope is already present, no update is needed");
     }
 
+    // ── Scope absent, PATCH succeeds → returns true ──────────────────────────
+
+    [Fact]
+    public async Task EnsureBlueprintPermissionGrantAsync_WhenScopeAbsentAndPatchSucceeds_ReturnsTrue()
+    {
+        var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(SpResponse("client-sp-id"));
+        handler.QueueResponse(SpResponse("graph-sp-id"));
+        handler.QueueResponse(GrantsWithScope("grant-id", "other-scope")); // target scope absent
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK));  // PATCH succeeds
+
+        var svc = new DelegatedConsentService(NullLogger.Instance, FakeGraphServiceWithToken("tok"), handler);
+
+        var result = await svc.EnsureBlueprintPermissionGrantAsync(ValidAppId, ValidTenantId);
+
+        result.Should().BeTrue(because: "when scope is absent and PATCH succeeds, the grant is updated and setup proceeds");
+    }
+
     // ── PATCH 403 → consent URL, not a retry message ─────────────────────────
 
     [Fact]

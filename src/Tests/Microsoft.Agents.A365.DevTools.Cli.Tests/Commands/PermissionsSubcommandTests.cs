@@ -867,7 +867,7 @@ public class PermissionsSubcommandTests
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("configured successfully")),
-            Arg.Any<Exception>(),
+            Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
 
@@ -907,7 +907,7 @@ public class PermissionsSubcommandTests
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("admin consent required")),
-            Arg.Any<Exception>(),
+            Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
 
@@ -934,7 +934,7 @@ public class PermissionsSubcommandTests
             LogLevel.Warning,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("S2S app role assignment failed")),
-            Arg.Any<Exception>(),
+            Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
 
         // Assert — success message must not be logged when S2S failed.
@@ -942,7 +942,7 @@ public class PermissionsSubcommandTests
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("configured successfully")),
-            Arg.Any<Exception>(),
+            Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
 
