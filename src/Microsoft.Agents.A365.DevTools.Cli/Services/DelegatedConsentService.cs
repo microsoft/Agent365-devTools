@@ -18,6 +18,9 @@ public sealed class DelegatedConsentService
 {
     private readonly ILogger _logger;
     private readonly GraphApiService _graphService;
+    private readonly HttpMessageHandler? _handler;
+
+    private enum ScopeGrantResult { Success, NeedsAdminConsent, TransientError }
 
     // Constants
     private const string TargetScope = "AgentIdentityBlueprint.ReadWrite.All";
@@ -25,10 +28,12 @@ public sealed class DelegatedConsentService
 
     public DelegatedConsentService(
         ILogger logger,
-        GraphApiService graphService)
+        GraphApiService graphService,
+        HttpMessageHandler? handler = null)
     {
         _logger = logger;
         _graphService = graphService;
+        _handler = handler;
     }
 
     /// <summary>
@@ -75,7 +80,7 @@ public sealed class DelegatedConsentService
                 return false;
             }
 
-            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId);
+            using var httpClient = HttpClientFactory.CreateAuthenticatedClient(graphToken, correlationId: correlationId, handler: _handler);
 
             // Step 1: Get or create service principal for custom client app
             _logger.LogDebug("    Looking up service principal for client app (ID: {AppId})", callingAppId);
@@ -112,8 +117,8 @@ public sealed class DelegatedConsentService
                 // Update existing grant(s) to include required scope
                 foreach (var grant in existingGrants)
                 {
-                    var updated = await EnsureScopeOnGrantAsync(httpClient, grant, TargetScope, cancellationToken);
-                    if (!updated)
+                    var result = await EnsureScopeOnGrantAsync(httpClient, grant, TargetScope, cancellationToken);
+                    if (result == ScopeGrantResult.NeedsAdminConsent)
                     {
                         var scopeUri = Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{TargetScope}");
                         var consentUrl = $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={callingAppId}&scope={scopeUri}";
@@ -123,6 +128,11 @@ public sealed class DelegatedConsentService
                             "Share this URL with an administrator to grant consent: {ConsentUrl}",
                             TargetScope, AuthenticationConstants.DelegatedGrantRequiredRoles, consentUrl);
                         _logger.LogError("After consent is granted, re-run the command.");
+                        return false;
+                    }
+                    else if (result == ScopeGrantResult.TransientError)
+                    {
+                        _logger.LogError("A transient error occurred while updating the permission grant. Please retry the command.");
                         return false;
                     }
                 }
@@ -416,7 +426,7 @@ public sealed class DelegatedConsentService
     /// Ensures the specified scope is present on an existing grant
     /// Equivalent to Ensure-ScopeOnGrant in PowerShell
     /// </summary>
-    private async Task<bool> EnsureScopeOnGrantAsync(
+    private async Task<ScopeGrantResult> EnsureScopeOnGrantAsync(
         HttpClient httpClient,
         JsonElement grant,
         string scopeToAdd,
@@ -438,7 +448,7 @@ public sealed class DelegatedConsentService
             if (existingScopes.Contains(scopeToAdd))
             {
                 _logger.LogDebug("    Scope '{Scope}' already exists on grant {GrantId}", scopeToAdd, grantId);
-                return true;
+                return ScopeGrantResult.Success;
             }
 
             // Add new scope
@@ -468,22 +478,21 @@ public sealed class DelegatedConsentService
                 if ((int)updateResponse.StatusCode is >= 400 and < 500)
                 {
                     // Non-transient failure (e.g., 403 Forbidden — caller lacks DelegatedPermissionGrant.ReadWrite.All).
-                    // Return false so the caller can surface a clear, actionable error.
                     _logger.LogError("Failed to update permission grant {GrantId} (HTTP {Status}): {Error}", grantId, (int)updateResponse.StatusCode, error);
-                    return false;
+                    return ScopeGrantResult.NeedsAdminConsent;
                 }
-                // Transient server-side error — return false so the caller surfaces an actionable error rather than silently skipping the update.
+                // Transient server-side error (5xx).
                 _logger.LogWarning("Transient error updating permission grant {GrantId} (HTTP {Status}): {Error}", grantId, (int)updateResponse.StatusCode, error);
-                return false;
+                return ScopeGrantResult.TransientError;
             }
 
             _logger.LogDebug("    Grant updated successfully");
-            return true;
+            return ScopeGrantResult.Success;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Exception in EnsureScopeOnGrantAsync");
-            return false;
+            return ScopeGrantResult.TransientError;
         }
     }
 

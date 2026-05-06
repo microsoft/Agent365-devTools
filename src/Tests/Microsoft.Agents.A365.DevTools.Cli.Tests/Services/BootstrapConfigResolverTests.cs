@@ -222,6 +222,52 @@ public class BootstrapConfigResolverTests : IDisposable
             because: "the tenant must be detected from az account show output");
     }
 
+    // ── CheckAndBackupStaleConfigAsync ───────────────────────────────────────
+
+    [Fact]
+    public async Task CheckAndBackupStaleConfigAsync_WhenTenantMismatch_BacksUpAndReturnsTrue()
+    {
+        var configPath = Path.Combine(_tempDir, "a365.config.json");
+        File.WriteAllText(configPath, """{"tenantId": "old-tenant"}""");
+
+        _executor.ExecuteAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(a => a.Contains("account show")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = "new-tenant",
+                StandardError = string.Empty
+            }));
+
+        var resolver = CreateResolver();
+        var result = await resolver.CheckAndBackupStaleConfigAsync(configPath);
+
+        result.Should().BeTrue(
+            because: "when the current tenant differs from the config tenant, the config is backed up and the caller must start fresh");
+        File.Exists(configPath).Should().BeFalse(
+            because: "the stale config file must be removed after backup");
+        Directory.GetFiles(_tempDir, "a365.config.json.bak.*").Should().HaveCountGreaterThan(0,
+            because: "the stale config must be preserved as a timestamped backup");
+    }
+
+    [Fact]
+    public async Task CheckAndBackupStaleConfigAsync_WhenAzCliUnavailable_ReturnsFalse()
+    {
+        var configPath = Path.Combine(_tempDir, "a365.config.json");
+        File.WriteAllText(configPath, """{"tenantId": "some-tenant"}""");
+
+        // Default stub returns StandardOutput = string.Empty — simulates az CLI unavailable
+        var resolver = CreateResolver();
+        var result = await resolver.CheckAndBackupStaleConfigAsync(configPath);
+
+        result.Should().BeFalse(
+            because: "when az CLI is unavailable, the tenant check is skipped and the caller proceeds normally");
+        File.Exists(configPath).Should().BeTrue(
+            because: "the config must not be backed up when the tenant check could not run");
+    }
+
     // ── Cleanup mode: blueprint ID resolved from Entra ────────────────────────
 
     [Fact]

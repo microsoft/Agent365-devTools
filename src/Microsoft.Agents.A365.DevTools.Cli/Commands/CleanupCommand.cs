@@ -1360,8 +1360,9 @@ public class CleanupCommand
             logger.LogInformation("Loaded configuration successfully from {ConfigFile}", configPath);
             return config;
         }
-        catch (ConfigFileNotFoundException)
+        catch (ConfigFileNotFoundException ex)
         {
+            logger.LogDebug("{Detail}", ex.IssueDescription);
             logger.LogError("Specify the agent to clean up: a365 cleanup --agent-name <name>");
             return null;
         }

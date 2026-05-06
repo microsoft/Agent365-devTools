@@ -55,6 +55,14 @@ public interface IBootstrapConfigResolver
     /// without inheriting stale resource IDs from a previous run.
     /// </summary>
     Task BackupAndClearStaleConfigAsync(string configPath, string resolvedTenantId);
+
+    /// <summary>
+    /// Detects the current az CLI tenant via <c>az account show</c> and compares it against the
+    /// tenant stored in <paramref name="configPath"/>. If they differ, backs up both config files
+    /// and returns <c>true</c> so the caller can start fresh. Returns <c>false</c> when az CLI is
+    /// unavailable, not signed in, or the tenants match — in all cases the caller may proceed normally.
+    /// </summary>
+    Task<bool> CheckAndBackupStaleConfigAsync(string configPath, CancellationToken ct = default);
 }
 
 /// <inheritdoc/>
@@ -205,6 +213,16 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         }
     }
 
+    /// <inheritdoc/>
+    public async Task<bool> CheckAndBackupStaleConfigAsync(string configPath, CancellationToken ct = default)
+    {
+        var currentTenant = await TryGetCurrentAzTenantAsync();
+        if (string.IsNullOrWhiteSpace(currentTenant))
+            return false;
+        await BackupAndClearStaleConfigAsync(configPath, currentTenant);
+        return !File.Exists(configPath);
+    }
+
     private async Task<string?> TryGetCurrentAzTenantAsync()
     {
         try
@@ -215,7 +233,11 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             var tenant = result.StandardOutput?.Trim();
             return string.IsNullOrWhiteSpace(tenant) ? null : tenant;
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve current Azure CLI tenant.");
+            return null;
+        }
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

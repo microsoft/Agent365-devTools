@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using System.CommandLine;
+using System.Text.Json;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
@@ -739,6 +740,265 @@ public class PermissionsSubcommandTests
     // - Multiple permissions with mixed lookup results
     // - Invalid permission validation
     // - SetupResults tracking for custom permissions
+
+    #endregion
+
+    #region ConfigureBotPermissionsAsync — Issue 402 Regression Tests
+    // Regression tests for the localResults fix: S2S failure was invisible when setupResults=null.
+
+    private Agent365Config ArrangeAdminPath(bool s2sSucceeds)
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-app-id",
+            AgentBlueprintServicePrincipalObjectId = "blueprint-sp-id"
+        };
+
+        _mockGraphApiService.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("resource-sp-id"));
+
+        _mockGraphApiService.IsCurrentUserAdminAsync(
+            Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.HasRole));
+
+        _mockGraphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
+
+        _mockBlueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
+
+        _mockBlueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(s2sSucceeds));
+
+        _mockGraphApiService.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(callInfo =>
+            {
+                var path = callInfo.ArgAt<string>(1);
+                return path.Contains("/me")
+                    ? Task.FromResult<JsonDocument?>(JsonDocument.Parse("{\"id\":\"mock-user-id\"}"))
+                    : Task.FromResult<JsonDocument?>(null);
+            });
+
+        _mockBlueprintService.VerifyInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<(bool, string[], string?)>((true, Array.Empty<string>(), null)));
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>())
+            .Returns(Task.CompletedTask);
+
+        return config;
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenS2SFailsAndNoExternalSetupResults_ReturnsFalse()
+    {
+        // Arrange — admin user, OAuth2 grants succeed, S2S grant fails, no external SetupResults.
+        var config = ArrangeAdminPath(s2sSucceeds: false);
+
+        // Act — no external SetupResults, mirrors how the CLI handler calls this method.
+        var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+            "config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            config,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            iSetupAll: false,
+            setupResults: null);
+
+        // Assert
+        result.Should().BeFalse(
+            because: "the method must create a local SetupResults so S2S failure is captured " +
+                     "even when called without an external setupResults (the CLI handler path)");
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("S2S app role assignment failed")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_WhenGraphAuthFails_DoesNotLogSuccessMessage()
+    {
+        // Arrange — all Graph calls return null → phase1Result=null (auth failed); consentGranted=false; S2S not attempted.
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-app-id"
+        };
+
+        _mockGraphApiService.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<JsonDocument?>(null));
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+            "config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            config,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            iSetupAll: false,
+            setupResults: null);
+
+        // Assert
+        result.Should().BeFalse(because: "consentGranted=false when Graph auth fails");
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("configured successfully")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_WhenGraphAuthFails_LogsConsentRequiredMessage()
+    {
+        // Arrange — all Graph calls return null → phase1Result=null (auth failed); consentGranted=false, S2S not attempted.
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-app-id"
+        };
+
+        _mockGraphApiService.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<JsonDocument?>(null));
+
+        _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>())
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+            "config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            config,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            iSetupAll: false,
+            setupResults: null);
+
+        // Assert
+        result.Should().BeFalse(because: "consentGranted=false when Graph auth fails");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("admin consent required")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenS2SFails_EmitsS2SWarningAndSuppressesSuccessLog()
+    {
+        // Arrange — admin user, OAuth2 grants succeed, S2S grant fails.
+        var config = ArrangeAdminPath(s2sSucceeds: false);
+
+        // Act
+        _ = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+            "config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            config,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            iSetupAll: false,
+            setupResults: null);
+
+        // Assert — S2S failure warning must be logged.
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("S2S app role assignment failed")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        // Assert — success message must not be logged when S2S failed.
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("configured successfully")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenAllSucceeds_ReturnsTrueAndLogsSuccess()
+    {
+        // Arrange — admin user, all OAuth2 grants succeed, S2S grant succeeds.
+        var config = ArrangeAdminPath(s2sSucceeds: true);
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+            "config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            config,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            iSetupAll: false,
+            setupResults: null);
+
+        // Assert
+        result.Should().BeTrue(because: "all grants and S2S succeed — method must return true");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("configured successfully")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenS2SFailsWithExternalSetupResults_PopulatesS2SFlagAndReturnsFalse()
+    {
+        // Arrange — S2S fails, non-null SetupResults passed in (AllSubcommand path).
+        var config = ArrangeAdminPath(s2sSucceeds: false);
+        var externalResults = new SetupResults();
+
+        // Act
+        var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+            "config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            config,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            iSetupAll: false,
+            setupResults: externalResults);
+
+        // Assert
+        result.Should().BeFalse(
+            because: "S2S failure must propagate via the external SetupResults reference");
+        externalResults.S2SAppRoleGranted.Should().BeFalse(
+            because: "the orchestrator must write S2SAppRoleGranted=false to the caller's SetupResults");
+    }
 
     #endregion
 }

@@ -41,8 +41,11 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 ### Fixed
 - `setup all` no longer inherits stale resource IDs when the user switches tenants between runs (`az logout` + `az login` to a different tenant). The CLI detects the tenant change before loading configuration, silently backs up files from the previous run, and prompts the user to re-run with `--agent-name` for a clean setup in the new tenant.
+- `setup permissions bot` no longer emits "Bot API permissions configured successfully" when any S2S app-role assignment fails; shows a warning with retry instructions instead.
+- Consent-required message "You are running as a non-admin user and cannot grant admin consent" replaced with "An administrator must grant tenant-wide consent to proceed" — the message fires when tenant-wide consent for S2S scopes has not yet been granted, not when the caller lacks admin rights.
 - `setup all --agent-name` re-runs no longer create a duplicate agent registration: the CLI now reads `agentRegistrationId` from `a365.generated.config.json` (when present) and checks for an existing registration before posting a new one.
 - `setup all` now skips agent registration with a clear warning when the agent identity ID is not available, instead of silently sending an invalid request. Retry with `a365 setup all --agent-registration-only` once the identity is ready.
+- `setup permissions bot` now returns a non-zero exit code when an S2S app role assignment fails, so callers and scripts can detect the failure.
 - `setup all --agent-registration-only` reliability fixes: stored IDs are now correctly read in bootstrap (`--agent-name`) mode; falls back to a Graph API lookup when `agenticAppId` is missing; skips identity, permission, and project-settings steps that don't apply.
 
 ### Removed

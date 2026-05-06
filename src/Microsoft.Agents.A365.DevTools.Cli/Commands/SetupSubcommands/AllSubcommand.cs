@@ -426,29 +426,11 @@ internal static class AllSubcommand
                 {
                     // Check for tenant mismatch before loading — if the user switched az login
                     // tenants since the last setup run, back up stale config and start clean.
-                    string? currentTenant = null;
-                    try
+                    if (resolver != null && await resolver.CheckAndBackupStaleConfigAsync(config.FullName, ct))
                     {
-                        var azResult = await executor.ExecuteAsync(
-                            "az", "account show --query tenantId -o tsv",
-                            captureOutput: true, suppressErrorLogging: true);
-                        currentTenant = azResult.StandardOutput?.Trim();
-                    }
-                    catch { /* az CLI unavailable — skip tenant mismatch check */ }
-
-                    if (!string.IsNullOrWhiteSpace(currentTenant))
-                    {
-                        if (resolver != null)
-                            await resolver.BackupAndClearStaleConfigAsync(config.FullName, currentTenant);
-                        else
-                            await BackupAndClearStaleConfigAsync(config.FullName, currentTenant, logger);
-
-                        if (!File.Exists(config.FullName))
-                        {
-                            logger.LogInformation("Run 'a365 setup all --agent-name <name>' to set up for the new tenant.");
-                            context.ExitCode = 1;
-                            return;
-                        }
+                        logger.LogInformation("Run 'a365 setup all --agent-name <name>' to set up for the new tenant.");
+                        context.ExitCode = 1;
+                        return;
                     }
 
                     setupConfig = await configService.LoadAsync(config.FullName);
@@ -1003,7 +985,7 @@ internal static class AllSubcommand
             "current session is tenant {NewTenant}. Starting fresh setup for the new tenant.",
             existingTenantId, resolvedTenantId);
 
-        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
         var configDir = Path.GetDirectoryName(configPath) ?? Environment.CurrentDirectory;
 
         var configBackup = configPath + ".bak." + timestamp;

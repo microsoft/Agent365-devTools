@@ -324,7 +324,7 @@ internal static class PermissionsSubcommand
             var botChecks = GetBotChecks(authValidator);
             await RequirementsSubcommand.RunChecksOrExitAsync(botChecks, setupConfig, logger, ct);
 
-            await ConfigureBotPermissionsAsync(
+            var success = await ConfigureBotPermissionsAsync(
                 configFile.FullName,
                 logger,
                 configService,
@@ -333,6 +333,8 @@ internal static class PermissionsSubcommand
                 graphApiService,
                 blueprintService,
                 false);
+            if (!success)
+                context.ExitCode = 1;
 
         });
 
@@ -670,22 +672,36 @@ internal static class PermissionsSubcommand
         {
             var specs = new List<ResourcePermissionSpec>(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
 
+            var localResults = setupResults ?? new SetupResults();
             var (_, _, consentGranted, _) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 graphService, blueprintService, setupConfig,
                 setupConfig.AgentBlueprintId!, setupConfig.TenantId,
-                specs, logger, setupResults, cancellationToken,
+                specs, logger, localResults, cancellationToken,
                 knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
 
             await configService.SaveStateAsync(setupConfig);
 
+            // != true treats both explicit failure (false) and skipped-due-to-error (null) as failure.
+            // Consent state is checked before S2S so the non-admin path still shows "consent required"
+            // rather than the S2S warning (S2S is never attempted when consent isn't granted).
+            var s2sFailed = localResults.S2SAppRoleGranted != true;
+
             logger.LogInformation("");
-            logger.LogInformation("Bot API permissions configured successfully");
+            if (!s2sFailed && consentGranted)
+                logger.LogInformation("Bot API permissions configured successfully");
+            else if (!consentGranted)
+                logger.LogInformation("Bot API permissions configured; admin consent required");
+            else
+                logger.LogWarning(
+                    "Bot API permissions configured, but S2S app role assignment failed. " +
+                    "Re-run 'a365 setup permissions bot' as {Roles} to retry.",
+                    AuthenticationConstants.S2SGrantRequiredRoles);
             logger.LogInformation("");
             if (!iSetupAll)
             {
                 logger.LogInformation("Next step: Deploy your agent (run 'a365 deploy' if hosting on Azure)");
             }
-            return consentGranted;
+            return consentGranted && !s2sFailed;
         }
         catch (Exception ex)
         {

@@ -456,9 +456,10 @@ internal static class SetupHelpers
         var permissionGrantsPending = isS2SFlow
             ? results.S2SAppRoleGranted == false
             : !permissionGrantsCompleted && results.BatchPermissionsPhase2Completed;
-        var pendingAdminAction = !isNonDw && !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
-        var pendingS2SAction = permissionGrantsPending && isS2SFlow;
         var pendingDelegatedAction = results.AgentIdentityDelegatedGrantPending;
+        var delegatedConsentApplicable = !isS2SFlow || isBothMode;
+        var pendingAdminAction = !isNonDw && delegatedConsentApplicable && !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
+        var pendingS2SAction = permissionGrantsPending && isS2SFlow;
 
         if (results.PermissionGrantsSkipped && isNonDw)
         {
