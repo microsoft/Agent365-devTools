@@ -171,7 +171,7 @@ internal static class BlueprintSubcommand
         var showSecretOption = new Option<bool>(
             "--show-secret",
             description: "Display the stored blueprint client secret in plaintext.\n" +
-                         "Reads a365.generated.config.json — no setup steps are performed.\n" +
+                         "No setup steps are performed.\n" +
                          "On Windows, requires the same machine and user account that ran setup.");
 
         command.AddOption(agentNameOption);
@@ -205,17 +205,17 @@ internal static class BlueprintSubcommand
             {
                 var generatedConfigPath = ConfigService.GetGeneratedConfigFilePath();
                 var storedConfig = generatedConfigPath != null
-                    ? await configService.LoadAsync(new FileInfo("a365.config.json").FullName)
+                    ? await configService.LoadAsync(config.FullName)
                     : null;
 
                 if (storedConfig is null || string.IsNullOrWhiteSpace(storedConfig.AgentBlueprintClientSecret))
                 {
-                    logger.LogError("No blueprint client secret found in a365.generated.config.json.");
+                    logger.LogError("No blueprint client secret found.");
                     logger.LogInformation("");
                     logger.LogInformation("To generate one, run:");
                     logger.LogInformation("  a365 setup blueprint --agent-name <name>");
                     logger.LogInformation("");
-                    logger.LogInformation("The secret will be displayed at creation time and stored in a365.generated.config.json.");
+                    logger.LogInformation("The secret is displayed at creation time.");
                     context.ExitCode = 1;
                     return;
                 }
@@ -228,8 +228,6 @@ internal static class BlueprintSubcommand
                 logger.LogInformation("");
                 logger.LogInformation("  Blueprint client secret: {Secret}", plaintext);
                 logger.LogInformation("");
-                if (storedConfig.AgentBlueprintClientSecretProtected)
-                    logger.LogInformation("  (Decrypted using DPAPI — requires the same Windows user and machine that ran setup.)");
                 return;
             }
 
@@ -1995,6 +1993,19 @@ internal static class BlueprintSubcommand
         using var clientSecretScope = logger.Indent();
         try
         {
+            // Check ownership before attempting creation — warn early if the current user is not an
+            // owner so they know why the POST /addPassword will return 403 Authorization_RequestDenied.
+            if (!string.IsNullOrWhiteSpace(setupConfig.TenantId) && !string.IsNullOrWhiteSpace(blueprintObjectId))
+            {
+                var isOwner = await graphService.IsApplicationOwnerAsync(setupConfig.TenantId, blueprintObjectId, ct: ct);
+                if (!isOwner)
+                {
+                    logger.LogWarning("You are not an owner of this blueprint. Client secret creation will fail.");
+                    logger.LogWarning("Ask a blueprint owner to run setup, or add yourself as an owner first:");
+                    logger.LogWarning("  https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{AppId}", blueprintAppId);
+                }
+            }
+
             // Resolve login hint so WAM targets the az-logged-in user, not the OS default account.
             // Without this, WAM may return a cached token for a different user who is not the owner.
             var loginHint = loginHintResolver != null
@@ -2094,16 +2105,12 @@ internal static class BlueprintSubcommand
             logger.LogInformation("");
             logger.LogInformation("  Blueprint client secret: {Secret}", secretText);
             logger.LogWarning("Copy this value now — it will not be shown again.");
-            logger.LogWarning("If you need to retrieve it later, run: a365 setup blueprint --show-secret");
+            if (isProtected)
+                logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder, Windows machine, and user account.");
+            else
+                logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder.");
             logger.LogInformation("");
-            logger.LogWarning("IMPORTANT: The client secret has been stored in a365.generated.config.json");
-            logger.LogWarning("Keep this file secure and do not commit it to source control!");
-
-            if (!isProtected)
-            {
-                logger.LogWarning("WARNING: Secret encryption is only available on Windows. The secret is stored in plaintext.");
-                logger.LogWarning("Consider using environment variables or Azure Key Vault for production deployments.");
-            }
+            logger.LogWarning("Keep your credentials secure and do not commit them to source control!");
 
             return true;
         }

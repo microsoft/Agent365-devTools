@@ -1780,4 +1780,209 @@ public class BlueprintSubcommandTests
     }
 
     #endregion
+
+    #region Ownership Check Tests
+
+    [Fact]
+    public async Task CreateBlueprintClientSecret_WhenUserIsNotOwner_LogsOwnershipWarning()
+    {
+        // Arrange
+        _mockGraphApiService.IsApplicationOwnerAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(false));
+
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000001",
+            ClientAppId = "" // empty → AcquireMsalGraphTokenAsync guard returns null immediately
+        };
+
+        // Act — method returns false after token acquisition fails; that is expected in this test
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "object-id",
+            blueprintAppId: "app-id",
+            graphService: _mockGraphApiService,
+            setupConfig: config,
+            configService: _mockConfigService,
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        // Assert
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not an owner")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecret_WhenUserIsOwner_DoesNotLogOwnershipWarning()
+    {
+        // Arrange
+        _mockGraphApiService.IsApplicationOwnerAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
+
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000001",
+            ClientAppId = ""
+        };
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "object-id",
+            blueprintAppId: "app-id",
+            graphService: _mockGraphApiService,
+            setupConfig: config,
+            configService: _mockConfigService,
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        // Assert — ownership warning must not fire when current user is an owner
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not an owner")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    #endregion
+}
+
+/// <summary>
+/// Tests for the --show-secret path that require a real a365.generated.config.json file
+/// in the working directory. Runs sequentially to avoid file-system races.
+/// </summary>
+[CollectionDefinition("BlueprintShowSecret", DisableParallelization = true)]
+public class BlueprintShowSecretCollection { }
+
+[Collection("BlueprintShowSecret")]
+public class BlueprintSubcommandShowSecretTests : IDisposable
+{
+    private readonly ILogger _mockLogger;
+    private readonly IConfigService _mockConfigService;
+    private readonly CommandExecutor _mockExecutor;
+    private readonly AzureAuthValidator _mockAuthValidator;
+    private readonly PlatformDetector _mockPlatformDetector;
+    private readonly ITeamsGraphBackendConfigurator _mockBackendConfigurator;
+    private readonly GraphApiService _mockGraphApiService;
+    private readonly AgentBlueprintService _mockBlueprintService;
+    private readonly IClientAppValidator _mockClientAppValidator;
+    private readonly BlueprintLookupService _mockBlueprintLookupService;
+    private readonly FederatedCredentialService _mockFederatedCredentialService;
+    private readonly string _generatedConfigPath;
+
+    public BlueprintSubcommandShowSecretTests()
+    {
+        _mockLogger = Substitute.For<ILogger>();
+        _mockConfigService = Substitute.For<IConfigService>();
+        var mockExecutorLogger = Substitute.For<ILogger<CommandExecutor>>();
+        _mockExecutor = Substitute.For<CommandExecutor>(mockExecutorLogger);
+        _mockExecutor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
+        _mockAuthValidator = Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, _mockExecutor);
+        var mockPlatformDetectorLogger = Substitute.For<ILogger<PlatformDetector>>();
+        _mockPlatformDetector = Substitute.ForPartsOf<PlatformDetector>(mockPlatformDetectorLogger);
+        _mockBackendConfigurator = Substitute.For<ITeamsGraphBackendConfigurator>();
+        _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
+            Substitute.For<ILogger<GraphApiService>>(), _mockExecutor, (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+        _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
+        _mockClientAppValidator = Substitute.For<IClientAppValidator>();
+        _mockBlueprintLookupService = Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), _mockGraphApiService);
+        _mockFederatedCredentialService = Substitute.ForPartsOf<FederatedCredentialService>(Substitute.For<ILogger<FederatedCredentialService>>(), _mockGraphApiService);
+
+        _generatedConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
+        // Clean up any stale file from a previous run before each test
+        if (File.Exists(_generatedConfigPath))
+            File.Delete(_generatedConfigPath);
+    }
+
+    public void Dispose()
+    {
+        if (File.Exists(_generatedConfigPath))
+            File.Delete(_generatedConfigPath);
+    }
+
+    private Command BuildCommand() => BlueprintSubcommand.CreateCommand(
+        _mockLogger, _mockConfigService, _mockExecutor, _mockAuthValidator,
+        _mockPlatformDetector, _mockBackendConfigurator, _mockGraphApiService,
+        _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService,
+        _mockFederatedCredentialService);
+
+    [Fact]
+    public async Task ShowSecret_WhenNoGeneratedConfigExists_SetsExitCode1AndLogsGuidance()
+    {
+        // Arrange — no a365.generated.config.json file (cleaned in constructor)
+        var parser = new CommandLineBuilder(BuildCommand()).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var exitCode = await parser.InvokeAsync("--show-secret", testConsole);
+
+        // Assert
+        exitCode.Should().Be(1, because: "no stored secret means setup has not been run");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("No blueprint client secret found")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ShowSecret_WhenGeneratedConfigExistsButNoSecret_SetsExitCode1()
+    {
+        // Arrange — file exists but LoadAsync returns config with no secret stored
+        await File.WriteAllTextAsync(_generatedConfigPath, "{}");
+
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(new Agent365Config { AgentBlueprintClientSecret = null }));
+
+        var parser = new CommandLineBuilder(BuildCommand()).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var exitCode = await parser.InvokeAsync("--show-secret", testConsole);
+
+        // Assert
+        exitCode.Should().Be(1, because: "an empty secret is treated the same as no secret");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("No blueprint client secret found")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ShowSecret_WhenSecretStored_LogsSecretAndReturnsExitCode0()
+    {
+        // Arrange — file exists and LoadAsync returns config with a plaintext secret
+        await File.WriteAllTextAsync(_generatedConfigPath, "{}");
+
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(new Agent365Config
+            {
+                AgentBlueprintClientSecret = "test-secret-value",
+                AgentBlueprintClientSecretProtected = false // plaintext — no DPAPI in tests
+            }));
+
+        var parser = new CommandLineBuilder(BuildCommand()).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var exitCode = await parser.InvokeAsync("--show-secret", testConsole);
+
+        // Assert
+        exitCode.Should().Be(0, because: "a stored secret should be displayed successfully");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("test-secret-value")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
 }

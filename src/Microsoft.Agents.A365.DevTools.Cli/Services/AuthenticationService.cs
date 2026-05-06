@@ -167,7 +167,7 @@ public class AuthenticationService : IAuthenticationService
         }
 
         // Authenticate interactively with specific tenant and scopes
-        _logger.LogInformation("Authentication required for Agent 365 Tools");
+        _logger.LogDebug("Authentication required for Agent 365 Tools");
         var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, ct: ct);
 
         // Validate the token identity before caching: if a userId was requested,
