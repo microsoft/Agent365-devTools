@@ -23,6 +23,8 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- `setup blueprint --show-secret` — displays the blueprint client secret stored in `a365.generated.config.json` in plaintext without re-running any setup steps. On Windows, decryption requires the same machine and user account that ran setup (DPAPI). When no secret is found, the command prints instructions to run `a365 setup blueprint --agent-name <name>`.
+- Blueprint client secret is now printed to the terminal at creation time with a "copy this value now" warning. Use `a365 setup blueprint --show-secret` to retrieve it afterwards.
 - Version check: stable-channel users now see an informational notice when a newer preview release exists above the current stable version, without triggering the update-required banner.
 - `setup requirements` Global Administrator path: when the well-known CLI client app is not found in a new tenant, Global Admins are prompted to create the app and grant admin consent automatically (enter an app ID or type `C` to create).
 - `--authmode obo|s2s|both` option on `setup all` — controls how the agent identity service principal receives permissions:

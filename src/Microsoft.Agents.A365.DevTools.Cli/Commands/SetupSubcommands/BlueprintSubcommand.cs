@@ -168,6 +168,12 @@ internal static class BlueprintSubcommand
             description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint " +
                         "via MCP Platform. Default is false (opt-in); omit this flag for non-M365 agents.");
 
+        var showSecretOption = new Option<bool>(
+            "--show-secret",
+            description: "Display the stored blueprint client secret in plaintext.\n" +
+                         "Reads a365.generated.config.json — no setup steps are performed.\n" +
+                         "On Windows, requires the same machine and user account that ran setup.");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -177,6 +183,7 @@ internal static class BlueprintSubcommand
         command.AddOption(updateEndpointOption);
         command.AddOption(skipRequirementsOption);
         command.AddOption(m365Option);
+        command.AddOption(showSecretOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -190,7 +197,41 @@ internal static class BlueprintSubcommand
             var updateEndpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
             var ct = context.GetCancellationToken();
+
+            // --show-secret: read-only, no setup steps
+            if (showSecret)
+            {
+                var generatedConfigPath = ConfigService.GetGeneratedConfigFilePath();
+                var storedConfig = generatedConfigPath != null
+                    ? await configService.LoadAsync(new FileInfo("a365.config.json").FullName)
+                    : null;
+
+                if (storedConfig is null || string.IsNullOrWhiteSpace(storedConfig.AgentBlueprintClientSecret))
+                {
+                    logger.LogError("No blueprint client secret found in a365.generated.config.json.");
+                    logger.LogInformation("");
+                    logger.LogInformation("To generate one, run:");
+                    logger.LogInformation("  a365 setup blueprint --agent-name <name>");
+                    logger.LogInformation("");
+                    logger.LogInformation("The secret will be displayed at creation time and stored in a365.generated.config.json.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var plaintext = Helpers.SecretProtectionHelper.UnprotectSecret(
+                    storedConfig.AgentBlueprintClientSecret,
+                    storedConfig.AgentBlueprintClientSecretProtected,
+                    logger);
+
+                logger.LogInformation("");
+                logger.LogInformation("  Blueprint client secret: {Secret}", plaintext);
+                logger.LogInformation("");
+                if (storedConfig.AgentBlueprintClientSecretProtected)
+                    logger.LogInformation("  (Decrypted using DPAPI — requires the same Windows user and machine that ran setup.)");
+                return;
+            }
 
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -2038,7 +2079,8 @@ internal static class BlueprintSubcommand
                 throw new InvalidOperationException("Client secret creation returned empty secret");
             }
 
-            var protectedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.ProtectSecret(secretTextNode.GetValue<string>(), logger);
+            var secretText = secretTextNode.GetValue<string>();
+            var protectedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.ProtectSecret(secretText, logger);
 
             var isProtected = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             setupConfig.AgentBlueprintClientSecret = protectedSecret;
@@ -2049,7 +2091,11 @@ internal static class BlueprintSubcommand
             await configService.SaveStateAsync(setupConfig);
 
             logger.LogInformation("Client secret created successfully!");
-            logger.LogInformation($"  - Secret stored in generated config (encrypted: {isProtected})");
+            logger.LogInformation("");
+            logger.LogInformation("  Blueprint client secret: {Secret}", secretText);
+            logger.LogWarning("Copy this value now — it will not be shown again.");
+            logger.LogWarning("If you need to retrieve it later, run: a365 setup blueprint --show-secret");
+            logger.LogInformation("");
             logger.LogWarning("IMPORTANT: The client secret has been stored in a365.generated.config.json");
             logger.LogWarning("Keep this file secure and do not commit it to source control!");
 
