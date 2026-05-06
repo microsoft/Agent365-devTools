@@ -424,6 +424,33 @@ internal static class AllSubcommand
                 }
                 else
                 {
+                    // Check for tenant mismatch before loading — if the user switched az login
+                    // tenants since the last setup run, back up stale config and start clean.
+                    string? currentTenant = null;
+                    try
+                    {
+                        var azResult = await executor.ExecuteAsync(
+                            "az", "account show --query tenantId -o tsv",
+                            captureOutput: true, suppressErrorLogging: true);
+                        currentTenant = azResult.StandardOutput?.Trim();
+                    }
+                    catch { /* az CLI unavailable — skip tenant mismatch check */ }
+
+                    if (!string.IsNullOrWhiteSpace(currentTenant))
+                    {
+                        if (resolver != null)
+                            await resolver.BackupAndClearStaleConfigAsync(config.FullName, currentTenant);
+                        else
+                            await BackupAndClearStaleConfigAsync(config.FullName, currentTenant, logger);
+
+                        if (!File.Exists(config.FullName))
+                        {
+                            logger.LogInformation("Run 'a365 setup all --agent-name <name>' to set up for the new tenant.");
+                            context.ExitCode = 1;
+                            return;
+                        }
+                    }
+
                     setupConfig = await configService.LoadAsync(config.FullName);
                 }
 
@@ -971,9 +998,9 @@ internal static class AllSubcommand
         if (!shouldBackup)
             return;
 
-        logger.LogWarning(
-            "Existing config files belong to tenant {OldTenant} but the current az login session " +
-            "is for tenant {NewTenant}. Backing up and removing stale config files to start clean.",
+        logger.LogInformation(
+            "Detected tenant change — previous setup was for tenant {OldTenant}, " +
+            "current session is tenant {NewTenant}. Starting fresh setup for the new tenant.",
             existingTenantId, resolvedTenantId);
 
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -981,14 +1008,14 @@ internal static class AllSubcommand
 
         var configBackup = configPath + ".bak." + timestamp;
         File.Move(configPath, configBackup);
-        logger.LogInformation("  Backed up: {File}", Path.GetFileName(configBackup));
+        logger.LogDebug("Backed up: {File}", Path.GetFileName(configBackup));
 
         var generatedPath = Path.Combine(configDir, "a365.generated.config.json");
         if (File.Exists(generatedPath))
         {
             var generatedBackup = generatedPath + ".bak." + timestamp;
             File.Move(generatedPath, generatedBackup);
-            logger.LogInformation("  Backed up: {File}", Path.GetFileName(generatedBackup));
+            logger.LogDebug("Backed up: {File}", Path.GetFileName(generatedBackup));
         }
     }
 

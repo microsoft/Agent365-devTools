@@ -68,6 +68,84 @@ public class BootstrapConfigResolverTests : IDisposable
             because: "when the config file exists and no agent-name is supplied, the file must be loaded");
     }
 
+    [Fact]
+    public async Task ResolveAsync_WhenConfigExistsForDifferentTenant_BacksUpAndReturnsNull()
+    {
+        var configFile = new FileInfo(Path.Combine(_tempDir, "a365.config.json"));
+        File.WriteAllText(configFile.FullName, """{"tenantId": "old-tenant"}""");
+
+        // az account show returns a different tenant
+        _executor.ExecuteAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(a => a.Contains("account show")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = "new-tenant",
+                StandardError = string.Empty
+            }));
+
+        var resolver = CreateResolver();
+        var result = await resolver.ResolveAsync(agentName: null, tenantIdFlag: null, configFile);
+
+        result.Should().BeNull(
+            because: "when the config belongs to a different tenant, setup must start fresh — caller receives null to exit cleanly");
+        File.Exists(configFile.FullName).Should().BeFalse(
+            because: "the stale config must be backed up and removed before the caller proceeds");
+        Directory.GetFiles(_tempDir, "a365.config.json.bak.*").Should().HaveCountGreaterThan(0,
+            because: "the stale config must be backed up with a timestamp suffix");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WhenConfigExistsAndTenantMatches_LoadsNormally()
+    {
+        var configFile = new FileInfo(Path.Combine(_tempDir, "a365.config.json"));
+        File.WriteAllText(configFile.FullName, """{"tenantId": "current-tenant"}""");
+
+        _executor.ExecuteAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(a => a.Contains("account show")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = "current-tenant",
+                StandardError = string.Empty
+            }));
+
+        var expected = new Agent365Config { TenantId = "current-tenant" };
+        _configService.LoadAsync(configFile.FullName).Returns(expected);
+
+        var resolver = CreateResolver();
+        var result = await resolver.ResolveAsync(agentName: null, tenantIdFlag: null, configFile);
+
+        result.Should().BeSameAs(expected,
+            because: "when the tenant matches, the config must be loaded without backup");
+        File.Exists(configFile.FullName).Should().BeTrue(
+            because: "the config must not be touched when tenants match");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WhenAzCliUnavailable_LoadsConfigNormally()
+    {
+        var configFile = new FileInfo(Path.Combine(_tempDir, "a365.config.json"));
+        File.WriteAllText(configFile.FullName, "{}");
+
+        // Default executor stub returns StandardOutput = string.Empty — simulates az CLI not signed in
+        // or unavailable. Tenant check is skipped; config must load normally.
+        var expected = new Agent365Config { TenantId = "some-tenant" };
+        _configService.LoadAsync(configFile.FullName).Returns(expected);
+
+        var resolver = CreateResolver();
+        var result = await resolver.ResolveAsync(agentName: null, tenantIdFlag: null, configFile);
+
+        result.Should().BeSameAs(expected,
+            because: "when az CLI is unavailable, the tenant check is skipped and config is loaded normally");
+        File.Exists(configFile.FullName).Should().BeTrue(
+            because: "the config must not be backed up when the tenant check could not run");
+    }
+
     // ── Mode 3: neither file nor agent-name ──────────────────────────────────
 
     [Fact]
