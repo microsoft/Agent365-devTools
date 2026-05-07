@@ -1849,6 +1849,40 @@ public class BlueprintSubcommandTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
+    [Fact]
+    public async Task CreateBlueprintClientSecret_WhenOwnershipIsIndeterminate_DoesNotLogOwnershipWarning()
+    {
+        // Arrange — null means Graph returned an error; ownership cannot be determined.
+        // The caller uses `if (isOwner == false)` so null must not trigger the warning.
+        _mockGraphApiService.IsApplicationOwnerAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<bool?>(null));
+
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000001",
+            ClientAppId = ""
+        };
+
+        // Act
+        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "object-id",
+            blueprintAppId: "app-id",
+            graphService: _mockGraphApiService,
+            setupConfig: config,
+            configService: _mockConfigService,
+            logger: _mockLogger,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        // Assert — indeterminate ownership must not log a "not an owner" warning
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not an owner")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
     #endregion
 }
 
@@ -1856,10 +1890,7 @@ public class BlueprintSubcommandTests
 /// Tests for the --show-secret path that require a real a365.generated.config.json file
 /// in the working directory. Runs sequentially to avoid file-system races.
 /// </summary>
-[CollectionDefinition("BlueprintShowSecret", DisableParallelization = true)]
-public class BlueprintShowSecretCollection { }
-
-[Collection("BlueprintShowSecret")]
+[Collection("ConfigTests")]
 public class BlueprintSubcommandShowSecretTests : IDisposable
 {
     private readonly ILogger _mockLogger;
@@ -1971,12 +2002,26 @@ public class BlueprintSubcommandShowSecretTests : IDisposable
         var parser = new CommandLineBuilder(BuildCommand()).Build();
         var testConsole = new TestConsole();
 
-        // Act
-        var exitCode = await parser.InvokeAsync("--show-secret", testConsole);
+        // Capture Console.Out to verify the plaintext secret is written to stdout.
+        // Console.WriteLine is used intentionally (not ILogger) so the secret bypasses the log file.
+        var capturedOut = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(capturedOut);
+
+        int exitCode;
+        try
+        {
+            exitCode = await parser.InvokeAsync("--show-secret", testConsole);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
 
         // Assert
         exitCode.Should().Be(0, because: "a stored secret should be displayed successfully");
-        // Secret goes to Console.WriteLine (not ILogger) to avoid persisting to the log file.
+        capturedOut.ToString().Should().Contain("test-secret-value",
+            because: "--show-secret must write the plaintext secret to stdout");
         // The redacted placeholder is logged at Debug so it appears in the log file but not the console.
         _mockLogger.Received().Log(
             LogLevel.Debug,
@@ -1988,6 +2033,37 @@ public class BlueprintSubcommandShowSecretTests : IDisposable
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("test-secret-value")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ShowSecret_WhenSecretIsProtectedButDecryptionFails_SetsExitCode1AndLogsClearError()
+    {
+        // Arrange — protected flag is true but the value is not a real DPAPI blob.
+        // SecretProtectionHelper.UnprotectSecret returns the original value on failure,
+        // so plaintext == storedSecret, which triggers the DPAPI failure detection.
+        // This simulates: different Windows user/machine, or non-Windows platform.
+        await File.WriteAllTextAsync(_generatedConfigPath, """
+            {
+              "agentBlueprintClientSecret": "not-a-real-dpapi-blob",
+              "agentBlueprintClientSecretProtected": true
+            }
+            """);
+
+        var parser = new CommandLineBuilder(BuildCommand()).Build();
+        var testConsole = new TestConsole();
+
+        // Act
+        var exitCode = await parser.InvokeAsync("--show-secret", testConsole);
+
+        // Assert
+        exitCode.Should().Be(1,
+            because: "when DPAPI decryption returns the original value the secret cannot be shown");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Cannot decrypt")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

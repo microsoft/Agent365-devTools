@@ -207,6 +207,14 @@ For each changed file, analyze:
    - Run `Grep` for the old string in `src/Tests/**/*.cs`
    - If test files assert `Contains("old string")` and the old string is gone, the test will silently pass with the wrong message — flag HIGH
 
+   **D. `catch (SomeException ex)` sets `context.ExitCode = <literal>` → verify literal matches exception class**
+   When the diff adds or modifies a catch block that sets `context.ExitCode` to a literal integer:
+   - Use `Grep` or `Read` to find the exception class definition (look for `class <ExceptionType>` in `Exceptions/` or `Commands/`)
+   - Check whether the class has an `ExitCode` property override (e.g., `public override int ExitCode => 2;`)
+   - If the literal does not match the property's return value, flag **HIGH** — the command will report a wrong exit code to scripts and CI pipelines that check `$LASTEXITCODE`
+   - **Fix pattern**: replace `context.ExitCode = 1;` with `context.ExitCode = ex.ExitCode;` so the exit code is always authoritative from the exception definition
+   - **Real example (PR #406, Comments 5 & 6)**: `ConfigFileNotFoundException.ExitCode => 2`, but two catch blocks in `AllSubcommand.cs` hardcoded `context.ExitCode = 1`. Scripts expecting exit code 2 on configuration errors received 1 instead.
+
 ### Step 3: Generate Findings
 
 For each issue found, provide:

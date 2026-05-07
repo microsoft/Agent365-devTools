@@ -238,6 +238,23 @@ internal static class BlueprintSubcommand
 
                 var plaintext = Helpers.SecretProtectionHelper.UnprotectSecret(storedSecret, storedIsProtected, logger);
 
+                // If the secret was stored as DPAPI-protected but the result equals the input,
+                // decryption did not succeed (non-Windows host, different machine/user, or DPAPI error).
+                // Print an error rather than writing the encrypted blob to the terminal.
+                if (storedIsProtected && string.Equals(plaintext, storedSecret, StringComparison.Ordinal))
+                {
+                    logger.LogError("Cannot decrypt the stored blueprint client secret.");
+                    logger.LogInformation("");
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                        logger.LogInformation("The secret was encrypted for a different Windows user account or machine.");
+                    else
+                        logger.LogInformation("The secret was encrypted with Windows DPAPI and cannot be decrypted on this platform.");
+                    logger.LogInformation("To generate a new client secret, run:");
+                    logger.LogInformation("  a365 setup blueprint --agent-name <name>");
+                    context.ExitCode = 1;
+                    return;
+                }
+
                 logger.LogInformation("");
                 Console.WriteLine($"  Blueprint client secret: {plaintext}");
                 logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
@@ -2121,7 +2138,7 @@ internal static class BlueprintSubcommand
             logger.LogInformation("");
             Console.WriteLine($"  Blueprint client secret: {secretText}");
             logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
-            logger.LogWarning("Copy this value now — it will not be shown again.");
+            logger.LogWarning("Copy this value now — it will not be shown again automatically.");
             if (isProtected)
                 logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder, Windows machine, and user account.");
             else
