@@ -280,6 +280,10 @@ public class CreateInstanceCommand
                     logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually.");
                 }
             }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Instance creation failed: {Message}", ex.Message);
@@ -405,6 +409,10 @@ public class CreateInstanceCommand
                     logger.LogWarning(syncEx, "Project settings sync failed (non-blocking). Please sync settings manually.");
                 }
             }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Identity creation failed: {Message}", ex.Message);
@@ -505,6 +513,10 @@ public class CreateInstanceCommand
 
                 logger.LogInformation("Licenses assigned successfully.");
             }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "License assignment failed: {Message}", ex.Message);
@@ -536,7 +548,7 @@ public class CreateInstanceCommand
             logger.LogError("Agent name required. Use --agent-name to specify it:");
             logger.LogInformation("");
             logger.LogInformation("  a365 create-instance --agent-name <name>");
-            return null;
+            throw;
         }
         catch (Exception ex)
         {

@@ -215,6 +215,23 @@ For each changed file, analyze:
    - **Fix pattern**: replace `context.ExitCode = 1;` with `context.ExitCode = ex.ExitCode;` so the exit code is always authoritative from the exception definition
    - **Real example (PR #406, Comments 5 & 6)**: `ConfigFileNotFoundException.ExitCode => 2`, but two catch blocks in `AllSubcommand.cs` hardcoded `context.ExitCode = 1`. Scripts expecting exit code 2 on configuration errors received 1 instead.
 
+   **D2. Cross-method "catch-returns-null / caller-sets-ExitCode" pattern — same exit-code problem, harder to spot**
+   Rule 9-D catches *inline* catch blocks. This variant spans two methods and is easy to miss:
+   ```csharp
+   // Helper:
+   catch (ConfigFileNotFoundException) { logger.Log...; return null; }
+   // Caller:
+   var config = await LoadConfigAsync(...);
+   if (config == null) { context.ExitCode = 1; return; }   // ← wrong exit code
+   ```
+   Detection:
+   - When a diff adds a private helper method that catches a typed exception, logs guidance, and **returns null**, search the file for every call site of that helper
+   - At each call site, find the null-check guard and read the hardcoded `context.ExitCode` literal
+   - Look up the exception class's `ExitCode` override as in Rule 9-D
+   - If the literals differ, flag **HIGH**
+   - Also check whether the PR already fixed this pattern in a *sibling* command (e.g., `AllSubcommand.cs` was fixed to use `ex.ExitCode`). If so, grep all files in `Commands/` for the same helper+null-check pattern — any remaining hardcoded literal is a miss.
+   - **Fix pattern**: Change `return null;` to `throw;` in the helper; add `catch (ExceptionType ex) { context.ExitCode = ex.ExitCode; }` before the outer `catch (Exception ex)` at each call site. This matches the AllSubcommand.cs pattern.
+
 ### Step 3: Generate Findings
 
 For each issue found, provide:
@@ -887,6 +904,25 @@ When a string property represents a discrete set of values (e.g., `"obo"`, `"s2s
   AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.Trim().ToLowerInvariant();
   ```
 - **Real example (PR #391, Comments 7 & 8)**: `SetupContext.AuthMode` and `NonDwBlueprintSetupOrchestrator.effectiveMode` both used `?.ToLowerInvariant()`, allowing `""` to disable OBO without any visible error.
+
+### 29. `args.Contains("--flag")` Misses `--flag=true` Form in System.CommandLine Preflight
+
+`System.CommandLine` normalises boolean options: a user can pass `--show-secret` (bare) **or** `--show-secret=true` / `--show-secret false`. Raw `args.Contains("--show-secret")` only matches the bare form; the `=true` variant slips through and re-enables any middleware that was meant to be skipped.
+
+- **Pattern to catch**: `args.Contains("--some-flag")` used in a middleware or startup guard (e.g., `isShowSecret`, `isHelpOrVersion`) — especially when it's a boolean `Option<bool>` in the command definition.
+- **Severity**: `medium` — wrong branch taken when the option is supplied as `--flag=true`; can silently re-enable Graph/network calls on commands that should work offline.
+- **Check**: Read `Program.cs` (or wherever the preflight guard lives) for every `args.Contains("--")` expression in the diff. If it guards a middleware skip, verify both forms are handled.
+- **Fix**:
+  ```csharp
+  // Wrong — misses --show-secret=true
+  var isShowSecret = args.Contains("--show-secret");
+
+  // Correct — handles bare and =value forms
+  var isShowSecret = args.Any(a =>
+      a.Equals("--show-secret", StringComparison.Ordinal)
+      || a.StartsWith("--show-secret=", StringComparison.Ordinal));
+  ```
+- **Real example (PR #406, Comment 1)**: `isShowSecret = args.Contains("--show-secret")` in `Program.cs` would not skip the Graph preflight when the user passed `--show-secret=true`, accidentally triggering an online call on an offline-only command.
 
 ## Example Invocation
 

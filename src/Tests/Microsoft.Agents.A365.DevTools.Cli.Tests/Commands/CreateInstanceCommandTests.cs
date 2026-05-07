@@ -5,6 +5,8 @@ using System.CommandLine;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using NSubstitute;
 using Xunit;
@@ -93,5 +95,24 @@ public class CreateInstanceCommandTests
         // Assert - Command is named "create-instance" for use as "a365 create-instance"
         Assert.NotNull(command);
         Assert.Equal("create-instance", command.Name);
+    }
+
+    [Fact]
+    public async Task CreateInstance_WhenConfigFileNotFound_ShouldReturnExitCode2()
+    {
+        // Arrange — ConfigFileNotFoundException.ExitCode is 2 (configuration error).
+        // Scripts checking $LASTEXITCODE must distinguish missing config (2) from general errors (1).
+        var mockConfigService = Substitute.For<IConfigService>();
+        mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromException<Agent365Config>(new ConfigFileNotFoundException()));
+
+        var command = CreateInstanceCommand.CreateCommand(
+            _mockLogger, mockConfigService, _mockExecutor, _mockGraphApiService);
+
+        // Act
+        var result = await command.InvokeAsync(new[] { "create-instance" });
+
+        // Assert
+        Assert.Equal(2, result);
     }
 }

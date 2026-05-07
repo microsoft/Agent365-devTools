@@ -223,7 +223,8 @@ class Program
             // Skip for help/version/show-secret — these never make Graph calls and must work offline.
             var isHelpOrVersion = args.Length == 0
                 || args.Any(a => a is "--help" or "-h" or "--version");
-            var isShowSecret = args.Contains("--show-secret");
+            var isShowSecret = args.Any(a => a.Equals("--show-secret", StringComparison.Ordinal)
+                || a.StartsWith("--show-secret=", StringComparison.Ordinal));
             if (!isHelpOrVersion && !isShowSecret)
             {
                 try
