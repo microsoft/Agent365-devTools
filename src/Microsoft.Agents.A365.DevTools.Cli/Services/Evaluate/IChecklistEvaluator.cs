@@ -38,11 +38,4 @@ public class ChecklistEvaluationResult
     /// actually did the work, rather than whatever the user requested (e.g. "auto").
     /// </summary>
     public EvalEngine? EngineUsed { get; init; }
-
-    /// <summary>
-    /// True when the plan-drift canary scored <c>true</c> at least once during evaluation,
-    /// indicating that the scoring agent may have been steered by adversarial MCP content.
-    /// Callers should surface a security banner in the report when this is true.
-    /// </summary>
-    public bool PlanDriftDetected { get; init; }
 }
