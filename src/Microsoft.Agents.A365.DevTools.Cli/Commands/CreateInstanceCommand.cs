@@ -531,9 +531,11 @@ public class CreateInstanceCommand
                 : await configService.LoadAsync();
             return config;
         }
-        catch (ConfigFileNotFoundException ex)
+        catch (ConfigFileNotFoundException)
         {
-            logger.LogError("{Message}", ex.IssueDescription);
+            logger.LogError("Agent name required. Use --agent-name to specify it:");
+            logger.LogInformation("");
+            logger.LogInformation("  a365 create-instance --agent-name <name>");
             return null;
         }
         catch (Exception ex)

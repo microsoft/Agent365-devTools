@@ -121,14 +121,9 @@ internal static class GetTokenSubcommand
                 }
                 else if (string.IsNullOrWhiteSpace(appId))
                 {
-                    // Config doesn't exist and no --app-id provided
-                    logger.LogError("Configuration file not found: {ConfigPath}", config.FullName);
+                    logger.LogError("Application ID required. Use --app-id to specify it, or run from your agent project directory.");
                     logger.LogInformation("");
-                    logger.LogInformation("To retrieve bearer tokens, you must either:");
-                    logger.LogInformation("  1. Run 'a365 setup all --agent-name <name>' to create a config file.");
-                    logger.LogInformation("  2. Specify the application ID using: a365 develop gettoken --app-id <your-app-id>");
-                    logger.LogInformation("");
-                    logger.LogInformation("Example: a365 develop gettoken --app-id 12345678-1234-1234-1234-123456789abc --scopes McpServers.Mail.All");
+                    logger.LogInformation("  a365 develop gettoken --app-id <your-app-id>");
                     context.ExitCode = 1;
                     return;
                 }

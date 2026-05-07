@@ -9,15 +9,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 /// </summary>
 public class ConfigFileNotFoundException : Agent365Exception
 {
-    public ConfigFileNotFoundException(string configFilePath)
+    public ConfigFileNotFoundException()
         : base(
             errorCode: "CONFIG_NOT_FOUND",
-            issueDescription: $"Configuration file not found: {configFilePath}",
+            issueDescription: "Configuration file not found.",
             mitigationSteps:
             [
-                "Make sure you are running this command from your agent project directory.",
-                "Pass --agent-name <name> to run without a config file.",
-                "Or run 'a365 setup all --agent-name <name>' to perform a full setup."
+                "Run this command from your agent project directory, or use --agent-name <name> to specify the agent."
             ])
     {
     }

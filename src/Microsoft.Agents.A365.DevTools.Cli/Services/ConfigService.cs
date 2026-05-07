@@ -242,7 +242,7 @@ public class ConfigService : IConfigService
         // Validate static config file exists
         if (!File.Exists(resolvedConfigPath))
         {
-            throw new ConfigFileNotFoundException(resolvedConfigPath);
+            throw new ConfigFileNotFoundException();
         }
 
         // Load static configuration (required)

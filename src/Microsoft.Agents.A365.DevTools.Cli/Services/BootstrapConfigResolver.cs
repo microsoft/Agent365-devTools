@@ -100,9 +100,9 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
                 _logger.LogDebug("Loaded configuration from {ConfigFile}", configFile.FullName);
                 return config;
             }
-            catch (ConfigFileNotFoundException ex)
+            catch (ConfigFileNotFoundException)
             {
-                _logger.LogError("{Message}", ex.IssueDescription);
+                _logger.LogError("Agent configuration could not be loaded. Use --agent-name to specify the agent name.");
                 return null;
             }
             catch (Exception ex)
@@ -112,11 +112,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             }
         }
 
-        _logger.LogError(
-            "No configuration file found at {Path}. " +
-            "Pass --agent-name <name> to run without a config file, " +
-            "or run 'a365 setup all --agent-name <name>' to perform a full setup.",
-            configFile.FullName);
+        _logger.LogError("Agent name required. Use --agent-name <name> to specify the agent name.");
         return null;
     }
 

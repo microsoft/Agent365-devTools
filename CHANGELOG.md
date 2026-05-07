@@ -42,6 +42,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - Defensive fallback when the server rejects the new request with a known contract-mismatch signature — the CLI logs `"Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually."` and directs the user to the Teams Developer Portal. Same user-facing path is reused when registration fails because the signed-in user is not a blueprint owner.
 
 ### Fixed
+- Error messages for commands run without required configuration no longer expose internal file paths. `setup all`, `cleanup`, and `create-instance` without `--agent-name` now show actionable guidance with the exact command to run. `develop addpermissions` and `develop gettoken` without `--app-id` now prompt for the application ID directly.
 - `setup permissions bot` no longer emits "Bot API permissions configured successfully" when any S2S app-role assignment fails; shows a warning with retry instructions instead.
 - Consent-required message "You are running as a non-admin user and cannot grant admin consent" replaced with "An administrator must grant tenant-wide consent to proceed" — the message fires when tenant-wide consent for S2S scopes has not yet been granted, not when the caller lacks admin rights.
 - `setup all --agent-name` re-runs no longer create a duplicate agent registration: the CLI now reads `agentRegistrationId` from `a365.generated.config.json` (when present) and checks for an existing registration before posting a new one.
