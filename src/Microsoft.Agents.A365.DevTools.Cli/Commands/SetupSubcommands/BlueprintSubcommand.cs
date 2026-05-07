@@ -200,15 +200,31 @@ internal static class BlueprintSubcommand
             var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
             var ct = context.GetCancellationToken();
 
-            // --show-secret: read-only, no setup steps
+            // --show-secret: read-only local operation — reads generated config directly so it works
+            // even when a365.config.json is absent (e.g. retrieving from a different machine copy).
             if (showSecret)
             {
                 var generatedConfigPath = ConfigService.GetGeneratedConfigFilePath();
-                var storedConfig = generatedConfigPath != null
-                    ? await configService.LoadAsync(config.FullName)
-                    : null;
 
-                if (storedConfig is null || string.IsNullOrWhiteSpace(storedConfig.AgentBlueprintClientSecret))
+                string? storedSecret = null;
+                bool storedIsProtected = false;
+
+                if (generatedConfigPath != null)
+                {
+                    try
+                    {
+                        var json = await File.ReadAllTextAsync(generatedConfigPath);
+                        var node = JsonNode.Parse(json)?.AsObject();
+                        storedSecret = node?["agentBlueprintClientSecret"]?.GetValue<string>();
+                        storedIsProtected = node?["agentBlueprintClientSecretProtected"]?.GetValue<bool>() ?? false;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(ex, "Could not read stored secret");
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(storedSecret))
                 {
                     logger.LogError("No blueprint client secret found.");
                     logger.LogInformation("");
@@ -220,13 +236,11 @@ internal static class BlueprintSubcommand
                     return;
                 }
 
-                var plaintext = Helpers.SecretProtectionHelper.UnprotectSecret(
-                    storedConfig.AgentBlueprintClientSecret,
-                    storedConfig.AgentBlueprintClientSecretProtected,
-                    logger);
+                var plaintext = Helpers.SecretProtectionHelper.UnprotectSecret(storedSecret, storedIsProtected, logger);
 
                 logger.LogInformation("");
-                logger.LogInformation("  Blueprint client secret: {Secret}", plaintext);
+                Console.WriteLine($"  Blueprint client secret: {plaintext}");
+                logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
                 logger.LogInformation("");
                 return;
             }
@@ -1362,7 +1376,7 @@ internal static class BlueprintSubcommand
                 ct,
                 scopes: AuthenticationConstants.BlueprintOperationScopes);
 
-            if (isOwner)
+            if (isOwner == true)
             {
                 logger.LogDebug("Current user is confirmed as blueprint owner");
             }
@@ -1997,8 +2011,10 @@ internal static class BlueprintSubcommand
             // owner so they know why the POST /addPassword will return 403 Authorization_RequestDenied.
             if (!string.IsNullOrWhiteSpace(setupConfig.TenantId) && !string.IsNullOrWhiteSpace(blueprintObjectId))
             {
-                var isOwner = await graphService.IsApplicationOwnerAsync(setupConfig.TenantId, blueprintObjectId, ct: ct);
-                if (!isOwner)
+                var isOwner = await graphService.IsApplicationOwnerAsync(
+                    setupConfig.TenantId, blueprintObjectId, ct: ct,
+                    scopes: AuthenticationConstants.BlueprintOperationScopes);
+                if (isOwner == false)
                 {
                     logger.LogWarning("You are not an owner of this blueprint. Client secret creation will fail.");
                     logger.LogWarning("Ask a blueprint owner to run setup, or add yourself as an owner first:");
@@ -2090,7 +2106,7 @@ internal static class BlueprintSubcommand
                 throw new InvalidOperationException("Client secret creation returned empty secret");
             }
 
-            var secretText = secretTextNode.GetValue<string>();
+            var secretText = secretTextNode.GetValue<string>(); // lgtm[cs/cleartext-storage-of-sensitive-information] - immediately protected by ProtectSecret below
             var protectedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.ProtectSecret(secretText, logger);
 
             var isProtected = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -2103,7 +2119,8 @@ internal static class BlueprintSubcommand
 
             logger.LogInformation("Client secret created successfully!");
             logger.LogInformation("");
-            logger.LogInformation("  Blueprint client secret: {Secret}", secretText);
+            Console.WriteLine($"  Blueprint client secret: {secretText}");
+            logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
             logger.LogWarning("Copy this value now — it will not be shown again.");
             if (isProtected)
                 logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder, Windows machine, and user account.");

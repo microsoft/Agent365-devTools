@@ -990,8 +990,8 @@ public class GraphApiService
     /// <param name="userObjectId">The user's object ID to check. If null, uses the current authenticated user.</param>
     /// <param name="ct">Cancellation token</param>
     /// <param name="scopes">OAuth2 scopes for elevated permissions (e.g., Application.ReadWrite.All, Directory.ReadWrite.All)</param>
-    /// <returns>True if the user is an owner, false otherwise</returns>
-    public virtual async Task<bool> IsApplicationOwnerAsync(
+    /// <returns>true if confirmed owner, false if confirmed non-owner, null if indeterminate (token failure or Graph error)</returns>
+    public virtual async Task<bool?> IsApplicationOwnerAsync(
         string tenantId,
         string applicationObjectId,
         string? userObjectId = null,
@@ -1006,7 +1006,7 @@ public class GraphApiService
                 if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct))
                 {
                     _logger.LogWarning("Could not acquire Graph token to check application owner");
-                    return false;
+                    return null;
                 }
 
                 using var meRequest = new HttpRequestMessage(HttpMethod.Get,
@@ -1017,7 +1017,7 @@ public class GraphApiService
                 if (!meResponse.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("Could not retrieve current user's ID: {Status}", meResponse.StatusCode);
-                    return false;
+                    return null;
                 }
 
                 var meJson = await meResponse.Content.ReadAsStringAsync(ct);
@@ -1026,7 +1026,7 @@ public class GraphApiService
                 if (!meDoc.RootElement.TryGetProperty("id", out var idElement))
                 {
                     _logger.LogWarning("Could not extract user ID from Graph response");
-                    return false;
+                    return null;
                 }
 
                 userObjectId = idElement.GetString();
@@ -1035,7 +1035,7 @@ public class GraphApiService
             if (string.IsNullOrWhiteSpace(userObjectId))
             {
                 _logger.LogWarning("User object ID is empty, cannot check owner");
-                return false;
+                return null;
             }
 
             // Check if user is an owner
@@ -1051,12 +1051,12 @@ public class GraphApiService
                 return isOwner;
             }
 
-            return false;
+            return null;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error checking if user is owner of application: {Message}", ex.Message);
-            return false;
+            return null;
         }
     }
 

@@ -1789,7 +1789,7 @@ public class BlueprintSubcommandTests
         // Arrange
         _mockGraphApiService.IsApplicationOwnerAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult(false));
+            .Returns(Task.FromResult<bool?>(false));
 
         var config = new Agent365Config
         {
@@ -1822,7 +1822,7 @@ public class BlueprintSubcommandTests
         // Arrange
         _mockGraphApiService.IsApplicationOwnerAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult(true));
+            .Returns(Task.FromResult<bool?>(true));
 
         var config = new Agent365Config
         {
@@ -1958,17 +1958,15 @@ public class BlueprintSubcommandShowSecretTests : IDisposable
     }
 
     [Fact]
-    public async Task ShowSecret_WhenSecretStored_LogsSecretAndReturnsExitCode0()
+    public async Task ShowSecret_WhenSecretStored_WritesSecretToConsoleAndReturnsExitCode0()
     {
-        // Arrange — file exists and LoadAsync returns config with a plaintext secret
-        await File.WriteAllTextAsync(_generatedConfigPath, "{}");
-
-        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
-            .Returns(Task.FromResult(new Agent365Config
+        // Arrange — file exists with the secret fields written directly (no LoadAsync)
+        await File.WriteAllTextAsync(_generatedConfigPath, """
             {
-                AgentBlueprintClientSecret = "test-secret-value",
-                AgentBlueprintClientSecretProtected = false // plaintext — no DPAPI in tests
-            }));
+              "agentBlueprintClientSecret": "test-secret-value",
+              "agentBlueprintClientSecretProtected": false
+            }
+            """);
 
         var parser = new CommandLineBuilder(BuildCommand()).Build();
         var testConsole = new TestConsole();
@@ -1978,7 +1976,15 @@ public class BlueprintSubcommandShowSecretTests : IDisposable
 
         // Assert
         exitCode.Should().Be(0, because: "a stored secret should be displayed successfully");
+        // Secret goes to Console.WriteLine (not ILogger) to avoid persisting to the log file.
+        // The redacted placeholder is logged at Debug so it appears in the log file but not the console.
         _mockLogger.Received().Log(
+            LogLevel.Debug,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("[displayed to terminal]")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.DidNotReceive().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("test-secret-value")),

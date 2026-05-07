@@ -179,7 +179,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     }
 
     [Fact]
-    public async Task IsApplicationOwnerAsync_WhenGetCurrentUserFails_ReturnsFalse()
+    public async Task IsApplicationOwnerAsync_WhenGetCurrentUserFails_ReturnsNull()
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
@@ -198,7 +198,7 @@ public class GraphApiServiceIsApplicationOwnerTests
         var result = await service.IsApplicationOwnerAsync(tenantId, appObjectId, userObjectId: null);
 
         // Assert
-        result.Should().BeFalse("should fail when unable to get current user");
+        result.Should().BeNull("ownership is indeterminate when current user cannot be retrieved");
     }
 
     [Fact]
@@ -233,7 +233,7 @@ public class GraphApiServiceIsApplicationOwnerTests
     }
 
     [Fact]
-    public async Task IsApplicationOwnerAsync_WhenGraphApiCallFails_ReturnsFalse()
+    public async Task IsApplicationOwnerAsync_WhenGraphApiCallFails_ReturnsNull()
     {
         // Arrange
         using var handler = new TestHttpMessageHandler();
@@ -253,7 +253,7 @@ public class GraphApiServiceIsApplicationOwnerTests
         var result = await service.IsApplicationOwnerAsync(tenantId, appObjectId, userObjectId);
 
         // Assert
-        result.Should().BeFalse("should fail when Graph API call fails");
+        result.Should().BeNull("ownership is indeterminate when the Graph API call fails");
     }
 
     [Fact]
