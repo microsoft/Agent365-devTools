@@ -369,7 +369,7 @@ internal static class SetupHelpers
         var directLink = $"https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{blueprintId}/isMSAApp~/false";
 
         logger.LogInformation("     Option A — Entra portal:");
-        logger.LogInformation("       1. Sign in as Global Administrator and open:");
+        logger.LogInformation("       1. Sign in as {Roles} and open:", AuthenticationConstants.DelegatedGrantRequiredRoles);
         logger.LogInformation("            {Link}", directLink);
         logger.LogInformation("       2. Add the following permissions (click 'Add a permission' for each):");
         foreach (var group in delegatedSpecs.GroupBy(s => (s.ResourceName, s.Scope)))
@@ -377,7 +377,7 @@ internal static class SetupHelpers
         logger.LogInformation("       3. Click 'Grant admin consent for your organization' and confirm");
 
         logger.LogInformation("");
-        logger.LogInformation("     To share with your Global Administrator:");
+        logger.LogInformation("     To share with your {Roles}:", AuthenticationConstants.DelegatedGrantRequiredRoles);
         logger.LogInformation("       Blueprint : {BlueprintId}", blueprintId);
         if (!string.IsNullOrWhiteSpace(tenantId))
             logger.LogInformation("       Tenant    : {TenantId}", tenantId);
@@ -456,9 +456,10 @@ internal static class SetupHelpers
         var permissionGrantsPending = isS2SFlow
             ? results.S2SAppRoleGranted == false
             : !permissionGrantsCompleted && results.BatchPermissionsPhase2Completed;
-        var pendingAdminAction = permissionGrantsPending && !isS2SFlow && !isNonDw;
-        var pendingS2SAction = permissionGrantsPending && isS2SFlow;
         var pendingDelegatedAction = results.AgentIdentityDelegatedGrantPending;
+        var delegatedConsentApplicable = !isS2SFlow || isBothMode;
+        var pendingAdminAction = !isNonDw && delegatedConsentApplicable && !results.AdminConsentGranted && results.BatchPermissionsPhase2Completed;
+        var pendingS2SAction = permissionGrantsPending && isS2SFlow;
 
         if (results.PermissionGrantsSkipped && isNonDw)
         {
@@ -663,7 +664,7 @@ internal static class SetupHelpers
                 var adminCmdBlueprintId = results.BlueprintId ?? "<blueprint-id>";
                 if (isDw)
                 {
-                    logger.LogInformation("  {N}. Permission Grants — forward the following to a Global Administrator:", actionCount);
+                    logger.LogInformation("  {N}. Permission Grants — forward the following to an {Roles}:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
                     logger.LogInformation("");
                     logger.LogInformation("     Blueprint : {BlueprintId}", adminCmdBlueprintId);
                     if (!string.IsNullOrWhiteSpace(results.TenantId))
@@ -673,7 +674,7 @@ internal static class SetupHelpers
                 }
                 else
                 {
-                    logger.LogInformation("  {N}. Permission Grants — a Global Administrator must grant admin consent in the Entra portal:", actionCount);
+                    logger.LogInformation("  {N}. Permission Grants — an {Roles} must grant admin consent in the Entra portal:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
                     LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, tenantId: results.TenantId);
                 }
             }
@@ -707,7 +708,7 @@ internal static class SetupHelpers
                     logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
                     logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $obs.Id -AppRoleId $rid");
                     logger.LogInformation("");
-                    logger.LogInformation("     To share with your Global Administrator:");
+                    logger.LogInformation("     To share with your {Roles}:", AuthenticationConstants.S2SGrantRequiredRoles);
                     logger.LogInformation("       Blueprint : {BlueprintAppId}", blueprintAppId);
                     if (!string.IsNullOrWhiteSpace(results.TenantId))
                         logger.LogInformation("       Tenant    : {TenantId}", results.TenantId);
@@ -940,7 +941,7 @@ internal static class SetupHelpers
         }
 
         // Observability API is required for both DW and non-DW paths.
-        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiAdminConsentScope })));
+        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
@@ -972,7 +973,7 @@ internal static class SetupHelpers
             foreach (var s in mcpScopes)
                 allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
             allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
-            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiAdminConsentScope}");
+            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
         }
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);

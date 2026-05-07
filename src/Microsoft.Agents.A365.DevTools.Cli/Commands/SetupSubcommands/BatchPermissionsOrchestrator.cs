@@ -373,10 +373,11 @@ internal static class BatchPermissionsOrchestrator
                 {
                     insufficientPrivilegesDetected = true;
                     logger.LogWarning(
-                        "Inheritable permissions require the Agent ID Administrator or Global Administrator role. " +
-                        "Remaining inheritable permission specs will be skipped.");
+                        "Inheritable permissions require the {Roles} role. " +
+                        "Remaining inheritable permission specs will be skipped.",
+                        AuthenticationConstants.InheritablePermissionsRequiredRoles);
                     setupResults?.Warnings.Add(
-                        "Inheritable permissions require the Agent ID Administrator or Global Administrator role.");
+                        $"Inheritable permissions require the {AuthenticationConstants.InheritablePermissionsRequiredRoles} role.");
                 }
                 else
                 {

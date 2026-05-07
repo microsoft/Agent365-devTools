@@ -24,12 +24,12 @@ public static class HttpClientFactory
     public static HttpClient CreateAuthenticatedClient(
         string? authToken = null,
         string userAgentPrefix = DefaultUserAgentPrefix,
-        string? correlationId = null)
+        string? correlationId = null,
+        HttpMessageHandler? handler = null)
     {
-        var client = new HttpClient
-        {
-            Timeout = TimeSpan.FromMinutes(2),
-        };
+        var client = handler != null
+            ? new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(2) }
+            : new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
 
         if (!string.IsNullOrWhiteSpace(authToken))
         {

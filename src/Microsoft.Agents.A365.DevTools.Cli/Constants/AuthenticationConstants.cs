@@ -221,7 +221,7 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
         "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
-        "AgentInstance.ReadWrite.All",  // Required for POST /beta/agentRegistry/agentInstances (PublishCommand)
+        "AgentInstance.ReadWrite.All",  // Required for DELETE /beta/agentRegistry/agentInstances (CleanupCommand)
         "AgentRegistration.ReadWrite.All",  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration)
         // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
         // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
@@ -271,10 +271,9 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Entra roles that can perform S2S app role assignments programmatically.
-    /// All three roles have been verified to work with <see cref="RequiredS2SGrantScopes"/>.
-    /// Listed in order of least privilege: Agent ID Administrator, Application Administrator, Global Administrator.
+    /// Verified: Agent ID Administrator cannot create S2S app role assignments (403). Application Administrator and Global Administrator confirmed working.
     /// </summary>
-    public const string S2SGrantRequiredRoles = "Agent ID Administrator, Application Administrator, or Global Administrator";
+    public const string S2SGrantRequiredRoles = "Application Administrator or Global Administrator";
 
     /// <summary>
     /// Roles required to create tenant-wide AllPrincipals oauth2PermissionGrants via the PowerShell
@@ -283,6 +282,13 @@ public static class AuthenticationConstants
     /// on the client app for DelegatedPermissionGrant.ReadWrite.All.
     /// </summary>
     public const string DelegatedGrantRequiredRoles = "Application Administrator or Global Administrator";
+
+    /// <summary>
+    /// Roles required to configure inheritable permissions on an agent blueprint or agent identity
+    /// service principal (PATCH /v1.0/servicePrincipals/{id}/permissionGrantPolicies).
+    /// Agent ID Administrator role covers the inheritable permissions endpoint.
+    /// </summary>
+    public const string InheritablePermissionsRequiredRoles = "Agent ID Administrator or Global Administrator";
 
     /// <summary>
     /// Scopes requested when acquiring an interactive Graph token for blueprint creation

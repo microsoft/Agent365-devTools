@@ -55,7 +55,6 @@ public class PublishCommand
         ILogger<PublishCommand> logger,
         IConfigService configService,
         ManifestTemplateService manifestTemplateService,
-        GraphApiService? graphApiService = null,
         IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("publish", "Update manifest IDs and create a package for upload to Microsoft 365 Admin Center");
@@ -78,7 +77,7 @@ public class PublishCommand
 
         var useBlueprintOption = new Option<bool>(
             "--use-blueprint",
-            description: "Use the blueprint-based non-DW flow (calls Agent Instance Graph API, no manifest).\n" +
+            description: "Identifies this as a blueprint-based non-DW agent. Registration is handled by 'a365 setup all'.\n" +
                         "Only meaningful with --aiteammate false");
 
         var verboseOption = new Option<bool>(
@@ -152,19 +151,18 @@ public class PublishCommand
                 {
                     var isBlueprint = useBlueprintFlag || (isBlueprintAgent && config.UseBlueprint == true);
 
-                    if (dryRun)
+                    if (isBlueprint)
                     {
-                        if (isBlueprint)
-                            PrintNonDwBlueprintDryRunPlan(config, logger);
-                        else
-                            PrintNonDwDryRunPlan(config, logger);
+                        logger.LogInformation("Blueprint-based agent registration is handled by 'a365 setup all'.");
+                        logger.LogInformation("Nothing to publish for blueprint-based agents. Run 'a365 setup all' to register.");
                         isNormalExit = true;
                         return;
                     }
 
-                    if (isBlueprint)
+                    if (dryRun)
                     {
-                        isNormalExit = await PublishBlueprintNonDwAsync(config, graphApiService, configService, logger, context, ct: context.GetCancellationToken());
+                        PrintNonDwDryRunPlan(config, logger);
+                        isNormalExit = true;
                         return;
                     }
 
@@ -297,85 +295,6 @@ public class PublishCommand
         });
 
         return command;
-    }
-
-    /// <summary>
-    /// Registers the agent instance via POST /beta/agentRegistry/agentInstances and saves
-    /// the returned instance ID to the generated config. Returns true on success.
-    /// </summary>
-    private static async Task<bool> PublishBlueprintNonDwAsync(
-        Agent365Config config,
-        GraphApiService? graphApiService,
-        IConfigService configService,
-        ILogger logger,
-        System.CommandLine.Invocation.InvocationContext context,
-        CancellationToken ct)
-    {
-        if (graphApiService == null)
-        {
-            logger.LogError("GraphApiService is not available. This is a configuration error.");
-            context.ExitCode = 1;
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(config.TenantId))
-        {
-            logger.LogError("tenantId is required for blueprint non-DW publish. Set it in a365.config.json.");
-            context.ExitCode = 1;
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(config.AgentIdentityDisplayName))
-        {
-            logger.LogError("agentIdentityDisplayName is required. Set it in a365.config.json.");
-            context.ExitCode = 1;
-            return false;
-        }
-
-        logger.LogInformation("Registering agent instance...");
-        logger.LogInformation("  POST /beta/agentRegistry/agentInstances");
-        logger.LogInformation("  displayName            : {DisplayName}", config.AgentIdentityDisplayName);
-        if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
-            logger.LogInformation("  agentIdentityBlueprintId: {BlueprintId}", config.AgentBlueprintId);
-
-        var instanceId = await graphApiService.RegisterAgentInstanceAsync(
-            config.TenantId,
-            config.AgentIdentityDisplayName,
-            config.AgentBlueprintId,
-            ct);
-
-        if (string.IsNullOrWhiteSpace(instanceId))
-        {
-            logger.LogError("Agent instance registration failed.");
-            context.ExitCode = 1;
-            return false;
-        }
-
-        logger.LogInformation("Agent instance registered: {InstanceId}", instanceId);
-
-        config.AgentInstanceId = instanceId;
-        await configService.SaveStateAsync(config);
-        logger.LogInformation("Saved agentInstanceId to generated config.");
-
-        return true;
-    }
-
-    private static void PrintNonDwBlueprintDryRunPlan(Models.Agent365Config config, ILogger logger)
-    {
-        var blueprintId = !string.IsNullOrWhiteSpace(config.AgentBlueprintId)
-            ? config.AgentBlueprintId
-            : "<agentBlueprintId — run setup first>";
-
-        logger.LogInformation("Non-DW Blueprint Publish Plan (dry run — no API calls will be made)");
-        logger.LogInformation("");
-        logger.LogInformation("  Agent Instance Registration");
-        logger.LogInformation("    Call Agent Instance Graph API");
-        logger.LogInformation("    Blueprint ID                 {BlueprintId}", blueprintId);
-        logger.LogInformation("    Tenant                       {TenantId}", config.TenantId);
-        logger.LogInformation("");
-        logger.LogInformation("  No manifest or zip created for blueprint-based agents.");
-        logger.LogInformation("");
-        logger.LogInformation("Run without --dry-run to register the agent instance.");
     }
 
     private static void PrintNonDwDryRunPlan(Models.Agent365Config config, ILogger logger)
