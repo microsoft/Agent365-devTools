@@ -85,7 +85,7 @@ public sealed class LogRedactionService : ILogRedactionService
     private static string BuildHeader(string sourceFilePath, int emails, int ids, int tokens)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"# Redacted by a365 logs export — {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}");
+        sb.AppendLine($"# Redacted by a365 logs export - {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}");
         sb.AppendLine($"# {emails} email(s), {ids} id(s), {tokens} JWT token(s) replaced");
         sb.AppendLine($"# Original: {sourceFilePath}");
         sb.AppendLine("#");

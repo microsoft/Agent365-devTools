@@ -65,7 +65,11 @@ public class LogsCommand
             else
             {
                 // Discover all a365.*.log files, excluding previously exported redacted copies
+                // (a365.*.redacted.log). The glob alone matches both, so filter out names whose
+                // base ends with ".redacted" (e.g. a365.setup.redacted) before processing.
                 targets = Directory.EnumerateFiles(logsDir, "a365.*.log")
+                    .Where(path => !Path.GetFileNameWithoutExtension(path)
+                        .EndsWith(".redacted", StringComparison.OrdinalIgnoreCase))
                     .Select(path =>
                     {
                         var fileName = Path.GetFileNameWithoutExtension(path); // e.g. a365.setup
@@ -81,7 +85,7 @@ public class LogsCommand
             {
                 if (!File.Exists(logPath))
                 {
-                    logger.LogWarning("No log found for '{Command}'. Run 'a365 {Command}' first.", name, name);
+                    logger.LogWarning("No log found for '{CliCommand}'. Run the command first to generate one.", name);
                     continue;
                 }
 
@@ -94,16 +98,16 @@ public class LogsCommand
                     var outputPath = Path.Combine(outputDirectory, outputFileName);
                     await File.WriteAllTextAsync(outputPath, result.RedactedContent, ct);
 
-                    logger.LogInformation("Exporting redacted log for: {Command}", name);
+                    logger.LogInformation("Exporting redacted log for: {CliCommand}", name);
                     logger.LogInformation("  Redacted: {Emails} email(s), {Ids} id(s), {Tokens} JWT token(s)",
                         result.EmailsRedacted, result.IdsRedacted, result.TokensRedacted);
                     logger.LogInformation("  Output:   {OutputPath}", outputPath);
                     logger.LogInformation("");
                     exported++;
                 }
-                catch (IOException ex)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
                 {
-                    logger.LogError("Failed to export log for '{Command}': {Message}", name, ex.Message);
+                    logger.LogError("Failed to export log for '{CliCommand}': {Message}", name, ex.Message);
                     context.ExitCode = 1;
                 }
             }

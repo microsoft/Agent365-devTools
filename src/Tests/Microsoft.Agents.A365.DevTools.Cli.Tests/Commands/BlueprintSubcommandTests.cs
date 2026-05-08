@@ -1473,6 +1473,7 @@ public class BlueprintSubcommandTests
             setupConfig: setupConfig,
             configService: _mockConfigService,
             logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — documentation link must be logged (covers required permissions)
@@ -1505,6 +1506,7 @@ public class BlueprintSubcommandTests
             setupConfig: setupConfig,
             configService: _mockConfigService,
             logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — config file name must be mentioned so user knows where to add the secret
@@ -1537,6 +1539,7 @@ public class BlueprintSubcommandTests
             setupConfig: setupConfig,
             configService: _mockConfigService,
             logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — re-run instruction must be logged
@@ -1572,6 +1575,7 @@ public class BlueprintSubcommandTests
             setupConfig: setupConfig,
             configService: _mockConfigService,
             logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — Azure CLI token path must NOT be taken
@@ -1805,6 +1809,7 @@ public class BlueprintSubcommandTests
             setupConfig: config,
             configService: _mockConfigService,
             logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert
@@ -1838,6 +1843,7 @@ public class BlueprintSubcommandTests
             setupConfig: config,
             configService: _mockConfigService,
             logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — ownership warning must not fire when current user is an owner
@@ -1872,6 +1878,7 @@ public class BlueprintSubcommandTests
             setupConfig: config,
             configService: _mockConfigService,
             logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Assert — indeterminate ownership must not log a "not an owner" warning

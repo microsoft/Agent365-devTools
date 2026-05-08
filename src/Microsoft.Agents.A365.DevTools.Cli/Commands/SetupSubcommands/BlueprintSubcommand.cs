@@ -2018,7 +2018,7 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         IConfigService configService,
         ILogger logger,
-        string? generatedConfigPath = null,
+        string generatedConfigPath,
         Func<Task<string?>>? loginHintResolver = null,
         CancellationToken ct = default)
     {
@@ -2134,13 +2134,9 @@ internal static class BlueprintSubcommand
             setupConfig.AgentBlueprintClientSecretProtected = isProtected;
 
             // Save to the explicit path so the write always lands in the same file that the
-            // generatedConfig JsonObject write above targeted — prevents a path divergence on
+            // generatedConfig JsonObject write above targeted - prevents a path divergence on
             // macOS where Environment.CurrentDirectory (getcwd, symlink-resolved) can differ
             // from config.DirectoryName (unresolved) when a symlink is in the path.
-            // The parameter is required: callers must supply the resolved generatedConfigPath.
-            if (generatedConfigPath is null)
-                throw new ArgumentNullException(nameof(generatedConfigPath),
-                    "Required to prevent macOS symlink-path divergence when saving the client secret.");
             await configService.SaveStateAsync(setupConfig, generatedConfigPath);
 
             logger.LogInformation("Client secret created successfully!");

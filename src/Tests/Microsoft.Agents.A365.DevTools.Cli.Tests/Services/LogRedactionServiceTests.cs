@@ -19,9 +19,12 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().Contain("<JWT-TOKEN>");
-        result.RedactedContent.Should().NotContain("eyJhbGciOiJSUzI1NiJ9");
-        result.TokensRedacted.Should().Be(1);
+        result.RedactedContent.Should().Contain("<JWT-TOKEN>",
+            because: "JWT tokens must be replaced with the JWT placeholder so secrets are never shared");
+        result.RedactedContent.Should().NotContain("eyJhbGciOiJSUzI1NiJ9",
+            because: "the original JWT header must not survive in redacted output (security/privacy invariant)");
+        result.TokensRedacted.Should().Be(1,
+            because: "exactly one JWT token was present and it must be counted to keep the redaction summary trustworthy");
     }
 
     [Fact]
@@ -31,9 +34,12 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().Contain("<email-1>");
-        result.RedactedContent.Should().NotContain("aarthi-dev@agent365002.onmicrosoft.com");
-        result.EmailsRedacted.Should().Be(1);
+        result.RedactedContent.Should().Contain("<email-1>",
+            because: "email addresses must be replaced with stable aliases in redacted output");
+        result.RedactedContent.Should().NotContain("aarthi-dev@agent365002.onmicrosoft.com",
+            because: "the original email address must not survive in redacted output (privacy invariant)");
+        result.EmailsRedacted.Should().Be(1,
+            because: "exactly one email was present and it must be counted to keep the redaction summary trustworthy");
     }
 
     [Fact]
@@ -43,13 +49,16 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().NotContain("user@contoso.com");
-        result.EmailsRedacted.Should().Be(1);
+        result.RedactedContent.Should().NotContain("user@contoso.com",
+            because: "no occurrence of the original email may survive in redacted output (privacy invariant)");
+        result.EmailsRedacted.Should().Be(1,
+            because: "the same email value must count once even when it appears multiple times");
         // Both lines replaced with the same alias
         var lines = result.RedactedContent.Split('\n').Where(l => l.StartsWith("[INF]")).ToList();
         var alias1 = lines[0].Split(' ').Last().Trim();
         var alias2 = lines[1].Split(' ').Last().Trim();
-        alias1.Should().Be(alias2);
+        alias1.Should().Be(alias2,
+            because: "the same email value must always map to the same alias so log correlation is preserved");
     }
 
     [Fact]
@@ -59,9 +68,12 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().Contain("<email-1>");
-        result.RedactedContent.Should().Contain("<email-2>");
-        result.EmailsRedacted.Should().Be(2);
+        result.RedactedContent.Should().Contain("<email-1>",
+            because: "the first distinct email must receive the email-1 alias");
+        result.RedactedContent.Should().Contain("<email-2>",
+            because: "the second distinct email must receive a different alias to preserve identity separation");
+        result.EmailsRedacted.Should().Be(2,
+            because: "two distinct emails were present and both must be counted");
     }
 
     [Fact]
@@ -71,9 +83,12 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().Contain("<id-1>");
-        result.RedactedContent.Should().NotContain("48e7c63c-15f8-42ff-9df9-7adb43889e34");
-        result.IdsRedacted.Should().Be(1);
+        result.RedactedContent.Should().Contain("<id-1>",
+            because: "GUIDs must be replaced with stable id aliases in redacted output");
+        result.RedactedContent.Should().NotContain("48e7c63c-15f8-42ff-9df9-7adb43889e34",
+            because: "the original GUID must not survive in redacted output (privacy invariant)");
+        result.IdsRedacted.Should().Be(1,
+            because: "exactly one GUID was present and it must be counted to keep the redaction summary trustworthy");
     }
 
     [Fact]
@@ -84,8 +99,10 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.IdsRedacted.Should().Be(1);
-        result.RedactedContent.Should().NotContain(guid);
+        result.IdsRedacted.Should().Be(1,
+            because: "the same GUID must count once even when it appears multiple times");
+        result.RedactedContent.Should().NotContain(guid,
+            because: "no occurrence of the original GUID may survive in redacted output (privacy invariant)");
     }
 
     [Fact]
@@ -95,9 +112,12 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().Contain("<id-1>");
-        result.RedactedContent.Should().Contain("<id-2>");
-        result.IdsRedacted.Should().Be(2);
+        result.RedactedContent.Should().Contain("<id-1>",
+            because: "the first distinct GUID must receive the id-1 alias");
+        result.RedactedContent.Should().Contain("<id-2>",
+            because: "the second distinct GUID must receive a different alias to preserve identity separation");
+        result.IdsRedacted.Should().Be(2,
+            because: "two distinct GUIDs were present and both must be counted");
     }
 
     [Fact]
@@ -135,12 +155,18 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().NotContain("aarthi-dev@agent365002.onmicrosoft.com");
-        result.RedactedContent.Should().NotContain("2cd3a148-4462-4f3c-8a8e-0c6f051c6a27");
-        result.RedactedContent.Should().NotContain("48e7c63c-15f8-42ff-9df9-7adb43889e34");
-        result.RedactedContent.Should().Contain("[INF] Requirements: 3 passed, 1 warnings, 0 failed");
-        result.EmailsRedacted.Should().Be(1);
-        result.IdsRedacted.Should().Be(2);
+        result.RedactedContent.Should().NotContain("aarthi-dev@agent365002.onmicrosoft.com",
+            because: "the original email must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().NotContain("2cd3a148-4462-4f3c-8a8e-0c6f051c6a27",
+            because: "the original user GUID must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().NotContain("48e7c63c-15f8-42ff-9df9-7adb43889e34",
+            because: "the original blueprint GUID must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().Contain("[INF] Requirements: 3 passed, 1 warnings, 0 failed",
+            because: "non-sensitive lines must be preserved verbatim so the log remains useful for support");
+        result.EmailsRedacted.Should().Be(1,
+            because: "exactly one distinct email was present and must be counted accurately");
+        result.IdsRedacted.Should().Be(2,
+            because: "two distinct GUIDs were present and both must be counted accurately");
     }
 
     [Fact]
@@ -184,11 +210,15 @@ public class LogRedactionServiceTests
 
         var result = _sut.Redact(log, Source);
 
-        result.RedactedContent.Should().Contain("<JWT-TOKEN>");
-        result.RedactedContent.Should().Contain("<email-1>");
-        result.TokensRedacted.Should().Be(1);
+        result.RedactedContent.Should().Contain("<JWT-TOKEN>",
+            because: "the JWT token must be replaced with the JWT placeholder");
+        result.RedactedContent.Should().Contain("<email-1>",
+            because: "the standalone email must still be aliased even when a JWT appears on the same line");
+        result.TokensRedacted.Should().Be(1,
+            because: "exactly one JWT token was present and the count must match");
         // The email inside the JWT payload must not be counted separately
-        result.EmailsRedacted.Should().Be(1);
+        result.EmailsRedacted.Should().Be(1,
+            because: "the email-like substring inside the JWT payload must NOT be re-counted after JWT redaction (cross-contamination would inflate the count)");
     }
 
     [Fact]
