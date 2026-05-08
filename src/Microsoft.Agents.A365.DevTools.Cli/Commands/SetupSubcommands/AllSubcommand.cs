@@ -179,9 +179,16 @@ internal static class AllSubcommand
             }
             if (authMode is not null && aiTeammateFlag == true)
             {
-                logger.LogError("--authmode is not supported with --aiteammate — AI Teammate agents automatically use OBO via agent user identity.");
-                context.ExitCode = 1;
-                return;
+                if (authMode == "obo")
+                {
+                    logger.LogWarning("--authmode obo is redundant with --aiteammate — AI Teammate agents always use OBO. Flag ignored.");
+                }
+                else
+                {
+                    logger.LogError("--authmode {AuthMode} is not supported with --aiteammate — AI Teammate agents always use OBO via agent user identity.", authMode);
+                    context.ExitCode = 1;
+                    return;
+                }
             }
 
             // Generate correlation ID at workflow entry point

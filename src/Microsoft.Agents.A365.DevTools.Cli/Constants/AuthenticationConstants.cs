@@ -219,7 +219,6 @@ public static class AuthenticationConstants
         "AgentIdentityBlueprint.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
         "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
-        "DelegatedPermissionGrant.ReadWrite.All",
         "Directory.Read.All",
         "AgentInstance.ReadWrite.All",  // Required for DELETE /beta/agentRegistry/agentInstances (CleanupCommand)
         "AgentRegistration.ReadWrite.All",  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration)
@@ -254,7 +253,6 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] RequiredPermissionGrantScopes = new[]
     {
-        "DelegatedPermissionGrant.ReadWrite.All",
         "AgentIdentityBlueprint.UpdateAuthProperties.All",
     };
 

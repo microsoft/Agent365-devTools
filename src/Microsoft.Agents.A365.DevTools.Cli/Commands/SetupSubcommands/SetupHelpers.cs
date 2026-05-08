@@ -620,6 +620,10 @@ internal static class SetupHelpers
                     {
                         logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not attempted (blueprint creation failed) — see Action Required");
                     }
+                    else if (string.Equals(results.MessagingEndpointFailureReason, "NotConfigured", StringComparison.Ordinal))
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not configured — add messagingEndpoint to a365.config.json to complete");
+                    }
                     else
                     {
                         logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed — see Action Required");
@@ -763,6 +767,12 @@ internal static class SetupHelpers
                     logger.LogInformation("  {N}. Messaging endpoint — not attempted because agent blueprint creation did not", actionCount);
                     logger.LogInformation("     complete. Resolve the blueprint step (see errors above), then re-run just");
                     logger.LogInformation("     the endpoint step:");
+                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                }
+                else if (string.Equals(results.MessagingEndpointFailureReason, "NotConfigured", StringComparison.Ordinal))
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — not configured. Add 'messagingEndpoint' to a365.config.json,", actionCount);
+                    logger.LogInformation("     then re-run just the endpoint step:");
                     logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
                 }
                 else
@@ -1392,7 +1402,7 @@ internal static class SetupHelpers
             {
                 logger.LogWarning("MessagingEndpoint not configured. Skipping endpoint registration.");
                 logger.LogWarning("Configure 'messagingEndpoint' in a365.config.json and re-run 'a365 setup blueprint' to register the endpoint.");
-                return (Models.EndpointRegistrationResult.Failed, "Other");
+                return (Models.EndpointRegistrationResult.Failed, "NotConfigured");
             }
 
             if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var messagingEndpointUri) ||

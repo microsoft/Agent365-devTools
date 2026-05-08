@@ -839,7 +839,7 @@ public class GraphApiService
                 if (attempt < maxRetries - 1)
                 {
                     var delaySecs = (int)Math.Min(baseDelaySeconds * Math.Pow(2, attempt), 60);
-                    _logger.LogWarning(
+                    _logger.LogDebug(
                         "Service principal not yet replicated to grants endpoint — retrying in {Delay}s (attempt {Attempt}/{Max})...",
                         delaySecs, attempt + 1, maxRetries - 1);
                     await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
@@ -1540,10 +1540,12 @@ public class GraphApiService
 
                 var errorContent = await response.Content.ReadAsStringAsync(ct);
 
-                // AADSTS7000215 means the credential exists in AAD but is not yet visible on this
-                // replica — same eventual consistency window as object replication. Retry with backoff.
+                // AADSTS7000215: credential exists but not yet visible on this STS replica.
+                // AADSTS700016: blueprint app itself not yet visible on this STS replica.
+                // Both are eventual-consistency propagation lag — retry with backoff.
                 var isCredentialPropagationLag = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
-                    && errorContent.Contains("AADSTS7000215", StringComparison.OrdinalIgnoreCase);
+                    && (errorContent.Contains("AADSTS7000215", StringComparison.OrdinalIgnoreCase)
+                        || errorContent.Contains("AADSTS700016", StringComparison.OrdinalIgnoreCase));
 
                 if (!isCredentialPropagationLag || attempt == maxRetries - 1)
                 {
@@ -1557,8 +1559,8 @@ public class GraphApiService
                 }
 
                 var delaySecs = Math.Min(baseDelaySeconds * (int)Math.Pow(2, attempt), 60);
-                _logger.LogInformation(
-                    "Blueprint credential not yet propagated (AADSTS7000215) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
+                _logger.LogDebug(
+                    "Blueprint app or credentials not yet propagated (AADSTS7000215/AADSTS700016) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
                     delaySecs, attempt + 1, maxRetries - 1);
                 await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
             }
@@ -1753,60 +1755,62 @@ public class GraphApiService
                 };
             }
 
-            using var content = new StringContent(
-                body.ToJsonString(),
-                System.Text.Encoding.UTF8,
-                "application/json");
+            const int maxAttempts = 5;
+            const int baseDelaySeconds = 5;
+            const string agentIdentityUrl = "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
 
-            using var response = await httpClient.PostAsync(
-                "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity",
-                content,
-                ct);
-
-            // Some tenants reject sponsor binding — retry without it.
-            if (!response.IsSuccessStatusCode && response.StatusCode == System.Net.HttpStatusCode.BadRequest
-                && !string.IsNullOrWhiteSpace(currentUserId))
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                _logger.LogDebug("Agent identity creation with sponsor failed (400); retrying without sponsor.");
-                body.Remove("sponsors@odata.bind");
-                using var content2 = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
-                using var response2 = await httpClient.PostAsync(
-                    "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity",
-                    content2,
-                    ct);
+                // StringContent is a one-shot stream — must be recreated each attempt.
+                using var content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                using var response = await httpClient.PostAsync(agentIdentityUrl, content, ct);
 
-                if (!response2.IsSuccessStatusCode)
+                // Some tenants reject sponsor binding — remove and retry immediately.
+                if (!response.IsSuccessStatusCode && response.StatusCode == System.Net.HttpStatusCode.BadRequest
+                    && body.ContainsKey("sponsors@odata.bind"))
                 {
-                    var err = await response2.Content.ReadAsStringAsync(ct);
-                    _logger.LogError("Failed to create agent identity: {Status} - {Error}", response2.StatusCode, err);
+                    _logger.LogDebug("Agent identity creation with sponsor failed (400); retrying without sponsor.");
+                    body.Remove("sponsors@odata.bind");
+                    continue;
+                }
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync(ct);
+                    using var doc = JsonDocument.Parse(json);
+                    var id = doc.RootElement.GetProperty("id").GetString();
+                    _logger.LogInformation("Agent identity created (ID: {Id})", id);
+                    return id;
+                }
+
+                var err = await response.Content.ReadAsStringAsync(ct);
+
+                // Authorization_IdentityNotFound: blueprint SP not yet propagated to the agent identity
+                // service — same eventual consistency window as SP replication. Retry with backoff.
+                var isIdentityNotFound = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                    && err.Contains("Authorization_IdentityNotFound", StringComparison.OrdinalIgnoreCase);
+
+                if (!isIdentityNotFound || attempt == maxAttempts - 1)
+                {
+                    _logger.LogError("Failed to create agent identity: {Status} - {Error}", response.StatusCode, err);
+                    if (err.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
+                        err.Contains("calling identity type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogError("Authorization denied. Ensure the blueprint application has the " +
+                            "AgentIdentity.CreateAsManager app role (auto-granted to Blueprint apps). " +
+                            "Re-run 'a365 setup blueprint' to recreate the blueprint if setup was incomplete.");
+                    }
                     return null;
                 }
 
-                var json2 = await response2.Content.ReadAsStringAsync(ct);
-                using var doc2 = JsonDocument.Parse(json2);
-                var id2 = doc2.RootElement.GetProperty("id").GetString();
-                _logger.LogInformation("Agent identity created (ID: {Id})", id2);
-                return id2;
+                var delaySecs = Math.Min(baseDelaySeconds * (int)Math.Pow(2, attempt), 60);
+                _logger.LogDebug(
+                    "Blueprint identity not yet propagated (Authorization_IdentityNotFound) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
+                    delaySecs, attempt + 1, maxAttempts - 1);
+                await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
             }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                var err = await response.Content.ReadAsStringAsync(ct);
-                _logger.LogError("Failed to create agent identity: {Status} - {Error}", response.StatusCode, err);
-                if (err.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
-                    err.Contains("calling identity type", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogError("Authorization denied. Ensure the blueprint application has " +
-                        "Application.ReadWrite.All and AgentIdentity.Create.OwnedBy application permissions.");
-                }
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-            var id = doc.RootElement.GetProperty("id").GetString();
-            _logger.LogInformation("Agent identity created (ID: {Id})", id);
-            return id;
+            return null;
         }
         catch (Exception ex)
         {
