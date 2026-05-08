@@ -17,10 +17,8 @@ public class InteractiveGraphAuthServiceTests
     /// This test ensures that all required Graph API scopes are present in the RequiredScopes array.
     /// If any of these scopes are removed, the test will fail to prevent accidental permission reduction.
     ///
-    /// These scopes are critical for Agent Blueprint creation and inheritable permissions configuration:
-    /// - AgentIdentityBlueprintPrincipal.Create: Required for blueprint SP creation (per Agent ID team — Kyle Marsh; ReadWrite.All is higher privilege and not needed)
-    /// - AgentIdentityBlueprint.ReadWrite.All: Required for Agent Blueprint operations
-    /// - AgentIdentityBlueprint.UpdateAuthProperties.All: Required for updating blueprint auth properties
+    /// These scopes are critical for Agent Blueprint creation:
+    /// - AgentIdentityBlueprint.ReadWrite.All: Required for Agent Blueprint operations (umbrella — includes SP creation, UpdateAuthProperties, AddRemoveCreds, DeleteRestore; per Kyle Marsh, Agent ID team)
     /// - User.Read: Basic user profile access for authentication context
     /// </summary>
     [Fact]
@@ -29,9 +27,8 @@ public class InteractiveGraphAuthServiceTests
         // Arrange
         var expectedScopes = new[]
         {
-            "https://graph.microsoft.com/AgentIdentityBlueprintPrincipal.Create",
             "https://graph.microsoft.com/AgentIdentityBlueprint.ReadWrite.All",
-            "https://graph.microsoft.com/AgentIdentityBlueprint.UpdateAuthProperties.All",
+            "https://graph.microsoft.com/AgentIdentityBlueprintPrincipal.Create",
             "https://graph.microsoft.com/User.Read"
         };
 

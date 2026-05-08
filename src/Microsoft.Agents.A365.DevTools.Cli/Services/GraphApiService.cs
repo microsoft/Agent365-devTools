@@ -164,25 +164,26 @@ public class GraphApiService
 
         string? token;
 
-        if (scopes != null && _tokenProvider != null)
+        bool hasScopes = scopes?.Any() == true;
+        if (hasScopes && _tokenProvider != null)
         {
             // Use token provider with delegated scopes (interactive browser auth with caching)
-            _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes));
+            _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes!));
             var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes!, false, CustomClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogError("Failed to acquire Graph token with scopes: {Scopes}", string.Join(", ", scopes));
+                _logger.LogError("Failed to acquire Graph token with scopes: {Scopes}", string.Join(", ", scopes!));
                 return false;
             }
 
             _logger.LogDebug("Successfully acquired Graph token with specific scopes (cached or new)");
         }
-        else if (scopes != null && _tokenProvider == null)
+        else if (hasScopes && _tokenProvider == null)
         {
             // Scopes required but no token provider - this is a configuration issue
-            _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes));
+            _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes!));
             return false;
         }
         else
@@ -1098,40 +1099,43 @@ public class GraphApiService
     /// </summary>
     private async Task<Models.RoleCheckResult> CheckDirectoryRoleAsync(string tenantId, string roleTemplateId, CancellationToken ct)
     {
+        // Decode the wids claim from the MSAL access token instead of calling Graph.
+        // wids contains role template GUIDs for directory roles the user directly holds.
+        // Limitation: group-based role assignments are not reflected in wids.
+        // If wids is absent (optional claim not configured on the app registration),
+        // we return Unknown and the caller proceeds without role validation.
         try
         {
-            // /me/transitiveMemberOf is a directory query — Directory.Read.All is required.
-            // User.Read is insufficient and would return Unknown for most users.
-            IEnumerable<string>? scopes = _tokenProvider != null
-                ? [AuthenticationConstants.DirectoryReadAllScope]
-                : null;
+            var token = await GetGraphAccessTokenAsync(tenantId, ct: ct);
+            if (string.IsNullOrWhiteSpace(token))
+                return Models.RoleCheckResult.Unknown;
 
-            string? nextUrl = "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId";
+            var parts = token.Split('.');
+            if (parts.Length < 2)
+                return Models.RoleCheckResult.Unknown;
 
-            while (nextUrl != null)
+            var payload = parts[1];
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            payload = (payload.Length % 4) switch
             {
-                using var doc = await GraphGetAsync(tenantId, nextUrl, ct, scopes);
+                2 => payload + "==",
+                3 => payload + "=",
+                _ => payload
+            };
 
-                if (doc == null)
-                    return Models.RoleCheckResult.Unknown;
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
 
-                if (!doc.RootElement.TryGetProperty("value", out var roles))
-                {
-                    _logger.LogWarning("Unexpected Graph response shape — 'value' property missing from transitiveMemberOf response.");
-                    return Models.RoleCheckResult.Unknown;
-                }
-
-                if (roles.EnumerateArray().Any(r =>
-                        r.TryGetProperty("roleTemplateId", out var id) &&
-                        string.Equals(id.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase)))
-                    return Models.RoleCheckResult.HasRole;
-
-                nextUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
-                    ? nextLink.GetString()
-                    : null;
+            if (!doc.RootElement.TryGetProperty("wids", out var wids))
+            {
+                _logger.LogDebug("wids claim absent from token — role check skipped (add wids as optional claim in Token Configuration on the app registration)");
+                return Models.RoleCheckResult.Unknown;
             }
 
-            return Models.RoleCheckResult.DoesNotHaveRole;
+            return wids.EnumerateArray().Any(w =>
+                string.Equals(w.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase))
+                ? Models.RoleCheckResult.HasRole
+                : Models.RoleCheckResult.DoesNotHaveRole;
         }
         catch (Exception ex)
         {
@@ -1515,7 +1519,7 @@ public class GraphApiService
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
             var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
 
-            const int maxRetries = 5;
+            const int maxRetries = 12;
             const int baseDelaySeconds = 5;
 
             for (int attempt = 0; attempt < maxRetries; attempt++)
@@ -1543,8 +1547,9 @@ public class GraphApiService
                 // AADSTS7000215: credential exists but not yet visible on this STS replica.
                 // AADSTS700016: blueprint app itself not yet visible on this STS replica.
                 // Both are eventual-consistency propagation lag — retry with backoff.
-                var isCredentialPropagationLag = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
-                    && (errorContent.Contains("AADSTS7000215", StringComparison.OrdinalIgnoreCase)
+                // AADSTS700016 / AADSTS7000215 are returned as 400 or 401 depending on the STS replica.
+                var isCredentialPropagationLag =
+                    (errorContent.Contains("AADSTS7000215", StringComparison.OrdinalIgnoreCase)
                         || errorContent.Contains("AADSTS700016", StringComparison.OrdinalIgnoreCase));
 
                 if (!isCredentialPropagationLag || attempt == maxRetries - 1)

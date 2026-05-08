@@ -553,12 +553,12 @@ internal static class SetupHelpers
             else
             {
                 var oboAlso = isBothMode && results.AgentIdentityPermissionsGranted;
-                var label = oboAlso ? "granted  S2S app roles + developer-scoped delegated" : "granted  S2S app roles";
+                var label = oboAlso ? "granted  S2S app roles + developer-scoped delegated on agent identity" : "granted  S2S app roles";
                 logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + label);
             }
         }
         else if (results.AgentIdentityPermissionsGranted)
-            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "granted  developer-scoped delegated");
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "granted  developer-scoped delegated on agent identity");
         else if (pendingDelegatedAction)
             logger.LogWarning(DryRunRow(permGrantStep, "Permission Grants") + "PENDING — see Action Required");
         else if (results.BatchPermissionsPhase2Completed)
@@ -622,7 +622,7 @@ internal static class SetupHelpers
                     }
                     else if (string.Equals(results.MessagingEndpointFailureReason, "NotConfigured", StringComparison.Ordinal))
                     {
-                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not configured — add messagingEndpoint to a365.config.json to complete");
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not configured — register manually in the Teams Developer Portal");
                     }
                     else
                     {
@@ -771,9 +771,8 @@ internal static class SetupHelpers
                 }
                 else if (string.Equals(results.MessagingEndpointFailureReason, "NotConfigured", StringComparison.Ordinal))
                 {
-                    logger.LogInformation("  {N}. Messaging endpoint — not configured. Add 'messagingEndpoint' to a365.config.json,", actionCount);
-                    logger.LogInformation("     then re-run just the endpoint step:");
-                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                    logger.LogInformation("  {N}. Messaging endpoint — register manually in the Teams Developer Portal:", actionCount);
+                    logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
                 }
                 else
                 {
@@ -836,7 +835,7 @@ internal static class SetupHelpers
             {
                 nextStepLines.Add(() =>
                 {
-                    logger.LogInformation("  Ensure 'AgentIdentityBlueprint.UpdateAuthProperties.All' is consented, then:");
+                    logger.LogInformation("  Ensure 'AgentIdentityBlueprint.ReadWrite.All' is consented, then:");
                     logger.LogInformation("    a365 setup blueprint");
                 });
             }
@@ -1190,7 +1189,7 @@ internal static class SetupHelpers
         {
             throw new SetupValidationException(
                 $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to {resourceName} {resourceAppId}. " +
-                "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All permission.");
+                "This may be due to insufficient permissions. Ensure you have AgentIdentityBlueprint.ReadWrite.All permission consented on your client app.");
         }
 
         // 3. Set inheritable permissions (for agent blueprints)
@@ -1204,7 +1203,7 @@ internal static class SetupHelpers
                 config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
             // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation.
-            // Reuse permissionGrantScopes (which already includes AgentIdentityBlueprint.UpdateAuthProperties.All)
+            // Reuse permissionGrantScopes (which uses AgentIdentityBlueprint.ReadWrite.All as umbrella)
             // so all Graph PowerShell calls in this method share a single Connect-MgGraph session/cache entry.
             var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
                 config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: permissionGrantScopes, ct);
@@ -1212,7 +1211,7 @@ internal static class SetupHelpers
             if (!ok && !alreadyExists)
             {
                 throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
-                    "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All permission in your custom client app.");
+                    "Ensure you have AgentIdentityBlueprint.ReadWrite.All permission consented on your custom client app.");
             }
 
             if (alreadyExists)
@@ -1401,7 +1400,6 @@ internal static class SetupHelpers
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogWarning("MessagingEndpoint not configured. Skipping endpoint registration.");
-                logger.LogWarning("Configure 'messagingEndpoint' in a365.config.json and re-run 'a365 setup blueprint' to register the endpoint.");
                 return (Models.EndpointRegistrationResult.Failed, "NotConfigured");
             }
 

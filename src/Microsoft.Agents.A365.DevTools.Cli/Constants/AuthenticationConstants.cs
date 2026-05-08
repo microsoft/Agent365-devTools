@@ -206,6 +206,22 @@ public static class AuthenticationConstants
     public const string ApplicationReadWriteAllScope = "Application.ReadWrite.All";
 
     /// <summary>
+    /// Delegated scope for reading application and service principal details.
+    /// Narrower replacement for Directory.Read.All — covers SP lookups by appId
+    /// (GET /v1.0/servicePrincipals?$filter=appId eq '...') without granting
+    /// broad directory read access.
+    /// </summary>
+    public const string ApplicationReadAllScope = "Application.Read.All";
+
+    /// <summary>
+    /// Delegated scope for creating and managing agent user accounts.
+    /// Agent-specific replacement for User.ReadWrite.All — covers agent user creation,
+    /// usageLocation update, and license assignment without granting broad write
+    /// access to all users in the tenant.
+    /// </summary>
+    public const string AgentIdUserReadWriteAllScope = "AgentIdUser.ReadWrite.All";
+
+    /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
     /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
     /// All permissions require admin consent.
@@ -215,23 +231,13 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] RequiredClientAppPermissions = new[]
     {
-        "AgentIdentityBlueprintPrincipal.Create",  // Required for POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal (blueprint SP creation)
-        "AgentIdentityBlueprint.ReadWrite.All",
-        "AgentIdentityBlueprint.UpdateAuthProperties.All",
-        "AgentIdentityBlueprint.AddRemoveCreds.All",  // Required for passwordCredentials and FICs during setup and cleanup
-        "Directory.Read.All",
-        "AgentInstance.ReadWrite.All",  // Required for DELETE /beta/agentRegistry/agentInstances (CleanupCommand)
+        "AgentIdentityBlueprint.ReadWrite.All",    // Umbrella — covers blueprint creation, UpdateAuthProperties, AddRemoveCreds, DeleteRestore sub-scopes
+        "AgentIdentityBlueprintPrincipal.Create",  // Required for POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal — separate from ReadWrite.All (different resource)
         "AgentRegistration.ReadWrite.All",  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration)
-        // AgentIdentity.ReadWrite.All removed — no code requests it as a token scope.
-        // Delete uses AgentIdentity.DeleteRestore.All. Read uses AgentIdentity.Read.All.
-        // AgentIdentity.Create.All is a delegated scope used by CreateAgentIdentityDelegatedAsync
-        // (POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity). Requires Agent ID Developer role.
-        "AgentIdentityBlueprint.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Blueprint application
         "AgentIdentity.Read.All",       // Required for GET /beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId (idempotency check)
         "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
+        "Application.Read.All",         // Narrower replacement for Directory.Read.All — covers SP lookups by appId
         "User.Read",  // Required for /me endpoint to resolve the signed-in user's object ID for blueprint owner/sponsor assignment
-        "User.ReadWrite.All",  // Required for agent user creation, usage location update, and license assignment
-        // Note: RoleManagementReadDirectoryScope is excluded because Directory.Read.All covers the needed read operations.
     };
 
     /// <summary>
@@ -251,10 +257,7 @@ public static class AuthenticationConstants
     /// token is reused from the in-process cache for all downstream Graph operations.
     /// All scopes require admin consent and are included in RequiredClientAppPermissions.
     /// </summary>
-    public static readonly string[] RequiredPermissionGrantScopes = new[]
-    {
-        "AgentIdentityBlueprint.UpdateAuthProperties.All",
-    };
+    public static readonly string[] RequiredPermissionGrantScopes = [];
 
     /// <summary>
     /// Additional scopes required only on Global Administrator paths that grant S2S app role
@@ -262,10 +265,7 @@ public static class AuthenticationConstants
     /// non-admin flows (deploy, setup permissions) do not request an admin-only scope and
     /// trigger unexpected consent prompts.
     /// </summary>
-    public static readonly string[] RequiredS2SGrantScopes = new[]
-    {
-        "AppRoleAssignment.ReadWrite.All",
-    };
+    public static readonly string[] RequiredS2SGrantScopes = [];
 
     /// <summary>
     /// Entra roles that can perform S2S app role assignments programmatically.
@@ -295,9 +295,8 @@ public static class AuthenticationConstants
     /// </summary>
     public static readonly string[] BlueprintInteractiveAuthScopes = new[]
     {
-        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprintPrincipal.Create",
         $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprint.ReadWrite.All",
-        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprint.UpdateAuthProperties.All",
+        $"{MicrosoftGraphResourceUri}/AgentIdentityBlueprintPrincipal.Create",
         $"{MicrosoftGraphResourceUri}/User.Read"
     };
 

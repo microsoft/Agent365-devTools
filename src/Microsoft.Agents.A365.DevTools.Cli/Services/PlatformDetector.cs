@@ -66,7 +66,7 @@ public class PlatformDetector
             return Models.ProjectPlatform.Python;
         }
 
-        _logger.LogWarning("Could not detect project platform in: {Path}", projectPath);
+        _logger.LogDebug("Could not detect project platform in: {Path}", projectPath);
         return Models.ProjectPlatform.Unknown;
     }
 }
