@@ -10,7 +10,8 @@ public sealed record LogRedactionResult(
     string RedactedContent,
     int EmailsRedacted,
     int IdsRedacted,
-    int TokensRedacted);
+    int TokensRedacted,
+    int UsernamesRedacted);
 
 public interface ILogRedactionService
 {
@@ -34,6 +35,12 @@ public sealed class LogRedactionService : ILogRedactionService
         @"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
         RegexOptions.Compiled);
 
+    // OS path usernames: /Users/<name>/ or /home/<name>/ (macOS/Linux) and C:\Users\<name>\ (Windows)
+    // Only the username segment is replaced; the rest of the path is preserved for debugging context.
+    private static readonly Regex PathUsernamePattern = new(
+        @"((?:/(?:Users|home)/|[A-Za-z]:\\Users\\))([^/\\\s]+)",
+        RegexOptions.Compiled);
+
     public LogRedactionResult Redact(string logContent, string sourceFilePath)
     {
         ArgumentNullException.ThrowIfNull(logContent);
@@ -41,6 +48,7 @@ public sealed class LogRedactionService : ILogRedactionService
         // Consistent alias maps: same value always maps to the same placeholder
         var emailMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var guidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var usernameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int tokenCount = 0;
 
         // 1. Redact JWT tokens first (they contain dots that could confuse other patterns)
@@ -74,19 +82,33 @@ public sealed class LogRedactionService : ILogRedactionService
             return alias;
         });
 
-        var header = BuildHeader(sourceFilePath, emailMap.Count, guidMap.Count, tokenCount);
+        // 4. Redact OS path usernames; preserve the rest of the path for debugging context
+        content = PathUsernamePattern.Replace(content, m =>
+        {
+            var prefix = m.Groups[1].Value;
+            var key = m.Groups[2].Value.ToLowerInvariant();
+            if (!usernameMap.TryGetValue(key, out var alias))
+            {
+                alias = $"<username-{usernameMap.Count + 1}>";
+                usernameMap[key] = alias;
+            }
+            return prefix + alias;
+        });
+
+        var header = BuildHeader(sourceFilePath, emailMap.Count, guidMap.Count, tokenCount, usernameMap.Count);
         return new LogRedactionResult(
             RedactedContent: header + content,
             EmailsRedacted: emailMap.Count,
             IdsRedacted: guidMap.Count,
-            TokensRedacted: tokenCount);
+            TokensRedacted: tokenCount,
+            UsernamesRedacted: usernameMap.Count);
     }
 
-    private static string BuildHeader(string sourceFilePath, int emails, int ids, int tokens)
+    private static string BuildHeader(string sourceFilePath, int emails, int ids, int tokens, int usernames)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"# Redacted by a365 logs export - {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}");
-        sb.AppendLine($"# {emails} email(s), {ids} id(s), {tokens} JWT token(s) replaced");
+        sb.AppendLine($"# {emails} email(s), {ids} id(s), {tokens} JWT token(s), {usernames} username(s) replaced");
         sb.AppendLine($"# Original: {sourceFilePath}");
         sb.AppendLine("#");
         return sb.ToString();

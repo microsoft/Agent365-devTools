@@ -99,8 +99,8 @@ public class LogsCommand
                     await File.WriteAllTextAsync(outputPath, result.RedactedContent, ct);
 
                     logger.LogInformation("Exporting redacted log for: {CliCommand}", name);
-                    logger.LogInformation("  Redacted: {Emails} email(s), {Ids} id(s), {Tokens} JWT token(s)",
-                        result.EmailsRedacted, result.IdsRedacted, result.TokensRedacted);
+                    logger.LogInformation("  Redacted: {Emails} email(s), {Ids} id(s), {Tokens} JWT token(s), {Usernames} username(s)",
+                        result.EmailsRedacted, result.IdsRedacted, result.TokensRedacted, result.UsernamesRedacted);
                     logger.LogInformation("  Output:   {OutputPath}", outputPath);
                     logger.LogInformation("");
                     exported++;

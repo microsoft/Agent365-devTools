@@ -131,6 +131,7 @@ public class LogRedactionServiceTests
         result.EmailsRedacted.Should().Be(0);
         result.IdsRedacted.Should().Be(0);
         result.TokensRedacted.Should().Be(0);
+        result.UsernamesRedacted.Should().Be(0);
     }
 
     [Fact]
@@ -141,7 +142,7 @@ public class LogRedactionServiceTests
         var result = _sut.Redact(log, Source);
 
         result.RedactedContent.Should().StartWith("# Redacted by a365 logs export");
-        result.RedactedContent.Should().Contain("1 email(s), 1 id(s), 0 JWT token(s)");
+        result.RedactedContent.Should().Contain("1 email(s), 1 id(s), 0 JWT token(s), 0 username(s)");
         result.RedactedContent.Should().Contain($"# Original: {Source}");
     }
 
@@ -191,6 +192,7 @@ public class LogRedactionServiceTests
         result.EmailsRedacted.Should().Be(0);
         result.IdsRedacted.Should().Be(0);
         result.TokensRedacted.Should().Be(0);
+        result.UsernamesRedacted.Should().Be(0);
     }
 
     [Fact]
@@ -230,5 +232,80 @@ public class LogRedactionServiceTests
         var result = _sut.Redact(log, windowsSource);
 
         result.RedactedContent.Should().Contain($"# Original: {windowsSource}");
+    }
+
+    [Fact]
+    public void Redact_MacOsUserPath_UsernameIsRedacted()
+    {
+        var log = "[INF] Config: /Users/aarthisaravanakumar/code/Sample-Agents/appsettings.json";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the OS username in a macOS /Users/ path must be replaced with a stable alias");
+        result.RedactedContent.Should().NotContain("aarthisaravanakumar",
+            because: "the original OS username must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().Contain("/Users/<username-1>/code/Sample-Agents/appsettings.json",
+            because: "the rest of the path must be preserved verbatim for debugging context");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "exactly one username was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_WindowsUserPath_UsernameIsRedacted()
+    {
+        var log = @"[INF] Config: C:\Users\johndoe\source\repos\project\appsettings.json";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the OS username in a Windows C:\\Users\\ path must be replaced with a stable alias");
+        result.RedactedContent.Should().NotContain("johndoe",
+            because: "the original OS username must not survive in redacted output (privacy invariant)");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "exactly one username was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_LinuxHomePath_UsernameIsRedacted()
+    {
+        var log = "[INF] Config: /home/ubuntu/project/appsettings.json";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the OS username in a Linux /home/ path must be replaced with a stable alias");
+        result.RedactedContent.Should().NotContain("/home/ubuntu",
+            because: "the original OS username must not survive in redacted output (privacy invariant)");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "exactly one username was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_SameUsernameAppearsMultipleTimes_SameAliasUsed()
+    {
+        var log = "[INF] Config: /Users/alice/project/appsettings.json\n[INF] Key: /Users/alice/project/key.pem";
+
+        var result = _sut.Redact(log, Source);
+
+        result.UsernamesRedacted.Should().Be(1,
+            because: "the same OS username must count once even when it appears multiple times");
+        result.RedactedContent.Should().NotContain("/Users/alice",
+            because: "no occurrence of the original OS username may survive in redacted output (privacy invariant)");
+    }
+
+    [Fact]
+    public void Redact_TwoDistinctPathUsernames_GetDifferentAliases()
+    {
+        var log = "[INF] A: /Users/alice/project\n[INF] B: /Users/bob/project";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the first distinct OS username must receive the username-1 alias");
+        result.RedactedContent.Should().Contain("<username-2>",
+            because: "the second distinct OS username must receive a different alias to preserve identity separation");
+        result.UsernamesRedacted.Should().Be(2,
+            because: "two distinct usernames were present and both must be counted");
     }
 }
