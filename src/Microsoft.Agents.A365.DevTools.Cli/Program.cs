@@ -160,6 +160,9 @@ class Program
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService, resolver: bootstrapResolver));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, resolver: bootstrapResolver));
+            var logsLogger = serviceProvider.GetRequiredService<ILogger<LogsCommand>>();
+            var logRedactionService = serviceProvider.GetRequiredService<ILogRedactionService>();
+            rootCommand.AddCommand(LogsCommand.CreateCommand(logsLogger, logRedactionService));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both
@@ -268,7 +271,12 @@ class Program
         services.AddLogging(builder =>
         {
             builder.ClearProviders();
-            builder.SetMinimumLevel(minimumLevel);
+
+            // Global minimum is Debug so the file logger always captures debug messages.
+            // The console provider is gated separately at minimumLevel (Information by default,
+            // Debug when -v is passed), so debug output never clutters the console unexpectedly.
+            builder.SetMinimumLevel(LogLevel.Debug);
+            builder.AddFilter<Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider>(null, minimumLevel);
 
             // Console logging with clean formatter
             builder.AddConsoleFormatter<CleanConsoleFormatter, Microsoft.Extensions.Logging.Console.SimpleConsoleFormatterOptions>();
@@ -280,8 +288,6 @@ class Program
             // File logging if path provided
             if (!string.IsNullOrEmpty(logFilePath))
             {
-                // Always use Trace level for file logging to capture all diagnostic information
-                // This ensures comprehensive logs for debugging, regardless of console verbosity
                 builder.Services.AddSingleton<ILoggerProvider>(provider =>
                     new FileLoggerProvider(logFilePath));
             }
@@ -289,6 +295,7 @@ class Program
 
         // Add core services
         services.AddSingleton<IConfigService, ConfigService>();
+        services.AddSingleton<ILogRedactionService, LogRedactionService>();
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
         services.AddSingleton<IAuthenticationService>(sp => sp.GetRequiredService<AuthenticationService>());

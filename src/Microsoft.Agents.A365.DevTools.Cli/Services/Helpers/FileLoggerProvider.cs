@@ -21,8 +21,10 @@ public sealed class FileLoggerProvider : ILoggerProvider
     public FileLoggerProvider(string filePath)
     {
         _filePath = filePath;
-        // Always use Trace level for file logging to capture all diagnostic information
-        // This ensures comprehensive logs for debugging, regardless of console verbosity
+        // File logger accepts Trace and above. The effective floor is Debug because
+        // Program.cs sets SetMinimumLevel(Debug) globally — Trace messages are filtered
+        // by the framework before reaching this provider. To capture Trace, add
+        // builder.AddFilter<FileLoggerProvider>(null, LogLevel.Trace) in ConfigureServices.
         _minimumLevel = LogLevel.Trace;
 
         // Ensure directory exists

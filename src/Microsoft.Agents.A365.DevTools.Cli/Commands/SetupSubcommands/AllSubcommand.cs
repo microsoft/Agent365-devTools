@@ -535,7 +535,7 @@ internal static class AllSubcommand
 
                 SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
 
-                await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                await ctx.ConfigService.SaveStateAsync(ctx.Config, ctx.GeneratedConfigPath);
 
                 // Step 4: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
                 await ExecuteMessagingEndpointStepAsync(ctx);

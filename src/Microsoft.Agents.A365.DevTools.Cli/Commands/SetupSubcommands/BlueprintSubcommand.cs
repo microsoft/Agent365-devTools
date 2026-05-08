@@ -658,6 +658,7 @@ internal static class BlueprintSubcommand
                     setupConfig,
                     configService,
                     logger,
+                    generatedConfigPath: generatedConfigPath,
                     loginHintResolver: loginHintResolver);
                 clientSecretManualActionRequired = !secretCreated;
             }
@@ -671,6 +672,7 @@ internal static class BlueprintSubcommand
                 setupConfig,
                 configService,
                 logger,
+                generatedConfigPath: generatedConfigPath,
                 loginHintResolver: loginHintResolver);
             clientSecretManualActionRequired = !secretCreated;
         }
@@ -1300,7 +1302,7 @@ internal static class BlueprintSubcommand
                 if (response.IsSuccessStatusCode) return false;
                 if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                 {
-                    logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
+                    logger.LogDebug("SP creation returned 400 (Entra appId index not yet replicated) — retrying...");
                     return true;
                 }
                 if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
@@ -1312,7 +1314,7 @@ internal static class BlueprintSubcommand
                         && forbiddenRetries < maxForbiddenRetries)
                     {
                         forbiddenRetries++;
-                        logger.LogDebug("SP creation returned 403 Forbidden (replication lag, attempt {Attempt}/{Max}) — retrying...", forbiddenRetries, maxForbiddenRetries);
+                        logger.LogDebug("SP creation returned 403 (owner propagation lag, attempt {Attempt}/{Max}) — retrying...", forbiddenRetries, maxForbiddenRetries);
                         return true;
                     }
                 }
@@ -2016,8 +2018,9 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         IConfigService configService,
         ILogger logger,
-        CancellationToken ct = default,
-        Func<Task<string?>>? loginHintResolver = null)
+        string? generatedConfigPath = null,
+        Func<Task<string?>>? loginHintResolver = null,
+        CancellationToken ct = default)
     {
         logger.LogInformation("");
         logger.LogInformation("Creating blueprint client secret...");
@@ -2130,9 +2133,15 @@ internal static class BlueprintSubcommand
             setupConfig.AgentBlueprintClientSecret = protectedSecret;
             setupConfig.AgentBlueprintClientSecretProtected = isProtected;
 
-            // Single consolidated save: persists blueprint identifiers (objectId, servicePrincipalId, appId) + client secret
-            // This ensures all blueprint-related state is saved atomically
-            await configService.SaveStateAsync(setupConfig);
+            // Save to the explicit path so the write always lands in the same file that the
+            // generatedConfig JsonObject write above targeted — prevents a path divergence on
+            // macOS where Environment.CurrentDirectory (getcwd, symlink-resolved) can differ
+            // from config.DirectoryName (unresolved) when a symlink is in the path.
+            // The parameter is required: callers must supply the resolved generatedConfigPath.
+            if (generatedConfigPath is null)
+                throw new ArgumentNullException(nameof(generatedConfigPath),
+                    "Required to prevent macOS symlink-path divergence when saving the client secret.");
+            await configService.SaveStateAsync(setupConfig, generatedConfigPath);
 
             logger.LogInformation("Client secret created successfully!");
             logger.LogInformation("");
