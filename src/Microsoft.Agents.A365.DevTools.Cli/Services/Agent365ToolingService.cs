@@ -274,7 +274,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     private string BuildPublishMcpServerV2Url(string environment, string environmentId, string serverName)
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
-        return $"{baseUrl}/agents/v2/dataverse/environments/{environmentId}/mcpServers/{serverName}/publish";
+        return $"{baseUrl}/agents/dataverse/environments/{environmentId}/mcpServers/{serverName}/publish/v2";
     }
 
     /// <summary>

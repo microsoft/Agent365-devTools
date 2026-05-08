@@ -360,39 +360,51 @@ internal class PublishCommandExecutor
             concurrentWarnings.Add(msg);
         }
 
-        var ppmiAppClientId = response.PpmiAppClientId;
-        Guid? ppmiScopeId = null;
-        if (!string.IsNullOrWhiteSpace(ppmiAppClientId))
+        // Grant required-resource-access on the just-created A365 Proxy + Public Clients Entra apps.
+        // The platform resolves the right resource per server type (Custom: managedidentityid; app-based
+        // / Dataverse MCP: 1p mappings; fallback: platform's own app id) and returns both the resource
+        // app id and the scope name. We look up the scope guid on the resource app, then add it as
+        // requiredResourceAccess on each of the two Entra apps we created.
+        var resourceAppId = response.McpServerAppId;
+        var resourceScopeName = response.McpServerScope;
+        Guid? resourceScopeId = null;
+        if (!string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(resourceScopeName))
         {
-            _logger.LogDebug("PPMI app provisioned: {PpmiAppClientId}", ppmiAppClientId);
+            _logger.LogDebug("Resolving scope '{ScopeName}' on underlying server app {AppId}", resourceScopeName, resourceAppId);
             try
             {
-                ppmiScopeId = await _retryHelper.ExecuteWithRetryAsync(
+                resourceScopeId = await _retryHelper.ExecuteWithRetryAsync(
                     async retryCt => await _graphApiService!.GetOAuth2PermissionScopeIdAsync(
-                        tenantId, ppmiAppClientId, "Tools.ListInvoke.All", retryCt),
+                        tenantId, resourceAppId, resourceScopeName, retryCt),
                     result => !result.HasValue,
                     cancellationToken: ct);
             }
             catch (Exception ex)
             {
-                var msg = $"Could not find 'Tools.ListInvoke.All' scope on PPMI app {ppmiAppClientId} after retries: {ex.Message}. API permissions not added.";
+                var msg = $"Could not find '{resourceScopeName}' scope on app {resourceAppId} after retries: {ex.Message}. API permissions not added.";
                 _logger.LogError(msg);
                 concurrentWarnings.Add(msg);
             }
         }
-
-        if (ppmiScopeId.HasValue)
+        else
         {
-            tasks.Add(AddPpmiPermissionAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings, ct));
+            var msg = $"Underlying server app id or scope was not returned by publish (appId='{resourceAppId}', scope='{resourceScopeName}'). API permissions not added.";
+            _logger.LogWarning(msg);
+            concurrentWarnings.Add(msg);
+        }
+
+        if (resourceScopeId.HasValue)
+        {
+            tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
 
             if (apps.PublicClientsObjectId != null)
             {
-                tasks.Add(AddPpmiPermissionAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, ppmiAppClientId!, ppmiScopeId.Value, concurrentWarnings, ct));
+                tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
             }
         }
-        else if (!string.IsNullOrWhiteSpace(ppmiAppClientId) && ppmiScopeId == null)
+        else if (!string.IsNullOrWhiteSpace(resourceAppId) && !string.IsNullOrWhiteSpace(resourceScopeName))
         {
-            var msg = $"Could not find 'Tools.ListInvoke.All' scope on PPMI app {ppmiAppClientId}. API permissions not added.";
+            var msg = $"Could not find '{resourceScopeName}' scope on app {resourceAppId}. API permissions not added.";
             _logger.LogError(msg);
             concurrentWarnings.Add(msg);
         }
@@ -439,26 +451,26 @@ internal class PublishCommandExecutor
         }
     }
 
-    private async Task AddPpmiPermissionAsync(
+    private async Task AddRequiredResourceAccessAsync(
         string tenantId,
         string appObjectId,
         string appName,
-        string ppmiAppClientId,
-        Guid ppmiScopeId,
+        string resourceAppId,
+        Guid resourceScopeId,
         System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
         CancellationToken ct = default)
     {
         try
         {
-            _logger.LogDebug("Adding PPMI 'Tools.ListInvoke.All' permission on '{AppName}' ({ObjectId})", appName, appObjectId);
+            _logger.LogDebug("Adding required-resource-access for resource {ResourceAppId} on '{AppName}' ({ObjectId})", resourceAppId, appName, appObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.AddRequiredResourceAccessAsync(
-                    tenantId, appObjectId, ppmiAppClientId, ppmiScopeId, retryCt),
+                    tenantId, appObjectId, resourceAppId, resourceScopeId, retryCt),
                 result => !result,
                 cancellationToken: ct);
             if (!success)
             {
-                var msg = $"Failed to add PPMI permission on '{appName}' after retries.";
+                var msg = $"Failed to add required-resource-access on '{appName}' after retries.";
                 _logger.LogError(msg);
                 concurrentWarnings.Add(msg);
             }
@@ -469,7 +481,7 @@ internal class PublishCommandExecutor
         }
         catch (Exception ex)
         {
-            var msg = $"Failed to add PPMI permission on '{appName}': {ex.Message}";
+            var msg = $"Failed to add required-resource-access on '{appName}': {ex.Message}";
             _logger.LogError(msg);
             concurrentWarnings.Add(msg);
         }

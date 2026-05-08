@@ -23,12 +23,22 @@ public class PublishMcpServerResponse
     public string? Message { get; set; }
 
     /// <summary>
-    /// PPMI app client id for the published server. Used by the CLI to look up the
-    /// <c>Tools.ListInvoke.All</c> scope id and grant it to the A365 Proxy + Public Clients Entra
-    /// apps after publish completes.
+    /// Resolved underlying MCP server's Entra app client id. The platform picks the right source per
+    /// server type — Custom servers from <c>managedidentityid</c> on the <c>mcpserver</c> row, app-based
+    /// / Dataverse MCP servers from 1p server-to-app mappings, fallback to the platform's own app id.
+    /// The CLI uses this together with <see cref="McpServerScope"/> to look up the scope id and grant
+    /// required-resource-access on the A365 Proxy + Public Clients Entra apps.
     /// </summary>
-    [JsonPropertyName("PpmiAppClientId")]
-    public string? PpmiAppClientId { get; set; }
+    [JsonPropertyName("McpServerAppId")]
+    public string? McpServerAppId { get; set; }
+
+    /// <summary>
+    /// Resolved OAuth scope name on the underlying MCP server's app. Paired with <see cref="McpServerAppId"/>;
+    /// the CLI calls Graph's GetOAuth2PermissionScopeId on (McpServerAppId, McpServerScope) to get the
+    /// scope guid for required-resource-access grants.
+    /// </summary>
+    [JsonPropertyName("McpServerScope")]
+    public string? McpServerScope { get; set; }
 
     /// <summary>
     /// CMS connector id created at publish time for the A365 Proxy connector, or null when the CLI
