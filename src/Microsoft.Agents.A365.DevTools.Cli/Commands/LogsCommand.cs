@@ -3,6 +3,7 @@
 
 using System.CommandLine;
 using System.CommandLine.Invocation;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -60,6 +61,13 @@ public class LogsCommand
 
             if (!string.IsNullOrWhiteSpace(commandName))
             {
+                if (!Regex.IsMatch(commandName, @"^[a-z0-9-]+$"))
+                {
+                    logger.LogError("Invalid command name '{CliCommand}'. Use lowercase letters, digits, and hyphens only.", commandName);
+                    context.ExitCode = 1;
+                    return;
+                }
+
                 targets = [(commandName, ConfigService.GetCommandLogPath(commandName))];
             }
             else
@@ -86,6 +94,7 @@ public class LogsCommand
                 if (!File.Exists(logPath))
                 {
                     logger.LogWarning("No log found for '{CliCommand}'. Run the command first to generate one.", name);
+                    context.ExitCode = 1;
                     continue;
                 }
 

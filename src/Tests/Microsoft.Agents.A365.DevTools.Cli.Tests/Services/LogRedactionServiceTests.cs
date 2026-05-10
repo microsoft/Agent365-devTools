@@ -224,14 +224,19 @@ public class LogRedactionServiceTests
     }
 
     [Fact]
-    public void Redact_WindowsPathInSourceFilePath_AppearsInHeader()
+    public void Redact_WindowsPathInSourceFilePath_UsernameIsRedactedInHeader()
     {
         var windowsSource = @"C:\Users\me\AppData\Local\Microsoft.Agents.A365.DevTools.Cli\logs\a365.setup.log";
         var log = "[INF] Setup complete";
 
         var result = _sut.Redact(log, windowsSource);
 
-        result.RedactedContent.Should().Contain($"# Original: {windowsSource}");
+        result.RedactedContent.Should().Contain(@"# Original: C:\Users\<username-1>\AppData\Local\Microsoft.Agents.A365.DevTools.Cli\logs\a365.setup.log",
+            because: "the OS username in the source file path must be redacted in the header so the exported log is safe to share");
+        result.RedactedContent.Should().NotContain(@"C:\Users\me\",
+            because: "the original OS username in the source path must not survive in the header (privacy invariant)");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "the username from the source path must be counted in the redaction summary");
     }
 
     [Fact]

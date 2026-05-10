@@ -2022,6 +2022,7 @@ internal static class BlueprintSubcommand
         Func<Task<string?>>? loginHintResolver = null,
         CancellationToken ct = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(generatedConfigPath);
         logger.LogInformation("");
         logger.LogInformation("Creating blueprint client secret...");
         using var clientSecretScope = logger.Indent();

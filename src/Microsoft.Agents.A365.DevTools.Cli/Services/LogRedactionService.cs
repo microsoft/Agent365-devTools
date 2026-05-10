@@ -95,7 +95,21 @@ public sealed class LogRedactionService : ILogRedactionService
             return prefix + alias;
         });
 
-        var header = BuildHeader(sourceFilePath, emailMap.Count, guidMap.Count, tokenCount, usernameMap.Count);
+        // Apply path username redaction to the source path written in the header (same alias map
+        // as content so the same username gets the same alias if it appears in both places).
+        var redactedSourcePath = PathUsernamePattern.Replace(sourceFilePath, m =>
+        {
+            var prefix = m.Groups[1].Value;
+            var key = m.Groups[2].Value.ToLowerInvariant();
+            if (!usernameMap.TryGetValue(key, out var alias))
+            {
+                alias = $"<username-{usernameMap.Count + 1}>";
+                usernameMap[key] = alias;
+            }
+            return prefix + alias;
+        });
+
+        var header = BuildHeader(redactedSourcePath, emailMap.Count, guidMap.Count, tokenCount, usernameMap.Count);
         return new LogRedactionResult(
             RedactedContent: header + content,
             EmailsRedacted: emailMap.Count,
