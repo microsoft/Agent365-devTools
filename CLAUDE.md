@@ -117,6 +117,7 @@ User-controlled input that reaches file system operations must be validated befo
 - Validate against an explicit allowlist pattern (e.g. `^[a-z0-9-]+$`) before interpolating into file names or paths
 - Reject inputs containing path separators, `..` segments, or characters outside the allowed set
 - Apply `ArgumentException.ThrowIfNullOrWhiteSpace` for string parameters where an empty or whitespace value would cause a silent failure — a non-nullable type alone is insufficient
+- CLI `Option<string?>` values default to null when omitted but can be explicitly passed as empty or whitespace by the user — check `IsNullOrWhiteSpace` on option values before use, and emit a targeted error rather than falling through to a confusing downstream failure (e.g. `Directory.Exists("")`)
 
 ```csharp
 // Correct: validate user input before using it in a path
@@ -192,3 +193,4 @@ Central NuGet package management in `src/Directory.Packages.props`. Key dependen
 7. **Value safety:** String parameters that must be non-empty use `ArgumentException.ThrowIfNullOrWhiteSpace`, not just a non-nullable type
 8. **Exit code completeness:** Every failure branch in a command handler (including `continue` inside loops) sets `context.ExitCode = 1`
 9. **Data flow consistency:** Any transformation applied to a value (redaction, sanitization) is applied everywhere that value is written — including headers, summaries, and log lines, not just the primary content
+10. **Command handler branch tests:** Every new `SetHandler` command handler must have invocation tests covering: invalid input → exit code 1, missing resource → exit code 1, bad output path → exit code 1, and successful path → exit code 0 with expected side effect (file written, message logged)

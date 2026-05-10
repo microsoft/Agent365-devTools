@@ -46,6 +46,13 @@ public class LogsCommand
             var outputDir = context.ParseResult.GetValueForOption(outputOption);
             var ct = context.GetCancellationToken();
 
+            if (outputDir is not null && string.IsNullOrWhiteSpace(outputDir))
+            {
+                logger.LogError("Output directory cannot be empty or whitespace. Omit --output to use the current directory.");
+                context.ExitCode = 1;
+                return;
+            }
+
             var outputDirectory = outputDir ?? Environment.CurrentDirectory;
 
             if (!Directory.Exists(outputDirectory))

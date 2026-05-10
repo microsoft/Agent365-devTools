@@ -166,7 +166,19 @@
   - A value is sanitized/redacted in one output path but written verbatim in another (e.g. redacted in log content but included raw in a file header)
   - A new sanitization step is added to content processing but the same value also flows into a header, summary line, or secondary output that was not updated
 
-### Rule 6: Verify Copyright Headers
+### Rule 6: CLI Option Whitespace Validation
+- **Description**: `Option<string?>` values are null when omitted but can be explicitly passed as empty or whitespace. Code that uses `?? defaultValue` to handle null will pass empty/whitespace through to file system calls, producing confusing errors like "Output directory does not exist: {Dir}" with a blank Dir.
+- **Action**: Flag as **HIGH** if an `Option<string?>` value is used in a file system call without first checking `string.IsNullOrWhiteSpace`. A targeted error message must be emitted when the option is explicitly provided as empty or whitespace.
+
+### Rule 7: Command Handler Branch Coverage
+- **Description**: Every `SetHandler` implementation defines a CLI contract (valid/invalid inputs, exit codes, output files). Without invocation tests, refactors silently break this contract.
+- **Action**: Flag as **MEDIUM** if a new `SetHandler` block has no corresponding `System.CommandLine` invocation tests. The following branches must be covered:
+  - Invalid input argument → exit code 1
+  - Nonexistent or whitespace output path → exit code 1
+  - Resource not found (missing file, etc.) → exit code 1
+  - Successful path → exit code 0 and expected side effect (file written, correct name)
+
+### Rule 8: Verify Copyright Headers
 - **Description**: Ensure all C# files have proper Microsoft copyright headers
 - **Action**: If a `.cs` file is missing a copyright header:
   - Add the Microsoft copyright header at the top of the file
