@@ -186,8 +186,9 @@ public class AgentBlueprintService
             spScopes,
             cancellationToken);
 
-        // Agent user query requires AgentIdUser.ReadWrite.All — only available when create-instance is enabled.
-        // Skip entirely when the scope is not on the app to avoid a 403 error that would surface misleadingly.
+        // Agent user query requires AgentIdUser.ReadWrite.All, which is intentionally absent from
+        // RequiredClientAppPermissions until create-instance is re-enabled. This means agent user
+        // cleanup is also disabled — no agent users exist while create-instance is off, so this is safe.
         List<JsonElement> userItems;
         if (AuthenticationConstants.RequiredClientAppPermissions.Contains(AuthenticationConstants.AgentIdUserReadWriteAllScope))
         {

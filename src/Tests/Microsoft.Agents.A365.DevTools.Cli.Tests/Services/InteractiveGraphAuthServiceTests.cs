@@ -18,7 +18,10 @@ public class InteractiveGraphAuthServiceTests
     /// If any of these scopes are removed, the test will fail to prevent accidental permission reduction.
     ///
     /// These scopes are critical for Agent Blueprint creation:
-    /// - AgentIdentityBlueprint.ReadWrite.All: Required for Agent Blueprint operations (umbrella — includes SP creation, UpdateAuthProperties, AddRemoveCreds, DeleteRestore; per Kyle Marsh, Agent ID team)
+    /// - AgentIdentityBlueprint.ReadWrite.All: Required for Agent Blueprint operations
+    ///   (umbrella — covers UpdateAuthProperties, AddRemoveCreds, and DeleteRestore)
+    /// - AgentIdentityBlueprintPrincipal.Create: Required for Agent Blueprint service principal creation
+    ///   (separate scope; NOT covered by the ReadWrite.All umbrella — 403 without it)
     /// - User.Read: Basic user profile access for authentication context
     /// </summary>
     [Fact]

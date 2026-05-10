@@ -251,19 +251,23 @@ public static class AuthenticationConstants
         .ToArray();
 
     /// <summary>
-    /// Required scopes for all PowerShell-based Microsoft Graph operations (OAuth2 grants,
-    /// service principal lookups, and inheritable permissions).
-    /// Using a single unified set ensures Connect-MgGraph authenticates once and the resulting
-    /// token is reused from the in-process cache for all downstream Graph operations.
-    /// All scopes require admin consent and are included in RequiredClientAppPermissions.
+    /// Explicit delegated scopes passed to EnsureGraphHeadersAsync for permission-grant operations.
+    /// Intentionally empty: the operations that previously needed explicit scopes here
+    /// (DelegatedPermissionGrant.ReadWrite.All for oauth2 grant CRUD,
+    /// AgentIdentityBlueprint.UpdateAuthProperties.All for inheritable permissions) are now
+    /// covered by the AgentIdentityBlueprint.ReadWrite.All umbrella in RequiredClientAppPermissions.
+    /// An empty array causes EnsureGraphHeadersAsync to route through the standard token path
+    /// (GetGraphAccessTokenAsync / AuthenticationService), which already carries all required scopes.
+    /// Validated end-to-end across all 4 setup variants (PR #409).
     /// </summary>
     public static readonly string[] RequiredPermissionGrantScopes = [];
 
     /// <summary>
-    /// Additional scopes required only on Global Administrator paths that grant S2S app role
-    /// assignments. Kept separate from <see cref="RequiredPermissionGrantScopes"/> so that
-    /// non-admin flows (deploy, setup permissions) do not request an admin-only scope and
-    /// trigger unexpected consent prompts.
+    /// Additional scopes for S2S app role assignment calls in BatchPermissionsOrchestrator.
+    /// Intentionally empty: AppRoleAssignment.ReadWrite.All was removed from the required
+    /// permission set. Global Admins can assign app roles without that scope (admin bypass);
+    /// developers receive a 403 and fall back to PowerShell instructions as intended.
+    /// Validated across admin and developer paths (PR #409).
     /// </summary>
     public static readonly string[] RequiredS2SGrantScopes = [];
 
