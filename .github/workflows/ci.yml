@@ -13,6 +13,7 @@ jobs:
   dotnet-sdk:
     name: .NET SDK
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     defaults:
@@ -52,7 +53,7 @@ jobs:
         run: dotnet build tests.proj --no-restore --configuration Release
 
       - name: Run tests
-        run: dotnet test tests.proj --no-build --configuration Release --verbosity normal
+        run: dotnet test tests.proj --no-build --configuration Release --verbosity normal --blame-hang --blame-hang-timeout 5min
 
       - name: Pack NuGet packages
         id: pack
