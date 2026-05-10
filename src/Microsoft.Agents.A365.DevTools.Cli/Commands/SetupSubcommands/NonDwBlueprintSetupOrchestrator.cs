@@ -640,8 +640,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             return;
         }
 
-        // For ServiceIdentity SPs (agent identities), id == appId.
-        // The SP was already created by CreateAgentIdentityAsync — use the stored ID directly.
+        // AgenticAppId is the SP object ID returned by CreateAgentIdentityAsync and stored in config.
         var agentIdentitySpObjectId = ctx.Config.AgenticAppId;
 
         if (string.IsNullOrWhiteSpace(agentIdentitySpObjectId))

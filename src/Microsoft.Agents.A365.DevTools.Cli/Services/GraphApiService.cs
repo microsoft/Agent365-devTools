@@ -842,7 +842,7 @@ public class GraphApiService
                     var delaySecs = (int)Math.Min(baseDelaySeconds * Math.Pow(2, attempt), 60);
                     _logger.LogDebug(
                         "Service principal not yet replicated to grants endpoint — retrying in {Delay}s (attempt {Attempt}/{Max})...",
-                        delaySecs, attempt + 1, maxRetries - 1);
+                        delaySecs, attempt + 1, maxRetries);
                     await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
                 }
             }
@@ -1566,7 +1566,7 @@ public class GraphApiService
                 var delaySecs = Math.Min(baseDelaySeconds * (int)Math.Pow(2, attempt), 60);
                 _logger.LogDebug(
                     "Blueprint app or credentials not yet propagated (AADSTS7000215/AADSTS700016) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
-                    delaySecs, attempt + 1, maxRetries - 1);
+                    delaySecs, attempt + 1, maxRetries);
                 await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
             }
 
@@ -1811,7 +1811,7 @@ public class GraphApiService
                 var delaySecs = Math.Min(baseDelaySeconds * (int)Math.Pow(2, attempt), 60);
                 _logger.LogDebug(
                     "Blueprint identity not yet propagated (Authorization_IdentityNotFound) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
-                    delaySecs, attempt + 1, maxAttempts - 1);
+                    delaySecs, attempt + 1, maxAttempts);
                 await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
             }
 

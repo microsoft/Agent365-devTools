@@ -589,8 +589,9 @@ public class SetupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
         var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
 
-        await parser.InvokeAsync("all --aiteammate true --authmode obo --dry-run", new TestConsole());
+        var result = await parser.InvokeAsync("all --aiteammate true --authmode obo --dry-run", new TestConsole());
 
+        result.Should().Be(0, because: "--authmode obo with --aiteammate must warn and continue, not exit with error");
         _mockLogger.DidNotReceive().Log(
             LogLevel.Error,
             Arg.Any<EventId>(),

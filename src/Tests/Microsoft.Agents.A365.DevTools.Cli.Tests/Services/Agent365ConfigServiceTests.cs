@@ -359,10 +359,12 @@ public class Agent365ConfigServiceTests : IDisposable
         // Act
         await _service.SaveStateAsync(config, statePath);
 
-        // Assert
+        // Assert — parse JSON to avoid dependence on serializer whitespace/ordering.
         var json = await File.ReadAllTextAsync(statePath);
-        Assert.Contains("\"agentBlueprintClientSecret\": \"super-secret-value\"", json);
-        Assert.Contains("\"agentBlueprintClientSecretProtected\": false", json);
+        var node = System.Text.Json.Nodes.JsonNode.Parse(json)?.AsObject();
+        Assert.NotNull(node);
+        Assert.Equal("super-secret-value", node!["agentBlueprintClientSecret"]?.GetValue<string>());
+        Assert.Equal(false, node["agentBlueprintClientSecretProtected"]?.GetValue<bool>());
     }
 
     #endregion
